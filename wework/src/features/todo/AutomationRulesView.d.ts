@@ -15,6 +15,7 @@ export interface AutomationRulesViewProps {
   executionCatalog?: AutomationExecutionCatalog
   onReload?: () => Promise<void>
   onLoadExecutionCatalog?: () => Promise<AutomationExecutionCatalog>
+  onLoadExecutionPlugins?: () => Promise<AutomationExecutionCatalog['plugins']>
   onLoadRuns?: () => Promise<AutomationUiRun[]>
   onSaveRule?: (rule: AutomationUiRule) => Promise<AutomationUiRule>
   onToggleRule?: (rule: AutomationUiRule, enabled: boolean) => Promise<AutomationUiRule>

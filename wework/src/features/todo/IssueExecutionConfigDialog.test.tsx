@@ -1,9 +1,17 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
 import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { IssueExecutionConfigDialog } from './IssueExecutionConfigDialog'
+
+const localExecutorMocks = vi.hoisted(() => ({
+  getLocalExecutorStatus: vi.fn(),
+}))
+
+vi.mock('@/desktop/localExecutor', () => ({
+  getLocalExecutorStatus: localExecutorMocks.getLocalExecutorStatus,
+}))
 
 const item = {
   id: 'WEG-1',
@@ -29,6 +37,15 @@ const item = {
 }
 
 describe('IssueExecutionConfigDialog', () => {
+  beforeEach(() => {
+    localExecutorMocks.getLocalExecutorStatus.mockReset()
+    localExecutorMocks.getLocalExecutorStatus.mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'local-device',
+    })
+  })
+
   it('refreshes cloud models when the hybrid catalog finishes loading', async () => {
     const listModels = vi
       .fn()
@@ -487,6 +504,10 @@ describe('IssueExecutionConfigDialog', () => {
         screen.getByTestId('issue-execution-config-fields-device').firstElementChild
       ).toHaveAttribute('data-value', 'configured-local-device')
     )
+    expect(screen.getByTestId('issue-execution-config-fields-device')).toHaveTextContent('未知设备')
+    expect(screen.getByTestId('issue-execution-config-fields-device')).not.toHaveTextContent(
+      'configured-local-device'
+    )
   })
 
   it('lists only runtime environments whose devices are online and submits inline', async () => {
@@ -536,8 +557,16 @@ describe('IssueExecutionConfigDialog', () => {
         deviceApi={
           {
             listDevices: vi.fn().mockResolvedValue([
-              { device_id: 'device-online', status: 'online' },
-              { device_id: 'device-offline', status: 'offline' },
+              {
+                device_id: 'device-online',
+                name: '公司发的 MacBook Pro',
+                status: 'online',
+              },
+              {
+                device_id: 'device-offline',
+                name: '离线测试设备',
+                status: 'offline',
+              },
             ]),
           } as never
         }
@@ -555,10 +584,13 @@ describe('IssueExecutionConfigDialog', () => {
     const deviceSelect = await screen.findByTestId('issue-execution-config-fields-device')
     await userEvent.click(deviceSelect)
     expect(screen.getByTestId('issue-execution-config-fields-device-menu')).toHaveTextContent(
+      '公司发的 MacBook Pro'
+    )
+    expect(screen.getByTestId('issue-execution-config-fields-device-menu')).not.toHaveTextContent(
       'device-online'
     )
     expect(screen.getByTestId('issue-execution-config-fields-device-menu')).not.toHaveTextContent(
-      'device-offline'
+      '离线测试设备'
     )
     expect(
       screen

@@ -117,11 +117,17 @@ const recipes: Record<string, string> = {
     'grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-text-secondary [&.trigger]:bg-focus [&.trigger]:text-white [&.step]:bg-violet-600 [&.step]:text-white [&.coordinator]:bg-violet-600 [&.coordinator]:text-white',
   'flow-node-copy':
     'grid min-w-0 gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:truncate [&_strong]:text-sm [&_strong]:font-medium [&>span]:truncate [&>span]:text-xs [&>span]:text-text-muted',
+  'dynamic-flow-node':
+    'grid h-full w-full grid-rows-[88px_44px] overflow-hidden rounded-xl border border-border/80 bg-background text-text-primary shadow-sm transition-[border-color,box-shadow] duration-150 hover:border-border hover:shadow-md [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20',
+  'dynamic-node-main':
+    'grid min-w-0 grid-cols-[38px_minmax(0,1fr)] items-center gap-3 border-0 bg-transparent px-3 py-3 text-left text-text-primary',
+  'dynamic-node-add-stage':
+    'inline-flex h-11 w-full items-center justify-center gap-1.5 whitespace-nowrap border-0 border-t border-border/70 bg-muted/35 px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary',
   'subgraph-count': 'whitespace-nowrap rounded-md bg-muted px-2 py-1 text-xs text-text-secondary',
   'react-flow-dynamic-group':
     'relative h-full w-full rounded-2xl border border-border/80 bg-background/95 shadow-sm [&.selected]:border-focus [&.selected]:shadow-md [&.selected]:ring-1 [&.selected]:ring-focus/20 [&.selected_.workflow-node-insert]:pointer-events-auto [&.selected_.workflow-node-insert]:opacity-100 [&:hover_.workflow-node-insert]:pointer-events-auto [&:hover_.workflow-node-insert]:opacity-100 [&:focus-within_.workflow-node-insert]:pointer-events-auto [&:focus-within_.workflow-node-insert]:opacity-100',
   'react-flow-group-header':
-    'grid h-[88px] w-full cursor-grab grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 border-0 border-b border-border/70 bg-background px-3.5 py-3 text-left text-text-primary active:cursor-grabbing [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:text-sm [&_strong]:font-medium [&_em]:text-xs [&_em]:not-italic [&_em]:text-text-muted',
+    'grid h-[88px] w-full cursor-grab grid-cols-[38px_minmax(0,1fr)_auto] items-center gap-3 rounded-t-2xl border-0 border-b border-border/70 bg-background px-3.5 py-3 text-left text-text-primary active:cursor-grabbing [&>span:nth-child(2)]:grid [&>span:nth-child(2)]:gap-1 [&_small]:text-xs [&_small]:text-text-muted [&_strong]:text-sm [&_strong]:font-medium [&_em]:text-xs [&_em]:not-italic [&_em]:text-text-muted',
   'react-flow-group-label':
     'pointer-events-none absolute left-[18px] top-[99px] inline-flex items-center gap-1 text-xs text-text-muted',
   'react-flow-stage-node':
@@ -129,7 +135,7 @@ const recipes: Record<string, string> = {
   'react-flow-stage-main':
     'grid h-full w-full cursor-grab grid-cols-[28px_minmax(0,1fr)] items-center gap-2 rounded-lg border-0 bg-transparent p-2 text-left text-text-primary active:cursor-grabbing [&>span:first-child]:grid [&>span:first-child]:size-7 [&>span:first-child]:place-items-center [&>span:first-child]:rounded-lg [&>span:first-child]:bg-focus/10 [&>span:first-child]:text-xs [&>span:first-child]:text-focus [&>span:last-child]:grid [&>span:last-child]:min-w-0 [&>span:last-child]:gap-1 [&_strong]:truncate [&_strong]:text-xs [&_strong]:font-medium [&_small]:text-xs [&_small]:text-text-muted',
   'react-flow-stage-handle':
-    '!top-[72%] !size-2.5 !border-2 !border-background !bg-focus opacity-0 transition-opacity',
+    '!top-1/2 !size-2.5 !border-2 !border-background !bg-focus opacity-0 transition-opacity',
   'react-flow-stage-insert':
     'pointer-events-none absolute top-1/2 z-20 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-focus bg-background text-focus opacity-0 shadow-sm transition-[opacity,transform,background-color,color] hover:scale-110 hover:bg-focus hover:text-white [&.before]:left-0 [&.before]:-translate-x-1/2 [&.after]:right-0 [&.after]:translate-x-1/2',
   'workflow-node-insert':
@@ -197,8 +203,6 @@ const recipes: Record<string, string> = {
     'grid gap-4 border-t border-border/60 pt-4 [&.coordinator-model-settings]:border-border/60',
   'panel-plugins':
     'relative flex min-h-10 flex-wrap items-center gap-2 rounded-lg bg-muted/60 p-2 [&_button]:inline-flex h-7 items-center gap-1 rounded-md bg-background px-2 text-xs text-text-secondary shadow-sm [&_button:hover]:text-text-primary [&_button.add]:border border-dashed border-border-strong bg-transparent shadow-none hover:bg-muted',
-  'plugin-popover':
-    'absolute left-0 top-[calc(100%+8px)] z-popover grid w-56 gap-1 rounded-xl border border-border bg-popover p-1.5 shadow-2xl [&_button]:flex [&_button]:h-9 [&_button]:items-center [&_button]:gap-2 [&_button]:rounded-lg [&_button]:bg-transparent [&_button]:px-2.5 [&_button]:text-xs [&_button]:text-text-secondary [&_button:hover]:bg-muted [&_button>span]:grid [&_button>span]:size-4 [&_button>span]:place-items-center [&_button>span]:rounded [&_button>span]:border [&_button>span]:border-border-strong [&_button>span.checked]:border-focus [&_button>span.checked]:bg-focus',
   'subgraph-mode-settings':
     'mb-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-700/20 bg-emerald-50/40 p-4 [&>div]:flex [&>div]:min-w-0 [&>div]:flex-1 [&>div]:items-start [&>div]:gap-2 [&>div>span]:grid [&>div>span]:min-w-0 [&>div>span]:flex-1 [&>div>span]:gap-1 [&_span]:text-xs [&_span]:text-emerald-800/70 [&_strong]:text-sm [&_strong]:font-medium [&_small]:text-xs [&_small]:text-emerald-800/60 [&>button]:relative [&>button]:h-5 [&>button]:w-9 [&>button]:shrink-0 [&>button]:rounded-full [&>button]:bg-border [&>button_i]:absolute [&>button_i]:left-0.5 [&>button_i]:top-0.5 [&>button_i]:size-4 [&>button_i]:rounded-full [&>button_i]:bg-background [&>button_i]:shadow-sm [&>button_i]:transition-transform [&>button.enabled]:bg-emerald-600 [&>button.enabled_i]:translate-x-4',
   'dag-stage-settings-intro':
@@ -211,7 +215,7 @@ const recipes: Record<string, string> = {
     'flex items-center justify-between gap-3 [&_strong]:text-sm [&_strong]:font-medium [&_button]:inline-flex h-8 items-center gap-1 rounded-lg px-2 text-xs text-focus [&_button:hover]:bg-muted',
   'deliverable-list': 'grid gap-2',
   'deliverable-item':
-    'grid grid-cols-[minmax(0,1fr)_56px_28px] items-center gap-2 rounded-lg bg-muted/60 p-3 [&>div]:grid [&>div]:gap-1 [&_input]:h-auto [&_input]:border-0 [&_input]:bg-transparent [&_input]:p-0 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input+input]:text-xs [&_input+input]:text-text-muted [&>span]:rounded-md [&>span]:bg-background [&>span]:px-2 [&>span]:py-1 [&>span]:text-center [&>span]:text-xs [&>span]:text-text-secondary [&>button]:grid [&>button]:size-7 [&>button]:place-items-center [&>button]:rounded-lg [&>button]:text-text-muted [&>button:hover]:bg-background [&>button:hover]:text-destructive',
+    'grid grid-cols-[minmax(0,1fr)_112px_28px] items-center gap-2 rounded-lg bg-muted/60 p-3 [&>div]:grid [&>div]:gap-1 [&_input]:h-auto [&_input]:border-0 [&_input]:bg-transparent [&_input]:p-0 [&_input]:text-sm [&_input]:text-text-primary [&_input]:outline-none [&_input+input]:text-xs [&_input+input]:text-text-muted [&>select]:h-8 [&>select]:min-w-0 [&>select]:rounded-md [&>select]:border [&>select]:border-transparent [&>select]:bg-background [&>select]:px-2 [&>select]:text-xs [&>select]:text-text-secondary [&>select]:outline-none [&>select]:focus:border-focus/70 [&>button]:grid [&>button]:size-7 [&>button]:place-items-center [&>button]:rounded-lg [&>button]:text-text-muted [&>button:hover]:bg-background [&>button:hover]:text-destructive',
   'empty-deliverables':
     'grid min-h-16 place-items-center rounded-lg border border-dashed border-border bg-muted/30 text-xs text-text-muted transition-colors hover:bg-muted/60 hover:text-text-secondary',
   'execution-mode':

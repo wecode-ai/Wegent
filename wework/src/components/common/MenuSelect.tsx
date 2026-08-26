@@ -221,6 +221,8 @@ export function PopupMenu({
   invalid = false,
   menuWidth,
   fullWidth = false,
+  triggerClassName,
+  onOpen,
 }: {
   testId: string
   trigger: ReactNode
@@ -230,6 +232,8 @@ export function PopupMenu({
   invalid?: boolean
   menuWidth?: number
   fullWidth?: boolean
+  triggerClassName?: string
+  onOpen?: () => void
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -281,10 +285,14 @@ export function PopupMenu({
         data-testid={testId}
         disabled={disabled}
         aria-invalid={invalid || undefined}
-        onClick={() => setOpen(current => !current)}
+        onClick={() => {
+          if (!open) onOpen?.()
+          setOpen(current => !current)
+        }}
         className={cn(
           'rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50',
-          fullWidth && 'w-full'
+          fullWidth && 'w-full',
+          triggerClassName
         )}
         aria-haspopup="menu"
         aria-expanded={open}

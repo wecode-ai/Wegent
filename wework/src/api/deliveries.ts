@@ -973,6 +973,7 @@ export function createDeliveryApi(client: HttpClient) {
         >
       > & {
         version: number
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
@@ -1333,7 +1334,7 @@ export function createDeliveryApi(client: HttpClient) {
     getWorkflowStageContext(
       itemId: string,
       workflowNodeId: string
-    ): Promise<Record<string, unknown>> {
+    ): Promise<Record<string, unknown> & { compiled_task_instruction: string }> {
       return client.get(
         `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(
           workflowNodeId

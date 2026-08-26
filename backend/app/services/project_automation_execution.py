@@ -1204,9 +1204,12 @@ class ProjectAutomationExecution:
                 "executor_type": execution.executor_type,
                 "run_status": "queued",
                 "execution_device_id": execution.execution_device_id,
+                "runtime_task_id": execution.runtime_task_id,
             }
         )
         row.metadata_json = activity_metadata
+        row.runtime_device_id = execution.execution_device_id or ""
+        row.runtime_task_id = execution.runtime_task_id or ""
 
     @staticmethod
     def _activity_payload(

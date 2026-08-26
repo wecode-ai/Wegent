@@ -31,6 +31,8 @@ import { automationClass } from './automationStyles'
 const OUTER_NODE_WIDTH = 300
 const OUTER_NODE_HEIGHT = 88
 const OUTER_NODE_GAP = 120
+const DYNAMIC_NODE_WIDTH = 300
+const DYNAMIC_NODE_HEIGHT = 132
 const GROUP_MIN_WIDTH = 560
 const GROUP_HEADER_HEIGHT = 88
 const STAGE_WIDTH = 150
@@ -157,6 +159,13 @@ const TriggerCanvasNode = memo(function TriggerCanvasNode({ data }) {
   )
 })
 
+function executionSummary(environment, model) {
+  const normalizedEnvironment = /^(Local Executor|本机执行器)(\s*·.*)?$/i.test(environment)
+    ? '本机'
+    : environment.replace(/\s*·\s*(在线|忙碌)$/, '')
+  return [normalizedEnvironment, model].filter(Boolean).join(' · ') || '尚未配置执行环境'
+}
+
 const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data }) {
   return (
     <article className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}>
@@ -175,12 +184,50 @@ const ExecutionCanvasNode = memo(function ExecutionCanvasNode({ data }) {
           <strong>{data.step.name || '未命名执行节点'}</strong>
           <span>
             {data.step.executionMode === 'automatic'
-              ? `${data.step.environment} · ${data.step.model}`
+              ? executionSummary(data.step.environment, data.step.model)
               : '由成员手动完成'}
           </span>
         </span>
         <ChevronRight size={14} />
       </button>
+      <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
+    </article>
+  )
+})
+
+const DynamicCanvasNode = memo(function DynamicCanvasNode({ data }) {
+  return (
+    <article
+      className={automationClass(`workflow-node-shell ${data.selected ? 'selected' : ''}`)}
+      data-testid={`ai-allocation-node-${data.step.id}`}
+    >
+      <HorizontalHandles />
+      <div className={automationClass(`dynamic-flow-node ${data.selected ? 'selected' : ''}`)}>
+        <button
+          type="button"
+          className={automationClass('dynamic-node-main')}
+          onClick={data.onSelect}
+        >
+          <span className={automationClass('node-icon coordinator')}>
+            <Sparkles size={17} />
+          </span>
+          <span className={automationClass('flow-node-copy')}>
+            <small>AI 动态分配 · 无约束</small>
+            <strong>{data.step.name}</strong>
+            <span>{executionSummary(data.step.environment, data.step.model)}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          className={automationClass('dynamic-node-add-stage nodrag nopan')}
+          data-testid={`dag-stage-add-first-${data.step.id}`}
+          aria-label="添加第一个阶段"
+          onClick={data.onAddFirstStage}
+        >
+          <GitBranch size={13} />
+          添加编排约束
+        </button>
+      </div>
       <WorkflowNodeInsertControls nodeId={data.step.id} onInsert={data.onInsert} />
     </article>
   )
@@ -205,9 +252,7 @@ const DynamicGroupCanvasNode = memo(function DynamicGroupCanvasNode({ data }) {
         <span>
           <small>AI 动态分配 · DAG 子图</small>
           <strong>{data.step.name}</strong>
-          <em>
-            {data.step.environment} · {data.step.model}
-          </em>
+          <em>{executionSummary(data.step.environment, data.step.model)}</em>
         </span>
         <span className={automationClass('subgraph-count')}>
           {data.step.subgraph?.nodes.length ?? 0} 个节点
@@ -245,7 +290,7 @@ const DagStageCanvasNode = memo(function DagStageCanvasNode({ data }) {
             {data.stage.dependencies.length
               ? `依赖 ${data.stage.dependencies.length} 个节点`
               : data.stage.executionMode === 'automatic'
-                ? `${data.stage.environment} · ${data.stage.model}`
+                ? executionSummary(data.stage.environment, data.stage.model)
                 : '手动执行'}
           </small>
         </span>
@@ -347,6 +392,7 @@ const DifyConnectionLine = memo(function DifyConnectionLine({ fromX, fromY, toX,
 const nodeTypes = {
   trigger: TriggerCanvasNode,
   execution: ExecutionCanvasNode,
+  dynamic: DynamicCanvasNode,
   dynamicGroup: DynamicGroupCanvasNode,
   dagStage: DagStageCanvasNode,
 }
@@ -397,21 +443,21 @@ const CanvasViewportControls = memo(function CanvasViewportControls() {
   )
 })
 
-const CanvasAutoFit = memo(function CanvasAutoFit({ nodeCount }) {
+const CanvasAutoFit = memo(function CanvasAutoFit({ outerNodeCount }) {
   const { fitView } = useReactFlow()
-  const previousNodeCount = useRef(nodeCount)
+  const previousOuterNodeCount = useRef(outerNodeCount)
 
   useEffect(() => {
-    if (nodeCount <= previousNodeCount.current) {
-      previousNodeCount.current = nodeCount
+    if (outerNodeCount <= previousOuterNodeCount.current) {
+      previousOuterNodeCount.current = outerNodeCount
       return undefined
     }
-    previousNodeCount.current = nodeCount
+    previousOuterNodeCount.current = outerNodeCount
     const frame = window.requestAnimationFrame(() => {
       void fitView({ duration: 240, padding: CANVAS_FIT_PADDING })
     })
     return () => window.cancelAnimationFrame(frame)
-  }, [fitView, nodeCount])
+  }, [fitView, outerNodeCount])
 
   return null
 })
@@ -473,76 +519,96 @@ export function AutomationWorkflowCanvas({
 
       if (step.kind === 'dynamic') {
         const subgraphNodes = step.subgraph?.nodes ?? []
-        const graphWidth = Math.max(
-          GROUP_MIN_WIDTH,
-          ...subgraphNodes.map(stage => (stage.x ?? 0) + STAGE_WIDTH + 40)
-        )
-        const graphHeight = Math.max(
-          280,
-          ...subgraphNodes.map(stage => (stage.y ?? 0) + STAGE_HEIGHT + 36)
-        )
-        const groupHeight = GROUP_HEADER_HEIGHT + graphHeight
-        nodes.push({
-          id: step.id,
-          type: 'dynamicGroup',
-          position: {
-            x: stepX,
-            y: stepY,
-          },
-          data: {
-            step,
-            selected:
-              (selectedNode.type === 'step' && selectedNode.id === step.id) ||
-              (selectedNode.type === 'dagStage' && selectedNode.stepId === step.id),
-            onSelect: () => onSelectNode({ type: 'step', id: step.id }),
-            onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
-          },
-          style: { width: graphWidth, height: groupHeight },
-        })
-
-        subgraphNodes.forEach((stage, stageIndex) => {
-          const stageNodeId = `dag:${step.id}:${stage.id}`
+        const selected =
+          (selectedNode.type === 'step' && selectedNode.id === step.id) ||
+          (selectedNode.type === 'dagStage' && selectedNode.stepId === step.id)
+        if (subgraphNodes.length === 0) {
           nodes.push({
-            id: stageNodeId,
-            type: 'dagStage',
-            parentId: step.id,
-            extent: 'parent',
+            id: step.id,
+            type: 'dynamic',
             position: {
-              x: (stage.x ?? 0) + 20,
-              y: (stage.y ?? 0) + GROUP_HEADER_HEIGHT,
+              x: stepX,
+              y: stepY,
             },
             data: {
-              stepId: step.id,
-              stage,
-              index: stageIndex,
-              selected:
-                selectedNode.type === 'dagStage' &&
-                selectedNode.stepId === step.id &&
-                selectedNode.stageId === stage.id,
-              onSelect: () =>
-                onSelectNode({ type: 'dagStage', stepId: step.id, stageId: stage.id }),
-              onInsert: placement => onAddDagStage(step.id, stage.id, placement),
+              step,
+              selected,
+              onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+              onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
+              onAddFirstStage: () => onAddDagStage(step.id),
             },
-            style: { width: STAGE_WIDTH, height: STAGE_HEIGHT },
+            style: { width: DYNAMIC_NODE_WIDTH, height: DYNAMIC_NODE_HEIGHT },
           })
-        })
+        } else {
+          const graphWidth = Math.max(
+            GROUP_MIN_WIDTH,
+            ...subgraphNodes.map(stage => (stage.x ?? 0) + STAGE_WIDTH + 40)
+          )
+          const graphHeight = Math.max(
+            280,
+            ...subgraphNodes.map(stage => (stage.y ?? 0) + STAGE_HEIGHT + 36)
+          )
+          const groupHeight = GROUP_HEADER_HEIGHT + graphHeight
+          nodes.push({
+            id: step.id,
+            type: 'dynamicGroup',
+            position: {
+              x: stepX,
+              y: stepY,
+            },
+            data: {
+              step,
+              selected,
+              onSelect: () => onSelectNode({ type: 'step', id: step.id }),
+              onInsert: (placement, kind) => onInsertNode(step.id, placement, kind),
+            },
+            style: { width: graphWidth, height: groupHeight },
+          })
 
-        subgraphNodes.forEach(stage => {
-          stage.dependencies.forEach(dependencyId => {
-            edges.push({
-              id: `dag-edge:${step.id}:${dependencyId}:${stage.id}`,
-              source: `dag:${step.id}:${dependencyId}`,
-              target: `dag:${step.id}:${stage.id}`,
-              type: 'dify',
-              data: {
-                kind: 'dag',
-                stepId: step.id,
-                sourceStageId: dependencyId,
-                targetStageId: stage.id,
+          subgraphNodes.forEach((stage, stageIndex) => {
+            const stageNodeId = `dag:${step.id}:${stage.id}`
+            nodes.push({
+              id: stageNodeId,
+              type: 'dagStage',
+              parentId: step.id,
+              extent: 'parent',
+              position: {
+                x: (stage.x ?? 0) + 20,
+                y: (stage.y ?? 0) + GROUP_HEADER_HEIGHT,
               },
+              data: {
+                stepId: step.id,
+                stage,
+                index: stageIndex,
+                selected:
+                  selectedNode.type === 'dagStage' &&
+                  selectedNode.stepId === step.id &&
+                  selectedNode.stageId === stage.id,
+                onSelect: () =>
+                  onSelectNode({ type: 'dagStage', stepId: step.id, stageId: stage.id }),
+                onInsert: placement => onAddDagStage(step.id, stage.id, placement),
+              },
+              style: { width: STAGE_WIDTH, height: STAGE_HEIGHT },
             })
           })
-        })
+
+          subgraphNodes.forEach(stage => {
+            stage.dependencies.forEach(dependencyId => {
+              edges.push({
+                id: `dag-edge:${step.id}:${dependencyId}:${stage.id}`,
+                source: `dag:${step.id}:${dependencyId}`,
+                target: `dag:${step.id}:${stage.id}`,
+                type: 'dify',
+                data: {
+                  kind: 'dag',
+                  stepId: step.id,
+                  sourceStageId: dependencyId,
+                  targetStageId: stage.id,
+                },
+              })
+            })
+          })
+        }
       } else {
         nodes.push({
           id: step.id,
@@ -625,7 +691,7 @@ export function AutomationWorkflowCanvas({
         )
         return
       }
-      if (node.type === 'execution' || node.type === 'dynamicGroup') {
+      if (node.type === 'execution' || node.type === 'dynamic' || node.type === 'dynamicGroup') {
         onMoveStep(node.id, Math.round(node.position.x), Math.round(node.position.y))
       }
     },
@@ -653,10 +719,18 @@ export function AutomationWorkflowCanvas({
         onToggleDagDependency(step.id, targetNode.data.stage.id, sourceNode.data.stage.id)
         return
       }
-      if (sourceNode?.type !== 'execution' && sourceNode?.type !== 'dynamicGroup') {
+      if (
+        sourceNode?.type !== 'execution' &&
+        sourceNode?.type !== 'dynamic' &&
+        sourceNode?.type !== 'dynamicGroup'
+      ) {
         return
       }
-      if (targetNode?.type !== 'execution' && targetNode?.type !== 'dynamicGroup') {
+      if (
+        targetNode?.type !== 'execution' &&
+        targetNode?.type !== 'dynamic' &&
+        targetNode?.type !== 'dynamicGroup'
+      ) {
         return
       }
       const targetStep = draft.steps.find(step => step.id === targetNode.id)
@@ -730,7 +804,7 @@ export function AutomationWorkflowCanvas({
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={['Backspace', 'Delete']}
       >
-        <CanvasAutoFit nodeCount={nodes.length} />
+        <CanvasAutoFit outerNodeCount={draft.steps.length + 1} />
         <Background
           variant="dots"
           gap={[18, 18]}

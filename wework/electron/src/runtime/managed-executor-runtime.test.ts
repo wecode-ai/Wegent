@@ -116,6 +116,7 @@ describe('managed executor runtime', () => {
   test('reconnects the owner stream after the executor restarts', async () => {
     const directory = await temporaryDirectory('managed-executor-restart-')
     const ownerConnectionsPath = join(directory.path, 'owner-connections')
+    const identityPath = join(directory.path, 'executor-identity.json')
     const runtime = new ManagedExecutorRuntime({
       command: process.execPath,
       args: [
@@ -126,6 +127,11 @@ describe('managed executor runtime', () => {
           const path = require('node:path')
           const endpoint = process.env.WEGENT_APP_IPC_ENDPOINT
           const ownerConnectionsPath = process.argv[1]
+          const identityPath = process.argv[2]
+          fs.writeFileSync(identityPath, JSON.stringify({
+            deviceId: process.env.WEGENT_APP_IPC_DEVICE_ID,
+            deviceName: process.env.DEVICE_NAME,
+          }))
           if (process.platform !== 'win32') {
             fs.mkdirSync(path.dirname(endpoint), { recursive: true })
             fs.rmSync(endpoint, { force: true })
@@ -149,6 +155,7 @@ describe('managed executor runtime', () => {
           }).listen(endpoint)
         `,
         ownerConnectionsPath,
+        identityPath,
       ],
       environment: {
         VITE_WEWORK_E2E: 'true',
@@ -157,10 +164,18 @@ describe('managed executor runtime', () => {
       dataDirectory: join(directory.path, 'data'),
       logDirectory: join(directory.path, 'logs'),
       deviceId: 'test-device',
+      deviceName: 'Test Device',
     })
 
     try {
       await runtime.start()
+      await expect
+        .poll(async () => JSON.parse(await readFile(identityPath, 'utf8')))
+        .toEqual({
+          deviceId: 'test-device',
+          deviceName: 'Test Device',
+        })
+
       const firstPid = runtime.pid()
       expect(firstPid).not.toBeNull()
       process.kill(firstPid!, 'SIGKILL')

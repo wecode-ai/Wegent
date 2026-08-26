@@ -294,10 +294,7 @@ class IssueWorkflowStartService:
             existing_workflow_run_id = (
                 payload.get("workflow_run_id") if isinstance(payload, dict) else None
             )
-            if (
-                not existing_workflow_run_id
-                or existing_workflow_run_id == workflow_run_id
-            ):
+            if existing_workflow_run_id == workflow_run_id:
                 return True
         return False
 

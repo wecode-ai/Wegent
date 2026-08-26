@@ -60,7 +60,7 @@ def build_project_robot_user_input(
     normalized_stage_instruction = stage_instruction.strip()
     if normalized_stage_instruction:
         sections.append(normalized_stage_instruction)
-    if normalized_prompt:
+    elif normalized_prompt:
         sections.append(normalized_prompt)
     return "\n\n".join(sections)
 
@@ -322,20 +322,24 @@ class WeworkExecutionProfile:
     ) -> str:
         if self.manager_mode:
             return self.instruction.strip()
-        from app.services.workflow_stage_context import (
-            workflow_stage_task_instruction,
-        )
+        from app.services.workflow_stage_context import compiled_workflow_stage_input
 
+        stage_instruction = (
+            str(
+                compiled_workflow_stage_input(workflow_stage_input).get(
+                    "compiled_task_instruction"
+                )
+                or ""
+            )
+            if workflow_stage_input
+            else ""
+        )
         return build_project_robot_user_input(
             project_id=project_id,
             task_id=task_id,
             execution_id=execution_id,
             execution_prompt=self.execution_prompt,
-            stage_instruction=(
-                workflow_stage_task_instruction(workflow_stage_input)
-                if workflow_stage_input
-                else ""
-            ),
+            stage_instruction=stage_instruction,
         )
 
     def build_runtime_request(
@@ -432,11 +436,24 @@ class WeworkExecutionProfile:
         title = str(getattr(task, "title", "") or "")
         bot_id: int | str = self.agent_id or 0
         origin = {
+            **origin_context,
             "type": "project_automation" if self.manager_mode else "board_task",
             "cloudProjectId": str(project.id),
             "loopItemId": str(getattr(task, "id", "")),
-            **origin_context,
+            "executionId": execution_id,
+            "taskUrl": (
+                f"cloud://projects/{project.id}/todos/"
+                f"{str(getattr(task, 'id', ''))}"
+            ),
         }
+        if isinstance(workflow_stage_input, dict):
+            target_stage = workflow_stage_input.get("target_stage")
+            if isinstance(target_stage, dict):
+                workflow_stage_id = str(target_stage.get("id") or "")
+                origin["workflowStageId"] = workflow_stage_id
+                origin["workflowStageName"] = str(
+                    target_stage.get("name") or workflow_stage_id
+                )
         origin["workspacePolicy"] = workspace_policy or self.workspace_policy
         if self.manager_mode:
             origin["automationRole"] = "manager"

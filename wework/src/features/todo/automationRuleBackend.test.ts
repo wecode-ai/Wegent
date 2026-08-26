@@ -205,6 +205,69 @@ describe('automationRuleBackend', () => {
     expect(input.cronExpression).toBe('30 9 * * 1-5')
   })
 
+  test('persists empty AI dynamic allocation as unconstrained Issue planning', () => {
+    const rule = uiRule()
+    rule.steps = [
+      {
+        ...rule.steps[0],
+        kind: 'dynamic',
+        name: 'AI 动态分配',
+        approvalPolicy: 'automatic',
+        subgraph: { nodes: [] },
+      },
+    ]
+
+    const input = automationInputFromUi(rule, 7)
+
+    expect(input.eventConfig.runtime_workflow_definition).toMatchObject({
+      stage_mode: 'none',
+      advancement_policy: 'ai',
+      approval_policy: 'automatic',
+      nodes: [],
+    })
+    expect(input.assignmentMode).toBe('ai_managed')
+    expect(input.managerType).toBe('custom')
+  })
+
+  test('keeps the AI dynamic allocation DAG when the automation is disabled', () => {
+    const rule = uiRule()
+    const stage = {
+      ...rule.steps[0],
+      id: 'analysis',
+      name: '分析需求',
+      executionConfigOverride: true,
+    }
+    rule.enabled = false
+    rule.steps = [
+      {
+        ...rule.steps[0],
+        kind: 'dynamic',
+        name: 'AI 动态分配',
+        subgraph: { nodes: [stage] },
+      },
+    ]
+
+    const input = automationInputFromUi(rule, 7)
+
+    expect(input.eventConfig.runtime_workflow_definition).toMatchObject({
+      stage_mode: 'dag',
+      advancement_policy: 'ai',
+      nodes: [
+        expect.objectContaining({
+          id: 'analysis',
+          execution_config: null,
+          execution_config_override: false,
+        }),
+      ],
+    })
+    const storedFlow = input.eventConfig.wework_flow as {
+      graph: { nodes: Array<{ subgraph: { nodes: Array<Record<string, unknown>> } }> }
+    }
+    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('model')
+    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('executionDeviceId')
+    expect(storedFlow.graph.nodes[0].subgraph.nodes[0]).not.toHaveProperty('plugins')
+  })
+
   test('projects and round-trips the legacy Issue workflow without losing node execution data', () => {
     const workflowRule = backendRule({
       id: 'workflow-rule-1',

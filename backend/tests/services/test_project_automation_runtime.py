@@ -620,6 +620,7 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         id=61,
         executor_type="automation_manager",
         execution_device_id="device-1",
+        runtime_task_id="codex-queue-61",
     )
     find_activity = MagicMock(return_value=activity)
     monkeypatch.setattr(ProjectAutomationExecution, "_activity", find_activity)
@@ -637,7 +638,10 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         "executor_type": "automation_manager",
         "run_status": "queued",
         "execution_device_id": "device-1",
+        "runtime_task_id": "codex-queue-61",
     }
+    assert activity.runtime_device_id == "device-1"
+    assert activity.runtime_task_id == "codex-queue-61"
 
 
 def test_manager_plan_submission_rejects_non_owner_before_writes(

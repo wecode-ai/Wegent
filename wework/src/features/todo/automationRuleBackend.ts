@@ -17,7 +17,6 @@ export interface AutomationUiDeliverable {
   id: string
   name: string
   description: string
-  type: string
   valueType: 'text' | 'file' | 'code_snapshot' | 'git_branch' | 'pull_request' | 'url'
   fileConstraints?: {
     accepted_types: string[]
@@ -51,6 +50,7 @@ export interface AutomationUiStep {
   automationRuleId: string | null
   executionConfig: WorkflowExecutionConfig | null
   executionConfigOverride: boolean
+  approvalPolicy?: 'required' | 'automatic'
   subgraph: AutomationUiGraph | null
 }
 
@@ -131,6 +131,14 @@ interface StoredAutomationFlowV1 {
 interface StoredAutomationFlowV2 {
   version: 2
   description: string
+  graph: {
+    nodes: unknown[]
+  }
+}
+
+interface NormalizedAutomationFlowV2 {
+  version: 2
+  description: string
   graph: AutomationUiGraph
 }
 
@@ -164,7 +172,6 @@ function normalizeDeliverables(value: unknown): AutomationUiDeliverable[] {
     id: typeof item.id === 'string' ? item.id : `deliverable-${index + 1}`,
     name: typeof item.name === 'string' ? item.name : '未命名交付物',
     description: typeof item.description === 'string' ? item.description : '',
-    type: typeof item.type === 'string' ? item.type : '文本',
     valueType: deliverableValueType(
       typeof item.valueType === 'string'
         ? item.valueType
@@ -273,20 +280,38 @@ function normalizeStoredStep(
       ? (item.executionConfig as unknown as WorkflowExecutionConfig)
       : null,
     executionConfigOverride: item.executionConfigOverride === true,
+    approvalPolicy: item.approvalPolicy === 'automatic' ? 'automatic' : 'required',
     subgraph: null,
   }
   step.subgraph =
     kind === 'dynamic'
       ? {
-          nodes: subgraphNodes.map((node, childIndex) =>
-            normalizeStoredStep(node, childIndex, step)
-          ),
+          nodes: subgraphNodes.map((node, childIndex) => {
+            const stage = normalizeStoredStep(node, childIndex)
+            return {
+              ...stage,
+              environment: '',
+              executionEnvironment: 'local',
+              executionDeviceId: null,
+              runtimeProfileId: null,
+              model: '',
+              modelType: null,
+              modelOptions: {},
+              plugins: [],
+              projectPlugins: [],
+              workspacePolicy: 'none',
+              executionConfig: null,
+              executionConfigOverride: false,
+              approvalPolicy: undefined,
+              subgraph: null,
+            }
+          }),
         }
       : null
   return step
 }
 
-function storedFlow(rule: ProjectAutomationRule): StoredAutomationFlowV2 | null {
+function storedFlow(rule: ProjectAutomationRule): NormalizedAutomationFlowV2 | null {
   const candidate = rule.eventConfig[FLOW_KEY]
   if (!isRecord(candidate)) {
     return null
@@ -497,7 +522,6 @@ function workflowNodesFromLegacy(
         id: requirement.id,
         name: requirement.name,
         description: requirement.description,
-        type: requirement.value_type,
         valueType: requirement.value_type,
         fileConstraints: requirement.file_constraints
           ? {
@@ -579,6 +603,7 @@ export function automationRuleFromLegacyWorkflow(
                   automationRuleId: null,
                   executionConfig: definition.execution_config ?? null,
                   executionConfigOverride: false,
+                  approvalPolicy: definition.approval_policy,
                   subgraph: { nodes: [] },
                 }),
             id: 'ai-dynamic-allocation',
@@ -587,6 +612,7 @@ export function automationRuleFromLegacyWorkflow(
             x: 440,
             y: 226,
             automationRuleId: managerRule?.id ?? null,
+            approvalPolicy: definition.approval_policy,
             subgraph: { nodes: workflowNodes },
           },
         ]
@@ -672,7 +698,10 @@ function executionConfigFromUiNode(node: AutomationUiStep): WorkflowExecutionCon
   }
 }
 
-function workflowNodeFromUi(node: AutomationUiStep): WorkflowNodeDefinition {
+function workflowNodeFromUi(
+  node: AutomationUiStep,
+  includeExecutionConfig = true
+): WorkflowNodeDefinition {
   return {
     id: node.id,
     name: node.name,
@@ -690,9 +719,9 @@ function workflowNodeFromUi(node: AutomationUiStep): WorkflowNodeDefinition {
       id: deliverable.id,
       name: deliverable.name,
       description: deliverable.description,
-      value_type: deliverable.valueType ?? deliverableValueType(deliverable.type),
+      value_type: deliverable.valueType,
       file_constraints:
-        (deliverable.valueType ?? deliverableValueType(deliverable.type)) === 'file'
+        deliverable.valueType === 'file'
           ? (deliverable.fileConstraints ?? {
               accepted_types: [],
               min_files: 1,
@@ -700,10 +729,10 @@ function workflowNodeFromUi(node: AutomationUiStep): WorkflowNodeDefinition {
             })
           : null,
     })),
-    workspace_policy: node.workspacePolicy,
+    workspace_policy: includeExecutionConfig ? node.workspacePolicy : 'none',
     automation_rule_id: node.automationRuleId,
-    execution_config: executionConfigFromUiNode(node),
-    execution_config_override: node.executionConfigOverride,
+    execution_config: includeExecutionConfig ? executionConfigFromUiNode(node) : null,
+    execution_config_override: includeExecutionConfig && node.executionConfigOverride,
   }
 }
 
@@ -716,24 +745,69 @@ export function legacyWorkflowFromAutomationRule(
   if (dynamicNode) {
     return {
       version: Math.max(1, previous?.version ?? 1),
-      stage_mode: rule.enabled && dynamicNode.subgraph?.nodes.length ? 'dag' : 'none',
+      stage_mode: dynamicNode.subgraph?.nodes.length ? 'dag' : 'none',
       advancement_policy: 'ai',
       coordinator_prompt: dynamicNode.prompt,
-      approval_policy: previous?.approval_policy ?? 'required',
+      approval_policy: dynamicNode.approvalPolicy ?? previous?.approval_policy ?? 'required',
       ai_automation_rule_id: dynamicNode.automationRuleId,
       execution_config: executionConfigFromUiNode(dynamicNode),
-      nodes: (dynamicNode.subgraph?.nodes ?? []).map(workflowNodeFromUi),
+      nodes: (dynamicNode.subgraph?.nodes ?? []).map(node => workflowNodeFromUi(node, false)),
     }
   }
   return {
     version: Math.max(1, previous?.version ?? 1),
-    stage_mode: rule.enabled ? 'dag' : 'none',
+    stage_mode: rule.steps.length ? 'dag' : 'none',
     advancement_policy: 'manual',
     coordinator_prompt: previous?.coordinator_prompt ?? '',
     approval_policy: previous?.approval_policy ?? 'required',
     ai_automation_rule_id: null,
     execution_config: previous?.execution_config ?? null,
-    nodes: rule.steps.map(workflowNodeFromUi),
+    nodes: rule.steps.map(node => workflowNodeFromUi(node)),
+  }
+}
+
+function storedStageConstraint(node: AutomationUiStep): Record<string, unknown> {
+  return {
+    id: node.id,
+    name: node.name,
+    prompt: node.prompt,
+    kind: 'task',
+    dependencies: [...(node.dependencies ?? [])],
+    dependencyContext: Object.fromEntries(
+      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
+        dependencyId,
+        [...sources],
+      ])
+    ),
+    x: node.x,
+    y: node.y,
+    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
+    executionMode: node.executionMode,
+    required: node.required,
+    automationRuleId: node.automationRuleId,
+  }
+}
+
+function storedStepFromUi(node: AutomationUiStep): Record<string, unknown> {
+  return {
+    ...node,
+    dependencies: [...(node.dependencies ?? [])],
+    dependencyContext: Object.fromEntries(
+      Object.entries(node.dependencyContext ?? {}).map(([dependencyId, sources]) => [
+        dependencyId,
+        [...sources],
+      ])
+    ),
+    deliverables: (node.deliverables ?? []).map(deliverable => ({ ...deliverable })),
+    plugins: [...(node.plugins ?? [])],
+    projectPlugins: (node.projectPlugins ?? []).map(plugin => ({ ...plugin })),
+    modelOptions: { ...(node.modelOptions ?? {}) },
+    subgraph:
+      node.kind === 'dynamic'
+        ? {
+            nodes: (node.subgraph?.nodes ?? []).map(storedStageConstraint),
+          }
+        : null,
   }
 }
 
@@ -765,6 +839,7 @@ export function automationInputFromUi(
     throw new Error('当前用户缺少可用的 Runtime 身份，无法保存自动化')
   }
   const eventTrigger = rule.trigger.type === 'event'
+  const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
   return {
     name: rule.name.trim(),
     prompt: flowPrompt(rule),
@@ -782,15 +857,15 @@ export function automationInputFromUi(
         version: 2,
         description: rule.description,
         graph: {
-          nodes: rule.steps,
+          nodes: rule.steps.map(storedStepFromUi),
         },
       } satisfies StoredAutomationFlowV2,
     },
     cronExpression: eventTrigger ? null : buildCron(rule.trigger),
     timezone: rule.trigger.schedule.timezone,
     enabled: rule.enabled,
-    assignmentMode: 'manual',
-    managerType: null,
+    assignmentMode: isAiDynamicWorkflow ? 'ai_managed' : 'manual',
+    managerType: isAiDynamicWorkflow ? 'custom' : null,
     agentId: null,
     wegentTeamId: null,
     model: null,

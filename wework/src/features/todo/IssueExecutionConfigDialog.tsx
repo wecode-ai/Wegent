@@ -13,6 +13,7 @@ import type { UnifiedModel } from '@/types/api'
 import type { DeviceInfo } from '@/types/devices'
 import { workflowNodeExecutionMode } from '@/api/issueWorkflow'
 import { WORKBENCH_MODELS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { CloudTodoModal } from './CloudTodoModal'
 import { WorkflowExecutionConfigFields } from './WorkflowExecutionConfigFields'
 import {
@@ -76,6 +77,7 @@ export function IssueExecutionConfigDialog({
   const [agents, setAgents] = useState<ProjectChatAgent[]>([])
   const [runtimeProfiles, setRuntimeProfiles] = useState<RuntimeProfile[]>([])
   const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const [localDeviceIds, setLocalDeviceIds] = useState<string[]>([])
   const [models, setModels] = useState<UnifiedModel[]>([])
   const [executionConfig, setExecutionConfig] = useState<WorkflowExecutionConfig>(
     item.execution_config ?? {
@@ -112,8 +114,9 @@ export function IssueExecutionConfigDialog({
       runtimeProfileApi?.list() ?? Promise.resolve([]),
       deviceApi.listDevices(),
       modelApi?.listModels() ?? Promise.resolve({ data: [] }),
+      getLocalExecutorStatus().catch(() => null),
     ])
-      .then(([nextAgents, profiles, devices, modelResponse]) => {
+      .then(([nextAgents, profiles, devices, modelResponse, localStatus]) => {
         if (!active) return
         const onlineDeviceIds = new Set(
           devices
@@ -129,6 +132,7 @@ export function IssueExecutionConfigDialog({
         )
         setAgents(activeAgents)
         setDevices(onlineDevices)
+        setLocalDeviceIds(localStatus?.deviceId?.trim() ? [localStatus.deviceId.trim()] : [])
         setAvailableModels(modelResponse.data)
         setRuntimeProfiles(onlineProfiles)
         setExecutionConfig(current =>
@@ -248,6 +252,7 @@ export function IssueExecutionConfigDialog({
               projectAgents={agents}
               runtimeProfiles={runtimeProfiles}
               devices={devices}
+              localDeviceIds={localDeviceIds}
               models={models}
               localProjects={localProjects}
               testId="issue-execution-config-default"
@@ -310,6 +315,7 @@ export function IssueExecutionConfigDialog({
                       projectAgents={agents}
                       runtimeProfiles={runtimeProfiles}
                       devices={devices}
+                      localDeviceIds={localDeviceIds}
                       models={models}
                       localProjects={localProjects}
                       testId={`issue-execution-config-node-${node.id}`}
@@ -326,6 +332,7 @@ export function IssueExecutionConfigDialog({
             projectAgents={agents}
             runtimeProfiles={runtimeProfiles}
             devices={devices}
+            localDeviceIds={localDeviceIds}
             models={models}
             localProjects={localProjects}
             testId="issue-execution-config-fields"

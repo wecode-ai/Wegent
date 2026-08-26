@@ -68,6 +68,7 @@ class LoopItemUpdate(BaseModel):
     tags: list[str] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
+    automation_rule_id: str | None = Field(default=None, max_length=64)
 
     _normalize = field_validator("tags", mode="before")(
         lambda value: None if value is None else _normalize_tags(value)

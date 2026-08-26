@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Circle,
   Clock3,
+  Cloud,
   Code2,
   Copy,
   FolderKanban,
@@ -41,6 +42,14 @@ const ACTIVE_RUN_STATUSES = new Set([
   'running',
 ])
 const EMPTY_EXECUTION_CATALOG = { environments: [], models: [], plugins: [] }
+const DELIVERABLE_TYPE_OPTIONS = [
+  { value: 'text', label: '文本' },
+  { value: 'file', label: '文件' },
+  { value: 'code_snapshot', label: '代码快照' },
+  { value: 'git_branch', label: 'Git 分支' },
+  { value: 'pull_request', label: 'PR/MR' },
+  { value: 'url', label: '链接' },
+]
 
 function runMatchesFilter(status, filter) {
   if (filter === 'all') return true
@@ -90,6 +99,7 @@ function createExecutionNode({
   automationRuleId = null,
   executionConfig = null,
   executionConfigOverride = false,
+  approvalPolicy = undefined,
   subgraph = null,
 }) {
   return {
@@ -117,6 +127,7 @@ function createExecutionNode({
     automationRuleId,
     executionConfig,
     executionConfigOverride,
+    approvalPolicy,
     subgraph,
   }
 }
@@ -134,6 +145,65 @@ function defaultExecutionConfiguration(executionCatalog) {
   }
 }
 
+function environmentDisplayLabel(option) {
+  if (!option) return ''
+  if (option.executionEnvironment === 'local') return '本机'
+  return option.label.replace(/\s*·\s*(在线|忙碌)$/, '') || option.deviceId
+}
+
+function ExecutionEnvironmentSelect({ testId, value, options, onChange }) {
+  const selected = options.find(option => option.deviceId === value)
+  const selectedLabel = environmentDisplayLabel(selected)
+  const SelectedIcon = selected?.executionEnvironment === 'cloud' ? Cloud : Laptop
+
+  return (
+    <PopupMenu
+      testId={testId}
+      fullWidth
+      trigger={
+        <span
+          data-value={value ?? ''}
+          className="flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-transparent bg-muted/60 px-3 text-sm text-text-primary transition-colors hover:bg-muted"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            {selected ? (
+              <SelectedIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+            ) : null}
+            <span className={selected ? 'truncate' : 'truncate text-text-muted'}>
+              {selectedLabel || '选择执行环境'}
+            </span>
+          </span>
+          <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+        </span>
+      }
+    >
+      {close =>
+        options.map(option => {
+          const label = environmentDisplayLabel(option)
+          const OptionIcon = option.executionEnvironment === 'cloud' ? Cloud : Laptop
+          return (
+            <button
+              key={option.deviceId}
+              type="button"
+              data-testid={`${testId}-option-${option.deviceId}`}
+              aria-label={option.executionEnvironment === 'cloud' ? `云设备 ${label}` : '本机'}
+              onClick={() => {
+                onChange(option.deviceId)
+                close()
+              }}
+              className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-text-primary hover:bg-surface"
+            >
+              <OptionIcon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {option.deviceId === value ? <Check className="h-4 w-4 shrink-0" /> : null}
+            </button>
+          )
+        })
+      }
+    </PopupMenu>
+  )
+}
+
 function createDynamicAllocationNode(executionCatalog, id = `step-${Date.now()}`) {
   return createExecutionNode({
     ...defaultExecutionConfiguration(executionCatalog),
@@ -142,46 +212,27 @@ function createDynamicAllocationNode(executionCatalog, id = `step-${Date.now()}`
     name: 'AI 动态分配',
     prompt:
       '阅读 Issue 的目标、上下文和验收标准，拆解需要完成的具体任务，选择合适的执行方式，并根据依赖关系决定执行顺序。',
+    approvalPolicy: 'required',
     subgraph: {
-      nodes: [
-        createExecutionNode({
-          ...defaultExecutionConfiguration(executionCatalog),
-          id: `dag-stage-${id}-analysis`,
-          name: '分析需求',
-          prompt: '理解 Issue 的目标、范围和验收标准。',
-          dependencies: [],
-          x: 24,
-          y: 105,
-        }),
-        createExecutionNode({
-          ...defaultExecutionConfiguration(executionCatalog),
-          id: `dag-stage-${id}-implementation`,
-          name: '实现任务',
-          prompt: '根据需求创建并分配实现任务。',
-          dependencies: [`dag-stage-${id}-analysis`],
-          x: 224,
-          y: 40,
-        }),
-        createExecutionNode({
-          ...defaultExecutionConfiguration(executionCatalog),
-          id: `dag-stage-${id}-testing`,
-          name: '验证结果',
-          prompt: '创建验证任务并检查交付结果。',
-          dependencies: [`dag-stage-${id}-analysis`],
-          x: 224,
-          y: 170,
-        }),
-        createExecutionNode({
-          ...defaultExecutionConfiguration(executionCatalog),
-          id: `dag-stage-${id}-delivery`,
-          name: '汇总交付',
-          prompt: '汇总所有分支结果并形成最终交付。',
-          dependencies: [`dag-stage-${id}-implementation`, `dag-stage-${id}-testing`],
-          x: 424,
-          y: 105,
-        }),
-      ],
+      nodes: [],
     },
+  })
+}
+
+function createStageConstraint(overrides) {
+  return createExecutionNode({
+    id: overrides.id,
+    name: overrides.name,
+    prompt: overrides.prompt,
+    dependencies: overrides.dependencies ?? [],
+    dependencyContext: overrides.dependencyContext ?? {},
+    x: overrides.x ?? 0,
+    y: overrides.y ?? 0,
+    deliverables: overrides.deliverables ?? [],
+    executionMode: overrides.executionMode ?? 'automatic',
+    workspacePolicy: 'none',
+    required: overrides.required ?? true,
+    automationRuleId: overrides.automationRuleId ?? null,
   })
 }
 
@@ -215,7 +266,7 @@ const automationTemplates = [
           {
             name: '需求分析',
             description: '目标、范围、约束与验收标准',
-            type: '文本',
+            valueType: 'text',
           },
         ],
         plugins: ['Wework 项目空间'],
@@ -227,7 +278,7 @@ const automationTemplates = [
           {
             name: '实现结果',
             description: '代码改动与测试结果',
-            type: '文本',
+            valueType: 'text',
           },
         ],
         plugins: ['GitHub', 'Wework 项目空间'],
@@ -240,7 +291,7 @@ const automationTemplates = [
           {
             name: 'Issue 更新',
             description: '结果、证据和后续建议',
-            type: '文本',
+            valueType: 'text',
           },
         ],
         plugins: ['Wework 项目空间'],
@@ -517,6 +568,7 @@ export function AutomationRulesView({
   executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
   onLoadExecutionCatalog,
+  onLoadExecutionPlugins,
   onLoadRuns,
   onSaveRule,
   onToggleRule,
@@ -536,11 +588,11 @@ export function AutomationRulesView({
   const [selectedNode, setSelectedNode] = useState({ type: 'trigger' })
   const [panelTab, setPanelTab] = useState('settings')
   const [templateStoreOpen, setTemplateStoreOpen] = useState(false)
-  const [pluginMenuOpen, setPluginMenuOpen] = useState(false)
   const [toast, setToast] = useState('')
   const [saving, setSaving] = useState(false)
   const [runsLoading, setRunsLoading] = useState(false)
   const executionCatalogRequestRef = useRef(null)
+  const executionPluginRequestRef = useRef(null)
   const runsRequestRef = useRef(null)
 
   const dirty = JSON.stringify(draft) !== savedSnapshot
@@ -580,12 +632,15 @@ export function AutomationRulesView({
     window.setTimeout(() => setToast(''), 2200)
   }
 
-  const resolveExecutionCatalog = async () => {
+  const loadExecutionCatalog = async () => {
     if (!onLoadExecutionCatalog) return executionCatalog
     if (!executionCatalogRequestRef.current) {
       executionCatalogRequestRef.current = onLoadExecutionCatalog()
         .then(catalog => {
-          setExecutionCatalog(catalog)
+          setExecutionCatalog(current => ({
+            ...catalog,
+            plugins: current.plugins,
+          }))
           return catalog
         })
         .finally(() => {
@@ -595,51 +650,64 @@ export function AutomationRulesView({
     return executionCatalogRequestRef.current
   }
 
-  const prepareEditor = async open => {
-    setView('preparing-editor')
-    try {
-      const catalog = await resolveExecutionCatalog()
-      open(catalog)
-    } catch (loadError) {
-      setView('home')
+  const refreshExecutionCatalog = () => {
+    void loadExecutionCatalog().catch(loadError => {
       notify(loadError instanceof Error ? loadError.message : String(loadError))
+    })
+  }
+
+  const loadExecutionPlugins = async () => {
+    if (!onLoadExecutionPlugins) return executionCatalog.plugins
+    if (!executionPluginRequestRef.current) {
+      executionPluginRequestRef.current = onLoadExecutionPlugins()
+        .then(plugins => {
+          setExecutionCatalog(current => ({ ...current, plugins }))
+          return plugins
+        })
+        .finally(() => {
+          executionPluginRequestRef.current = null
+        })
     }
+    return executionPluginRequestRef.current
+  }
+
+  const preparePluginMenu = () => {
+    void loadExecutionPlugins().catch(loadError => {
+      notify(loadError instanceof Error ? loadError.message : String(loadError))
+    })
   }
 
   const openRule = rule => {
-    void prepareEditor(() => {
-      setDraft(cloneRule(rule))
-      setSavedSnapshot(JSON.stringify(rule))
-      setEditorSection('workflow')
-      setSelectedNode({ type: 'trigger' })
-      setPanelTab('settings')
-      setView('editor')
-    })
+    setDraft(cloneRule(rule))
+    setSavedSnapshot(JSON.stringify(rule))
+    setEditorSection('workflow')
+    setSelectedNode({ type: 'trigger' })
+    setPanelTab('settings')
+    setView('editor')
+    refreshExecutionCatalog()
   }
 
   const createRule = () => {
-    void prepareEditor(() => {
-      const rule = makeRule()
-      setDraft(rule)
-      setSavedSnapshot('')
-      setEditorSection('workflow')
-      setSelectedNode({ type: 'trigger' })
-      setPanelTab('settings')
-      setView('editor')
-    })
+    const rule = makeRule()
+    setDraft(rule)
+    setSavedSnapshot('')
+    setEditorSection('workflow')
+    setSelectedNode({ type: 'trigger' })
+    setPanelTab('settings')
+    setView('editor')
+    refreshExecutionCatalog()
   }
 
   const applyTemplate = template => {
-    void prepareEditor(catalog => {
-      const rule = makeRuleFromTemplate(template, catalog)
-      setTemplateStoreOpen(false)
-      setDraft(rule)
-      setSavedSnapshot('')
-      setEditorSection('workflow')
-      setSelectedNode({ type: 'trigger' })
-      setPanelTab('settings')
-      setView('editor')
-    })
+    const rule = makeRuleFromTemplate(template, executionCatalog)
+    setTemplateStoreOpen(false)
+    setDraft(rule)
+    setSavedSnapshot('')
+    setEditorSection('workflow')
+    setSelectedNode({ type: 'trigger' })
+    setPanelTab('settings')
+    setView('editor')
+    refreshExecutionCatalog()
   }
 
   const loadRuns = async () => {
@@ -695,6 +763,13 @@ export function AutomationRulesView({
       )
     if (hasUnnamedNode(draft.steps)) {
       notify('请填写所有执行节点名称')
+      return null
+    }
+    const unconfiguredExecutionNode = draft.steps.find(
+      node => node.executionMode === 'automatic' && (!node.executionDeviceId || !node.model)
+    )
+    if (unconfiguredExecutionNode) {
+      notify(`请为“${unconfiguredExecutionNode.name}”选择执行环境和模型`)
       return null
     }
     setSaving(true)
@@ -870,20 +945,6 @@ export function AutomationRulesView({
     setSelectedNode({ type: 'trigger' })
   }
 
-  if (view === 'preparing-editor') {
-    return (
-      <div className={automationClass('automation-root')} data-testid="project-automation-view">
-        <main className={automationClass('project-content')}>
-          <div className={automationClass('home-empty')} data-testid="automation-editor-preparing">
-            <Activity className={automationClass('spin')} size={22} />
-            <strong>正在准备自动化编辑器</strong>
-            <span>正在读取可用的执行环境、模型和插件。</span>
-          </div>
-        </main>
-      </div>
-    )
-  }
-
   if (view === 'editor') {
     const editor = (
       <div className={automationClass('project-editor-host')}>
@@ -898,7 +959,6 @@ export function AutomationRulesView({
           saving={saving}
           projectTags={projectTags}
           executionCatalog={executionCatalog}
-          pluginMenuOpen={pluginMenuOpen}
           onBack={() => setView('home')}
           onEditorSectionChange={changeEditorSection}
           onSelectNode={setSelectedNode}
@@ -907,7 +967,7 @@ export function AutomationRulesView({
           onSave={saveRule}
           onAddStep={addStep}
           onRemoveStep={removeSelectedStep}
-          onPluginMenuChange={setPluginMenuOpen}
+          onOpenPluginMenu={preparePluginMenu}
         />
       </div>
     )
@@ -1443,7 +1503,6 @@ function WorkflowEditor({
   saving,
   projectTags,
   executionCatalog,
-  pluginMenuOpen,
   onBack,
   onSelectNode,
   onPanelTabChange,
@@ -1451,7 +1510,7 @@ function WorkflowEditor({
   onSave,
   onAddStep,
   onRemoveStep,
-  onPluginMenuChange,
+  onOpenPluginMenu,
   onEditorSectionChange,
 }) {
   const [runStatus, setRunStatus] = useState('all')
@@ -1515,12 +1574,30 @@ function WorkflowEditor({
     }))
   }
 
-  const addDagStage = (stepId, anchorStageId, placement) => {
+  const addDagStage = (stepId, anchorStageId = null, placement = 'after') => {
     const id = `dag-stage-${Date.now()}`
     onDraftChange(current => ({
       ...current,
       steps: current.steps.map(step => {
         if (step.id !== stepId) return step
+        if (step.subgraph.nodes.length === 0) {
+          return {
+            ...step,
+            subgraph: {
+              nodes: [
+                createStageConstraint({
+                  id,
+                  name: '新阶段',
+                  prompt: '说明这个阶段的目标、边界和验收要求。',
+                  dependencies: [],
+                  dependencyContext: {},
+                  x: 24,
+                  y: 105,
+                }),
+              ],
+            },
+          }
+        }
         const anchorIndex = step.subgraph.nodes.findIndex(stage => stage.id === anchorStageId)
         const anchor = step.subgraph.nodes[anchorIndex]
         if (!anchor) return step
@@ -1529,11 +1606,10 @@ function WorkflowEditor({
           stage.id !== anchor.id && stage.x >= insertionX ? { ...stage, x: stage.x + 200 } : stage
         )
         const dependencies = placement === 'before' ? [...anchor.dependencies] : [anchorStageId]
-        const stage = createExecutionNode({
-          ...defaultExecutionConfiguration(executionCatalog),
+        const stage = createStageConstraint({
           id,
           name: '新阶段',
-          prompt: '说明这个阶段需要完成什么。',
+          prompt: '说明这个阶段的目标、边界和验收要求。',
           dependencies,
           dependencyContext:
             placement === 'before'
@@ -1953,14 +2029,15 @@ function WorkflowEditor({
                         <StepSettings
                           step={selectedDagStage}
                           executionCatalog={executionCatalog}
-                          pluginMenuOpen={pluginMenuOpen}
                           onChange={updateDagStage}
                           onDelete={removeDagStage}
-                          onPluginMenuChange={onPluginMenuChange}
+                          onOpenPluginMenu={onOpenPluginMenu}
+                          constraint
                           supplemental={
                             <SubgraphDependencySummary
                               node={selectedDagStage}
                               parent={selectedDagParent}
+                              onChange={updateDagStage}
                             />
                           }
                         />
@@ -1969,19 +2046,17 @@ function WorkflowEditor({
                       <CoordinatorSettings
                         coordinator={selectedStep}
                         executionCatalog={executionCatalog}
-                        pluginMenuOpen={pluginMenuOpen}
                         onChange={updateStep}
                         onDelete={onRemoveStep}
-                        onPluginMenuChange={onPluginMenuChange}
+                        onOpenPluginMenu={onOpenPluginMenu}
                       />
                     ) : (
                       <StepSettings
                         step={selectedStep}
                         executionCatalog={executionCatalog}
-                        pluginMenuOpen={pluginMenuOpen}
                         onChange={updateStep}
                         onDelete={onRemoveStep}
-                        onPluginMenuChange={onPluginMenuChange}
+                        onOpenPluginMenu={onOpenPluginMenu}
                       />
                     )}
                   </div>
@@ -2361,13 +2436,78 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
   )
 }
 
+function PluginSelector({ testId, selectedPlugins, options, onToggle, onOpen }) {
+  const optionForLabel = label =>
+    options.find(option => option.label === label) ?? {
+      id: label,
+      label,
+      reference: { displayName: label },
+    }
+
+  return (
+    <div className={automationClass('panel-plugins')}>
+      {selectedPlugins.map(plugin => (
+        <button key={plugin} type="button" onClick={() => onToggle(optionForLabel(plugin))}>
+          {plugin}
+          <X size={12} />
+        </button>
+      ))}
+      <PopupMenu
+        testId={testId}
+        keepOpen
+        menuWidth={224}
+        triggerClassName="add"
+        onOpen={onOpen}
+        trigger={
+          <span className="inline-flex items-center gap-1">
+            <Plus size={12} />
+            添加
+          </span>
+        }
+      >
+        {() =>
+          options.length ? (
+            options.map(option => {
+              const checked = selectedPlugins.includes(option.label)
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={checked}
+                  data-testid={`${testId}-option-${option.id}`}
+                  onClick={() => onToggle(option)}
+                  className="flex h-9 w-full items-center gap-2 rounded-lg bg-transparent px-2.5 text-left text-xs text-text-secondary hover:bg-muted"
+                >
+                  <span
+                    className={automationClass(
+                      'grid size-4 place-items-center rounded border border-border-strong',
+                      checked && 'border-focus bg-focus text-white'
+                    )}
+                  >
+                    {checked ? <Check size={11} /> : null}
+                  </span>
+                  {option.label}
+                </button>
+              )
+            })
+          ) : (
+            <small className="block px-2.5 py-2 text-xs text-text-muted">
+              当前执行环境没有可用插件
+            </small>
+          )
+        }
+      </PopupMenu>
+    </div>
+  )
+}
+
 function CoordinatorSettings({
   coordinator,
   executionCatalog,
-  pluginMenuOpen,
   onChange,
   onDelete,
-  onPluginMenuChange,
+  onOpenPluginMenu,
 }) {
   const environmentOptions = executionCatalog.environments.some(
     option => option.deviceId === coordinator.executionDeviceId
@@ -2453,20 +2593,12 @@ function CoordinatorSettings({
             <Laptop size={14} />
             调度执行环境
           </span>
-          <select
-            data-testid="ai-coordinator-environment"
+          <ExecutionEnvironmentSelect
+            testId="ai-coordinator-environment"
             value={coordinator.executionDeviceId ?? ''}
-            onChange={event => selectEnvironment(event.target.value)}
-          >
-            <option value="" disabled>
-              选择执行环境
-            </option>
-            {environmentOptions.map(option => (
-              <option key={option.deviceId} value={option.deviceId}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            options={environmentOptions}
+            onChange={selectEnvironment}
+          />
         </label>
         <label className={automationClass('panel-field')}>
           <span>
@@ -2493,48 +2625,13 @@ function CoordinatorSettings({
             <Puzzle size={14} />
             调度插件
           </span>
-          <div className={automationClass('panel-plugins')}>
-            {coordinator.plugins.map(plugin => (
-              <button
-                key={plugin}
-                type="button"
-                onClick={() =>
-                  togglePlugin(
-                    configuredPluginOptions.find(option => option.label === plugin) ?? {
-                      id: plugin,
-                      label: plugin,
-                      reference: { displayName: plugin },
-                    }
-                  )
-                }
-              >
-                {plugin}
-                <X size={12} />
-              </button>
-            ))}
-            <button
-              className={automationClass('add')}
-              type="button"
-              data-testid="ai-coordinator-add-plugin"
-              onClick={() => onPluginMenuChange(!pluginMenuOpen)}
-            >
-              <Plus size={12} />
-              添加
-            </button>
-          </div>
-          {pluginMenuOpen ? (
-            <div className={automationClass('plugin-popover')}>
-              {configuredPluginOptions.map(option => (
-                <button key={option.id} type="button" onClick={() => togglePlugin(option)}>
-                  <span className={coordinator.plugins.includes(option.label) ? 'checked' : ''}>
-                    {coordinator.plugins.includes(option.label) ? <Check size={11} /> : null}
-                  </span>
-                  {option.label}
-                </button>
-              ))}
-              {!configuredPluginOptions.length ? <small>当前执行环境没有可用插件</small> : null}
-            </div>
-          ) : null}
+          <PluginSelector
+            testId="ai-coordinator-add-plugin"
+            selectedPlugins={coordinator.plugins}
+            options={configuredPluginOptions}
+            onToggle={togglePlugin}
+            onOpen={onOpenPluginMenu}
+          />
         </div>
       </div>
 
@@ -2550,6 +2647,32 @@ function CoordinatorSettings({
           onChange={event => onChange('prompt', event.target.value)}
         />
       </label>
+      <fieldset className={automationClass('execution-mode')}>
+        <legend>任务方案确认</legend>
+        <div>
+          <button
+            type="button"
+            data-testid="ai-coordinator-approval-required"
+            className={coordinator.approvalPolicy !== 'automatic' ? 'selected' : ''}
+            onClick={() => onChange('approvalPolicy', 'required')}
+          >
+            <UserRound size={16} />
+            人工确认后执行
+          </button>
+          <button
+            type="button"
+            data-testid="ai-coordinator-approval-automatic"
+            className={coordinator.approvalPolicy === 'automatic' ? 'selected' : ''}
+            onClick={() => onChange('approvalPolicy', 'automatic')}
+          >
+            <Bot size={16} />
+            自动确认并执行
+          </button>
+        </div>
+      </fieldset>
+      <p className={automationClass('execution-hint')}>
+        人工确认时，Issue 详情会展示 AI 拆出的任务、依赖、执行者和顺序，确认后才创建并执行子任务。
+      </p>
       <div className={automationClass('panel-danger-zone compact')}>
         <button
           type="button"
@@ -2565,22 +2688,58 @@ function CoordinatorSettings({
   )
 }
 
-function SubgraphDependencySummary({ node, parent }) {
-  const dependencyNames = node.dependencies
-    .map(id => parent.subgraph.nodes.find(item => item.id === id)?.name)
+const DEPENDENCY_CONTEXT_OPTIONS = [
+  ['final_result', '最终结果'],
+  ['deliveries', '交付物'],
+  ['activity', '执行动态'],
+]
+
+function SubgraphDependencySummary({ node, parent, onChange }) {
+  const dependencies = node.dependencies
+    .map(id => parent.subgraph.nodes.find(item => item.id === id))
     .filter(Boolean)
+
+  const toggleSource = (dependencyId, source) => {
+    const current = node.dependencyContext[dependencyId] ?? ['final_result', 'deliveries']
+    const next = current.includes(source)
+      ? current.filter(item => item !== source)
+      : [...current, source]
+    onChange('dependencyContext', {
+      ...node.dependencyContext,
+      [dependencyId]: next,
+    })
+  }
 
   return (
     <div className={automationClass('dag-stage-dependency-summary')}>
-      <span>当前前置依赖</span>
+      <span>前置阶段上下文</span>
       <div>
-        {dependencyNames.length ? (
-          dependencyNames.map(name => <em key={name}>{name}</em>)
+        {dependencies.length ? (
+          dependencies.map(dependency => (
+            <div key={dependency.id}>
+              <em>{dependency.name}</em>
+              <div>
+                {DEPENDENCY_CONTEXT_OPTIONS.map(([source, label]) => (
+                  <label key={source}>
+                    <input
+                      type="checkbox"
+                      data-testid={`dag-stage-context-${node.id}-${dependency.id}-${source}`}
+                      checked={(
+                        node.dependencyContext[dependency.id] ?? ['final_result', 'deliveries']
+                      ).includes(source)}
+                      onChange={() => toggleSource(dependency.id, source)}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))
         ) : (
           <small>子图起点，无前置依赖</small>
         )}
       </div>
-      <p>从节点右侧连接点拖到另一节点左侧即可建立依赖；选中连线后按 Delete 可移除。</p>
+      <p>依赖决定阶段解锁顺序；上下文决定 AI 规划该阶段时可读取哪些前序产物。</p>
     </div>
   )
 }
@@ -2588,11 +2747,11 @@ function SubgraphDependencySummary({ node, parent }) {
 function StepSettings({
   step,
   executionCatalog,
-  pluginMenuOpen,
   onChange,
   onDelete,
-  onPluginMenuChange,
+  onOpenPluginMenu,
   supplemental,
+  constraint = false,
 }) {
   if (!step) return null
 
@@ -2671,7 +2830,8 @@ function StepSettings({
         id: `deliverable-${Date.now()}`,
         name: '新交付物',
         description: '',
-        type: '文本',
+        valueType: 'text',
+        fileConstraints: null,
       },
     ])
   }
@@ -2685,27 +2845,55 @@ function StepSettings({
     )
   }
 
+  const updateDeliverableType = (id, valueType) => {
+    const deliverable = step.deliverables.find(item => item.id === id)
+    if (!deliverable) return
+    onChange(
+      'deliverables',
+      step.deliverables.map(item =>
+        item.id === id
+          ? {
+              ...item,
+              valueType,
+              fileConstraints:
+                valueType === 'file'
+                  ? (deliverable.fileConstraints ?? {
+                      accepted_types: [],
+                      min_files: 1,
+                      max_files: 1,
+                    })
+                  : null,
+            }
+          : item
+      )
+    )
+  }
+
   return (
     <>
       <section className={automationClass('panel-section')}>
         <label className={automationClass('panel-field')}>
-          <span>节点名称</span>
+          <span>{constraint ? '阶段名称' : '节点名称'}</span>
           <input
             data-testid={`execution-node-name-${step.id}`}
             value={step.name}
-            placeholder="例如：分析需求"
+            placeholder={constraint ? '例如：需求分析阶段' : '例如：分析需求'}
             onChange={event => onChange('name', event.target.value)}
           />
         </label>
         <label className={automationClass('panel-field')}>
           <span>
             <Code2 size={14} />
-            节点提示词
+            {constraint ? '阶段目标与约束' : '节点提示词'}
           </span>
           <textarea
             data-testid={`execution-node-prompt-${step.id}`}
             value={step.prompt}
-            placeholder="清楚描述这个节点需要完成的具体任务"
+            placeholder={
+              constraint
+                ? '描述该阶段要达成的目标、执行边界和验收标准'
+                : '清楚描述这个节点需要完成的具体任务'
+            }
             onChange={event => onChange('prompt', event.target.value)}
           />
         </label>
@@ -2746,7 +2934,18 @@ function StepSettings({
                     }
                   />
                 </div>
-                <span>{deliverable.type}</span>
+                <select
+                  data-testid={`execution-node-deliverable-type-${deliverable.id}`}
+                  value={deliverable.valueType}
+                  aria-label={`交付物类型 ${deliverable.name}`}
+                  onChange={event => updateDeliverableType(deliverable.id, event.target.value)}
+                >
+                  {DELIVERABLE_TYPE_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   data-testid={`execution-node-deliverable-delete-${deliverable.id}`}
@@ -2778,7 +2977,7 @@ function StepSettings({
 
       <section className={automationClass('panel-section execution-section')}>
         <fieldset className={automationClass('execution-mode')}>
-          <legend>任务执行方式</legend>
+          <legend>{constraint ? '阶段执行偏好' : '任务执行方式'}</legend>
           <div>
             <button
               type="button"
@@ -2801,27 +3000,19 @@ function StepSettings({
           </div>
         </fieldset>
 
-        {step.executionMode === 'automatic' ? (
+        {!constraint && step.executionMode === 'automatic' ? (
           <div className={automationClass('node-model-settings')}>
             <label className={automationClass('panel-field')}>
               <span>
                 <Laptop size={14} />
                 执行环境
               </span>
-              <select
-                data-testid={`execution-node-environment-${step.id}`}
+              <ExecutionEnvironmentSelect
+                testId={`execution-node-environment-${step.id}`}
                 value={step.executionDeviceId ?? ''}
-                onChange={event => selectEnvironment(event.target.value)}
-              >
-                <option value="" disabled>
-                  选择执行环境
-                </option>
-                {environmentOptions.map(option => (
-                  <option key={option.deviceId} value={option.deviceId}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                options={environmentOptions}
+                onChange={selectEnvironment}
+              />
             </label>
             <label className={automationClass('panel-field')}>
               <span>
@@ -2848,71 +3039,42 @@ function StepSettings({
                 <Puzzle size={14} />
                 插件
               </span>
-              <div className={automationClass('panel-plugins')}>
-                {step.plugins.map(plugin => (
-                  <button
-                    key={plugin}
-                    type="button"
-                    onClick={() =>
-                      togglePlugin(
-                        configuredPluginOptions.find(option => option.label === plugin) ?? {
-                          id: plugin,
-                          label: plugin,
-                          reference: { displayName: plugin },
-                        }
-                      )
-                    }
-                  >
-                    {plugin}
-                    <X size={12} />
-                  </button>
-                ))}
-                <button
-                  className={automationClass('add')}
-                  type="button"
-                  data-testid={`execution-node-add-plugin-${step.id}`}
-                  onClick={() => onPluginMenuChange(!pluginMenuOpen)}
-                >
-                  <Plus size={12} />
-                  添加
-                </button>
-              </div>
-              {pluginMenuOpen ? (
-                <div className={automationClass('plugin-popover')}>
-                  {configuredPluginOptions.map(option => (
-                    <button key={option.id} type="button" onClick={() => togglePlugin(option)}>
-                      <span className={step.plugins.includes(option.label) ? 'checked' : ''}>
-                        {step.plugins.includes(option.label) ? <Check size={11} /> : null}
-                      </span>
-                      {option.label}
-                    </button>
-                  ))}
-                  {!configuredPluginOptions.length ? <small>当前执行环境没有可用插件</small> : null}
-                </div>
-              ) : null}
+              <PluginSelector
+                testId={`execution-node-add-plugin-${step.id}`}
+                selectedPlugins={step.plugins}
+                options={configuredPluginOptions}
+                onToggle={togglePlugin}
+                onOpen={onOpenPluginMenu}
+              />
             </div>
             <p className={automationClass('execution-hint')}>
               节点提示词会作为当前模型的任务指令，执行记录归入当前节点。
             </p>
           </div>
-        ) : (
+        ) : !constraint ? (
           <p className={automationClass('execution-hint')}>
             节点就绪后由成员手动执行，完成结果仍归入当前节点。
           </p>
+        ) : (
+          <p className={automationClass('execution-hint')}>
+            这里只约束阶段由人工还是机器人执行；具体执行环境、模型和插件由 AI 调度器在运行时选择。
+          </p>
         )}
 
-        <label className={automationClass('panel-field')}>
-          <span>任务工作空间</span>
-          <select
-            data-testid={`execution-node-workspace-${step.id}`}
-            value={step.workspacePolicy}
-            onChange={event => onChange('workspacePolicy', event.target.value)}
-          >
-            <option value="composer">创建任务时选择工作空间</option>
-            <option value="inherit">继承前序任务工作空间</option>
-            <option value="none">不限定工作空间</option>
-          </select>
-        </label>
+        {!constraint ? (
+          <label className={automationClass('panel-field')}>
+            <span>任务工作空间</span>
+            <select
+              data-testid={`execution-node-workspace-${step.id}`}
+              value={step.workspacePolicy}
+              onChange={event => onChange('workspacePolicy', event.target.value)}
+            >
+              <option value="composer">创建任务时选择工作空间</option>
+              <option value="inherit">继承前序任务工作空间</option>
+              <option value="none">不限定工作空间</option>
+            </select>
+          </label>
+        ) : null}
 
         <label className={automationClass('required-node')}>
           <input
@@ -2926,7 +3088,11 @@ function StepSettings({
 
         <div className={automationClass('panel-help')}>
           <GitBranch size={15} />
-          <p>执行节点按画布顺序运行；模型、环境和插件只影响当前节点。</p>
+          <p>
+            {constraint
+              ? '阶段按 DAG 依赖解锁，AI 会在阶段就绪后规划具体任务。'
+              : '执行节点按画布顺序运行；模型、环境和插件只影响当前节点。'}
+          </p>
         </div>
       </section>
       {supplemental ? (
@@ -2939,7 +3105,7 @@ function StepSettings({
           onClick={onDelete}
         >
           <Trash2 size={14} />
-          删除执行节点
+          {constraint ? '删除阶段约束' : '删除执行节点'}
         </button>
       </section>
     </>

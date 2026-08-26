@@ -4,6 +4,7 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect, type MenuOption } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import { cn } from '@/lib/utils'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import type { ProjectWithTasks } from '@/types/api'
@@ -20,6 +21,7 @@ export function WorkflowExecutionConfigFields({
   projectAgents,
   runtimeProfiles,
   devices,
+  localDeviceIds,
   models,
   localProjects,
   testId,
@@ -29,6 +31,7 @@ export function WorkflowExecutionConfigFields({
   projectAgents: ProjectChatAgent[]
   runtimeProfiles: RuntimeProfile[]
   devices: DeviceInfo[]
+  localDeviceIds: string[]
   models: UnifiedModel[]
   localProjects: ProjectWithTasks[]
   testId: string
@@ -52,24 +55,20 @@ export function WorkflowExecutionConfigFields({
   if (selectedDeviceId && !devices.some(device => device.device_id === selectedDeviceId)) {
     deviceOptions.push({
       value: selectedDeviceId,
-      label: selectedDeviceId,
+      label: t('workbench.environment_device_unknown', '未知设备'),
       icon: <Cloud aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />,
       ariaLabel: t('todo.workflow_execution_cloud_device_named', '云设备 {{name}}', {
-        name: selectedDeviceId,
+        name: t('workbench.environment_device_unknown', '未知设备'),
       }),
     })
   }
 
   deviceOptions.push(
     ...devices.map(device => {
-      const local =
-        device.device_id === 'local-device' ||
-        device.device_type === 'local' ||
-        device.device_type === 'app' ||
-        device.name === 'Local Executor'
+      const local = isCurrentAppDevice(device, localDeviceIds)
       const label = local
         ? t('todo.workflow_execution_local_device', '本机')
-        : device.name || device.device_id
+        : device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
 
       return {
         value: device.device_id,

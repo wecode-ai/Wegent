@@ -16,6 +16,9 @@ import type {
   ProjectWithTasks,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { getLocalExecutorStatus } from '@/desktop/localExecutor'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
 import {
   automationInputFromUi,
@@ -80,7 +83,6 @@ interface ProjectAutomationRuleLoadRequest {
 interface ExecutionCatalogCacheEntry {
   deviceSource: object | undefined
   modelSource: object | undefined
-  pluginSource: object | undefined
   catalog: AutomationExecutionCatalog
   updatedAt: number
 }
@@ -88,8 +90,20 @@ interface ExecutionCatalogCacheEntry {
 interface ExecutionCatalogLoadRequest {
   deviceSource: object | undefined
   modelSource: object | undefined
-  pluginSource: object | undefined
   promise: Promise<AutomationExecutionCatalog>
+}
+
+interface ExecutionPluginCacheEntry {
+  pluginSource: object | undefined
+  deviceIds: string
+  plugins: AutomationExecutionCatalog['plugins']
+  updatedAt: number
+}
+
+interface ExecutionPluginLoadRequest {
+  pluginSource: object | undefined
+  deviceIds: string
+  promise: Promise<AutomationExecutionCatalog['plugins']>
 }
 
 const AUTOMATION_CACHE_FRESH_MS = 30_000
@@ -98,6 +112,8 @@ const projectAutomationRuleCache = new Map<string, ProjectAutomationRuleCacheEnt
 const projectAutomationRuleLoads = new Map<string, ProjectAutomationRuleLoadRequest>()
 const executionCatalogCache = new Map<string, ExecutionCatalogCacheEntry>()
 const executionCatalogLoads = new Map<string, ExecutionCatalogLoadRequest>()
+const executionPluginCache = new Map<string, ExecutionPluginCacheEntry>()
+const executionPluginLoads = new Map<string, ExecutionPluginLoadRequest>()
 
 function readProjectAutomationRuleCache(
   cacheKey: string,
@@ -112,17 +128,11 @@ function executionCatalogSourcesMatch(
   entry: {
     deviceSource: object | undefined
     modelSource: object | undefined
-    pluginSource: object | undefined
   },
   deviceSource: object | undefined,
-  modelSource: object | undefined,
-  pluginSource: object | undefined
+  modelSource: object | undefined
 ): boolean {
-  return (
-    entry.deviceSource === deviceSource &&
-    entry.modelSource === modelSource &&
-    entry.pluginSource === pluginSource
-  )
+  return entry.deviceSource === deviceSource && entry.modelSource === modelSource
 }
 
 function buildAutomationRuleSnapshot(
@@ -164,6 +174,19 @@ function buildAutomationRuleSnapshot(
   return { rules, runSources }
 }
 
+function clearedLegacyWorkflow(definition: ProjectWorkflowDefinition): ProjectWorkflowDefinition {
+  return {
+    version: definition.version,
+    stage_mode: 'none',
+    advancement_policy: 'manual',
+    coordinator_prompt: '',
+    approval_policy: 'required',
+    ai_automation_rule_id: null,
+    execution_config: null,
+    nodes: [],
+  }
+}
+
 async function loadAutomationRuns(
   projectAutomationApi: NonNullable<WorkbenchServices['projectAutomationApi']>,
   projectId: string,
@@ -187,34 +210,24 @@ async function loadAutomationRuns(
 async function fetchExecutionCatalog(
   deviceApi: WorkbenchServices['deviceApi'] | undefined,
   modelApi: WorkbenchServices['modelApi'] | undefined,
-  pluginApi: WorkbenchServices['pluginApi'] | undefined
+  unknownDeviceLabel: string
 ): Promise<AutomationExecutionCatalog> {
-  const [devices, modelResponse] = await Promise.all([
+  const [devices, modelResponse, localStatus] = await Promise.all([
     deviceApi?.listDevices() ?? Promise.resolve([]),
     modelApi?.listModels() ?? Promise.resolve({ data: [] }),
+    getLocalExecutorStatus().catch(() => null),
   ])
+  const localDeviceIds = localStatus?.deviceId?.trim() ? [localStatus.deviceId.trim()] : []
   const availableDevices = devices.filter(device => device.status !== 'offline')
-  const pluginGroups = pluginApi
-    ? await Promise.all(availableDevices.map(device => pluginApi.listPlugins(device.device_id)))
-    : []
-  const plugins = Array.from(
-    new Map(
-      pluginGroups.flat().map(plugin => [
-        plugin.id,
-        {
-          id: plugin.id,
-          label: plugin.displayName || plugin.pluginName,
-          reference: { ...plugin },
-        },
-      ])
-    ).values()
-  )
   return {
-    environments: availableDevices.map(device => ({
-      deviceId: device.device_id,
-      label: `${device.name} · ${device.status === 'online' ? '在线' : '忙碌'}`,
-      executionEnvironment: device.device_type === 'cloud' ? 'cloud' : 'local',
-    })),
+    environments: availableDevices.map(device => {
+      const local = isCurrentAppDevice(device, localDeviceIds)
+      return {
+        deviceId: device.device_id,
+        label: local ? '本机' : device.name?.trim() || unknownDeviceLabel,
+        executionEnvironment: local ? 'local' : 'cloud',
+      }
+    }),
     models: modelResponse.data
       .filter(model => model.isActive !== false && !model.compatibilityDisabled)
       .map(model => ({
@@ -227,11 +240,32 @@ async function fetchExecutionCatalog(
           )
         ),
       })),
-    plugins,
+    plugins: [],
   }
 }
 
+async function fetchExecutionPlugins(
+  pluginApi: WorkbenchServices['pluginApi'] | undefined,
+  deviceIds: string[]
+): Promise<AutomationExecutionCatalog['plugins']> {
+  if (!pluginApi || deviceIds.length === 0) return []
+  const pluginGroups = await Promise.all(deviceIds.map(deviceId => pluginApi.listPlugins(deviceId)))
+  return Array.from(
+    new Map(
+      pluginGroups.flat().map(plugin => [
+        plugin.id,
+        {
+          id: plugin.id,
+          label: plugin.displayName || plugin.pluginName,
+          reference: { ...plugin },
+        },
+      ])
+    ).values()
+  )
+}
+
 export function ProjectAutomationView(props: ProjectAutomationViewProps) {
+  const { t } = useTranslation('common')
   const {
     api,
     project,
@@ -280,9 +314,37 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         let request = projectAutomationRuleLoads.get(cacheKey)
         if (!request || request.source !== projectAutomationApi) {
           const loadProject = projectRef.current
-          const promise = projectAutomationApi
-            .list(projectId)
-            .then(backendRules => buildAutomationRuleSnapshot(loadProject, backendRules))
+          const promise = projectAutomationApi.list(projectId).then(async backendRules => {
+            const legacyRule = loadProject.workflow_automation_id
+              ? null
+              : automationRuleFromLegacyWorkflow(loadProject, backendRules)
+            if (!legacyRule) {
+              return buildAutomationRuleSnapshot(loadProject, backendRules)
+            }
+            if (!canManageAgents || currentUserId == null) {
+              throw new Error(
+                t(
+                  'cloud_project.legacy_workflow_upgrade_required',
+                  '旧版 Issue 编排需要由项目管理员完成自动升级'
+                )
+              )
+            }
+            const workflowDefinition = legacyWorkflowFromAutomationRule(legacyRule)
+            const result = await projectAutomationApi.migrateWorkflow(projectId, {
+              projectVersion: loadProject.version,
+              automation: automationInputFromUi(legacyRule, currentUserId),
+              workflowDefinition,
+            })
+            const updatedProject: CloudProject = {
+              ...loadProject,
+              workflow_automation_id: result.workflowAutomationId,
+              workflow_definition: clearedLegacyWorkflow(workflowDefinition),
+              version: result.projectVersion,
+            }
+            projectRef.current = updatedProject
+            onProjectUpdated?.(updatedProject)
+            return buildAutomationRuleSnapshot(updatedProject, [result.automation, ...backendRules])
+          })
           request = { source: projectAutomationApi, promise }
           projectAutomationRuleLoads.set(cacheKey, request)
           const clearRequest = () => {
@@ -309,7 +371,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         setLoading(false)
       }
     },
-    [cacheKey, projectAutomationApi, projectId]
+    [cacheKey, canManageAgents, currentUserId, onProjectUpdated, projectAutomationApi, projectId, t]
   )
 
   useEffect(() => {
@@ -377,18 +439,21 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     const cached = executionCatalogCache.get(cacheKey)
     if (
       cached &&
-      executionCatalogSourcesMatch(cached, deviceApi, modelApi, pluginApi) &&
+      executionCatalogSourcesMatch(cached, deviceApi, modelApi) &&
       Date.now() - cached.updatedAt < AUTOMATION_CACHE_FRESH_MS
     ) {
       return cached.catalog
     }
     let request = executionCatalogLoads.get(cacheKey)
-    if (!request || !executionCatalogSourcesMatch(request, deviceApi, modelApi, pluginApi)) {
-      const promise = fetchExecutionCatalog(deviceApi, modelApi, pluginApi)
+    if (!request || !executionCatalogSourcesMatch(request, deviceApi, modelApi)) {
+      const promise = fetchExecutionCatalog(
+        deviceApi,
+        modelApi,
+        t('workbench.environment_device_unknown', '未知设备')
+      )
       request = {
         deviceSource: deviceApi,
         modelSource: modelApi,
-        pluginSource: pluginApi,
         promise,
       }
       executionCatalogLoads.set(cacheKey, request)
@@ -403,12 +468,52 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     executionCatalogCache.set(cacheKey, {
       deviceSource: deviceApi,
       modelSource: modelApi,
-      pluginSource: pluginApi,
       catalog,
       updatedAt: Date.now(),
     })
     return catalog
-  }, [cacheKey, deviceApi, modelApi, pluginApi])
+  }, [cacheKey, deviceApi, modelApi, t])
+
+  const loadExecutionPlugins = useCallback(async (): Promise<
+    AutomationExecutionCatalog['plugins']
+  > => {
+    const catalog = await loadExecutionCatalog()
+    const deviceIds = catalog.environments.map(environment => environment.deviceId)
+    const deviceKey = deviceIds.join('\n')
+    const cached = executionPluginCache.get(cacheKey)
+    if (
+      cached &&
+      cached.pluginSource === pluginApi &&
+      cached.deviceIds === deviceKey &&
+      Date.now() - cached.updatedAt < AUTOMATION_CACHE_FRESH_MS
+    ) {
+      return cached.plugins
+    }
+    let request = executionPluginLoads.get(cacheKey)
+    if (!request || request.pluginSource !== pluginApi || request.deviceIds !== deviceKey) {
+      const promise = fetchExecutionPlugins(pluginApi, deviceIds)
+      request = {
+        pluginSource: pluginApi,
+        deviceIds: deviceKey,
+        promise,
+      }
+      executionPluginLoads.set(cacheKey, request)
+      const clearRequest = () => {
+        if (executionPluginLoads.get(cacheKey)?.promise === promise) {
+          executionPluginLoads.delete(cacheKey)
+        }
+      }
+      void promise.then(clearRequest, clearRequest)
+    }
+    const plugins = await request.promise
+    executionPluginCache.set(cacheKey, {
+      pluginSource: pluginApi,
+      deviceIds: deviceKey,
+      plugins,
+      updatedAt: Date.now(),
+    })
+    return plugins
+  }, [cacheKey, loadExecutionCatalog, pluginApi])
 
   const reload = useCallback(async () => {
     await load({ force: true })
@@ -429,16 +534,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
         const updatedProject: CloudProject = {
           ...project,
           workflow_automation_id: result.workflowAutomationId,
-          workflow_definition: {
-            version: workflowDefinition.version,
-            stage_mode: 'none',
-            advancement_policy: 'manual',
-            coordinator_prompt: '',
-            approval_policy: 'required',
-            ai_automation_rule_id: null,
-            execution_config: null,
-            nodes: [],
-          },
+          workflow_definition: clearedLegacyWorkflow(workflowDefinition),
           version: result.projectVersion,
         }
         onProjectUpdated?.(updatedProject)
@@ -568,6 +664,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       projectTags={project.tags}
       onReload={reload}
       onLoadExecutionCatalog={loadExecutionCatalog}
+      onLoadExecutionPlugins={loadExecutionPlugins}
       onLoadRuns={refreshRuns}
       onSaveRule={persistRule}
       onToggleRule={toggleRule}

@@ -988,6 +988,110 @@ def test_status_automation_workflow_is_returned_by_status_update(
     )
 
 
+def test_status_update_requires_one_automation_before_entering_processing(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    delivery_project: CloudProject,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Choose workflow on processing", "status": "inbox"},
+    ).json()
+    item = test_db.get(LoopItem, created["id"])
+    assert item is not None
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "workflow": {
+            "version": 1,
+            "definition_version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "approval_policy": "required",
+            "orchestration_status": "idle",
+            "nodes": [
+                {
+                    "id": "legacy-step",
+                    "name": "Legacy step",
+                    "prompt": "Do not start after selecting a canonical automation",
+                    "execution_mode": "human",
+                    "status": "ready",
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    matching_rules = [
+        SimpleNamespace(id="rule-1", title="Implement", description="Build the change"),
+        SimpleNamespace(id="rule-2", title="Review", description="Review the request"),
+    ]
+    matching = MagicMock(return_value=matching_rules)
+    process = AsyncMock(return_value=1)
+    start = AsyncMock(return_value=1)
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.matching_rules",
+        matching,
+    )
+    monkeypatch.setattr(
+        "app.services.project_automations.project_automation_processor.process",
+        process,
+    )
+    monkeypatch.setattr(
+        deliveries_endpoint.issue_workflow_start_service,
+        "start",
+        start,
+    )
+
+    selection_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={"version": created["version"], "status": "pending"},
+    )
+
+    assert selection_response.status_code == 409
+    assert selection_response.json()["detail"] == {
+        "code": "automation_selection_required",
+        "message": "Multiple automations match this Issue",
+        "candidates": [
+            {
+                "id": "rule-1",
+                "name": "Implement",
+                "description": "Build the change",
+            },
+            {
+                "id": "rule-2",
+                "name": "Review",
+                "description": "Review the request",
+            },
+        ],
+    }
+    unchanged = test_client.get(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+    ).json()
+    assert unchanged["status"] == "inbox"
+    assert unchanged["version"] == created["version"]
+    process.assert_not_awaited()
+
+    selected_response = test_client.patch(
+        f"/api/v1/loop-items/{created['id']}",
+        headers=_auth(test_token),
+        json={
+            "version": created["version"],
+            "status": "pending",
+            "automation_rule_id": "rule-2",
+        },
+    )
+
+    assert selected_response.status_code == 200
+    assert selected_response.json()["status"] == "pending"
+    start.assert_not_awaited()
+    process.assert_awaited_once()
+    assert process.await_args.kwargs["automation_id"] == "rule-2"
+
+
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
     test_client: TestClient,
     test_db: Session,
@@ -1610,6 +1714,15 @@ def test_workflow_task_binding_survives_missing_dependency_delivery_content(
     assert dependency_delivery["id"] == draft["id"]
     assert dependency_delivery["markdown"] == ""
     assert dependency_delivery["content_available"] is False
+    context_response = test_client.get(
+        f"/api/v1/loop-items/{item['id']}/workflow-nodes/deploy/input-context",
+        headers=_auth(test_token),
+    )
+    assert context_response.status_code == 200
+    compiled_instruction = context_response.json()["compiled_task_instruction"]
+    assert "## 任务定位" in compiled_instruction
+    assert "## 上游已交付内容" in compiled_instruction
+    assert f'"id": "{draft["id"]}"' in compiled_instruction
 
 
 def test_binding_subscription_backend_task_uses_task_store(

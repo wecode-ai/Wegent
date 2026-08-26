@@ -173,7 +173,6 @@ import {
   shouldPrepareWorkItemTask,
   shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
-  workflowStageTaskInput,
 } from './workItemTaskInput'
 import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 
@@ -2881,7 +2880,8 @@ export function CloudTodoWorkspace({
     itemId: string,
     columnKey: string,
     beforeItemId: string | null = null,
-    executionResult?: IssueExecutionConfigResult
+    executionResult?: IssueExecutionConfigResult,
+    automationRuleId?: string
   ): Promise<boolean> {
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
@@ -2963,7 +2963,11 @@ export function CloudTodoWorkspace({
       if (!itemApi) throw new Error('项目空间当前不可用')
       const update =
         nativeGroupBy === 'status'
-          ? { status: column.status, ...executionResult }
+          ? {
+              status: column.status,
+              ...executionResult,
+              ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
+            }
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
@@ -3063,6 +3067,30 @@ export function CloudTodoWorkspace({
       return true
     } catch (cause) {
       setItems(previousItems)
+      const candidates = automationSelectionCandidates(cause)
+      if (candidates && !automationRuleId) {
+        setBoardError(null)
+        setPendingAutomationSelection({
+          candidates,
+          onCancel: () => setPendingAutomationSelection(null),
+          onConfirm: async selectedAutomationId => {
+            const moved = await moveItem(
+              itemId,
+              columnKey,
+              beforeItemId,
+              executionResult,
+              selectedAutomationId
+            )
+            if (!moved) {
+              throw new Error(
+                t('todo.automation_selection_move_failed', '移动 Issue 失败，请重新选择')
+              )
+            }
+            setPendingAutomationSelection(null)
+          },
+        })
+        return false
+      }
       setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
       if (executionResult && item.can_view_detail !== false) {
         setSelectedItem(item)
@@ -4912,6 +4940,12 @@ export function CloudTodoWorkspace({
                   const workflowNode = selectedItem.workflow?.nodes.find(
                     node => node.id === workflowNodeId
                   )
+                  const stageContext = workflowNode
+                    ? await selectedItemApi.getWorkflowStageContext(
+                        selectedItem.id,
+                        workflowNode.id
+                      )
+                    : null
                   if (
                     workflowNode?.workspace_policy === 'inherit' &&
                     workflowNode.depends_on.length > 0
@@ -4930,7 +4964,7 @@ export function CloudTodoWorkspace({
                   setBackgroundTaskItemId(null)
                   openTaskComposer({
                     workItemId: selectedItem.id,
-                    initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
+                    initialInput: stageContext?.compiled_task_instruction ?? '',
                     backgroundAfterSend: false,
                     workflowNodeId,
                     inheritFromTask,

@@ -1,9 +1,17 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeAll, describe, expect, test, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectAutomationView } from './ProjectAutomationView'
+
+const localExecutorMocks = vi.hoisted(() => ({
+  getLocalExecutorStatus: vi.fn(),
+}))
+
+vi.mock('@/desktop/localExecutor', () => ({
+  getLocalExecutorStatus: localExecutorMocks.getLocalExecutorStatus,
+}))
 
 const project = {
   id: 11,
@@ -153,6 +161,12 @@ const run: ProjectAutomationRun = {
 }
 
 beforeAll(() => {
+  Object.defineProperty(window, 'DOMMatrixReadOnly', {
+    configurable: true,
+    value: class DOMMatrixReadOnly {
+      m22 = 1
+    },
+  })
   vi.stubGlobal(
     'ResizeObserver',
     class ResizeObserver {
@@ -161,6 +175,15 @@ beforeAll(() => {
       disconnect() {}
     }
   )
+})
+
+beforeEach(() => {
+  localExecutorMocks.getLocalExecutorStatus.mockReset()
+  localExecutorMocks.getLocalExecutorStatus.mockResolvedValue({
+    running: true,
+    ready: true,
+    deviceId: 'local-device',
+  })
 })
 
 function renderView({
@@ -269,7 +292,7 @@ describe('ProjectAutomationView', () => {
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
   })
 
-  test('loads the execution catalog only after entering the editor', async () => {
+  test('opens the editor immediately while loading devices and models in the background', async () => {
     const { deviceApi, modelApi, pluginApi } = renderView()
     let resolveDevices:
       | ((devices: Awaited<ReturnType<NonNullable<typeof deviceApi>['listDevices']>>) => void)
@@ -286,7 +309,7 @@ describe('ProjectAutomationView', () => {
 
     fireEvent.click(card)
 
-    expect(screen.getByTestId('automation-editor-preparing')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-rule-editor')).toBeInTheDocument()
     expect(deviceApi!.listDevices).toHaveBeenCalledOnce()
     expect(modelApi!.listModels).toHaveBeenCalledOnce()
     expect(pluginApi.listPlugins).not.toHaveBeenCalled()
@@ -302,8 +325,40 @@ describe('ProjectAutomationView', () => {
       },
     ])
 
-    expect(await screen.findByTestId('automation-rule-editor')).toBeInTheDocument()
-    expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+    await waitFor(() => expect(deviceApi!.listDevices).toHaveBeenCalledOnce())
+    expect(pluginApi.listPlugins).not.toHaveBeenCalled()
+  })
+
+  test('loads plugins only when the plugin selector is opened', async () => {
+    const { pluginApi } = renderView()
+
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    fireEvent.click(screen.getByTestId('execution-node-add-plugin-step-1'))
+
+    await waitFor(() => {
+      expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+    })
+  })
+
+  test('closes the plugin selector on outside click and Escape', async () => {
+    renderView()
+
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const trigger = screen.getByTestId('execution-node-add-plugin-step-1')
+    fireEvent.click(trigger)
+    expect(screen.getByTestId('execution-node-add-plugin-step-1-menu')).toBeInTheDocument()
+
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByTestId('execution-node-add-plugin-step-1-menu')).not.toBeInTheDocument()
+
+    fireEvent.click(trigger)
+    expect(screen.getByTestId('execution-node-add-plugin-step-1-menu')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByTestId('execution-node-add-plugin-step-1-menu')).not.toBeInTheDocument()
   })
 
   test('renders the processing-boundary trigger semantics', async () => {
@@ -366,7 +421,7 @@ describe('ProjectAutomationView', () => {
     expect(await screen.findByTestId('automation-rule-editor')).toBeInTheDocument()
     expect(deviceApi.listDevices).toHaveBeenCalledOnce()
     expect(modelApi.listModels).toHaveBeenCalledOnce()
-    expect(pluginApi.listPlugins).toHaveBeenCalledWith('local-device')
+    expect(pluginApi.listPlugins).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     expect(screen.getByDisplayValue('每日 Issue 巡检')).toBeInTheDocument()
     expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
@@ -412,6 +467,86 @@ describe('ProjectAutomationView', () => {
     expect(view.container.querySelector('[data-id^="insert-"]')).toBeNull()
   })
 
+  test('shows understandable local and cloud execution device names', async () => {
+    const { deviceApi } = renderView()
+    vi.mocked(deviceApi.listDevices).mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'local-device',
+        name: 'Local Executor',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+      },
+      {
+        id: 2,
+        device_id: 'cloud-verify-device',
+        name: 'Cloud Verify Device',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+      },
+    ] as never)
+
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    const environmentSelect = screen.getByTestId('execution-node-environment-step-1')
+    expect(environmentSelect).toHaveTextContent('本机')
+    expect(environmentSelect.querySelector('.lucide-laptop')).toBeInTheDocument()
+    expect(environmentSelect).not.toHaveTextContent('Local Executor')
+    expect(environmentSelect).not.toHaveTextContent('在线')
+
+    fireEvent.click(environmentSelect)
+
+    const localOption = screen.getByTestId('execution-node-environment-step-1-option-local-device')
+    const cloudOption = screen.getByTestId(
+      'execution-node-environment-step-1-option-cloud-verify-device'
+    )
+    expect(localOption).toHaveTextContent('本机')
+    expect(localOption.querySelector('.lucide-laptop')).toBeInTheDocument()
+    expect(cloudOption).toHaveTextContent('Cloud Verify Device')
+    expect(cloudOption.querySelector('.lucide-cloud')).toBeInTheDocument()
+    expect(screen.queryByText('Local Executor')).not.toBeInTheDocument()
+    expect(screen.queryByText('在线')).not.toBeInTheDocument()
+
+    fireEvent.click(cloudOption)
+
+    expect(environmentSelect).toHaveTextContent('Cloud Verify Device')
+    expect(environmentSelect.querySelector('.lucide-cloud')).toBeInTheDocument()
+  })
+
+  test('removes legacy executor names and trailing separators from workflow nodes', async () => {
+    renderView({
+      listedRules: [
+        {
+          ...rule,
+          eventConfig: {
+            ...rule.eventConfig,
+            wework_flow: {
+              ...rule.eventConfig.wework_flow,
+              steps: [
+                {
+                  ...rule.eventConfig.wework_flow.steps[0],
+                  environment: 'Local Executor · 在线',
+                  model: '',
+                },
+              ],
+            },
+          },
+        },
+      ],
+    })
+
+    await openRuleEditor()
+
+    const node = screen.getByTestId('execution-node-step-1')
+    expect(node).toHaveTextContent('本机')
+    expect(node).not.toHaveTextContent('Local Executor')
+    expect(node).not.toHaveTextContent('在线')
+    expect(node).not.toHaveTextContent('本机 ·')
+  })
+
   test('uses hand mode by default and allows switching to pointer mode', async () => {
     renderView()
     await openRuleEditor()
@@ -439,6 +574,56 @@ describe('ProjectAutomationView', () => {
 
     expect(pointerMode).toHaveClass('active')
     expect(handMode).not.toHaveClass('active')
+  })
+
+  test('selects and persists the required deliverable type', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    fireEvent.click(screen.getByTestId('execution-node-add-deliverable-step-1'))
+
+    const typeSelect = screen.getByRole('combobox', { name: /交付物类型/ })
+    fireEvent.change(typeSelect, { target: { value: 'file' } })
+    expect(typeSelect).toHaveValue('file')
+
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    const flow = input.eventConfig?.wework_flow as {
+      graph: {
+        nodes: Array<{
+          deliverables: Array<{
+            valueType: string
+            fileConstraints: {
+              accepted_types: string[]
+              min_files: number
+              max_files: number
+            } | null
+          }>
+        }>
+      }
+    }
+    const workflow = input.eventConfig?.runtime_workflow_definition
+
+    expect(flow.graph.nodes[0]?.deliverables[0]).toMatchObject({
+      valueType: 'file',
+      fileConstraints: {
+        accepted_types: [],
+        min_files: 1,
+        max_files: 1,
+      },
+    })
+    expect(workflow?.nodes[0]?.required_deliverables?.[0]).toMatchObject({
+      value_type: 'file',
+      file_constraints: {
+        accepted_types: [],
+        min_files: 1,
+        max_files: 1,
+      },
+    })
   })
 
   test('inserts a node before an existing stage and rewires its dependencies', async () => {
@@ -525,9 +710,132 @@ describe('ProjectAutomationView', () => {
     await openRuleEditor()
     fireEvent.click(screen.getByTestId('ai-allocation-node-step-2'))
 
+    const group = screen.getByTestId('ai-allocation-node-step-2')
     expect(screen.getByText('AI 动态分配 · DAG 子图')).toBeInTheDocument()
+    fireEvent.click(group.querySelector('.react-flow-group-header')!)
+    expect(screen.getByTestId('ai-coordinator-approval-required')).toHaveClass('selected')
+    expect(screen.getByText('人工确认后执行')).toBeInTheDocument()
+    expect(group.querySelector('.react-flow-group-header')).toHaveClass('rounded-t-2xl')
     expect(screen.getByTestId('dag-stage-node-dag-stage-step-2-analysis')).toBeInTheDocument()
     expect(screen.getByTestId('dag-stage-node-dag-stage-step-2-delivery')).toBeInTheDocument()
+    expect(
+      screen
+        .getByTestId('dag-stage-container-dag-stage-step-2-analysis')
+        .querySelector('.react-flow-stage-handle')
+    ).toHaveClass('!top-1/2')
+  })
+
+  test('edits DAG stages as constraints without per-stage runtime configuration', async () => {
+    renderView()
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('dag-stage-node-dag-stage-step-2-delivery'))
+
+    expect(screen.getByText('阶段名称')).toBeInTheDocument()
+    expect(screen.getByText('阶段目标与约束')).toBeInTheDocument()
+    expect(screen.getByText('阶段执行偏好')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        '这里只约束阶段由人工还是机器人执行；具体执行环境、模型和插件由 AI 调度器在运行时选择。'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByTestId('execution-node-environment-dag-stage-step-2-delivery')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('execution-node-model-dag-stage-step-2-delivery')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByTestId(
+        'dag-stage-context-dag-stage-step-2-delivery-dag-stage-step-2-analysis-final_result'
+      )
+    ).toBeChecked()
+  })
+
+  test('saves an empty AI allocation as unconstrained Issue planning', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.create = vi.fn().mockImplementation((_projectId, input) =>
+      Promise.resolve({
+        ...rule,
+        id: 'rule-unconstrained',
+        name: input.name,
+        prompt: input.prompt,
+        eventConfig: input.eventConfig,
+      })
+    )
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-dynamic-trigger'))
+
+    const compactNode = screen.getByTestId(/ai-allocation-node-/)
+    expect(screen.getByText('AI 动态分配 · 无约束')).toBeInTheDocument()
+    expect(screen.getByTestId(/dag-stage-add-first-/)).toHaveTextContent('添加编排约束')
+    expect(compactNode.closest('.react-flow__node')).toHaveStyle({
+      width: '300px',
+      height: '132px',
+    })
+    fireEvent.click(screen.getByTestId('ai-coordinator-environment'))
+    fireEvent.click(await screen.findByTestId('ai-coordinator-environment-option-local-device'))
+    fireEvent.change(screen.getByTestId('ai-coordinator-model'), {
+      target: { value: 'codex-runtime' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.create).mock.calls[0][1]
+    expect(input.eventConfig?.runtime_workflow_definition).toMatchObject({
+      stage_mode: 'none',
+      advancement_policy: 'ai',
+      nodes: [],
+    })
+  })
+
+  test('creates an empty AI allocation and lets the user add its first DAG stage', async () => {
+    const { view } = renderView()
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-trigger'))
+    fireEvent.click(screen.getByTestId('automation-node-insert-after-dynamic-trigger'))
+
+    const addFirstStage = view.container.querySelector<HTMLElement>(
+      '[data-testid^="dag-stage-add-first-"]'
+    )
+    expect(addFirstStage).not.toBeNull()
+    const viewport = view.container.querySelector<HTMLElement>('.react-flow__viewport')
+    const viewportTransform = viewport?.style.transform
+    expect(screen.getByTestId(/ai-allocation-node-/).closest('.react-flow__node')).toHaveStyle({
+      width: '300px',
+      height: '132px',
+    })
+    expect(view.container.querySelector('[data-testid^="dag-stage-node-"]')).toBeNull()
+
+    fireEvent.click(addFirstStage!)
+
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('[data-testid^="dag-stage-node-"]')).toHaveLength(1)
+    )
+    expect(view.container.querySelector('[data-testid^="dag-stage-add-first-"]')).toBeNull()
+    expect(view.container.querySelector('[data-testid^="dag-stage-insert-after-"]')).not.toBeNull()
+    expect(screen.getByTestId(/ai-allocation-node-/)).toHaveClass('react-flow-dynamic-group')
+    expect(viewport?.style.transform).toBe(viewportTransform)
+
+    const deleteStage = view.container.querySelector<HTMLElement>(
+      '[data-testid^="execution-node-delete-dag-stage-"]'
+    )
+    expect(deleteStage).not.toBeNull()
+    fireEvent.click(deleteStage!)
+
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-testid^="dag-stage-node-"]')).toBeNull()
+    )
+    expect(screen.getByTestId(/ai-allocation-node-/).closest('.react-flow__node')).toHaveStyle({
+      width: '300px',
+      height: '132px',
+    })
+    expect(view.container.querySelector('[data-testid^="dag-stage-add-first-"]')).not.toBeNull()
   })
 
   test('shows backend run history inside the current automation', async () => {
@@ -595,7 +903,7 @@ describe('ProjectAutomationView', () => {
     )
   })
 
-  test('promotes a legacy Issue workflow on its first save', async () => {
+  test('promotes a legacy Issue workflow as soon as automation rules load', async () => {
     const legacyProject = {
       ...project,
       version: 4,
@@ -629,12 +937,9 @@ describe('ProjectAutomationView', () => {
     const onProjectUpdated = vi.fn()
     const { projectAutomationApi } = renderView({
       viewProject: legacyProject,
-      listedRules: [],
+      listedRules: [{ ...rule, id: 'rule-secondary', name: '另一条自动化' }],
       onProjectUpdated,
     })
-
-    await openRuleEditor('legacy-workflow-11')
-    fireEvent.click(screen.getByTestId('automation-save'))
 
     await waitFor(() => expect(projectAutomationApi.migrateWorkflow).toHaveBeenCalledOnce())
     expect(projectAutomationApi.migrateWorkflow).toHaveBeenCalledWith(
@@ -653,6 +958,10 @@ describe('ProjectAutomationView', () => {
         version: 5,
       })
     )
+    expect(screen.queryByTestId('automation-card-legacy-workflow-11')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('automation-card-rule-migrated')).toBeInTheDocument()
+    expect(screen.getByTestId('automation-card-rule-secondary')).toBeInTheDocument()
+    await openRuleEditor('rule-migrated')
     expect(await screen.findByTestId('execution-node-implement')).toBeInTheDocument()
   })
 

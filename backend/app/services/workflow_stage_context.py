@@ -25,33 +25,152 @@ DEFAULT_DEPENDENCY_CONTEXT = ["final_result", "deliveries"]
 logger = logging.getLogger(__name__)
 
 
+def _json_block(value: object) -> str:
+    return f"```json\n{json.dumps(value, ensure_ascii=False, indent=2)}\n```"
+
+
+def _upstream_final_results(dependencies: list[dict[str, Any]]) -> str:
+    stages = []
+    for dependency in dependencies:
+        results = dependency.get("final_results")
+        if not isinstance(results, list) or not results:
+            continue
+        stage_name = str(
+            dependency.get("stage_name") or dependency.get("stage_id") or ""
+        )
+        stage_id = str(dependency.get("stage_id") or "")
+        stages.append(f"### {stage_name} (`{stage_id}`)\n\n{_json_block(results)}")
+    if not stages:
+        return ""
+    return "## 上游最终结果\n\n" + "\n\n".join(stages)
+
+
+def _upstream_deliveries(dependencies: list[dict[str, Any]]) -> str:
+    stages = []
+    for dependency in dependencies:
+        deliveries = dependency.get("deliveries")
+        if not isinstance(deliveries, list) or not deliveries:
+            continue
+        stage_name = str(
+            dependency.get("stage_name") or dependency.get("stage_id") or ""
+        )
+        stage_id = str(dependency.get("stage_id") or "")
+        stages.append(f"### {stage_name} (`{stage_id}`)\n\n{_json_block(deliveries)}")
+    if not stages:
+        return ""
+    return "## 上游已交付内容\n\n" + "\n\n".join(stages)
+
+
+def _upstream_activity(dependencies: list[dict[str, Any]]) -> str:
+    stages = []
+    for dependency in dependencies:
+        activity = dependency.get("activity")
+        if not isinstance(activity, list) or not activity:
+            continue
+        stage_name = str(
+            dependency.get("stage_name") or dependency.get("stage_id") or ""
+        )
+        stage_id = str(dependency.get("stage_id") or "")
+        stages.append(f"### {stage_name} (`{stage_id}`)\n\n{_json_block(activity)}")
+    if not stages:
+        return ""
+    return "## 上游执行过程\n\n" + "\n\n".join(stages)
+
+
+def _deliverable_requirement_line(requirement: dict[str, Any]) -> str:
+    requirement_id = str(requirement.get("id") or "")
+    name = str(requirement.get("name") or "")
+    value_type = str(requirement.get("value_type") or "")
+    description = str(requirement.get("description") or "").strip()
+    details = [f"- [{requirement_id}] {name} ({value_type})"]
+    if description:
+        details.append(f"  - 要求：{description}")
+    constraints = requirement.get("file_constraints")
+    if isinstance(constraints, dict):
+        accepted_types = constraints.get("accepted_types")
+        if isinstance(accepted_types, list) and accepted_types:
+            details.append(
+                "  - 允许类型：" + "、".join(str(value) for value in accepted_types)
+            )
+        details.append(
+            "  - 文件数量："
+            f"{int(constraints.get('min_files') or 1)}–"
+            f"{int(constraints.get('max_files') or 1)}"
+        )
+    return "\n".join(details)
+
+
 def workflow_stage_task_instruction(stage_input: dict[str, Any]) -> str:
     """Compile the concrete task instruction shared by every stage launcher."""
 
     target = stage_input.get("target_stage")
     if not isinstance(target, dict):
         return ""
-    sections = [str(target.get("prompt") or "").strip()]
+    sections = []
+    issue = stage_input.get("issue")
+    if isinstance(issue, dict):
+        issue_id = str(issue.get("id") or "")
+        issue_title = str(issue.get("title") or "")
+        stage_id = str(target.get("id") or "")
+        stage_name = str(target.get("name") or "")
+        positioning = [
+            "## 任务定位",
+            "",
+            f"- Issue：{issue_title} (`{issue_id}`)",
+            f"- 当前节点：{stage_name} (`{stage_id}`)",
+        ]
+        issue_description = str(issue.get("description") or "").strip()
+        if issue_description:
+            positioning.extend(["", "### Issue 描述", "", issue_description])
+        sections.append("\n".join(positioning))
+    prompt = str(target.get("prompt") or "").strip()
+    if prompt:
+        sections.append(f"## 当前节点任务\n\n{prompt}")
+    dependencies = stage_input.get("dependencies")
+    normalized_dependencies = (
+        [value for value in dependencies if isinstance(value, dict)]
+        if isinstance(dependencies, list)
+        else []
+    )
+    sections.extend(
+        section
+        for section in (
+            _upstream_final_results(normalized_dependencies),
+            _upstream_deliveries(normalized_dependencies),
+            _upstream_activity(normalized_dependencies),
+        )
+        if section
+    )
     requirements = target.get("required_deliverables")
     if isinstance(requirements, list) and requirements:
-        lines = ["完成任务后，必须通过 Issue 交付工具逐项提交以下交付物："]
-        for requirement in requirements:
-            if not isinstance(requirement, dict):
-                continue
-            requirement_id = str(requirement.get("id") or "")
-            name = str(requirement.get("name") or "")
-            value_type = str(requirement.get("value_type") or "")
-            description = str(requirement.get("description") or "").strip()
-            suffix = f"：{description}" if description else ""
-            lines.append(f"- [{requirement_id}] {name} ({value_type}){suffix}")
-        lines.append(
-            "上传文件后，调用 finalize_delivery 时必须传入 fulfillments，"
-            "并让每个实际结果绑定对应 requirement_id。仅创建 Delivery、"
-            "上传资产或提交空 fulfillments 都不算完成。提交后等待流程状态更新，"
-            "不要自行宣称已经进入下一阶段。"
+        normalized_requirements = [
+            value for value in requirements if isinstance(value, dict)
+        ]
+        sections.append(
+            "## 当前节点交付要求\n\n"
+            + "\n".join(
+                _deliverable_requirement_line(requirement)
+                for requirement in normalized_requirements
+            )
         )
-        sections.append("\n".join(lines))
+        sections.append(
+            "## 提交约束\n\n"
+            "完成任务后，必须通过 Issue 交付工具逐项提交上述交付物。\n"
+            "上传文件后，调用 finalize_delivery 时必须传入 fulfillments，"
+            "并让每个实际结果绑定对应 requirement_id。\n"
+            "仅创建 Delivery、上传资产或提交空 fulfillments 都不算完成。\n"
+            "提交后等待流程状态更新，不要自行宣称已经进入下一阶段。"
+        )
     return "\n\n".join(section for section in sections if section)
+
+
+def compiled_workflow_stage_input(stage_input: dict[str, Any]) -> dict[str, Any]:
+    """Attach the canonical task instruction to one workflow stage snapshot."""
+
+    return {
+        **stage_input,
+        "compiled_task_instruction": workflow_stage_task_instruction(stage_input),
+    }
 
 
 def _iso(value: object) -> str | None:
@@ -142,7 +261,7 @@ class WorkflowStageContextResolver:
             separators=(",", ":"),
         ).encode()
         snapshot["sha256"] = hashlib.sha256(encoded).hexdigest()
-        return snapshot
+        return compiled_workflow_stage_input(snapshot)
 
     @staticmethod
     def _workspace_device_id(
@@ -187,7 +306,11 @@ class WorkflowStageContextResolver:
             binding.metadata_json if isinstance(binding.metadata_json, dict) else {}
         )
         snapshot = metadata.get("workflow_stage_input")
-        return dict(snapshot) if isinstance(snapshot, dict) else None
+        return (
+            compiled_workflow_stage_input(snapshot)
+            if isinstance(snapshot, dict)
+            else None
+        )
 
     @staticmethod
     def _workflow(item: LoopItem) -> dict[str, Any]:

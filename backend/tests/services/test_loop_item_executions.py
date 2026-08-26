@@ -1983,7 +1983,7 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
         runtime_profile=None,
         owner_user_id=test_user.id,
         display_name="Direct execution",
-        execution_prompt="",
+        execution_prompt="Build it",
         model_override="test-model",
         workspace_binding_override={"type": "standalone"},
     )
@@ -2019,6 +2019,13 @@ def test_inline_workflow_execution_uses_standalone_conversation_workspace(
     assert payload["standaloneChatWorkspace"] is True
     assert "projectId" not in payload
     assert "runtimeProjectKey" not in payload
+    assert payload["message"].count("Build it") == 1
+    assert payload["origin"]["executionId"] == 92
+    assert payload["origin"]["taskUrl"] == (
+        f"cloud://projects/{project.id}/todos/item-standalone"
+    )
+    assert payload["origin"]["workflowStageId"] == "build"
+    assert payload["origin"]["workflowStageName"] == "build"
 
 
 def test_git_worktree_policy_does_not_depend_on_robot_concurrency(
@@ -2710,7 +2717,50 @@ def test_automation_robot_uses_the_same_visible_input_and_board_origin(
 def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> None:
     instruction = workflow_stage_task_instruction(
         {
+            "issue": {
+                "id": "PRJ-26",
+                "title": "发布工作流",
+                "description": "完成发布并保留完整上下文。",
+            },
+            "dependencies": [
+                {
+                    "stage_id": "build",
+                    "stage_name": "实现",
+                    "final_results": [
+                        {
+                            "task_id": "runtime-build",
+                            "content": "实现完成",
+                            "completed_at": "2026-08-26T10:00:00Z",
+                        }
+                    ],
+                    "deliveries": [
+                        {
+                            "id": "delivery-build",
+                            "markdown": "代码已提交。",
+                            "content_available": True,
+                            "fulfillments": [
+                                {
+                                    "requirement_id": "source",
+                                    "kind": "git_branch",
+                                    "branch": "feature/build",
+                                    "commit_sha": "abcdef1",
+                                }
+                            ],
+                            "assets": [],
+                        }
+                    ],
+                    "activity": [
+                        {
+                            "message_id": "message-1",
+                            "status": "completed",
+                            "content": "已完成实现与自测",
+                        }
+                    ],
+                }
+            ],
             "target_stage": {
+                "id": "deploy",
+                "name": "部署",
                 "prompt": "部署并测试，之后交付",
                 "required_deliverables": [
                     {
@@ -2718,6 +2768,11 @@ def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> N
                         "name": "测试报告",
                         "value_type": "file",
                         "description": "",
+                        "file_constraints": {
+                            "accepted_types": ["text/markdown"],
+                            "min_files": 1,
+                            "max_files": 2,
+                        },
                     },
                     {
                         "id": "deliverable-2",
@@ -2726,13 +2781,29 @@ def test_workflow_stage_instruction_contains_prompt_and_delivery_contract() -> N
                         "description": "必须可访问",
                     },
                 ],
-            }
+            },
         }
     )
 
-    assert instruction.startswith("部署并测试，之后交付")
+    assert instruction.startswith("## 任务定位")
+    assert "Issue：发布工作流 (`PRJ-26`)" in instruction
+    assert "当前节点：部署 (`deploy`)" in instruction
+    assert "完成发布并保留完整上下文。" in instruction
+    assert "## 当前节点任务\n\n部署并测试，之后交付" in instruction
+    assert "## 上游最终结果" in instruction
+    assert '"content": "实现完成"' in instruction
+    assert "## 上游已交付内容" in instruction
+    assert '"id": "delivery-build"' in instruction
+    assert '"branch": "feature/build"' in instruction
+    assert "## 上游执行过程" in instruction
+    assert '"content": "已完成实现与自测"' in instruction
+    assert "## 当前节点交付要求" in instruction
     assert "- [deliverable-1] 测试报告 (file)" in instruction
-    assert "- [deliverable-2] 访问地址 (text)：必须可访问" in instruction
+    assert "允许类型：text/markdown" in instruction
+    assert "文件数量：1–2" in instruction
+    assert "- [deliverable-2] 访问地址 (text)" in instruction
+    assert "要求：必须可访问" in instruction
+    assert "## 提交约束" in instruction
     assert "finalize_delivery" in instruction
     assert "requirement_id" in instruction
 

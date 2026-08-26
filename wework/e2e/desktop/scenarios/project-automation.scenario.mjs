@@ -632,6 +632,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         }),
       }
     )
+    const alternateStatusWorkflowRule = await cloudRequest(
+      `/api/v1/cloud-projects/${projectId}/automations`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          name: '进入进行中绑定替代工作流',
+          prompt: 'Issue 进入进行中后选择替代工作流。',
+          triggerType: 'event',
+          eventType: 'task.status_changed',
+          eventConfig: {
+            transition: 'entered_processing',
+            tags: ['status-wf-bind'],
+            runtime_workflow_definition: {
+              version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              approval_policy: 'required',
+              coordinator_prompt: '',
+              ai_automation_rule_id: null,
+              execution_config: null,
+              nodes: [
+                {
+                  id: 'alternate-review',
+                  name: '替代工作流评审',
+                  prompt: '验证用户选择的状态自动化被唯一绑定。',
+                  execution_mode: 'human',
+                  depends_on: [],
+                  dependency_context: {},
+                  required: true,
+                  required_deliverables: [],
+                  workspace_policy: 'none',
+                  automation_rule_id: null,
+                  execution_config: null,
+                  execution_config_override: false,
+                },
+              ],
+            },
+          },
+          assignmentMode: 'manual',
+          agentId: localDefaultAgent.id,
+          enabled: true,
+        }),
+      }
+    )
     const statusWorkflowIssue = await publicApiRequest(
       `/api/v1/cloud-projects/${projectId}/loop-items`,
       {
@@ -668,13 +712,33 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('drag', statusWorkflowCard, {
-      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-in_progress"]`,
+      target: `${activeBoard} [data-testid="cloud-todo-column-dropzone-pending"]`,
+    })
+    await control.command('waitFor', '[data-testid="automation-selection-options"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    const issueBeforeAutomationSelection = await cloudRequest(
+      `/api/v1/loop-items/${statusWorkflowIssue.id}`
+    )
+    assert.equal(
+      issueBeforeAutomationSelection.status,
+      'inbox',
+      'The Issue moved before the user selected one matching automation'
+    )
+    await control.command(
+      'click',
+      `[data-testid="automation-selection-option-${alternateStatusWorkflowRule.id}"]`,
+      { visible: true }
+    )
+    await control.command('click', '[data-testid="automation-selection-confirm"]', {
+      visible: true,
     })
     const boundStatusWorkflowIssue = await waitForValue(
       () => cloudRequest(`/api/v1/loop-items/${statusWorkflowIssue.id}`),
       item =>
-        item.status === 'in_progress' &&
-        item.workflow?.nodes?.[0]?.id === 'review' &&
+        item.status === 'pending' &&
+        item.workflow?.nodes?.[0]?.id === 'alternate-review' &&
         item.workflow?.nodes?.[0]?.status === 'ready',
       'The status automation workflow was not bound before execution routing',
       uiTimeoutMs
@@ -687,6 +751,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     )
     await captureScreenshot(control, 'project-automation-status-workflow-bound.png')
     await disableRule(projectId, statusWorkflowRule)
+    await disableRule(projectId, alternateStatusWorkflowRule)
 
     const inheritedWorkflowIssue = await publicApiRequest(
       `/api/v1/cloud-projects/${projectId}/loop-items`,
@@ -1266,6 +1331,13 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('waitFor', '[data-testid="ai-chat-modal"]', {
       timeoutMs: uiTimeoutMs,
     })
+    const workflowTaskInput = '[data-testid="ai-chat-modal"] [data-testid="chat-message-input"]'
+    const compiledWorkflowPrompt = await control.command('getValue', workflowTaskInput)
+    assert.match(compiledWorkflowPrompt, /## 任务定位/)
+    assert.match(compiledWorkflowPrompt, /真实后端阶段任务绑定/)
+    assert.match(compiledWorkflowPrompt, /真实后端开发阶段/)
+    assert.match(compiledWorkflowPrompt, /## 当前节点任务/)
+    assert.match(compiledWorkflowPrompt, /实现 Issue 中描述的功能并完成验证。/)
     const issueComposerSnapshot = JSON.parse(await control.command('snapshot', 'body'))
     await control.command(
       'waitFor',
@@ -1373,7 +1445,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       switchedComposerSnapshot.testIds.includes('ai-chat-modal'),
       'Switching the Issue task runtime project closed the right-side composer'
     )
-    const workflowTaskInput = '[data-testid="ai-chat-modal"] [data-testid="chat-message-input"]'
     await control.command('fill', workflowTaskInput, {
       value: '执行真实后端阶段任务绑定验证',
     })
@@ -1543,12 +1614,32 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
     })
+    await control.command('click', '[data-testid^="execution-node-add-deliverable-"]', {
+      visible: true,
+    })
+    await control.command('fill', '[data-testid^="execution-node-deliverable-name-"]', {
+      value: '实现文件',
+    })
+    await control.command('select', '[data-testid^="execution-node-deliverable-type-"]', {
+      value: 'file',
+    })
     await control.command('waitFor', '[data-testid^="automation-node-insert-after-step-"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
     await control.command('click', '[data-testid^="automation-node-insert-after-step-"]')
     await control.command('click', '[data-testid^="automation-node-insert-after-dynamic-step-"]')
+    await control.command('waitFor', '[data-testid^="dag-stage-add-first-"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', '[data-testid^="dag-stage-add-first-"]', {
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid^="dag-stage-insert-after-"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('waitFor', '[data-testid="ai-coordinator-prompt"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1601,8 +1692,37 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.eventType, 'task.created')
     const unifiedGraphNodes = unifiedRule.eventConfig.wework_flow.graph.nodes
     assert.equal(unifiedGraphNodes.length, 2)
+    const unifiedDeliverable = unifiedGraphNodes[0].deliverables[0]
+    assert.ok(unifiedDeliverable?.id)
+    assert.deepEqual(unifiedDeliverable, {
+      id: unifiedDeliverable.id,
+      name: '实现文件',
+      description: '',
+      valueType: 'file',
+      fileConstraints: {
+        accepted_types: [],
+        min_files: 1,
+        max_files: 1,
+      },
+    })
+    assert.deepEqual(
+      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].required_deliverables,
+      [
+        {
+          id: unifiedDeliverable.id,
+          name: '实现文件',
+          description: '',
+          value_type: 'file',
+          file_constraints: {
+            accepted_types: [],
+            min_files: 1,
+            max_files: 1,
+          },
+        },
+      ]
+    )
     assert.equal(unifiedGraphNodes[1].kind, 'dynamic')
-    assert.ok(unifiedGraphNodes[1].subgraph.nodes.length > 1)
+    assert.equal(unifiedGraphNodes[1].subgraph.nodes.length, 1)
 
     await disableRule(projectId, unifiedRule)
     const projectWithWorkflow = await cloudRequest(`/api/v1/cloud-projects/${projectId}`)
@@ -1790,18 +1910,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         visible: true,
       }
     )
-    const managerExecutionShortcut = `${activeBoard} [data-testid="cloud-todo-workflow-manager-open-execution"]`
-    await control.command('waitFor', managerExecutionShortcut, {
+    const managerExecutionCard = `${activeBoard} [data-testid="cloud-todo-workflow-manager-run"]`
+    await control.command('waitFor', managerExecutionCard, {
       text: '查看执行细节',
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('scrollIntoView', managerExecutionShortcut)
-    await control.command('waitFor', managerExecutionShortcut, {
+    await control.command('scrollIntoView', managerExecutionCard)
+    await control.command('waitFor', managerExecutionCard, {
       text: '查看执行细节',
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
-    await control.command('click', managerExecutionShortcut, { visible: true })
+    await control.command('click', managerExecutionCard, { visible: true })
     await control.command('waitFor', '[data-testid="runtime-execution-detail-overlay"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
@@ -3718,12 +3838,49 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
         value: '完成代码实现和测试。',
       })
+      const pluginMenuTrigger = '[data-testid^="execution-node-add-plugin-"]'
+      const pluginMenu = '[data-testid^="execution-node-add-plugin-"][data-testid$="-menu"]'
+      await control.command('click', pluginMenuTrigger, { visible: true })
+      await control.command('waitFor', pluginMenu, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid^="execution-node-name-"]', {
+        visible: true,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', pluginMenu)),
+        0,
+        'Plugin menu did not close after an outside click'
+      )
+      await control.command('click', pluginMenuTrigger, { visible: true })
+      await control.command('waitFor', pluginMenu, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('press', 'body', { key: 'Escape' })
+      assert.equal(
+        Number(await control.command('getElementCount', pluginMenu)),
+        0,
+        'Plugin menu did not close after Escape'
+      )
       await control.command('waitFor', '[data-testid^="automation-node-insert-after-step-"]', {
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
       await control.command('click', '[data-testid^="automation-node-insert-after-step-"]')
       await control.command('click', '[data-testid^="automation-node-insert-after-dynamic-step-"]')
+      await control.command('waitFor', '[data-testid^="dag-stage-add-first-"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid^="dag-stage-add-first-"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid^="dag-stage-insert-after-"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await captureScreenshot(control, 'project-automation-00-unified-editor.png')
       await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
         timeoutMs: uiTimeoutMs,
@@ -3735,7 +3892,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const createdGraphNodes = createdAutomation?.eventConfig.wework_flow.graph.nodes
       assert.equal(createdGraphNodes?.length, 2)
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
-      assert.ok(createdGraphNodes?.[1].subgraph.nodes.length > 1)
+      assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
 
       await control.command(
         'click',

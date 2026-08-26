@@ -118,6 +118,7 @@ vi.mock('./AiChatModal', () => ({
     prepareTask,
     workflowNodeId,
     initialTaskRequest,
+    initialTaskInput,
   }: {
     task?: { id: string }
     open: boolean
@@ -133,6 +134,7 @@ vi.mock('./AiChatModal', () => ({
     }) => void | Promise<void | (() => void | Promise<void>)>
     workflowNodeId?: string
     initialTaskRequest?: { projectId?: number; modelId?: string }
+    initialTaskInput?: string
   }) => (
     <div
       data-testid="ai-chat-modal"
@@ -142,6 +144,7 @@ vi.mock('./AiChatModal', () => ({
       data-workflow-node-id={workflowNodeId}
       data-task-project-id={initialTaskRequest?.projectId}
       data-task-model-id={initialTaskRequest?.modelId}
+      data-initial-task-input={initialTaskInput}
     >
       <button
         type="button"
@@ -496,6 +499,9 @@ function services(overrides: Partial<WorkbenchServices> = {}): WorkbenchServices
       removeLoopItemCollaborator: vi.fn(async () => undefined),
       bindTask: vi.fn(async () => undefined),
       unbindTask: vi.fn(async () => undefined),
+      getWorkflowStageContext: vi.fn(async () => ({
+        compiled_task_instruction: '## 当前节点任务\n\n执行后端任务',
+      })),
       listMyWork: vi.fn(async () => ({ items: [] })),
       listCloudProjectMembers: vi.fn(async () => [
         {
@@ -3445,6 +3451,71 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('issue-execution-config-dialog')).toBeInTheDocument()
   })
 
+  it('asks the user to choose one automation before moving into processing', async () => {
+    const user = userEvent.setup()
+    const inboxItem = { ...item, status: 'inbox' as const }
+    const selectedItem = {
+      ...inboxItem,
+      status: 'in_progress' as const,
+      version: inboxItem.version + 1,
+    }
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({ items: [inboxItem] }))
+    workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => inboxItem)
+    workbenchServices.deliveryApi!.updateLoopItem = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ApiError(
+          'Multiple automations match this Issue',
+          409,
+          'automation_selection_required',
+          {
+            code: 'automation_selection_required',
+            candidates: [
+              {
+                id: 'automation-implement',
+                name: 'Implement',
+                description: 'Build the requested change',
+              },
+              {
+                id: 'automation-review',
+                name: 'Review',
+                description: 'Review the requested change',
+              },
+            ],
+          }
+        )
+      )
+      .mockResolvedValueOnce(selectedItem)
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await user.click((await screen.findAllByText('Wegent V4'))[0])
+    await screen.findByTestId('cloud-todo-card-WEG-1')
+
+    fireEvent.click(screen.getByTestId('mock-dnd-drag-to-in-progress'))
+
+    expect(await screen.findByTestId('automation-selection-options')).toHaveTextContent('Implement')
+    expect(screen.getByTestId('cloud-todo-card-WEG-1')).toBeInTheDocument()
+    await user.click(screen.getByTestId('automation-selection-option-automation-review'))
+    await user.click(screen.getByTestId('automation-selection-confirm'))
+
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.updateLoopItem).toHaveBeenLastCalledWith(inboxItem.id, {
+        version: inboxItem.version,
+        status: 'in_progress',
+        automation_rule_id: 'automation-review',
+      })
+    )
+    expect(screen.queryByTestId('automation-selection-options')).not.toBeInTheDocument()
+  })
+
   it('binds a human workflow task without inventing an automation queue state', async () => {
     const manualIssue = {
       ...item,
@@ -3473,6 +3544,11 @@ describe('CloudTodoWorkspace', () => {
       items: [manualIssue],
     }))
     workbenchServices.deliveryApi!.getLoopItem = vi.fn(async () => manualIssue)
+    workbenchServices.deliveryApi!.getWorkflowStageContext = vi.fn(async () => ({
+      version: 1,
+      compiled_task_instruction:
+        '## 任务定位\n\n- Issue：Implement cloud MCP (`WEG-1`)\n- 当前节点：后端 (`backend`)\n\n## 当前节点任务\n\nls',
+    }))
     let taskBound = false
     workbenchServices.deliveryApi!.listTaskBindings = vi.fn(async () =>
       taskBound
@@ -3507,6 +3583,18 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(await screen.findByTestId('cloud-todo-create-workflow-task-backend'))
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-workflow-node-id', 'backend')
+    expect(workbenchServices.deliveryApi!.getWorkflowStageContext).toHaveBeenCalledWith(
+      'WEG-1',
+      'backend'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-task-input',
+      expect.stringContaining('## 当前节点任务')
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute(
+      'data-initial-task-input',
+      expect.stringContaining('ls')
+    )
 
     vi.mocked(workbenchServices.deliveryApi!.updateLoopItem).mockClear()
     await userEvent.click(screen.getByTestId('mock-create-runtime-task'))

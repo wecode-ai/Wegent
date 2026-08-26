@@ -12,7 +12,6 @@ if (!readyFile) throw new Error('WEWORK_APP_WATCH_READY_FILE is required')
 
 await rm(readyFile, { force: true })
 
-process.env.WEWORK_DSH_APP_OUT_DIR = appWebRoot
 process.env.VITE_APP_BASE_PATH = '/wework/app/'
 process.chdir(weworkRoot)
 
@@ -21,6 +20,8 @@ const watcher = await build({
   configFile: path.join(weworkRoot, 'vite.config.ts'),
   logLevel: 'warn',
   build: {
+    outDir: appWebRoot,
+    emptyOutDir: true,
     watch: {},
   },
 })

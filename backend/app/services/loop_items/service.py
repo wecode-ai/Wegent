@@ -916,7 +916,10 @@ class LoopItemService:
     ) -> LoopItem:
         item = self.get(db, item_id, user_id)
         self._require_item_access(db, item, user_id, edit=True)
-        updates = values.model_dump(exclude={"version"}, exclude_unset=True)
+        updates = values.model_dump(
+            exclude={"version", "automation_rule_id"},
+            exclude_unset=True,
+        )
         meaningful_change = any(
             field in values.model_fields_set
             and (

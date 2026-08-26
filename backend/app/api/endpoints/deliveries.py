@@ -24,7 +24,13 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.security import get_current_user, get_current_user_flexible_for_executor
-from app.models.delivery import Delivery, LoopItem
+from app.models.delivery import (
+    Delivery,
+    LoopItem,
+    LoopItemTaskBinding,
+    ProjectAutomationRule,
+    loop_datetime_is_unset,
+)
 from app.models.user import User
 from app.schemas.delivery import (
     CloudTaskContextResponse,
@@ -74,8 +80,12 @@ from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
     loop_item_provider_router,
 )
+from app.services.project_automation_domain import ProjectAutomationEvent
 from app.services.project_automation_execution import project_automation_execution
-from app.services.project_automations import project_automation_service
+from app.services.project_automations import (
+    project_automation_processor,
+    project_automation_service,
+)
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
@@ -97,6 +107,58 @@ def _loop_item_response(
     return LoopItemResponse.model_validate(
         loop_item_service.response_values(db, item, current_user.id)
     )
+
+
+def _automation_selection_error(
+    *,
+    code: str,
+    message: str,
+    candidates: list[ProjectAutomationRule] | None = None,
+) -> HTTPException:
+    detail: dict[str, object] = {"code": code, "message": message}
+    if candidates is not None:
+        detail["candidates"] = [
+            {
+                "id": str(rule.id),
+                "name": rule.title,
+                "description": rule.description or "",
+            }
+            for rule in candidates
+        ]
+    return HTTPException(status.HTTP_409_CONFLICT, detail=detail)
+
+
+def _selected_event_automation_id(
+    db: Session,
+    event: ProjectAutomationEvent,
+    *,
+    requested_id: str | None,
+    bound_rule_id: str = "",
+) -> str | None:
+    matching_rules = project_automation_processor.matching_rules(db, event)
+    if requested_id:
+        selected_rule = next(
+            (rule for rule in matching_rules if str(rule.id) == requested_id),
+            None,
+        )
+        if selected_rule is None or (bound_rule_id and bound_rule_id != requested_id):
+            raise _automation_selection_error(
+                code="automation_selection_stale",
+                message="The selected automation no longer matches this Issue",
+            )
+        return requested_id
+    if bound_rule_id:
+        return next(
+            (str(rule.id) for rule in matching_rules if str(rule.id) == bound_rule_id),
+            None,
+        )
+    if len(matching_rules) > 1:
+        raise _automation_selection_error(
+            code="automation_selection_required",
+            message="Multiple automations match this Issue",
+            candidates=matching_rules,
+        )
+    return str(matching_rules[0].id) if matching_rules else None
 
 
 def _delivery_response(db: Session, delivery: Delivery) -> DeliveryResponse:
@@ -476,11 +538,6 @@ async def create_loop_item(
     """Create a board task using a user JWT or personal API key."""
 
     project = cloud_project_service.get(db, project_id, current_user.id)
-    from app.services.project_automations import (
-        ProjectAutomationEvent,
-        project_automation_processor,
-    )
-
     event_payload = values.model_dump(
         mode="json",
         exclude={"automation_rule_id"},
@@ -512,43 +569,19 @@ async def create_loop_item(
             or project_workflow.get("advancement_policy") == "ai"
         )
     )
-    matching_rules = (
-        []
-        if has_bound_workflow
-        else project_automation_processor.matching_rules(db, event)
-    )
-    selected_automation_id = values.automation_rule_id
-    if selected_automation_id:
-        selected_rule = next(
-            (rule for rule in matching_rules if str(rule.id) == selected_automation_id),
-            None,
-        )
-        if selected_rule is None:
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "automation_selection_stale",
-                    "message": "The selected automation no longer matches this Issue",
-                },
+    if has_bound_workflow:
+        if values.automation_rule_id:
+            raise _automation_selection_error(
+                code="automation_selection_stale",
+                message="The selected automation no longer matches this Issue",
             )
-    elif len(matching_rules) > 1:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            detail={
-                "code": "automation_selection_required",
-                "message": "Multiple automations match this Issue",
-                "candidates": [
-                    {
-                        "id": str(rule.id),
-                        "name": rule.title,
-                        "description": rule.description or "",
-                    }
-                    for rule in matching_rules
-                ],
-            },
+        selected_automation_id = None
+    else:
+        selected_automation_id = _selected_event_automation_id(
+            db,
+            event,
+            requested_id=values.automation_rule_id,
         )
-    elif len(matching_rules) == 1:
-        selected_automation_id = str(matching_rules[0].id)
 
     created = loop_item_provider_router.create(db, project, current_user, values)
     response = LoopItemResponse.model_validate(created.values)
@@ -985,8 +1018,59 @@ async def update_loop_item(
         return LoopItemResponse.model_validate(response)
     existing = loop_item_service.get(db, item_id, current_user.id)
     previous_status = existing.status
+    project = cloud_project_service.get(
+        db,
+        int(existing.cloud_project_id),
+        current_user.id,
+    )
+    selected_automation_id: str | None = None
+    requested_status = (
+        values.status
+        if "status" in values.model_fields_set and values.status is not None
+        else previous_status
+    )
+    requested_transition = project_status_transition(
+        project,
+        previous_status=previous_status,
+        current_status=requested_status,
+    )
+    if requested_status != previous_status and requested_transition.entered_processing:
+        event_payload = _loop_item_response(
+            db,
+            existing,
+            current_user,
+        ).model_dump(mode="json")
+        event_payload["previous_status"] = previous_status
+        event_payload["status"] = requested_status
+        if "priority" in values.model_fields_set and values.priority is not None:
+            event_payload["priority"] = values.priority
+        if "tags" in values.model_fields_set and values.tags is not None:
+            event_payload["tags"] = values.tags
+        event = ProjectAutomationEvent(
+            event_type="task.status_changed",
+            project_id=str(existing.cloud_project_id),
+            subject_id=str(existing.id),
+            source="board",
+            actor_user_id=current_user.id,
+            payload=event_payload,
+        )
+        item_metadata = (
+            existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
+        )
+        workflow_binding = item_metadata.get("workflow_automation")
+        bound_rule_id = (
+            str(workflow_binding.get("rule_id") or "")
+            if isinstance(workflow_binding, dict)
+            else ""
+        )
+        selected_automation_id = _selected_event_automation_id(
+            db,
+            event,
+            requested_id=values.automation_rule_id,
+            bound_rule_id=bound_rule_id,
+        )
+
     item = loop_item_service.update(db, item_id, current_user.id, values)
-    project = cloud_project_service.get(db, int(item.cloud_project_id), current_user.id)
     issue_workflow_planning_service.sync_from_child(
         db,
         child_id=item.id,
@@ -1002,8 +1086,9 @@ async def update_loop_item(
         current_status=item.status,
     )
     entered_processing = status_changed and status_transition.entered_processing
-    should_start_workflow = entered_processing or (
-        workflow_updated and is_processing_status(project, item.status)
+    should_start_workflow = selected_automation_id is None and (
+        entered_processing
+        or (workflow_updated and is_processing_status(project, item.status))
     )
     logger.info(
         "[issue-workflow-start] update item=%s project=%s previous_status=%s "
@@ -1048,11 +1133,6 @@ async def update_loop_item(
         background_tasks.add_task(consume_queues_background)
         db.refresh(item)
     if status_changed:
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
-
         item_metadata_before_automation = (
             item.metadata_json if isinstance(item.metadata_json, dict) else {}
         )
@@ -1073,6 +1153,7 @@ async def update_loop_item(
                         "previous_status": previous_status,
                     },
                 ),
+                automation_id=selected_automation_id,
             )
             db.refresh(item)
             item_metadata_after_automation = (
