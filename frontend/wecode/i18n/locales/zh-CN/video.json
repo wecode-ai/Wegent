@@ -10,6 +10,20 @@
     "description": "查看当前结果并继续视频创作",
     "noPreview": "当前阶段暂无可预览内容"
   },
+  "script": {
+    "title": "剧本详情",
+    "loading": "正在加载完整剧本...",
+    "loadFailed": "加载完整剧本失败，请稍后重试",
+    "retry": "重试",
+    "empty": "当前剧本暂无内容",
+    "updatedAt": "修改于 {{time}}",
+    "edit": "编辑",
+    "save": "应用",
+    "saving": "保存中...",
+    "saveSuccess": "剧本已保存",
+    "saveFailed": "保存剧本失败，请重试",
+    "editorLabel": "剧本内容"
+  },
   "entity": {
     "title": "主体预览",
     "count": "共 {{count}} 个主体",
@@ -107,9 +121,7 @@
     "imageFailed": "生成分镜图片失败",
     "generateSuccess": "分镜视频已生成",
     "generateFailed": "生成分镜视频失败",
-    "versionFailed": "切换视频版本失败",
-    "confirmTitle": "确认视频生成",
-    "confirmGenerate": "确认生成"
+    "versionFailed": "切换视频版本失败"
   },
   "composition": {
     "title": "视频剪辑工作台",

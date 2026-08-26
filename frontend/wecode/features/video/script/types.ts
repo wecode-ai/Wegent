@@ -38,7 +38,11 @@ export interface ScriptDetail {
   script_id: number
   task_id: number
   title: string
+  is_draft?: boolean
+  draft_content?: string
   global_style?: ScriptGlobalStyle
   bgm?: ScriptBgmItem[]
   final_video_cover?: FinalVideoCover | null
+  create_time?: string
+  update_time?: string
 }

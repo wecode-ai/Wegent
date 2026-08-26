@@ -10,6 +10,20 @@
     "description": "Review the current result and continue creating the video",
     "noPreview": "No preview is available for this stage"
   },
+  "script": {
+    "title": "Script details",
+    "loading": "Loading the complete script...",
+    "loadFailed": "Failed to load the complete script. Try again later.",
+    "retry": "Retry",
+    "empty": "This script has no content",
+    "updatedAt": "Updated at {{time}}",
+    "edit": "Edit",
+    "save": "Apply",
+    "saving": "Saving...",
+    "saveSuccess": "Script saved",
+    "saveFailed": "Failed to save the script. Try again.",
+    "editorLabel": "Script content"
+  },
   "entity": {
     "title": "Entity preview",
     "count": "{{count}} entities",
@@ -107,9 +121,7 @@
     "imageFailed": "Failed to generate storyboard image",
     "generateSuccess": "Storyboard video generated",
     "generateFailed": "Failed to generate storyboard video",
-    "versionFailed": "Failed to change video version",
-    "confirmTitle": "Confirm video generation",
-    "confirmGenerate": "Confirm"
+    "versionFailed": "Failed to change video version"
   },
   "composition": {
     "title": "Video composition editor",

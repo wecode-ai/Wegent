@@ -45,17 +45,39 @@ export const storyboardApis = {
     return apiClient.get(`/aigc-video/api/v2/storyboards/task/${taskUuid}`)
   },
 
-  generateSingleVideo(params: GenerateSingleVideoParams): Promise<VideoGenerateResponse> {
+  async generateSingleVideo(params: GenerateSingleVideoParams): Promise<VideoGenerateResponse> {
+    const response = await apiClient.post<VideoGenerateResponse>(
+      '/aigc-video/api/v2/storyboard-videos/generate-single',
+      {
+        ...params,
+        support_charge_confirmation: true,
+      }
+    )
+    if (response.action !== 'confirm_charge') return response
+
     return apiClient.post('/aigc-video/api/v2/storyboard-videos/generate-single', {
       ...params,
       support_charge_confirmation: true,
+      confirm_charge: true,
+      billing_token: response.billing_token,
     })
   },
 
-  generateAllVideos(params: GenerateAllVideosParams): Promise<VideoGenerateResponse> {
+  async generateAllVideos(params: GenerateAllVideosParams): Promise<VideoGenerateResponse> {
+    const response = await apiClient.post<VideoGenerateResponse>(
+      '/aigc-video/api/v2/storyboard-videos/generate-all',
+      {
+        ...params,
+        support_charge_confirmation: true,
+      }
+    )
+    if (response.action !== 'confirm_charge') return response
+
     return apiClient.post('/aigc-video/api/v2/storyboard-videos/generate-all', {
       ...params,
       support_charge_confirmation: true,
+      confirm_charge: true,
+      billing_token: response.billing_token,
     })
   },
 

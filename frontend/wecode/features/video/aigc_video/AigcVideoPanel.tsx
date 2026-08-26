@@ -68,6 +68,24 @@ const EntityPanel = dynamic(
   }
 )
 
+const ScriptPanel = dynamic(
+  () =>
+    import('../script/ScriptPanel').then(module => ({
+      default: module.ScriptPanel,
+    })),
+  {
+    ssr: false,
+    loading: () => (
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center"
+        data-testid="video-script-panel-module-loading"
+      >
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      </div>
+    ),
+  }
+)
+
 export interface VideoPanelTarget {
   panel?: string
   scriptId?: number
@@ -148,6 +166,7 @@ export function AigcVideoPanel({
       target.panel === 'material-search' ||
       target.panel === 'timeline')
   const isEntity = target.panel === 'entity' && taskId
+  const isScript = target.panel === 'script' && Boolean(target.scriptId)
   const chatButtons = buttons.filter(button => button.button_type !== 'link')
   const finalVideoButton =
     chatButtons.find(button => /最终|合成|final/i.test(button.button_name)) ?? chatButtons.at(-1)
@@ -187,6 +206,29 @@ export function AigcVideoPanel({
           onClose={onClose}
           onGenerateFinalVideo={onChatButtonClick ? () => handleContinue() : undefined}
         />
+      ) : isScript ? (
+        <ScriptPanel scriptId={target.scriptId!} onClose={onClose}>
+          {buttons.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {buttons.map(button => {
+                const buttonId = button.button_id || button.button_name
+                return (
+                  <Button
+                    key={buttonId}
+                    disabled={submitting === buttonId}
+                    onClick={() => void handleAction(button)}
+                    data-testid={`aigc-video-panel-action-${buttonId}`}
+                  >
+                    {submitting === buttonId ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : null}
+                    {button.button_name}
+                  </Button>
+                )
+              })}
+            </div>
+          ) : null}
+        </ScriptPanel>
       ) : (
         <>
           <header className="flex min-h-14 shrink-0 items-center justify-between border-b border-border px-4">
