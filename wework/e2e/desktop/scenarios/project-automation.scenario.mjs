@@ -840,8 +840,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    const defaultExecutionDevice =
+      '[data-testid="issue-execution-config-default-device"] [data-value]'
     assert.equal(
-      await control.command('getValue', '[data-testid="issue-execution-config-default-device"]'),
+      await control.command('getAttribute', defaultExecutionDevice, {
+        name: 'data-value',
+      }),
       localDefaultDevice.device_id,
       'The workflow dialog did not promote the legacy node device to the shared configuration'
     )
@@ -966,7 +970,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The execution dialog lost the robot preset identity'
     )
     assert.equal(
-      await control.command('getValue', executionDevice),
+      await control.command('getAttribute', `${executionDevice} [data-value]`, {
+        name: 'data-value',
+      }),
       localDefaultDevice.device_id,
       'The execution dialog did not expose the robot local-device default'
     )
@@ -975,9 +981,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       `runtime:${DEFAULT_MODEL_ID}`,
       'The execution dialog did not expose the robot GPT default'
     )
-    await control.command('fill', executionDevice, { value: CLOUD_DEVICE_ID })
-    await control.command('fill', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
-    await control.command('fill', executionProject, { value: 'standalone' })
+    await control.command('click', executionDevice, { visible: true })
+    await control.command(
+      'click',
+      `[data-testid="issue-execution-config-fields-device-option-${CLOUD_DEVICE_ID}"]`,
+      { visible: true }
+    )
+    await control.command('select', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
+    await control.command('select', executionProject, { value: 'standalone' })
     const initialUpstreamRequestOffset = upstreamResponseRequests.length
     await control.command('clickWhenEnabled', '[data-testid="issue-execution-config-confirm"]', {
       timeoutMs: uiTimeoutMs,
