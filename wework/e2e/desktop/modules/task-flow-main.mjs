@@ -1055,6 +1055,7 @@ async function main() {
           }
         : {}),
     }
+    delete appEnvironment.WEGENT_APP_IPC_DEVICE_ID
     const electronLaunchArguments =
       process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
         ? (() => {
@@ -1082,6 +1083,13 @@ async function main() {
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
       const beforeStart = typeof options === 'function' ? options : options?.afterStop
+      const desktopDeviceIdPath = join(resultDir, 'electron-user-data', 'desktop-device-id')
+      const desktopDeviceIdBeforeRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
+      assert.match(
+        desktopDeviceIdBeforeRestart,
+        /^electron-/,
+        'Wework did not persist a valid Electron device identity before restart'
+      )
       const readyCountBeforeRestart = control.readyCount
       await stopDesktopAppProcess(app)
       await beforeStart?.()
@@ -1090,6 +1098,12 @@ async function main() {
         control.awaitReadyAfter(readyCountBeforeRestart),
         WORKBENCH_READY_TIMEOUT_MS,
         'The restarted Wework application did not reconnect to the desktop controller'
+      )
+      const desktopDeviceIdAfterRestart = (await readFile(desktopDeviceIdPath, 'utf8')).trim()
+      assert.equal(
+        desktopDeviceIdAfterRestart,
+        desktopDeviceIdBeforeRestart,
+        'Restarting Wework changed the persisted Electron device identity'
       )
       return app
     }

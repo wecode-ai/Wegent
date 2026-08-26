@@ -1310,6 +1310,17 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
     'hover',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
   )
+  await control.command('click', '[data-testid="copy-message-button"]')
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    MESSAGE_EDIT_ORIGINAL_PROMPT,
+    'Clicking the user-message copy button did not copy the visible message text'
+  )
+
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
+  )
   await control.command('waitFor', '[data-testid="edit-message-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

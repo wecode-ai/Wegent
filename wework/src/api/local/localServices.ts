@@ -9,6 +9,7 @@ import {
   buildHarnessUserContext,
   type HarnessContextRegistration,
 } from '@/features/harness-apps/harnessContext'
+import { reconnectDshExecutorEvents } from '@/api/dsh/executorTransport'
 import { createExecutorClientFromApis } from '@/api/executorAccess'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { buildProjectPluginCatalog } from '@/features/plugins/projectPluginCatalog'
@@ -3667,5 +3668,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
       importRuntimeAuthJson: () => cloudConnectionRequired('importRuntimeAuthJson'),
     },
     chatStream: getRuntimeChatStream(subscribe, request),
+    async recoverRuntimeConnections() {
+      reconnectDshExecutorEvents()
+    },
   } as unknown as WorkbenchServices
 }

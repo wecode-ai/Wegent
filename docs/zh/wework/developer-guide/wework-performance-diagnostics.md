@@ -120,6 +120,8 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # 开启 runtime work cache/emit mapping �
 
 Wework 将 executor 高频到达的文本增量与 Markdown 展示节奏分离。消息状态仍实时接收并保持完整内容，`AssistantMarkdown` 使用轻量缓冲器在浏览器帧上逐步推进可见文本：积压较多时自适应加速，接近队尾时保留少量字符并缓慢释放，以平滑 executor 批量发送和短暂空档造成的视觉顿挫。流结束、内容被替换或发生非追加更新时会立即对齐完整文本，不会影响最终消息正确性。
 
+过程文本、thinking 和 plan block 的实时更新只传输 `content_delta`，不能在每个 delta 或完成节点重复发送从开头累计的完整 `content`。完成节点通常只携带 `status: done`；若 provider 的完成快照仅比已流式内容多一个尾部，则只补发该尾部增量。Wework 在浏览器动画帧内合并同一 block 的连续增量后再更新 React 状态，避免长程任务形成二次方级别的 IPC 复制和渲染压力。流式 block 更新属于可丢弃的 bulk 事件；发生 app IPC 背压时，终态事件仍保持优先，并由 transcript 对账恢复权威内容。Electron 主进程不得为每个 `response.*` 增量写 stdout；终端或父进程未及时消费输出时，同步 console 写入会阻塞 Browser 主线程和全部窗口输入。
+
 流式消息不执行 Pretext 全文高度测量，而是使用稳定的离屏占位高度；消息完成后再精确测量并缓存。已完成消息优先按消息对象和宽度命中高度缓存，避免每次流式更新都重新计算历史消息全文 hash。Composer、Workspace 操作栏、右侧工作区和底部终端也使用稳定属性与 memo 边界，避免随每个文本增量重复渲染。
 
 拖动底部终端面板调整高度时，高度更新按浏览器动画帧合并，并在拖动期间关闭高度过渡，避免高频指针事件触发过量 React 更新和终端重排。松开指针时必须提交最终高度，并恢复面板打开、关闭所需的过渡效果。

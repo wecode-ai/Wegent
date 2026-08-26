@@ -9,6 +9,7 @@ const scripts = [
   'electron/scripts/copy-static.mjs',
   'electron/scripts/package-app.mjs',
   'electron/scripts/prepare-package-assets.mjs',
+  'scripts/dev-mac-app.sh',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
   'scripts/prepare-execution-runtime.mjs',
@@ -23,6 +24,7 @@ describe('desktop resource migration', () => {
       'pnpm --dir electron install --frozen-lockfile'
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
   })

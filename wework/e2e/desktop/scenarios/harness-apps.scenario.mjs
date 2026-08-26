@@ -520,10 +520,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         text: '文件改动后可重新加载',
         timeoutMs: 120_000,
       })
-      await control.command('waitFor', '[data-testid="project-work-button"]', {
-        text: '空白 E2E 工作台',
-        timeoutMs: uiTimeoutMs,
-      })
+      const blankWorkbenchSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(blankWorkbenchSnapshot.workbench?.currentProject, null)
+      assert.equal(
+        blankWorkbenchSnapshot.workbench?.standaloneWorkspacePath,
+        join(resultDir, CREATED_INSTALLATION_ID)
+      )
       await captureScreenshot(control, 'harness-apps-03b-builder-chat.png', 'body')
       await control.command(
         'clickWhenEnabled',

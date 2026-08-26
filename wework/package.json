@@ -7,7 +7,7 @@
     "dev": "vite",
     "prepare:electron": "pnpm --dir electron install --frozen-lockfile",
     "dev:desktop": "pnpm run prepare:electron && pnpm --dir electron dev",
-    "dev:mac": "pnpm run dev:desktop",
+    "dev:mac": "bash scripts/dev-mac-app.sh",
     "dev:windows": "pnpm run dev:desktop",
     "prepare:codex": "node scripts/prepare-codex-binary.mjs",
     "prepare:dws": "node scripts/prepare-dws-binary.mjs",

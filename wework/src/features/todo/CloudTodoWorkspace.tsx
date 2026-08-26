@@ -104,6 +104,7 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import {
   runtimeMessagesToWorkbenchMessages,
@@ -1606,16 +1607,21 @@ export function CloudTodoWorkspace({
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message: buildChangeRequestRepairPrompt(
-        changeRequest,
-        binding.task_title || binding.task_id,
-        selectedProject.pull_request_automation?.prompt
-      ),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
+    const prompt = buildChangeRequestRepairPrompt(
+      changeRequest,
+      binding.task_title || binding.task_id,
+      selectedProject.pull_request_automation?.prompt
+    )
+    const optimisticUserMessage = createRuntimeUserMessage(prompt)
+    const accepted = await workbench.sendRuntimePaneMessage(
+      {
+        address,
+        message: prompt,
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      },
+      { optimisticUserMessage }
+    )
     if (!accepted) {
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
@@ -1643,15 +1649,19 @@ export function CloudTodoWorkspace({
     const selectedAttachments = attachmentState?.attachments ?? []
     const attachmentIds = remoteAttachmentIds(selectedAttachments)
     const attachments = localRuntimeAttachments(selectedAttachments)
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message,
-      ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-      ...(attachments.length > 0 ? { attachments } : {}),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
+    const optimisticUserMessage = createRuntimeUserMessage(message, selectedAttachments)
+    const accepted = await workbench.sendRuntimePaneMessage(
+      {
+        address,
+        message,
+        ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      },
+      { optimisticUserMessage }
+    )
     if (accepted) projectChat.resetAttachmentsForScope(scopeKey)
     return accepted
   }

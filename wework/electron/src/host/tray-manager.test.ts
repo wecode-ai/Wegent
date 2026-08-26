@@ -30,7 +30,10 @@ function state(overrides: Partial<TrayMenuState> = {}): TrayMenuState {
   }
 }
 
-function setup(platform: NodeJS.Platform = 'darwin') {
+function setup(
+  platform: NodeJS.Platform = 'darwin',
+  applyTitle?: (tray: TrayAdapter, title: string) => void
+) {
   const listeners = new Map<'click' | 'double-click', () => void>()
   const tray: TrayAdapter = {
     on: vi.fn((event, listener) => {
@@ -47,6 +50,7 @@ function setup(platform: NodeJS.Platform = 'darwin') {
     createTray: vi.fn(() => tray),
     buildMenu,
     dispatchAction,
+    applyTitle,
     platform,
   }
   const manager = new ElectronTrayManager(dependencies)
@@ -204,6 +208,17 @@ describe('ElectronTrayManager', () => {
       titleSupported: false,
       tooltip: 'Codex: 42%',
     })
+  })
+
+  test('uses the platform title renderer when one is provided', () => {
+    const applyTitle = vi.fn()
+    const { manager, tray } = setup('darwin', applyTitle)
+
+    manager.setState(state({ usageTitle: 'Codex  79%\nAIGC 845.21' }))
+    manager.create()
+
+    expect(applyTitle).toHaveBeenCalledWith(tray, 'Codex  79%\nAIGC 845.21')
+    expect(tray.setTitle).not.toHaveBeenCalled()
   })
 
   test('updates the native menu and visual state after creation', () => {

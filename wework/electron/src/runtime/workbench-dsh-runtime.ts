@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { basename, join, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import * as tar from 'tar'
 import {
@@ -76,7 +76,13 @@ export async function prepareWorkbenchDshLaunch(
   )
   const packages = await prepareInstanceBundle(options, runtime, dshHome)
   await prepareProfile(dshHome, options.manifest.entry.profile)
-  const environment = runtimeEnvironment(options.environment, runtime.root, dshHome, options)
+  const environment = runtimeEnvironment(
+    options.environment,
+    runtime.root,
+    dshHome,
+    nodeCommand,
+    options
+  )
   const run = options.run ?? runCommand
   await installPlugins(
     runtime,
@@ -390,12 +396,16 @@ function runtimeEnvironment(
   environment: NodeJS.ProcessEnv,
   runtimeRoot: string,
   dshHome: string,
+  nodeCommand: string,
   options: PrepareWorkbenchDshOptions
 ): NodeJS.ProcessEnv {
+  const pathEntries = [join(runtimeRoot, 'node_modules', '.bin')]
+  if (isAbsolute(nodeCommand)) pathEntries.push(dirname(nodeCommand))
+  if (environment.PATH) pathEntries.push(environment.PATH)
   return {
     ...environment,
     DSH_HOME: dshHome,
-    PATH: `${join(runtimeRoot, 'node_modules', '.bin')}:${environment.PATH ?? ''}`,
+    PATH: pathEntries.join(delimiter),
     ...(options.modelBaseUrl ? { WEWORK_HARNESS_API_KEY: 'wework-local-router' } : {}),
     ...(options.contextBaseUrl ? { WEWORK_HARNESS_CONTEXT_BASE_URL: options.contextBaseUrl } : {}),
     ...(options.contextToken ? { WEWORK_HARNESS_CONTEXT_TOKEN: options.contextToken } : {}),

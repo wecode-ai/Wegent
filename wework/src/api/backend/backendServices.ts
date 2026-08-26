@@ -132,6 +132,10 @@ export function createBackendWorkbenchServices(
     }),
     userApi: createUserApi(client),
     socketClient,
+    async recoverRuntimeConnections() {
+      socketClient.disconnect()
+      await socketClient.connect(undefined, true)
+    },
     projectChatClient,
     projectChatAgentApi,
     projectAutomationApi,

@@ -28,16 +28,19 @@ export class SystemSleepController {
 
   handleExecutorEvent(event: string, payload: Record<string, unknown>): void {
     const taskId = typeof payload.taskId === 'string' ? payload.taskId : null
-    const active = event === 'response.created'
-    const terminal =
+    if (!taskId) return
+    const source = `executor:${taskId}`
+    if (event === 'response.created') {
+      this.setTaskActive(source, true)
+      return
+    }
+    if (
       event === 'response.completed' ||
       event === 'response.failed' ||
       event === 'response.incomplete'
-    if (!active && !terminal) return
-
-    console.log(`Executor sleep event: event=${event} task_id=${taskId ?? 'missing'}`)
-    if (!taskId) return
-    this.setTaskActive(`executor:${taskId}`, active)
+    ) {
+      this.setTaskActive(source, false)
+    }
   }
 
   private reconcile(): void {

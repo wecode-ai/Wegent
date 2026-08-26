@@ -26,7 +26,12 @@ format_python_module() {
   # Convert relative paths to absolute paths for formatting
   ABSOLUTE_FILES=""
   for file in $MODULE_FILES; do
-    ABSOLUTE_FILES="$ABSOLUTE_FILES $PROJECT_ROOT/$file"
+    if [ -z "$ABSOLUTE_FILES" ]; then
+      ABSOLUTE_FILES="$PROJECT_ROOT/$file"
+    else
+      ABSOLUTE_FILES="$ABSOLUTE_FILES
+$PROJECT_ROOT/$file"
+    fi
   done
 
   MODULE_VENV_BIN="$MODULE_DIR/.venv/bin"
@@ -49,25 +54,27 @@ format_python_module() {
 
   # Prefer already-installed formatter binaries to avoid uv environment
   # resolution during git hooks. Fall back to uv only when needed.
-  if [ -n "$BLACK_CMD" ] && echo "$ABSOLUTE_FILES" | xargs "$BLACK_CMD" 2>/dev/null; then
+  if [ -n "$BLACK_CMD" ] &&
+    printf '%s\n' "$ABSOLUTE_FILES" | xargs -I '{}' "$BLACK_CMD" '{}' 2>/dev/null; then
     echo "    ✅ Black formatting applied for $MODULE_NAME"
   elif uv run black --version >/dev/null 2>&1; then
-    echo "$ABSOLUTE_FILES" | xargs uv run black 2>/dev/null
+    printf '%s\n' "$ABSOLUTE_FILES" | xargs -I '{}' uv run black '{}' 2>/dev/null
     echo "    ✅ Black formatting applied for $MODULE_NAME"
   else
     echo "    ⚠️ Black not available for $MODULE_NAME. Skipping."
   fi
 
-  if [ -n "$ISORT_CMD" ] && echo "$ABSOLUTE_FILES" | xargs "$ISORT_CMD" 2>/dev/null; then
+  if [ -n "$ISORT_CMD" ] &&
+    printf '%s\n' "$ABSOLUTE_FILES" | xargs -I '{}' "$ISORT_CMD" '{}' 2>/dev/null; then
     echo "    ✅ isort formatting applied for $MODULE_NAME"
   elif uv run isort --version >/dev/null 2>&1; then
-    echo "$ABSOLUTE_FILES" | xargs uv run isort 2>/dev/null
+    printf '%s\n' "$ABSOLUTE_FILES" | xargs -I '{}' uv run isort '{}' 2>/dev/null
     echo "    ✅ isort formatting applied for $MODULE_NAME"
   else
     echo "    ⚠️ isort not available for $MODULE_NAME. Skipping."
   fi
 
-  cd "$PROJECT_ROOT"
+  cd "$PROJECT_ROOT" || return 1
 }
 
 if [ -n "$PYTHON_FILES" ]; then
@@ -136,14 +143,14 @@ if [ -n "$PYTHON_FILES" ]; then
   else
     # Fall back to python -m approach
     echo "Using python -m to run formatters..."
-    cd "$PROJECT_ROOT"
+    cd "$PROJECT_ROOT" || exit 1
 
     # Check if black is available
     if python -m black --version >/dev/null 2>&1 || python3 -m black --version >/dev/null 2>&1; then
       PYTHON_CMD="python"
       python -m black --version >/dev/null 2>&1 || PYTHON_CMD="python3"
       # Run black to auto-fix staged Python files
-      echo "$PYTHON_FILES" | xargs $PYTHON_CMD -m black 2>/dev/null
+      printf '%s\n' "$PYTHON_FILES" | xargs -I '{}' "$PYTHON_CMD" -m black '{}' 2>/dev/null
       echo "✅ Black formatting applied"
     else
       echo "⚠️ Black not installed. Skipping black formatting."
@@ -154,7 +161,7 @@ if [ -n "$PYTHON_FILES" ]; then
       PYTHON_CMD="python"
       python -m isort --version >/dev/null 2>&1 || PYTHON_CMD="python3"
       # Run isort to auto-fix staged Python files
-      echo "$PYTHON_FILES" | xargs $PYTHON_CMD -m isort 2>/dev/null
+      printf '%s\n' "$PYTHON_FILES" | xargs -I '{}' "$PYTHON_CMD" -m isort '{}' 2>/dev/null
       echo "✅ isort formatting applied"
     else
       echo "⚠️ isort not installed. Skipping isort formatting."
@@ -162,10 +169,10 @@ if [ -n "$PYTHON_FILES" ]; then
   fi
 
   # Return to project root
-  cd "$PROJECT_ROOT"
+  cd "$PROJECT_ROOT" || exit 1
 
   # Re-add the formatted files to staging
-  echo "$PYTHON_FILES" | xargs git add
+  printf '%s\n' "$PYTHON_FILES" | xargs -I '{}' git add '{}'
 fi
 
 # =============================================================================
@@ -177,7 +184,7 @@ FRONTEND_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '^fronte
 
 if [ -n "$FRONTEND_FILES" ]; then
   # Ensure we're in the correct directory for frontend
-  cd "$PROJECT_ROOT"
+  cd "$PROJECT_ROOT" || exit 1
   if [ ! -f "package.json" ] || ! grep -q '"name": "wecode-ai-assistant"' package.json 2>/dev/null; then
     if [ -d "frontend" ]; then
       cd frontend || exit 1
@@ -197,7 +204,7 @@ if [ -n "$FRONTEND_FILES" ]; then
   TRANSLATION_CHECK_SCRIPT="frontend/scripts/find-missing-translations.js"
   
   # Ensure we run from project root to resolve paths correctly
-  cd "$PROJECT_ROOT"
+  cd "$PROJECT_ROOT" || exit 1
   
   if node "$TRANSLATION_CHECK_SCRIPT"; then
      : # Success
