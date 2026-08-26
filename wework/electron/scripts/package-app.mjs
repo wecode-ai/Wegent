@@ -72,6 +72,9 @@ const applications = await packager({
   extraResource: [
     join(electronRoot, 'resources', 'harness-runtime'),
     join(electronRoot, 'resources', 'bin'),
+    join(electronRoot, 'resources', 'codex'),
+    join(electronRoot, 'resources', 'wework-core-plugins'),
+    join(electronRoot, 'resources', 'components.json'),
     join(electronRoot, 'resources', 'bundled-plugins'),
     join(sharedResourcesRoot, 'icons'),
   ],

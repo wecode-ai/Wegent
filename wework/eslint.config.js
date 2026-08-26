@@ -12,6 +12,7 @@ export default defineConfig([
     'dsh/app-wework/web',
     'dummy-non-existing-folder',
     'electron/dummy-non-existing-folder',
+    'electron/release',
     'electron/release-installer',
     'electron/resources',
     '**/public/vendor',
