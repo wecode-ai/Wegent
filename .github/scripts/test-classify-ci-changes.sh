@@ -930,9 +930,10 @@ wework_memory_job="$(
 )"
 if [[ "$wework_memory_job" != *"pnpm-store-v2-"* ]] ||
   [[ "$wework_memory_job" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
-  [[ "$wework_memory_job" != *"pnpm install --frozen-lockfile --offline"* ]] ||
-  [[ "$wework_memory_job" != *"pnpm --dir wework/electron install --frozen-lockfile --offline"* ]]; then
-  printf 'Wework memory E2E must install from the complete offline macOS pnpm cache\n' >&2
+  [[ "$wework_memory_job" != *"pnpm install --frozen-lockfile"* ]] ||
+  [[ "$wework_memory_job" != *"pnpm --dir wework/electron install --frozen-lockfile"* ]] ||
+  [[ "$wework_memory_job" == *"--offline"* ]]; then
+  printf 'Wework memory E2E must allow dependency downloads when the macOS pnpm cache is incomplete\n' >&2
   exit 1
 fi
 
