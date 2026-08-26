@@ -139,6 +139,69 @@ collect_wework_renderer_tests() {
     done
 }
 
+run_wework_unit_tests() {
+    local test_exit=0
+
+    : > "$TEMP_DIR/wework_test.log"
+
+    if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
+        if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
+            echo -e "   Running full renderer unit tests with $WEWORK_TEST_WORKERS workers..."
+            if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
+                pnpm --filter wework exec vitest run --dir src --pool=threads \
+                >> "$TEMP_DIR/wework_test.log" 2>&1; then
+                test_exit=1
+            fi
+        else
+            collect_wework_renderer_tests
+            if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
+                echo -e "   Running focused renderer unit tests with $WEWORK_TEST_WORKERS workers..."
+                if ! VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
+                    pnpm --filter wework exec vitest run --pool=threads \
+                    "${WEWORK_FOCUSED_TEST_FILES[@]}" \
+                    >> "$TEMP_DIR/wework_test.log" 2>&1; then
+                    test_exit=1
+                fi
+            else
+                echo -e "   ${YELLOW}↪ Renderer unit tests: SKIPPED (no colocated tests)${NC}"
+            fi
+        fi
+    fi
+
+    if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
+        echo -e "   Running Electron unit tests..."
+        if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    if [ "$WEWORK_DSH_CHANGED" -eq 1 ]; then
+        echo -e "   Running DSH unit tests..."
+        DSH_TEST_FILES=()
+        while IFS= read -r test_file; do
+            DSH_TEST_FILES+=("${test_file#wework/}")
+        done < <(collect_node_test_files "wework/dsh")
+        if ! pnpm --filter wework test \
+            "${DSH_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    if [ "$WEWORK_SCRIPTS_CHANGED" -eq 1 ]; then
+        echo -e "   Running Wework script unit tests..."
+        SCRIPT_TEST_FILES=()
+        while IFS= read -r test_file; do
+            SCRIPT_TEST_FILES+=("${test_file#wework/}")
+        done < <(collect_node_test_files "wework/scripts")
+        if ! pnpm --filter wework test \
+            "${SCRIPT_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
+            test_exit=1
+        fi
+    fi
+
+    return "$test_exit"
+}
+
 resolve_default_base() {
     local remote_name="${1:-}"
     local candidate=""
@@ -485,7 +548,7 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
         collect_wework_test_scope
-        echo -e "   Running static checks in parallel..."
+        echo -e "   Running static checks and unit tests in parallel..."
 
         pnpm --filter wework lint > "$TEMP_DIR/wework_eslint.log" 2>&1 &
         ESLINT_PID=$!
@@ -511,6 +574,10 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             fi
         fi
 
+        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-4}"
+        run_wework_unit_tests &
+        WEWORK_TEST_PID=$!
+
         wait "$ESLINT_PID"
         ESLINT_EXIT=$?
 
@@ -524,59 +591,8 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
             ELECTRON_TSC_EXIT=$?
         fi
 
-        WEWORK_TEST_WORKERS="${WEWORK_PRE_PUSH_TEST_WORKERS:-2}"
-        TEST_EXIT=0
-        : > "$TEMP_DIR/wework_test.log"
-
-        if [ "$WEWORK_RENDERER_CHANGED" -eq 1 ]; then
-            if [ "$WEWORK_RENDERER_FULL_TESTS" -eq 1 ]; then
-                echo -e "   Running full renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-                VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                    pnpm --filter wework exec vitest run >> "$TEMP_DIR/wework_test.log" 2>&1
-            else
-                collect_wework_renderer_tests
-                if [ "${#WEWORK_FOCUSED_TEST_FILES[@]}" -gt 0 ]; then
-                    echo -e "   Running focused renderer unit tests with $WEWORK_TEST_WORKERS workers..."
-                    VITEST_MAX_WORKERS="$WEWORK_TEST_WORKERS" \
-                        pnpm --filter wework exec vitest run \
-                        "${WEWORK_FOCUSED_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1
-                else
-                    echo -e "   ${YELLOW}↪ Renderer unit tests: SKIPPED (no colocated tests)${NC}"
-                fi
-            fi
-            TEST_EXIT=$?
-        fi
-
-        if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ] && [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
-            echo -e "   Running Electron unit tests..."
-            if ! pnpm --dir wework/electron test >> "$TEMP_DIR/wework_test.log" 2>&1; then
-                TEST_EXIT=1
-            fi
-        fi
-
-        if [ "$WEWORK_DSH_CHANGED" -eq 1 ]; then
-            echo -e "   Running DSH unit tests..."
-            DSH_TEST_FILES=()
-            while IFS= read -r test_file; do
-                DSH_TEST_FILES+=("${test_file#wework/}")
-            done < <(collect_node_test_files "wework/dsh")
-            if ! pnpm --filter wework test \
-                "${DSH_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
-                TEST_EXIT=1
-            fi
-        fi
-
-        if [ "$WEWORK_SCRIPTS_CHANGED" -eq 1 ]; then
-            echo -e "   Running Wework script unit tests..."
-            SCRIPT_TEST_FILES=()
-            while IFS= read -r test_file; do
-                SCRIPT_TEST_FILES+=("${test_file#wework/}")
-            done < <(collect_node_test_files "wework/scripts")
-            if ! pnpm --filter wework test \
-                "${SCRIPT_TEST_FILES[@]}" >> "$TEMP_DIR/wework_test.log" 2>&1; then
-                TEST_EXIT=1
-            fi
-        fi
+        wait "$WEWORK_TEST_PID"
+        TEST_EXIT=$?
 
         if [ $ESLINT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
