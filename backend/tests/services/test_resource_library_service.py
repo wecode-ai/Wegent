@@ -879,6 +879,49 @@ def test_editing_system_publication_materializes_complete_metadata(
     )
 
 
+def test_public_listing_treats_system_marketplace_metadata_as_public(
+    test_db, test_admin_user
+):
+    skill = _create_skill(
+        test_db,
+        user_id=0,
+        name="system-marketplace-only-skill",
+        capability={"marketplace": {"recommendationScore": 0}},
+    )
+
+    listing = resource_library_service.get_public_listing(
+        test_db,
+        listing_id=skill.id,
+        user_id=test_admin_user.id,
+    )
+
+    assert listing.id == skill.id
+    assert listing.status == "published"
+
+
+def test_public_listing_rejects_explicitly_archived_system_resource(
+    test_db, test_admin_user
+):
+    skill = _create_skill(
+        test_db,
+        user_id=0,
+        name="archived-system-skill",
+        capability={
+            "visibility": "private",
+            "publishStatus": "archived",
+            "marketplace": {"recommendationScore": 90},
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        resource_library_service.get_public_listing(
+            test_db,
+            listing_id=skill.id,
+            user_id=test_admin_user.id,
+        )
+    assert exc_info.value.status_code == 404
+
+
 def test_private_skill_sharing_scope_can_be_read_and_updated(test_db, test_user):
     skill = _create_skill(test_db, user_id=test_user.id, name="private-scope-skill")
     group_name = _create_group_with_member(test_db, test_user)
