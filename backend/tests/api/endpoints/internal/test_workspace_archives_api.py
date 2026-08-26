@@ -203,7 +203,13 @@ def test_restore_sandbox_endpoint_uses_sandbox_runtime(
     restore_mock = mocker.patch.object(
         archive_service,
         "restore_workspace",
-        new=AsyncMock(return_value=True),
+        new=AsyncMock(
+            return_value={
+                "success": True,
+                "session_restored": False,
+                "git_restored": False,
+            }
+        ),
     )
 
     response = test_client.post(

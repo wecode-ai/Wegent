@@ -831,6 +831,7 @@ async fn archive_workspace(
     let mode = parse_archive_mode(&request.runtime_type)?;
     let archive = create_runtime_archive(ArchiveOptions {
         mode,
+        task_id: request.task_id.to_string(),
         workspace_path: task_workspace_path(request.task_id),
         home_path: runtime_home_path(mode),
         max_size_bytes: u64::from(request.max_size_mb) * 1024 * 1024,
@@ -892,6 +893,7 @@ async fn restore_workspace(
     let result = restore_runtime_archive(
         &bytes,
         mode,
+        &request.task_id.to_string(),
         &task_workspace_path(request.task_id),
         &runtime_home_path(mode),
     )

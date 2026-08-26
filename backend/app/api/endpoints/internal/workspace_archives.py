@@ -154,7 +154,7 @@ async def restore_sandbox_workspace(
         runtime_type="sandbox",
     )
 
-    return SandboxRestoreResponse(success=restored, task_id=task_id)
+    return SandboxRestoreResponse(success=bool(restored), task_id=task_id)
 
 
 @router.get("/{task_id}/download-url", response_model=ArchiveDownloadUrlResponse)

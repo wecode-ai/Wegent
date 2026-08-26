@@ -17,7 +17,7 @@ with git clone enabled.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -69,7 +69,7 @@ class ExecutorRecoveryService:
 
         return "default"
 
-    def _persist_prepare_failure(
+    def _persist_recovery_failure(
         self,
         db: Session,
         subtask: Subtask,
@@ -84,6 +84,49 @@ class ExecutorRecoveryService:
         db.add(subtask)
         db.add(task)
         db.commit()
+
+    @staticmethod
+    def _requires_claude_session(request: ExecutionRequest) -> bool:
+        if request.new_session:
+            return False
+        bots = request.bot if isinstance(request.bot, list) else [request.bot]
+        return any(
+            isinstance(bot, dict) and bot.get("shell_type") == "ClaudeCode"
+            for bot in bots
+        )
+
+    @staticmethod
+    def _has_inherited_claude_session(request: ExecutionRequest) -> bool:
+        bots = request.bot if isinstance(request.bot, list) else [request.bot]
+        bot_ids = {
+            str(bot["id"])
+            for bot in bots
+            if isinstance(bot, dict) and bot.get("id") is not None
+        }
+        for session in request.inherited_sessions:
+            if not isinstance(session, dict):
+                continue
+            if session.get("agent") not in {"ClaudeCode", "Claude Code"}:
+                continue
+            session_id = session.get("sessionId") or session.get("session_id")
+            if not ExecutorRecoveryService._is_safe_session_identifier(session_id):
+                continue
+            session_bot_id: Any = session.get("botId", session.get("bot_id"))
+            if bot_ids and session_bot_id is not None:
+                if str(session_bot_id) not in bot_ids:
+                    continue
+            return True
+        return False
+
+    @staticmethod
+    def _is_safe_session_identifier(value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        value = value.strip()
+        return bool(value) and all(
+            character.isascii() and (character.isalnum() or character in {"-", "_"})
+            for character in value
+        )
 
     async def recover(
         self,
@@ -208,7 +251,7 @@ class ExecutorRecoveryService:
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
                 if error:
-                    self._persist_prepare_failure(db, subtask, task, error)
+                    self._persist_recovery_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name
@@ -218,14 +261,27 @@ class ExecutorRecoveryService:
             )
 
             # Restore workspace from archive
-            restore_success = await archive_service.restore_workspace(
+            restore_result = await archive_service.restore_workspace(
                 db=db,
                 task=task,
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
             )
 
-            if not restore_success:
+            session_available = bool(restore_result) and bool(
+                restore_result.get("session_restored", False)
+                or self._has_inherited_claude_session(request)
+            )
+            if self._requires_claude_session(request) and not session_available:
+                error = (
+                    f"Claude session context for task {task_id} was not restored. "
+                    "Refusing to send the continuation to a new session."
+                )
+                logger.error(f"[RecoveryService] {error}")
+                self._persist_recovery_failure(db, subtask, task, error)
+                raise RuntimeError(error)
+
+            if not restore_result:
                 logger.warning(
                     f"[RecoveryService] Failed to restore workspace for task {task_id}, "
                     "continuing with empty workspace"
@@ -244,6 +300,8 @@ class ExecutorRecoveryService:
 
             return True
 
+        except RuntimeError:
+            raise
         except Exception as e:
             logger.error(
                 f"[RecoveryService] Error recovering with archive for task {task_id}: {e}",
@@ -286,7 +344,7 @@ class ExecutorRecoveryService:
                     f"[RecoveryService] Failed to prepare executor for task {task_id}: {error}"
                 )
                 if error:
-                    self._persist_prepare_failure(db, subtask, task, error)
+                    self._persist_recovery_failure(db, subtask, task, error)
                 return False
 
             executor_name = executor.container_name

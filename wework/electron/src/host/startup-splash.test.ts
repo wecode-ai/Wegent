@@ -152,8 +152,34 @@ describe('StartupSplash', () => {
     await show()
 
     await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    await splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
 
     expect(target.webContents.capturePage).toHaveBeenCalledOnce()
+    expect(writePng).toHaveBeenCalledWith(
+      '/tmp/wework-e2e/startup-splash.png',
+      Buffer.from('splash-png')
+    )
+    expect(writePng).toHaveBeenCalledOnce()
+  })
+
+  test('shares one close operation across concurrent callers', async () => {
+    const { show, splash, target, writePng } = createFixture()
+    await show()
+    let finishCapture: (() => void) | undefined
+    target.webContents.capturePage.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishCapture = () => resolve({ toPNG: () => Buffer.from('splash-png') })
+        })
+    )
+
+    const first = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash.png' })
+    const second = splash.close({ capturePath: '/tmp/wework-e2e/startup-splash-second.png' })
+    finishCapture?.()
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2)
+    expect(target.webContents.capturePage).toHaveBeenCalledOnce()
+    expect(writePng).toHaveBeenCalledOnce()
     expect(writePng).toHaveBeenCalledWith(
       '/tmp/wework-e2e/startup-splash.png',
       Buffer.from('splash-png')
