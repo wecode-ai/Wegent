@@ -103,7 +103,10 @@ jobs:
           notes="$(mktemp)"
           node wework/scripts/generate-release-notes.mjs > "$notes"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release edit "$RELEASE_TAG" --title "$title" --notes-file "$notes"
+            gh release edit "$RELEASE_TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$title" \
+              --notes-file "$notes"
           else
             gh release create "$RELEASE_TAG" \
               --target "$RELEASE_SHA" \

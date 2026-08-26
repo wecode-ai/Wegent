@@ -125,6 +125,7 @@ export class DesktopRuntime {
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
       environment: this.options.environment,
+      dataDirectory: this.options.dataDirectory,
       logDirectory: this.options.logDirectory,
       deviceId,
       onEvent: this.options.onExecutorEvent,

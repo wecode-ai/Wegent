@@ -31,6 +31,7 @@ describe('managed executor runtime', () => {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"auth":"native"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: '/must-not-leak',
         VITE_WEWORK_E2E: 'true',
@@ -54,6 +55,7 @@ describe('managed executor runtime', () => {
     await writeFile(join(launchingCodexHome, 'auth.json'), '{"auth":"launching"}\n')
 
     const environment = prepareManagedExecutorEnvironment({
+      dataDirectory: join(directory.path, 'data'),
       environment: {
         CODEX_HOME: launchingCodexHome,
         VITE_WEWORK_E2E: 'true',
@@ -65,19 +67,6 @@ describe('managed executor runtime', () => {
     await expect(readFile(join(managedCodexHome, 'auth.json'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
-    await directory.remove()
-  })
-
-  test('reuses the legacy Wework executor home without copying data', async () => {
-    const directory = await temporaryDirectory('managed-executor-legacy-home-')
-    const environment = prepareManagedExecutorEnvironment({
-      environment: {
-        HOME: directory.path,
-      },
-    })
-
-    expect(environment.WEGENT_EXECUTOR_HOME).toBe(join(directory.path, '.wework'))
-    expect(environment.WEGENT_CODEX_HOME).toBe(join(directory.path, '.wework', 'codex'))
     await directory.remove()
   })
 
