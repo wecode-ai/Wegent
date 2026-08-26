@@ -17,6 +17,7 @@ if (!platform || !arch || !version || !outputDirectory) {
 }
 
 const output = resolve(outputDirectory)
+const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
@@ -49,7 +50,7 @@ if (platform === 'macos') {
 } else if (platform === 'linux') {
   const appImage = await findFile(
     installerRoot,
-    new RegExp(`^WeWork_${escape(version)}_linux_${arch}\\.AppImage$`)
+    new RegExp(`^WeWork_${escape(version)}_linux_${installerArchitecture}\\.AppImage$`)
   )
   await cp(appImage, join(output, basename(appImage)))
 } else {

@@ -4793,12 +4793,11 @@ export function CloudTodoWorkspace({
                       })
                     }
                   }
-                  const backgroundAfterSend = selectedItem.status === 'pending' && !workflowNodeId
-                  setBackgroundTaskItemId(backgroundAfterSend ? selectedItem.id : null)
+                  setBackgroundTaskItemId(null)
                   openTaskComposer({
                     workItemId: selectedItem.id,
                     initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
-                    backgroundAfterSend,
+                    backgroundAfterSend: false,
                     workflowNodeId,
                     inheritFromTask,
                   })

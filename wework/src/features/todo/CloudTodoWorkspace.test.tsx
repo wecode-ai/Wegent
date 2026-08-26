@@ -1547,7 +1547,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-open', 'yes')
   })
 
-  it('starts a pending task in the background without mounting any panel', async () => {
+  it('opens the task composer when creating a task from a pending Issue', async () => {
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [{ ...item, status: 'pending' as const }],
@@ -1565,22 +1565,13 @@ describe('CloudTodoWorkspace', () => {
     await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
 
-    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('mock-start-background-task'))
-
-    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
-
-    await userEvent.click(screen.getByTestId('cloud-todo-card-WEG-1'))
-
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
-    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-panel-stack')).toHaveAttribute(
+      'data-conversation-open',
+      'true'
+    )
+    expect(screen.getByTestId('ai-chat-modal')).toHaveAttribute('data-task-id', item.id)
+    expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
   })
 
   it('dismisses the unified Issue and conversation panel in one action', async () => {
@@ -2492,8 +2483,43 @@ describe('CloudTodoWorkspace', () => {
         file
       )
     )
-    expect(screen.queryByText('brief.txt')).not.toBeInTheDocument()
+    expect(screen.getByText('brief.txt')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-attachment-footer')).toHaveTextContent('附件1＋ 上传')
+  })
+
+  it('shows existing Issue attachments in the detail panel', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItemAttachments = vi.fn(async () => [
+      {
+        id: 'attachment-existing',
+        loop_item_id: item.id,
+        display_name: 'feedback.png',
+        content_type: 'image/png',
+        size_bytes: 2048,
+        sha256: 'existing-hash',
+        created_by_user_id: 1,
+        created_at: '2026-08-26T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-existing',
+        markdown:
+          '[feedback.png](wegent://attachments/attachment-existing)\n<!-- wegent-attachment:attachment-existing -->',
+      },
+    ])
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+
+    expect(await screen.findByText('feedback.png')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('cloud-todo-attachment-download-attachment-existing')
+    ).toBeInTheDocument()
   })
 
   it('collapses and restores the sidebar chrome', async () => {
