@@ -3,7 +3,9 @@ import { once } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { createInterface } from 'node:readline'
 import { describe, expect, test, vi } from 'vitest'
+import type { AppUpdateService } from './app-update-service.js'
 import { HostCapabilityRouter } from './capability-router.js'
+import { registerAppUpdateCapabilities } from './electron-capabilities.js'
 import { HostPipeServer } from './host-pipe.js'
 
 describe('HostPipeServer', () => {
@@ -94,6 +96,61 @@ describe('HostPipeServer', () => {
       error: { code: 'capability_denied' },
     })
     server.stop()
+  })
+
+  test('writes the install response before running application shutdown', async () => {
+    const router = new HostCapabilityRouter()
+    router.grant('@wegent/dsh-app-wework', ['appUpdate.install'])
+    const prepareShutdown = vi.fn(async () => server.stop())
+    const quitAndInstall = vi.fn()
+    const appUpdates = {
+      createInstallAction: vi.fn(() => async () => {
+        await prepareShutdown()
+        quitAndInstall(false, true)
+      }),
+    } as unknown as AppUpdateService
+    registerAppUpdateCapabilities(router, appUpdates)
+    const server = new HostPipeServer(router)
+    const childToHost = new PassThrough()
+    const hostToChild = new PassThrough()
+    const replies = createInterface({ input: hostToChild })
+    const nextReply = () =>
+      new Promise<Record<string, unknown>>(resolve =>
+        replies.once('line', line => resolve(JSON.parse(line) as Record<string, unknown>))
+      )
+    server.attachStreams(childToHost, hostToChild)
+
+    let response = nextReply()
+    childToHost.write(
+      `${JSON.stringify({
+        type: 'hello',
+        protocolVersion: 1,
+        token: server.environment().WEWORK_ELECTRON_HOST_TOKEN,
+        principal: '@wegent/dsh-app-wework',
+      })}\n`
+    )
+    await response
+
+    response = nextReply()
+    childToHost.write(
+      `${JSON.stringify({
+        type: 'request',
+        id: 'install-request',
+        capability: 'appUpdate.install',
+        params: {},
+      })}\n`
+    )
+
+    await expect(response).resolves.toEqual({
+      type: 'response',
+      id: 'install-request',
+      ok: true,
+      result: null,
+    })
+    await vi.waitFor(() => {
+      expect(prepareShutdown).toHaveBeenCalledOnce()
+      expect(quitAndInstall).toHaveBeenCalledWith(false, true)
+    })
   })
 
   test('rejects incompatible or unauthenticated handshakes', async () => {

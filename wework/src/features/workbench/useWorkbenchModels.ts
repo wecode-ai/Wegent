@@ -67,33 +67,13 @@ function areModelOptionsEqual(left: ModelOptions, right: ModelOptions): boolean 
   return leftKeys.every(key => left[key] === right[key])
 }
 
-function getSelectionKey(
-  models: UnifiedModel[],
-  selectionConfig?: ModelSelectionConfig | null
-): string {
-  const modelsKey = models
-    .map(model => {
-      const identity = modelSelectionIdentityOptions(model)
-      return [
-        model.type,
-        model.name,
-        identity.codexProviderId ?? '',
-        identity.weworkCloudModelNamespace ?? '',
-        identity.weworkCloudModelResourceUserId ?? '',
-      ].join(':')
-    })
-    .join('|')
+function getSelectionKey(selectionConfig?: ModelSelectionConfig | null): string {
   const options = selectionConfig?.options ?? {}
   const optionsKey = Object.keys(options)
     .sort()
     .map(key => `${key}:${options[key]}`)
     .join('|')
-  return [
-    modelsKey,
-    selectionConfig?.modelType ?? '',
-    selectionConfig?.modelName ?? '',
-    optionsKey,
-  ].join('::')
+  return [selectionConfig?.modelType ?? '', selectionConfig?.modelName ?? '', optionsKey].join('::')
 }
 
 export function useWorkbenchModels({
@@ -137,8 +117,8 @@ export function useWorkbenchModels({
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
   }, [defaultSelectionConfig, models, selectionConfig])
   const selectionKey = useMemo(
-    () => getSelectionKey(models, effectiveSelectionConfig),
-    [models, effectiveSelectionConfig]
+    () => getSelectionKey(effectiveSelectionConfig),
+    [effectiveSelectionConfig]
   )
   const selectionMatchesConfig = Boolean(
     effectiveSelectionConfig?.modelName &&
@@ -272,7 +252,15 @@ export function useWorkbenchModels({
           Object.prototype.hasOwnProperty.call(selectedModelRef.current, scopeKey) ||
           Object.prototype.hasOwnProperty.call(selectedModelOptionsRef.current, scopeKey)
         const scopeSelectionAlreadyRestored = restoredSelectionKeyByScope[scopeKey] === selectionKey
-        if (!hasScopeSelection || !scopeSelectionAlreadyRestored) {
+        const configuredModelAvailable = Boolean(
+          effectiveSelectionConfig?.modelName &&
+          findModelForSelection(models, effectiveSelectionConfig)
+        )
+        if (
+          !hasScopeSelection ||
+          !scopeSelectionAlreadyRestored ||
+          (configuredModelAvailable && !selectedModelRef.current[scopeKey])
+        ) {
           restoreSelection(models, effectiveSelectionConfig)
         }
         setRestoredSelectionKeyByScope(current =>

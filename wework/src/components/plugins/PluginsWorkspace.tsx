@@ -80,6 +80,7 @@ import {
   marketplaceItemNeedsPluginAutoUpdate,
   runPluginAutoUpdate,
 } from '@/features/plugins/pluginAutoUpdate'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import type {
   InstalledPlugin,
   PluginAccessUpdateRequest,
@@ -264,6 +265,14 @@ export function PluginsWorkspace({
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [marketplaceLoadingMessage, setMarketplaceLoadingMessage] = useState('')
   const [marketplaceRefreshTick, setMarketplaceRefreshTick] = useState(0)
+
+  useEffect(() => {
+    const refreshAfterAutoUpdate = () => setMarketplaceRefreshTick(previous => previous + 1)
+    window.addEventListener(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT, refreshAfterAutoUpdate)
+    return () =>
+      window.removeEventListener(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT, refreshAfterAutoUpdate)
+  }, [])
+
   const [showAddMarketDialog, setShowAddMarketDialog] = useState(false)
   const [showPluginImportDialog, setShowPluginImportDialog] = useState(false)
   const [addMarketForm, setAddMarketForm] = useState<AddMarketFormData>({

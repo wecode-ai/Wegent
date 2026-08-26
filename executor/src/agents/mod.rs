@@ -362,7 +362,21 @@ impl AgentEngine for AgentProcessEngine {
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
-                                git_auth::setup_git_authentication(&request).await;
+                                spec = match git_auth::apply_task_git_authentication(&request, spec)
+                                {
+                                    Ok(spec) => spec,
+                                    Err(message) => {
+                                        let mut failed_fields =
+                                            task_fields(&request.task_id, &request.subtask_id);
+                                        failed_fields
+                                            .push(("reason", "git_auth_failed".to_owned()));
+                                        log_executor_event(
+                                            "Claude task Git authentication failed",
+                                            &failed_fields,
+                                        );
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                };
                                 run_pre_execute_hook(&request, &spec).await;
                             }
                             stream_process_engine_for(&agent_kind, spec)
@@ -467,7 +481,21 @@ impl AgentEngine for AgentProcessEngine {
                                 deploy_claude_task_skills(&request, &spec).await;
                                 configure_claude_default_settings(&request, &spec);
                                 configure_claude_file_edit_hooks(&request, &spec);
-                                git_auth::setup_git_authentication(&request).await;
+                                spec = match git_auth::apply_task_git_authentication(&request, spec)
+                                {
+                                    Ok(spec) => spec,
+                                    Err(message) => {
+                                        let mut failed_fields =
+                                            task_fields(&request.task_id, &request.subtask_id);
+                                        failed_fields
+                                            .push(("reason", "git_auth_failed".to_owned()));
+                                        log_executor_event(
+                                            "Claude task Git authentication failed",
+                                            &failed_fields,
+                                        );
+                                        return ExecutionOutcome::Failed { message };
+                                    }
+                                };
                                 run_pre_execute_hook(&request, &spec).await;
                             }
                             stream_process_engine_for(&agent_kind, spec)

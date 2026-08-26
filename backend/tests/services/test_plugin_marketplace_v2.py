@@ -8,6 +8,7 @@ import json
 import stat
 import zipfile
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -296,7 +297,8 @@ def _device_install(test_db, user_id: int) -> tuple[Kind, PluginRelease]:
 def test_submission_review_publishes_immutable_release_without_install_copy(
     test_db, test_user, monkeypatch
 ):
-    service = PluginMarketplaceService()
+    release_notifier = Mock(return_value=1)
+    service = PluginMarketplaceService(release_notifier=release_notifier)
     package = _plugin_zip()
     digest = hashlib.sha256(package).hexdigest()
     stored_packages: dict[str, bytes] = {}
@@ -319,6 +321,7 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
         user_id=test_user.id,
         submission_id=initialized.submissionId,
     )
+    release_notifier.assert_not_called()
     reviewed = service.review_submission(
         test_db,
         reviewer_user_id=test_user.id,
@@ -329,6 +332,7 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
 
     assert completed.status == "pending"
     assert reviewed.status == "approved"
+    release_notifier.assert_called_once_with(test_db, initialized.releaseId)
     catalog = service.list_plugins(test_db, user_id=test_user.id)
     assert [item.displayName for item in catalog.items] == ["GitLab Engineering"]
     assert catalog.items[0].sourceProvider == "user"
@@ -350,6 +354,48 @@ def test_submission_review_publishes_immutable_release_without_install_copy(
         test_db.query(SkillBinary).filter(SkillBinary.kind_id == installed_id).first()
         is None
     )
+
+
+def test_task_bound_submission_rejects_another_task_token(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = PluginMarketplaceService()
+    package = _plugin_zip()
+    stored_packages: dict[str, bytes] = {}
+    _mock_package_storage(monkeypatch, stored_packages, package)
+    initialized = service.init_submission(
+        test_db,
+        user_id=test_user.id,
+        request=PluginSubmissionInitRequest(
+            slug="task-bound",
+            displayName="Task Bound",
+            version="1.0.0",
+            filename="task-bound.zip",
+            sha256=hashlib.sha256(package).hexdigest(),
+            sizeBytes=len(package),
+        ),
+        task_binding=(101, 202),
+    )
+
+    service.ensure_submission_task_binding(
+        test_db,
+        user_id=test_user.id,
+        submission_id=initialized.submissionId,
+        task_id=101,
+        subtask_id=202,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        service.ensure_submission_task_binding(
+            test_db,
+            user_id=test_user.id,
+            submission_id=initialized.submissionId,
+            task_id=101,
+            subtask_id=203,
+        )
+
+    assert exc_info.value.status_code == 404
 
 
 def test_submission_cannot_be_reviewed_twice(test_db, test_user, monkeypatch):
@@ -605,7 +651,9 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
     test_db, test_user, monkeypatch, tmp_path
 ):
     source = _write_official_source(tmp_path / "official-review")
-    publisher = OfficialPluginPublisher()
+    release_notifier = Mock(return_value=1)
+    marketplace_service = PluginMarketplaceService(release_notifier=release_notifier)
+    publisher = OfficialPluginPublisher(marketplace_service=marketplace_service)
     first_build = publisher.build_package(source)
     second_build = publisher.build_package(source)
     stored_packages: dict[str, bytes] = {}
@@ -633,6 +681,7 @@ def test_official_package_build_is_deterministic_and_publish_is_idempotent(
     assert first_build.sha256 == second_build.sha256
     assert first.created is True
     assert second.created is False
+    release_notifier.assert_called_once_with(test_db, first.release.id)
     assert second.release.id == first.release.id
     assert test_db.query(PluginRelease).count() == 1
     plugin = test_db.get(Plugin, first.release.plugin_id)
@@ -1297,7 +1346,8 @@ def test_list_plugins_batches_grant_lookups_instead_of_per_plugin_queries(
 def test_restricted_submission_is_owner_only_until_access_is_granted(
     test_db, test_user, monkeypatch
 ):
-    service = PluginMarketplaceService()
+    release_notifier = Mock(return_value=1)
+    service = PluginMarketplaceService(release_notifier=release_notifier)
     package = _plugin_zip()
     digest = hashlib.sha256(package).hexdigest()
     stored_packages: dict[str, bytes] = {}
@@ -1338,6 +1388,7 @@ def test_restricted_submission_is_owner_only_until_access_is_granted(
     assert plugin.visibility == "personal"
     assert plugin.status == "published"
     assert release.status == "ready"
+    release_notifier.assert_called_once_with(test_db, initialized.releaseId)
     assert [
         item.id for item in service.list_plugins(test_db, user_id=test_user.id).items
     ] == [plugin.id]
@@ -2675,7 +2726,8 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
         "app.services.plugin_marketplace_service.validate_upstream_url",
         lambda _url: None,
     )
-    service = PluginMarketplaceService()
+    release_notifier = Mock(return_value=1)
+    service = PluginMarketplaceService(release_notifier=release_notifier)
     package = _plugin_zip("2.0.0")
     stored_packages: dict[str, bytes] = {}
     upstream = service.create_upstream(
@@ -2706,6 +2758,7 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
 
     assert first.lastSeenVersion == "2.0.0"
     assert second.lastError is None
+    release_notifier.assert_called_once()
     assert (
         test_db.query(PluginRelease)
         .filter(PluginRelease.plugin_id == upstream.pluginId)
@@ -2720,6 +2773,7 @@ def test_upstream_sync_is_incremental_and_records_failure(test_db, monkeypatch):
     )
     downgraded = service.sync_upstream(test_db, upstream_id=upstream.id)
     assert downgraded.lastSeenVersion == "1.5.0"
+    release_notifier.assert_called_once()
     assert test_db.get(Plugin, upstream.pluginId).latest_release_id == latest_release_id
     assert (
         test_db.query(PluginRelease)

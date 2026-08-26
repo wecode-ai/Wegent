@@ -1,12 +1,15 @@
 {
   "name": "@wegent/wework-electron",
   "private": true,
-  "version": "0.2.5",
+  "version": "0.2.7-beta.1",
+  "description": "Wework desktop workbench",
+  "author": "Wecode",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "build:package": "pnpm run prepare:package && pnpm run build && node scripts/package-app.mjs",
+    "build:release": "pnpm run prepare:package && pnpm run build && node scripts/build-release.mjs",
     "dev": "pnpm run build && electron .",
     "prepare:package": "node scripts/prepare-package-assets.mjs",
     "start": "electron .",
@@ -19,15 +22,18 @@
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
+    "@tauri-apps/cli": "2.11.4",
     "@types/archiver": "8.0.0",
     "@types/node": "24.13.3",
     "@types/semver": "7.8.0",
     "electron": "43.4.1",
+    "electron-builder": "26.15.3",
     "typescript": "~6.0.2",
     "vitest": "4.1.7"
   },
   "dependencies": {
     "archiver": "8.0.0",
+    "electron-updater": "6.8.9",
     "extract-zip": "2.0.1",
     "semver": "7.8.5",
     "tar": "7.5.22"

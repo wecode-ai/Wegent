@@ -8,7 +8,9 @@ const BASE_PATH = '/wework/electron-host/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
 export async function apply(ctx) {
-  const client = ElectronHostClient.fromEnvironment()
+  const client = ElectronHostClient.fromEnvironment(process.env, {
+    onDisconnect: hostDisconnectHandler(ctx),
+  })
   await client.start()
   const generation = createWeworkDesktopService(client)
   ctx.effect(() => {
@@ -37,6 +39,14 @@ export async function apply(ctx) {
       }),
     `wework-electron-host: ${BASE_PATH}/invoke`
   )
+}
+
+export function hostDisconnectHandler(ctx) {
+  const exit = ctx.get('appExit')
+  if (typeof exit !== 'function') {
+    throw new Error('wework-electron-host requires the DSH launcher appExit service')
+  }
+  return () => exit(0)
 }
 
 async function describe(req, res, client) {

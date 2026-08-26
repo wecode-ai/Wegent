@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
@@ -412,7 +413,19 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               className="h-full"
               scrollerClassName={isCreatingWorktree ? 'pt-16' : 'pb-28 pt-16'}
               contentFooter={
-                isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                isCreatingWorktree ? (
+                  <WorktreeCreationStatus className="py-8" />
+                ) : (
+                  <PluginWorkspaceConversationResult
+                    taskId={currentRuntimeTask?.taskId}
+                    workspacePath={currentRuntimeTask?.workspacePath}
+                    messages={paneMessages}
+                    waiting={paneSession.status.isWaitingForAssistantIndicator}
+                    onSendAction={(message, additionalContext) =>
+                      paneSession.send(message, { additionalContext })
+                    }
+                  />
+                )
               }
               devices={state.devices}
               onRetryFailedMessage={message => {

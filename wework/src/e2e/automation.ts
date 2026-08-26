@@ -44,7 +44,7 @@ import {
 } from '@/desktop/appPreferences'
 import type { LocalHarnessId } from '@/lib/local-harness'
 import { getDesktopE2ERuntimeConfig, loadDesktopE2ERuntimeConfig } from './runtime-config'
-import { getDesktopE2EClipboardText, installDesktopE2EClipboard } from './clipboard'
+import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
@@ -1537,7 +1537,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'snapshot':
       return desktopControlSnapshot(command.selector)
     case 'getClipboardText':
-      return getDesktopE2EClipboardText()
+      return invokeDesktopHost<string>('e2e.getClipboardText')
     case 'scrollIntoView': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]
@@ -1881,6 +1881,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
+      if (command.value !== undefined) {
+        fillDesktopControlElement(element, command.value)
+      }
       form.requestSubmit()
       return ''
     }

@@ -109,7 +109,7 @@ export function GitHostingSettingsPage() {
         title={t('workbench.git_hosting_settings_title', '代码托管')}
         description={t(
           'workbench.git_hosting_settings_description',
-          '使用本机 GitHub CLI 或 GitLab CLI 查询当前分支的拉取请求或合并请求状态。Wework 不保存访问令牌。'
+          '检测当前设备上的 GitHub CLI 或 GitLab CLI，并配置 PR / MR 状态显示。'
         )}
         actions={
           <button

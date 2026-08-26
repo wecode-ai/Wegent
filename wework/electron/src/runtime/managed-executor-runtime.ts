@@ -28,8 +28,9 @@ export interface ManagedExecutorRuntimeOptions {
 export class ManagedExecutorRuntime {
   private readonly endpoint: string
   private readonly token = randomBytes(32).toString('base64url')
+  private readonly ownerToken = randomBytes(32).toString('base64url')
   private readonly process: RuntimeSupervisor
-  private eventSocket: Socket | null = null
+  private ownerSocket: Socket | null = null
 
   constructor(private readonly options: ManagedExecutorRuntimeOptions) {
     this.endpoint = localExecutorEndpoint()
@@ -41,19 +42,30 @@ export class ManagedExecutorRuntime {
         ...environment,
         WEGENT_APP_IPC_DEVICE_ID: options.deviceId,
         WEGENT_APP_IPC_ENDPOINT: this.endpoint,
+        WEGENT_APP_IPC_OWNER_TOKEN: this.ownerToken,
         WEGENT_APP_IPC_TOKEN: this.token,
       },
       name: 'wegent-executor',
       log: { path: join(options.logDirectory, 'executor-runtime.log') },
-      probe: (_child, signal) => waitForEndpointAuthentication(this.endpoint, this.token, signal),
+      probe: async (_child, signal) => {
+        await waitForEndpointAuthentication(this.endpoint, this.token, signal)
+        this.ownerSocket?.destroy()
+        this.ownerSocket = await connectEventStream(
+          this.endpoint,
+          this.ownerToken,
+          this.options.onEvent ?? (() => undefined),
+          signal
+        )
+      },
+    })
+    this.process.on('exit', () => {
+      this.ownerSocket?.destroy()
+      this.ownerSocket = null
     })
   }
 
   async start(): Promise<void> {
     await this.process.start()
-    if (this.options.onEvent) {
-      this.eventSocket = await connectEventStream(this.endpoint, this.token, this.options.onEvent)
-    }
   }
 
   environment(): NodeJS.ProcessEnv {
@@ -67,14 +79,120 @@ export class ManagedExecutorRuntime {
     return this.process.pid()
   }
 
+  request<Result>(
+    method: string,
+    params: Record<string, unknown> = {},
+    signal = AbortSignal.timeout(75_000)
+  ): Promise<Result> {
+    return requestExecutor<Result>(this.endpoint, this.token, method, params, signal)
+  }
+
   async stop(): Promise<void> {
-    this.eventSocket?.destroy()
-    this.eventSocket = null
+    this.ownerSocket?.destroy()
+    this.ownerSocket = null
     await this.process.stop()
     if (process.platform !== 'win32') {
       await rm(this.endpoint, { force: true })
     }
   }
+}
+
+export function requestExecutor<Result>(
+  endpoint: string,
+  token: string,
+  method: string,
+  params: Record<string, unknown>,
+  signal: AbortSignal
+): Promise<Result> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection(endpoint)
+    const requestId = randomUUID()
+    let authenticated = false
+    let buffer = ''
+    let settled = false
+    const finish = (error?: Error, result?: Result) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      socket.end()
+      if (error) reject(error)
+      else resolve(result as Result)
+    }
+    const onAbort = () => {
+      socket.destroy()
+      finish(
+        signal.reason instanceof Error ? signal.reason : new Error('Executor request was aborted')
+      )
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    socket.setEncoding('utf8')
+    socket.once('connect', () => {
+      socket.write(
+        `${JSON.stringify({
+          type: 'authenticate',
+          protocol_version: 1,
+          token,
+        })}\n`
+      )
+    })
+    socket.on('data', chunk => {
+      buffer += chunk
+      for (;;) {
+        const newline = buffer.indexOf('\n')
+        if (newline < 0) return
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        try {
+          const message = JSON.parse(line) as {
+            type?: unknown
+            id?: unknown
+            ok?: unknown
+            protocol_version?: unknown
+            result?: Result
+            error?: { message?: unknown }
+          }
+          if (!authenticated) {
+            if (
+              message.type !== 'authenticated' ||
+              message.ok !== true ||
+              message.protocol_version !== 1
+            ) {
+              throw new Error('Executor rejected request authentication')
+            }
+            authenticated = true
+            socket.write(
+              `${JSON.stringify({
+                type: 'request',
+                id: requestId,
+                method,
+                params,
+              })}\n`
+            )
+            continue
+          }
+          if (message.type !== 'response' || message.id !== requestId) continue
+          if (message.ok !== true) {
+            const detail =
+              typeof message.error?.message === 'string'
+                ? message.error.message
+                : `Executor request failed: ${method}`
+            finish(new Error(detail))
+            return
+          }
+          finish(undefined, message.result)
+          return
+        } catch (error) {
+          socket.destroy()
+          finish(error instanceof Error ? error : new Error(String(error)))
+          return
+        }
+      }
+    })
+    socket.once('error', error => finish(error))
+    socket.once('close', () => {
+      if (!settled) finish(new Error(`Executor closed the request for ${method}`))
+    })
+  })
 }
 
 export function prepareManagedExecutorEnvironment(
@@ -140,13 +258,24 @@ function samePath(left: string, right: string): boolean {
 function connectEventStream(
   endpoint: string,
   token: string,
-  onEvent: (event: string, payload: Record<string, unknown>) => void
+  onEvent: (event: string, payload: Record<string, unknown>) => void,
+  signal: AbortSignal
 ): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(endpoint)
     let authenticated = false
     let settled = false
     let buffer = ''
+    const onAbort = () => {
+      socket.destroy()
+      if (!settled) reject(signal.reason)
+    }
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
     socket.setEncoding('utf8')
     socket.once('connect', () => {
       socket.write(
@@ -182,6 +311,7 @@ function connectEventStream(
             }
             authenticated = true
             settled = true
+            cleanup()
             resolve(socket)
             continue
           }
@@ -199,10 +329,16 @@ function connectEventStream(
       }
     })
     socket.once('error', error => {
-      if (!settled) reject(error)
+      if (!settled) {
+        cleanup()
+        reject(error)
+      }
     })
     socket.once('close', () => {
-      if (!settled) reject(new Error('Executor event stream closed before authentication'))
+      if (!settled) {
+        cleanup()
+        reject(new Error('Executor event stream closed before authentication'))
+      }
     })
   })
 }

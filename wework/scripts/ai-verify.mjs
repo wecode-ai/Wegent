@@ -9,12 +9,16 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
+const repositoryDir = resolve(weworkDir, '..')
+const electronDir = join(weworkDir, 'electron')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 120_000
 const commandResultGraceMs = 5_000
@@ -99,11 +103,13 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
+  pnpm --filter wework ai:verify start --packaged true
   pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
+  --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
                             seed-local-project, paste-paths, or drop-paths
@@ -159,11 +165,12 @@ export function resolveOptionalBoolean(value, optionName) {
 }
 
 export function validateStartOptions(options) {
-  const allowedOptions = new Set(['codex-home-initialization', 'timeout'])
+  const allowedOptions = new Set(['codex-home-initialization', 'packaged', 'timeout'])
   const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
   if (unexpectedOption) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
+  resolveOptionalBoolean(options.packaged, 'packaged')
 }
 
 function json(response, status, value) {
@@ -293,6 +300,102 @@ export function resolveElectronAppBinary(platform = process.platform, arch = pro
   return platform === 'darwin'
     ? join(appRoot, 'WeWork.app', 'Contents', 'MacOS', executable)
     : join(appRoot, executable)
+}
+
+export function resolveElectronLaunch({
+  packaged,
+  sourceBinary,
+  platform = process.platform,
+  arch = process.arch,
+}) {
+  if (packaged) {
+    return {
+      command: resolveElectronAppBinary(platform, arch),
+      args: [],
+      cwd: weworkDir,
+    }
+  }
+  return {
+    command: sourceBinary,
+    args: ['.'],
+    cwd: electronDir,
+  }
+}
+
+export function resolveHostTarget(platform = process.platform, arch = process.arch) {
+  const target = {
+    'darwin:arm64': 'aarch64-apple-darwin',
+    'darwin:x64': 'x86_64-apple-darwin',
+    'linux:arm64': 'aarch64-unknown-linux-gnu',
+    'linux:x64': 'x86_64-unknown-linux-gnu',
+    'win32:x64': 'x86_64-pc-windows-msvc',
+  }[`${platform}:${arch}`]
+  if (!target) throw new Error(`Unsupported Electron source platform: ${platform}/${arch}`)
+  return target
+}
+
+export async function buildSourceRuntimeEnvironment(
+  platform = process.platform,
+  arch = process.arch
+) {
+  const target = resolveHostTarget(platform, arch)
+  const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
+  const codex = lock.targets[target]
+  if (!codex?.binaryPath) throw new Error(`Codex binary is not configured for ${target}`)
+  const executorTargetDir =
+    process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+  return {
+    CODEX_BINARY_PATH: join(weworkDir, 'resources', 'binaries', 'codex', target, codex.binaryPath),
+    DWS_BINARY_PATH: join(
+      weworkDir,
+      'resources',
+      'binaries',
+      `dws-${target}${platform === 'win32' ? '.exe' : ''}`
+    ),
+    WEWORK_EXECUTOR_PATH: join(
+      executorTargetDir,
+      'debug',
+      platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+    ),
+    WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
+    WEWORK_NODE_PATH: process.execPath,
+  }
+}
+
+async function resolveSourceElectronBinary() {
+  const require = createRequire(join(electronDir, 'package.json'))
+  return require('electron')
+}
+
+export function prepareElectronApp({
+  packaged,
+  environment = process.env,
+  platform = process.platform,
+  spawnProcess = spawn,
+}) {
+  if (packaged && environment.WEWORK_ELECTRON_APP_BIN?.trim()) return Promise.resolve()
+  const script = packaged ? 'ai:verify:electron:build' : 'ai:verify:electron:prepare'
+  const description = packaged ? 'Electron package build' : 'Electron source preparation'
+  const preparationEnvironment = {
+    ...environment,
+    CI: environment.CI || '1',
+  }
+  return new Promise((resolvePromise, reject) => {
+    const pnpmCommand = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+    const command = wrapWindowsScriptCommand(pnpmCommand, ['run', script], { platform })
+    const child = spawnProcess(command.command, command.args, {
+      cwd: weworkDir,
+      env: preparationEnvironment,
+      stdio: 'inherit',
+    })
+    child.once('error', error => {
+      reject(new Error(`${description} failed to start: ${error.message}`))
+    })
+    child.once('exit', code => {
+      if (code === 0) resolvePromise()
+      else reject(new Error(`${description} exited with code ${code ?? 'unknown'}`))
+    })
+  })
 }
 
 export function monitorAppProcess(app, pending, onExit) {
@@ -457,11 +560,18 @@ async function runServer(sessionPath, token) {
     executorHome,
     sessionDirectory: session.directory,
   })
-  app = spawn(resolveElectronAppBinary(), [], {
-    cwd: weworkDir,
+  const sourceEnvironment =
+    session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
+  const launch = resolveElectronLaunch({
+    packaged: session.launchMode === 'packaged',
+    sourceBinary: session.launchMode === 'source' ? await resolveSourceElectronBinary() : undefined,
+  })
+  app = spawn(launch.command, launch.args, {
+    cwd: launch.cwd,
     detached: true,
     env: {
       ...environment,
+      ...sourceEnvironment,
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_E2E_CONTROL_TOKEN: token,
       WEWORK_USER_DATA_DIR: join(session.directory, 'user-data'),
@@ -510,6 +620,12 @@ async function main() {
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
     validateStartOptions(options)
+    const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
+    await prepareElectronApp({ packaged })
+    const launch = resolveElectronLaunch({
+      packaged,
+      sourceBinary: packaged ? undefined : await resolveSourceElectronBinary(),
+    })
     const directory = join(
       weworkDir,
       'test-results',
@@ -518,7 +634,7 @@ async function main() {
     )
     await mkdir(directory, { recursive: true })
     const token = randomBytes(32).toString('hex')
-    await readFile(resolveElectronAppBinary())
+    await readFile(launch.command)
     const sessionPath = join(directory, 'session.json')
     await writeFile(
       sessionPath,
@@ -529,6 +645,7 @@ async function main() {
           directory,
           token,
           status: 'starting',
+          launchMode: packaged ? 'packaged' : 'source',
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,

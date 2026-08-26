@@ -52,6 +52,7 @@ export interface AppPreferences {
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
+  cloudConnection: Record<string, unknown> | null
 }
 
 export interface FriendlyTaskTitleModelConfig {
@@ -137,6 +138,7 @@ export interface AppPreferencesPatch {
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
+  cloudConnection?: Record<string, unknown> | null
 }
 
 export const defaultQuickPhrases: QuickPhrase[] = [
@@ -199,6 +201,7 @@ export const defaultAppPreferences: AppPreferences = {
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
+  cloudConnection: null,
 }
 
 export const APP_PREFERENCES_CHANGED_EVENT = 'wework:app-preferences-changed'
@@ -394,6 +397,12 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
     localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
+    cloudConnection:
+      record.cloudConnection &&
+      typeof record.cloudConnection === 'object' &&
+      !Array.isArray(record.cloudConnection)
+        ? { ...record.cloudConnection }
+        : null,
   }
 }
 

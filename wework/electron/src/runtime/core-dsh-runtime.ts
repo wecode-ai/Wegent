@@ -52,6 +52,7 @@ export interface CoreDshLaunch {
   args: string[]
   cwd: string
   dshHome: string
+  environment: NodeJS.ProcessEnv
   profile: string
   version: string
   sourceFingerprint: string
@@ -83,6 +84,11 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
     args: [runtime.entry, '--profile', PROFILE_NAME, '--no-open', '--port', String(options.port)],
     cwd: runtime.root,
     dshHome,
+    environment: {
+      ...options.environment,
+      DSH_HOME: dshHome,
+      WEWORK_HARNESS_API_KEY: 'wework-local-router',
+    },
     profile: PROFILE_NAME,
     version: runtime.version,
     sourceFingerprint: runtime.sourceFingerprint,
@@ -122,9 +128,7 @@ export async function selectBundledDshRuntimeMatching(
   versionRequirement: string
 ): Promise<BundledDshRuntime> {
   const absoluteRoot = resolve(root)
-  const roots = (await isRuntimeRoot(absoluteRoot))
-    ? [absoluteRoot]
-    : await runtimeDirectories(absoluteRoot)
+  const roots = await runtimeDirectories(absoluteRoot)
   const candidates = (await Promise.all(roots.map(candidate => readRuntime(candidate)))).filter(
     (runtime): runtime is BundledDshRuntime =>
       runtime !== null &&
@@ -325,8 +329,9 @@ async function runtimeDirectories(root: string): Promise<string[]> {
       return fingerprints.map(fingerprint => join(root, fingerprint as string))
     }
   } catch {
-    // Fall back to directory discovery for a direct development runtime root.
+    // Fall back to direct-runtime metadata or directory discovery.
   }
+  if (await isRuntimeRoot(root)) return [root]
   const entries = await readdir(root, { withFileTypes: true })
   return entries.filter(entry => entry.isDirectory()).map(entry => join(root, entry.name))
 }

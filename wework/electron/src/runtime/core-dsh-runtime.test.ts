@@ -31,6 +31,27 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
+  test('prefers the runtime catalog over stale direct-runtime metadata', async () => {
+    const root = await temporaryDirectory('core-dsh-stale-root-')
+    const core = await writeRuntime(root.path, CORE_DSH_VERSION, '2')
+    await writeFile(
+      join(root.path, 'runtime.json'),
+      JSON.stringify({
+        dshVersion: '0.1.0-rc.8',
+        sourceFingerprint: '8'.repeat(64),
+      })
+    )
+    await writeFile(
+      join(root.path, 'runtimes.json'),
+      JSON.stringify({ runtimes: [{ sourceFingerprint: core.fingerprint }] })
+    )
+
+    await expect(selectCoreDshRuntime(root.path)).resolves.toMatchObject({
+      version: CORE_DSH_VERSION,
+    })
+    await root.remove()
+  })
+
   test('selects the highest bundled runtime satisfying a version requirement', async () => {
     const root = await temporaryDirectory('workbench-dsh-selection-')
     await writeRuntime(root.path, '0.1.0-rc.7', '7')
@@ -70,6 +91,10 @@ describe('core DSH runtime', () => {
 
     expect(first.command).toBe('/managed/node')
     expect(first.args).toContain('3080')
+    expect(first.environment).toMatchObject({
+      DSH_HOME: join(dataDirectory, 'dsh-core'),
+      WEWORK_HARNESS_API_KEY: 'wework-local-router',
+    })
     expect(second.args).toContain('3081')
     expect(
       JSON.parse(

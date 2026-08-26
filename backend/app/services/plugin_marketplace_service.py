@@ -16,7 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from io import BytesIO
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from fastapi import HTTPException
 from packaging.version import Version
@@ -75,6 +75,9 @@ from app.services.plugin_package_storage import (
     PluginPackageStorageError,
     plugin_package_storage,
 )
+from app.services.plugin_release_notification_service import (
+    notify_plugin_release_available,
+)
 from app.services.plugin_upstream_adapter import (
     AdaptedUpstreamPackage,
     adapt_upstream_package,
@@ -115,8 +118,23 @@ class _UserPluginAccessContext:
 class PluginMarketplaceService:
     """Own the cloud marketplace while leaving runtime installation to Codex."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        release_notifier: Callable[[Session, int], int] | None = None,
+    ) -> None:
         self._resolved_interface_cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._release_notifier = release_notifier
+
+    def _notify_release_available(self, db: Session, release_id: int) -> None:
+        if not self._release_notifier:
+            return
+        try:
+            self._release_notifier(db, release_id)
+        except Exception:
+            logger.exception(
+                "Plugin release notification failed after publication: release_id=%s",
+                release_id,
+            )
 
     def reconcile_stale_installed_catalog_refs(
         self, db: Session, *, user_id: int
@@ -755,6 +773,8 @@ class PluginMarketplaceService:
                 db.rollback()
                 raise
             db.refresh(result.release)
+        if result.created:
+            self._notify_release_available(db, result.release.id)
         return result
 
     def init_submission(
@@ -763,6 +783,7 @@ class PluginMarketplaceService:
         *,
         user_id: int,
         request: PluginSubmissionInitRequest,
+        task_binding: tuple[int, int] | None = None,
     ) -> PluginSubmissionInitResponse:
         self._validate_slug(request.slug)
         self._validate_version(request.version)
@@ -849,6 +870,16 @@ class PluginMarketplaceService:
                     "filename": request.filename,
                     "requestedVisibility": visibility,
                     **({"pendingAccess": pending_access} if pending_access else {}),
+                    **(
+                        {
+                            "taskBinding": {
+                                "taskId": task_binding[0],
+                                "subtaskId": task_binding[1],
+                            }
+                        }
+                        if task_binding
+                        else {}
+                    ),
                 },
                 created_by_user_id=user_id,
             )
@@ -954,6 +985,26 @@ class PluginMarketplaceService:
         db.refresh(submission)
         return self._submission_item(submission)
 
+    def ensure_submission_task_binding(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        submission_id: int,
+        task_id: int,
+        subtask_id: int,
+    ) -> None:
+        """Ensure a task token only operates on its own submission."""
+        submission = self._owned_submission(db, user_id, submission_id)
+        release = db.get(PluginRelease, submission.release_id)
+        report = release.scan_report_json if release else {}
+        binding = report.get("taskBinding") if isinstance(report, dict) else None
+        if not isinstance(binding, dict) or binding != {
+            "taskId": task_id,
+            "subtaskId": subtask_id,
+        }:
+            raise HTTPException(status_code=404, detail="Submission not found")
+
     def _resolve_submission_visibility(
         self, request: PluginSubmissionInitRequest
     ) -> str:
@@ -1050,6 +1101,7 @@ class PluginMarketplaceService:
             staging_report = release.scan_report_json or {}
             requested_visibility = staging_report.get("requestedVisibility")
             pending_access = staging_report.get("pendingAccess")
+            task_binding = staging_report.get("taskBinding")
             scanned_report = self._scan_report(
                 parsed,
                 security_report,
@@ -1063,6 +1115,8 @@ class PluginMarketplaceService:
                 scanned_report["requestedVisibility"] = requested_visibility
             if isinstance(pending_access, dict):
                 scanned_report["pendingAccess"] = pending_access
+            if isinstance(task_binding, dict):
+                scanned_report["taskBinding"] = task_binding
             release.scan_report_json = scanned_report
             if submission.purpose == "restricted_share":
                 plugin.visibility = "personal"
@@ -1108,6 +1162,8 @@ class PluginMarketplaceService:
             db.commit()
             raise
         db.refresh(submission)
+        if submission.status == "approved":
+            self._notify_release_available(db, submission.release_id)
         return self._submission_item(submission)
 
     def get_submission(
@@ -1190,6 +1246,8 @@ class PluginMarketplaceService:
             plugin.status = "published" if has_published else "draft"
         db.commit()
         db.refresh(submission)
+        if approved:
+            self._notify_release_available(db, submission.release_id)
         return self._submission_item(submission)
 
     def _apply_release_listing(self, plugin: Plugin, release: PluginRelease) -> None:
@@ -1546,6 +1604,7 @@ class PluginMarketplaceService:
                 .first()
             )
             plugin = db.get(Plugin, upstream.plugin_id)
+            previous_release_id = plugin.latest_release_id if plugin else 0
             latest = (
                 db.get(PluginRelease, plugin.latest_release_id)
                 if plugin and plugin.latest_release_id
@@ -1585,6 +1644,13 @@ class PluginMarketplaceService:
                 db.commit()
             raise
         db.refresh(upstream)
+        plugin = db.get(Plugin, upstream.plugin_id)
+        if (
+            plugin
+            and plugin.latest_release_id
+            and plugin.latest_release_id != previous_release_id
+        ):
+            self._notify_release_available(db, plugin.latest_release_id)
         return self._upstream_item(upstream)
 
     def sync_enabled_upstreams(self, db: Session) -> list[PluginUpstreamItem]:
@@ -3101,4 +3167,6 @@ class PluginMarketplaceService:
         return InstalledPlugin.model_validate(payload)
 
 
-plugin_marketplace_service = PluginMarketplaceService()
+plugin_marketplace_service = PluginMarketplaceService(
+    release_notifier=notify_plugin_release_available
+)

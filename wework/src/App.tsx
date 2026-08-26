@@ -54,6 +54,7 @@ import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitiali
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
@@ -343,6 +344,12 @@ export function WorkspaceTabSurface({
               loadTaskComposerCatalogs
               prewarmComposerApps={prewarmComposerApps}
               publishDebugSnapshots={active && !iframe}
+              syncCoreDshModels={
+                tab.fixed &&
+                tab.kind === 'task' &&
+                isElectronRuntime() &&
+                getDesktopWindowLabel() === 'main'
+              }
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -934,6 +941,7 @@ function AppShell() {
             token={cloudConnection.token}
           />
         ) : null}
+        {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />
         <div
           data-testid="app-route-host"

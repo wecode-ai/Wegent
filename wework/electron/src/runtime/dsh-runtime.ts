@@ -101,12 +101,14 @@ async function waitForHttp(url: string, signal: AbortSignal): Promise<void> {
     }
     await abortableDelay(250, signal)
   }
+  if (signal.reason instanceof Error) throw signal.reason
   throw new Error(`DSH did not become reachable at ${url}`, {
     cause: signal.reason ?? lastError,
   })
 }
 
 function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(signal.reason)
   return new Promise((resolve, reject) => {
     const timer = setTimeout(resolve, milliseconds)
     timer.unref()

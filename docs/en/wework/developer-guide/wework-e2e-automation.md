@@ -135,33 +135,47 @@ checkpoint. When upstream checkpoints are skipped, each checkpoint establishes
 its own minimal fixtures instead of depending on tasks or UI state created only
 by the complete flow. PR CI builds the smallest segment matrix for the changed
 feature paths. Shared desktop infrastructure, merge queue, scheduled runs, and
-`ci:all` still run the complete desktop suites. The complete Core and Cloud
-suites each use eight fixed GitHub Actions matrix jobs. Every job runs its
+`ci:all` still run the complete desktop suites. Core uses seventeen fixed GitHub
+Actions matrix jobs and Cloud uses fifteen. Every job runs its
 checkpoints serially so multiple real Electron, WebView, and Executor stacks do not
 contend for CPU and memory on the same GitHub runner and push normal asynchronous
-state beyond the shared 10-second step timeout. The sixteen matrix jobs still provide
+state beyond the shared 10-second step timeout. The thirty-two matrix jobs still provide
 suite-level parallelism across runners. Shards are balanced from observed CI
-durations; a new or materially slower checkpoint requires rebalancing instead of
-adding runners, removing coverage, or rerunning failures. CI first builds one Core Electron
-application, Executor, and Codex artifact. In `--build-only` mode, the
-independent Electron and Executor builds run concurrently on the same runner. Every
-Core and Cloud shard downloads and reuses that artifact instead of rebuilding
-Vite, Electron, and Executor. Rust builds reuse both the `main`-owned Cargo target
-cache and sccache compiler units: the target cache bounds PR and first-run
-latency, while sccache reduces incremental compilation after dependency or
-source changes. Archiving strips Linux debug symbols only from the copied
+durations and capped to keep the complete suite inside its ten-minute critical-path
+budget; a new or materially slower checkpoint requires rebalancing instead of
+removing coverage or rerunning failures. The 2,200-delta Codex notification
+isolation stress case and the long plugin auto-update checkpoint each have a
+dedicated shard; the notification scenario uses a targeted 30-second render
+budget without changing the shared 10-second UI timeout. CI first builds one Core Electron
+application, Executor, and Codex artifact. Electron package preparation builds
+the Harness runtime, Node execution runtime, and Executor concurrently; the
+Harness preparation owns the single DSH application Vite build so the same
+frontend is not compiled twice. Every Core and Cloud shard downloads and reuses
+that artifact instead of rebuilding Vite, Electron, and Executor. Rust builds
+reuse both the `main`-owned Cargo target cache and sccache compiler units: the
+target cache bounds PR and first-run latency, while sccache reduces incremental
+compilation after dependency or source changes. Archiving strips Linux debug symbols only from the copied
 artifact binaries, leaving the original build outputs unchanged while reducing
-upload and download time across the sixteen shards. Desktop E2E and its cache
+upload and download time across the thirty-two shards. Desktop E2E and its cache
 warmup explicitly set `WEWORK_EXECUTOR_PROFILE=debug` so test artifacts do not
 spend time optimizing the Executor. Release packaging leaves the variable unset
 and continues to build the `release` Executor by default. Desktop E2E builds
 skip the duplicate TypeScript typecheck that the parallel Lint workflow runs in full,
 while retaining the real Vite and Electron artifact build; test coverage and the
-type gate remain unchanged. The plugin suite requires an independent build
+type gate remain unchanged. The macOS memory job keys its pnpm store from both
+the workspace and Electron lockfiles, then installs offline so registry stalls
+cannot consume the critical-path budget. Its large streaming Markdown response
+uses a targeted 30-second completion budget while ordinary memory interactions
+retain the shared 10-second timeout. The plugin suite requires an independent build
 configuration and continues to run in parallel with the shared Core build.
-Both successful and failed runs retain complete diagnostics; uploads disable
-redundant compression for PNG and other already-compressed evidence so artifact
-archiving does not extend the pipeline tail. Merge queue validates
+Desktop shards use only the runtime tools already present in the immutable E2E
+image; ZIP fixtures use Python's standard library, so the jobs do not restore
+the full frontend dependency cache. Successful harness-app coverage keeps
+milestone screenshots, and every run retains logs, state snapshots, and other
+useful diagnostics. Before upload, CI removes only transient Chromium caches
+that cannot help reproduce a failure. Uploads disable redundant compression for
+PNG and other already-compressed evidence so artifact archiving does not extend
+the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
@@ -255,7 +269,7 @@ The plugin scenario dynamically creates an isolated local Codex marketplace and 
 
 The memory scenario is macOS-only. It executes a development task through a real Codex tool call, then streams a long response containing Markdown, tables, and TypeScript code into the real Electron renderer. The test first waits for the renderer-process memory baseline to stabilize, then samples the aggregate physical footprint of associated Electron renderer processes every 500 milliseconds. It writes the samples, DOM node counts, and summary metrics to `memory-growth.json`; the gate does not include the main Wework process. The default gates limit peak growth to 384 MiB, settled growth after completion to 224 MiB, and the full physical-footprint range within the settled window to 16 MiB. The DOM gate checks the settled window after virtual-list convergence and allows at most 900 retained nodes by default. Transient peaks during streaming remain in the diagnostics but do not treat pre-convergence rendering as a leak. The limits can be adjusted with `WEWORK_E2E_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_MEMORY_MAX_SETTLED_DOM_NODES`.
 
-The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. The gate requires the whole process group to stay below an 800 MiB peak and can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PHYSICAL_FOOTPRINT_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
+The concurrent-memory scenario is also macOS-only. It creates and holds 10 Responses streams at the same time, samples the process-group physical footprint for the Wework main process, Electron renderer/GPU/network processes, Executor processes, and the Codex app-server, and writes the evidence to `concurrent-memory.json`. Relative to the stable baseline, both the peak and active settled plateau may grow by at most 320 MiB, while the settled sampling window may vary by at most 64 MiB. The limits can be adjusted with `WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB`, `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB`, and `WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB`. The scenario also switches between the first and last tasks and waits for each task's prompt content to reappear.
 
 ## Responses API Mock
 
@@ -452,11 +466,12 @@ Home, ports, and diagnostic artifact. This preserves the existing real Electron,
 Executor, and Codex verification semantics while removing the serial wait
 between the three scenarios. Matrix fail-fast is disabled so the remaining
 scenarios can finish and upload diagnostics when one scenario fails.
-The three scenarios inject different build-time Vite environment variables, so
-their Electron application artifacts must be isolated by E2E command. The plugins
-scenario must not restore an application binary built by the core or cloud
-scenario, because that binary may contain a different Codex Home initialization
-setting.
+The three scenarios reuse one prebuilt Electron artifact. Scenario-specific
+values such as Codex Home initialization, cloud endpoints, and test credentials
+are injected through the desktop E2E runtime config when Electron starts rather
+than compiled into the application binary. Plugins, core, and cloud can therefore
+share the application build while retaining isolated runtime directories and
+process state.
 
 The Linux desktop scenarios cache the downloaded `.deb` files for Electron system
 dependencies in the runner user's home directory. Cache keys rotate weekly and

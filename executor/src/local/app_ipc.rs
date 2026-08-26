@@ -26,6 +26,7 @@ use tokio::{
 };
 
 use super::backend::runtime_rpc_encoding::encode_app_ipc_response;
+use super::event_stream::{event_sequence, ExecutorEventHub};
 use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
@@ -129,6 +130,12 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "todos.*",
 ];
 const APP_IPC_WRITE_BUFFER_CAPACITY: usize = 8192;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LocalEndpointRole {
+    Client,
+    Owner,
+}
 const GIT_PUSH_SCRIPT: &str = r#"branch=$(git branch --show-current)
 if [ -z "$branch" ]; then
   echo "Cannot push detached HEAD" >&2
@@ -369,6 +376,7 @@ pub trait RuntimeWorkHandler: Send + Sync {
 
 pub trait BackendConnectionHandler: Send + Sync {
     fn configure_backend<'a>(&'a self, params: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
+    fn backend_quota<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
     fn backend_status<'a>(&'a self) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 }
 
@@ -408,12 +416,14 @@ pub struct AppIpcServer {
     backend_connection_handler: Option<Arc<dyn BackendConnectionHandler>>,
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
+    event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<Mutex<Option<BundledPluginMarketplace>>>,
 }
 
 impl Default for AppIpcServer {
     fn default() -> Self {
         let (event_tx, _) = broadcast::channel(super::RUNTIME_EVENT_BUFFER_CAPACITY);
+        let event_hub = ExecutorEventHub::new(event_tx.clone());
         Self {
             device_id: DEFAULT_DEVICE_ID.to_owned(),
             runtime_instance_id: None,
@@ -421,6 +431,7 @@ impl Default for AppIpcServer {
             backend_connection_handler: None,
             command_handler: Arc::new(CommandHandler),
             event_tx,
+            event_hub,
             bundled_plugin_marketplace: Arc::new(Mutex::new(None)),
         }
     }
@@ -462,7 +473,8 @@ impl AppIpcServer {
         event_tx: broadcast::Sender<Value>,
     ) -> Self {
         self.runtime_work_handler = Some(handler);
-        self.event_tx = event_tx;
+        self.event_tx = event_tx.clone();
+        self.event_hub = ExecutorEventHub::new(event_tx);
         self
     }
 
@@ -685,6 +697,16 @@ impl AppIpcServer {
             return handler.backend_status().await;
         }
 
+        if method == "executor.backend.quota" {
+            let Some(handler) = &self.backend_connection_handler else {
+                return Err(AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection handler is not available",
+                ));
+            };
+            return handler.backend_quota().await;
+        }
+
         if method == "device.execute_command" {
             return self.handle_device_command(params).await;
         }
@@ -842,6 +864,7 @@ impl AppIpcServer {
             "transports": [
                 "stdio-ndjson",
                 "local-endpoint-ndjson",
+                "local-endpoint-event-stream",
                 "socketio-runtime-relay"
             ],
             "features": {
@@ -849,7 +872,7 @@ impl AppIpcServer {
                 "events": true,
                 "structured_errors": true,
                 "compressed_responses": true,
-                "event_resume": false,
+                "event_resume": true,
             },
         })
     }
@@ -860,13 +883,25 @@ impl AppIpcServer {
         self.serve_io(tokio::io::stdin(), tokio::io::stdout()).await
     }
 
-    pub async fn serve_local_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    pub async fn serve_local_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         validate_local_endpoint_credentials(endpoint, token)?;
-        self.serve_platform_endpoint(endpoint, token).await
+        validate_local_endpoint_credentials(endpoint, owner_token)?;
+        self.serve_platform_endpoint(endpoint, token, owner_token)
+            .await
     }
 
     #[cfg(unix)]
-    async fn serve_platform_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    async fn serve_platform_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         let path = Path::new(endpoint);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -879,61 +914,121 @@ impl AppIpcServer {
             .map_err(|error| format!("failed to bind app IPC Unix socket: {error}"))?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
             .map_err(|error| format!("failed to secure app IPC Unix socket: {error}"))?;
+        let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
-            let (stream, _) = listener
-                .accept()
-                .await
-                .map_err(|error| format!("failed to accept app IPC Unix socket: {error}"))?;
+            let (stream, _) = tokio::select! {
+                _ = owner_closed_rx.recv() => return Ok(()),
+                accepted = listener.accept() => accepted
+                    .map_err(|error| format!("failed to accept app IPC Unix socket: {error}"))?,
+            };
             let server = self.clone();
             let token = token.to_owned();
+            let owner_token = owner_token.to_owned();
+            let owner_closed_tx = owner_closed_tx.clone();
             tokio::spawn(async move {
-                if let Err(error) = server.serve_authenticated_stream(stream, &token).await {
-                    write_executor_log_line(&format_executor_log(
-                        "app IPC local endpoint connection closed",
-                        &[("error", error)],
-                    ));
+                match server
+                    .serve_authenticated_stream(stream, &token, &owner_token)
+                    .await
+                {
+                    Ok(Some(LocalEndpointRole::Owner)) => {
+                        let _ = owner_closed_tx.send(()).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        write_executor_log_line(&format_executor_log(
+                            "app IPC local endpoint connection closed",
+                            &[("error", error)],
+                        ));
+                    }
                 }
             });
         }
     }
 
     #[cfg(windows)]
-    async fn serve_platform_endpoint(&self, endpoint: &str, token: &str) -> Result<(), String> {
+    async fn serve_platform_endpoint(
+        &self,
+        endpoint: &str,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<(), String> {
         if !endpoint.starts_with(r"\\.\pipe\") {
             return Err("app IPC named pipe must use the \\\\.\\pipe\\ prefix".to_owned());
         }
         let mut first_instance = true;
         let mut pipe = create_named_pipe_server(endpoint, first_instance)?;
+        let (owner_closed_tx, mut owner_closed_rx) = mpsc::channel::<()>(1);
         loop {
-            pipe.connect()
-                .await
-                .map_err(|error| format!("failed to accept app IPC named pipe: {error}"))?;
+            tokio::select! {
+                _ = owner_closed_rx.recv() => return Ok(()),
+                connected = pipe.connect() => connected
+                    .map_err(|error| format!("failed to accept app IPC named pipe: {error}"))?,
+            }
             let connected = pipe;
             first_instance = false;
             pipe = create_named_pipe_server(endpoint, first_instance)?;
             let server = self.clone();
             let token = token.to_owned();
+            let owner_token = owner_token.to_owned();
+            let owner_closed_tx = owner_closed_tx.clone();
             tokio::spawn(async move {
-                if let Err(error) = server.serve_authenticated_stream(connected, &token).await {
-                    write_executor_log_line(&format_executor_log(
-                        "app IPC local endpoint connection closed",
-                        &[("error", error)],
-                    ));
+                match server
+                    .serve_authenticated_stream(connected, &token, &owner_token)
+                    .await
+                {
+                    Ok(Some(LocalEndpointRole::Owner)) => {
+                        let _ = owner_closed_tx.send(()).await;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        write_executor_log_line(&format_executor_log(
+                            "app IPC local endpoint connection closed",
+                            &[("error", error)],
+                        ));
+                    }
                 }
             });
         }
     }
 
-    async fn serve_authenticated_stream<S>(&self, mut stream: S, token: &str) -> Result<(), String>
+    async fn serve_authenticated_stream<S>(
+        &self,
+        mut stream: S,
+        token: &str,
+        owner_token: &str,
+    ) -> Result<Option<LocalEndpointRole>, String>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let authenticated = authenticate_local_endpoint(&mut stream, token).await?;
-        if !authenticated {
-            return Ok(());
-        }
+        let Some(authentication) =
+            authenticate_local_endpoint(&mut stream, token, owner_token).await?
+        else {
+            return Ok(None);
+        };
+        let role = authentication.role;
         let (reader, writer) = split(stream);
-        self.serve_io(reader, writer).await
+        let result = if authentication.event_stream {
+            self.serve_event_stream(writer, authentication.after_sequence)
+                .await
+        } else {
+            self.serve_io_inner(
+                reader,
+                writer,
+                APP_IPC_BULK_WRITE_BUFFER_CAPACITY,
+                authentication.receive_events,
+            )
+            .await
+        };
+        if let Err(error) = result {
+            if role != LocalEndpointRole::Owner {
+                return Err(error);
+            }
+            write_executor_log_line(&format_executor_log(
+                "app IPC owner connection closed",
+                &[("error", error)],
+            ));
+        }
+        Ok(Some(role))
     }
 
     pub async fn serve_io<R, W>(&self, reader: R, writer: W) -> Result<(), String>
@@ -959,6 +1054,22 @@ impl AppIpcServer {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
+        self.serve_io_inner(reader, writer, bulk_write_buffer_capacity, true)
+            .await
+    }
+
+    async fn serve_io_inner<R, W>(
+        &self,
+        reader: R,
+        writer: W,
+        bulk_write_buffer_capacity: usize,
+        receive_events: bool,
+    ) -> Result<(), String>
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        self.event_hub.ensure_started();
         let (priority_write_tx, mut priority_write_rx) =
             mpsc::channel::<Value>(APP_IPC_WRITE_BUFFER_CAPACITY);
         let (event_write_tx, mut event_write_rx) =
@@ -985,7 +1096,7 @@ impl AppIpcServer {
             .map_err(|error| format!("failed to queue app IPC ready event: {error}"))?;
 
         let mut reader = BufReader::new(reader);
-        let mut events = self.event_tx.subscribe();
+        let mut events = self.event_hub.subscribe_live();
         let mut frame = Vec::new();
         let mut bulk_backpressure_reported = false;
         loop {
@@ -1089,7 +1200,7 @@ impl AppIpcServer {
                         }
                     });
                 }
-                event = events.recv() => {
+                event = events.recv(), if receive_events => {
                     match event {
                         Ok(message) => {
                             if is_bulk_app_ipc_event(&message) {
@@ -1143,7 +1254,10 @@ impl AppIpcServer {
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             let message = self.event_message(
                                 "executor.event_lagged",
-                                json!({ "skipped": skipped }),
+                                json!({
+                                    "skipped": skipped,
+                                    "reason": "app_ipc_backpressure",
+                                }),
                             );
                             event_write_tx.send(message)
                                 .await
@@ -1152,6 +1266,40 @@ impl AppIpcServer {
                         Err(broadcast::error::RecvError::Closed) => return Ok(()),
                     }
                 }
+            }
+        }
+    }
+
+    async fn serve_event_stream<W>(&self, mut writer: W, after: u64) -> Result<(), String>
+    where
+        W: AsyncWrite + Unpin + Send + 'static,
+    {
+        self.event_hub.ensure_started();
+        let mut subscription = self.event_hub.subscribe_after(after);
+        let mut delivered_sequence = after;
+        loop {
+            for event in subscription.replay.drain(..) {
+                write_message(&mut writer, &event)
+                    .await
+                    .map_err(|error| format!("failed to write executor event stream: {error}"))?;
+                delivered_sequence = event_sequence(&event).unwrap_or(delivered_sequence);
+            }
+            delivered_sequence = delivered_sequence.max(subscription.resume_after);
+            match subscription.receiver.recv().await {
+                Ok(event) => {
+                    let sequence = event_sequence(&event).unwrap_or(delivered_sequence);
+                    if sequence <= delivered_sequence {
+                        continue;
+                    }
+                    write_message(&mut writer, &event).await.map_err(|error| {
+                        format!("failed to write live executor event stream: {error}")
+                    })?;
+                    delivered_sequence = sequence;
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    subscription = self.event_hub.subscribe_after(delivered_sequence);
+                }
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
             }
         }
     }
@@ -1249,10 +1397,18 @@ fn validate_local_endpoint_credentials(endpoint: &str, token: &str) -> Result<()
     Ok(())
 }
 
+struct LocalEndpointAuthentication {
+    role: LocalEndpointRole,
+    event_stream: bool,
+    after_sequence: u64,
+    receive_events: bool,
+}
+
 async fn authenticate_local_endpoint<S>(
     stream: &mut S,
     expected_token: &str,
-) -> Result<bool, String>
+    expected_owner_token: &str,
+) -> Result<Option<LocalEndpointAuthentication>, String>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -1262,9 +1418,17 @@ where
     )
     .await
     .map_err(|_| "app IPC local endpoint authentication timed out".to_owned())??;
-    let authenticated = parse_auth_token(&frame)
-        .is_some_and(|token| constant_time_equal(token.as_bytes(), expected_token.as_bytes()));
-    let response = if authenticated {
+    let request = parse_auth_request(&frame);
+    let role = request.as_ref().and_then(|request| {
+        if constant_time_equal(request.token.as_bytes(), expected_owner_token.as_bytes()) {
+            Some(LocalEndpointRole::Owner)
+        } else if constant_time_equal(request.token.as_bytes(), expected_token.as_bytes()) {
+            Some(LocalEndpointRole::Client)
+        } else {
+            None
+        }
+    });
+    let response = if role.is_some() {
         json!({
             "type": "authenticated",
             "ok": true,
@@ -1283,7 +1447,14 @@ where
     write_message(stream, &response)
         .await
         .map_err(|error| format!("failed to write app IPC authentication response: {error}"))?;
-    Ok(authenticated)
+    Ok(role.map(|role| LocalEndpointAuthentication {
+        role,
+        event_stream: request.as_ref().is_some_and(|request| request.event_stream),
+        after_sequence: request.as_ref().map_or(0, |request| request.after_sequence),
+        receive_events: request
+            .as_ref()
+            .map_or(true, |request| request.receive_events),
+    }))
 }
 
 async fn read_auth_frame<S>(stream: &mut S) -> Result<Vec<u8>, String>
@@ -1308,17 +1479,39 @@ where
     Err("app IPC authentication frame exceeds size limit".to_owned())
 }
 
-fn parse_auth_token(frame: &[u8]) -> Option<String> {
+struct LocalEndpointAuthRequest {
+    token: String,
+    event_stream: bool,
+    after_sequence: u64,
+    receive_events: bool,
+}
+
+fn parse_auth_request(frame: &[u8]) -> Option<LocalEndpointAuthRequest> {
     let value: Value = serde_json::from_slice(frame).ok()?;
     if value.get("type").and_then(Value::as_str) != Some("authenticate")
         || value.get("protocol_version").and_then(Value::as_u64) != Some(APP_IPC_PROTOCOL_VERSION)
     {
         return None;
     }
-    value
+    let token = value
         .get("token")
         .and_then(Value::as_str)
-        .map(str::to_owned)
+        .map(str::to_owned)?;
+    Some(LocalEndpointAuthRequest {
+        token,
+        event_stream: value
+            .get("event_stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        after_sequence: value
+            .get("after_sequence")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        receive_events: value
+            .get("receive_events")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    })
 }
 
 fn constant_time_equal(left: &[u8], right: &[u8]) -> bool {
@@ -3382,11 +3575,12 @@ mod tests {
         let directory = tempfile::tempdir().expect("temporary directory should be created");
         let endpoint = directory.path().join("executor.sock");
         let token = "0123456789abcdef0123456789abcdef";
+        let owner_token = "abcdef0123456789abcdef0123456789";
         let server = AppIpcServer::new();
         let endpoint_for_server = endpoint.clone();
         let serving = tokio::spawn(async move {
             server
-                .serve_local_endpoint(endpoint_for_server.to_str().unwrap(), token)
+                .serve_local_endpoint(endpoint_for_server.to_str().unwrap(), token, owner_token)
                 .await
         });
         for _ in 0..100 {
@@ -3477,7 +3671,112 @@ mod tests {
             message["id"] == Value::String("health".to_owned()) && message["ok"] == true
         }));
 
-        serving.abort();
-        let _ = serving.await;
+        let owner = UnixStream::connect(&endpoint)
+            .await
+            .expect("owner should connect");
+        let (owner_reader, mut owner_writer) = split(owner);
+        owner_writer
+            .write_all(
+                format!(
+                    "{{\"type\":\"authenticate\",\"protocol_version\":1,\"token\":\"{owner_token}\"}}\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .expect("owner authentication should be written");
+        let mut owner_reader = BufReader::new(owner_reader);
+        let mut owner_authentication = String::new();
+        owner_reader
+            .read_line(&mut owner_authentication)
+            .await
+            .expect("owner authentication response should be read");
+        let owner_authentication: Value = serde_json::from_str(&owner_authentication)
+            .expect("owner authentication response should be JSON");
+        assert_eq!(owner_authentication["ok"], true);
+        owner_writer
+            .shutdown()
+            .await
+            .expect("owner connection should close");
+
+        assert!(tokio::time::timeout(Duration::from_secs(1), serving)
+            .await
+            .expect("owner disconnect should stop the local endpoint")
+            .expect("local endpoint task should join")
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn executor_event_stream_replays_events_after_the_requested_sequence() {
+        let server = AppIpcServer::new();
+        let event_tx = server.event_tx.clone();
+        let (first_client, first_executor) = duplex(16 * 1024);
+        let (first_reader, _) = split(first_client);
+        let (_, first_writer) = split(first_executor);
+        let first_server = server.clone();
+        let first_stream =
+            tokio::spawn(async move { first_server.serve_event_stream(first_writer, 0).await });
+        for _ in 0..100 {
+            if event_tx.receiver_count() > 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "first"}},
+            }))
+            .expect("event stream should subscribe to executor events");
+        let mut first_reader = BufReader::new(first_reader);
+        let mut first_line = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            first_reader.read_line(&mut first_line),
+        )
+        .await
+        .expect("first executor event should arrive")
+        .expect("first executor event should be readable");
+        let first_event: Value =
+            serde_json::from_str(&first_line).expect("first executor event should be JSON");
+        let first_sequence = first_event["sequence"]
+            .as_u64()
+            .expect("first executor event should be sequenced");
+        first_stream.abort();
+
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "second"}},
+            }))
+            .expect("executor event journal should remain subscribed");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let (second_client, second_executor) = duplex(16 * 1024);
+        let (second_reader, _) = split(second_client);
+        let (_, second_writer) = split(second_executor);
+        let second_server = server.clone();
+        let second_stream = tokio::spawn(async move {
+            second_server
+                .serve_event_stream(second_writer, first_sequence)
+                .await
+        });
+        let mut second_reader = BufReader::new(second_reader);
+        let mut second_line = String::new();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            second_reader.read_line(&mut second_line),
+        )
+        .await
+        .expect("replayed executor event should arrive")
+        .expect("replayed executor event should be readable");
+        let second_event: Value =
+            serde_json::from_str(&second_line).expect("replayed executor event should be JSON");
+
+        assert_eq!(second_event["payload"]["data"]["delta"], "second");
+        assert!(second_event["sequence"].as_u64().unwrap() > first_sequence);
+        second_stream.abort();
     }
 }

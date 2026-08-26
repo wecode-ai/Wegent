@@ -1,4 +1,5 @@
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
+import { LocalEndpointEventStream } from './local-endpoint-event-stream.js'
 
 export const name = 'wework-executor-runtime'
 export const inject = ['webServer']
@@ -12,7 +13,7 @@ export async function apply(ctx) {
   ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, client))
-  register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res, client))
+  register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
 }
 
 function register(ctx, path, handler) {
@@ -59,24 +60,25 @@ async function rpc(req, res, client) {
   }
 }
 
-export async function handleExecutorEvents(req, res, client) {
+export async function handleExecutorEvents(
+  req,
+  res,
+  createEventStream = options => LocalEndpointEventStream.fromEnvironment(options)
+) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
   let active = true
-  let dispose = () => {}
-  let writer = null
+  let eventStream = null
   const disconnect = () => {
     if (!active) return
     active = false
-    writer?.close()
-    dispose()
+    eventStream?.stop()
   }
   req.once('close', disconnect)
   res.once('close', disconnect)
   res.on('error', disconnect)
   try {
-    const replay = client.replay(after)
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache, no-store',
@@ -94,19 +96,28 @@ export async function handleExecutorEvents(req, res, client) {
       }
       return writable
     }
-    writer = createExecutorEventWriter(writeChunk)
-    for (const event of replay) {
-      writer.write(event)
-      if (!active) return
-    }
-    writer.flush()
-    if (!active || res.writableEnded || res.destroyed) return
-    dispose = client.listen(event => writer.write(event))
-    if (!active) {
-      dispose()
-      return
-    }
     writeChunk(': connected\n\n')
+    if (!active) return
+    eventStream = createEventStream({
+      afterSequence: after,
+      onEvent(event) {
+        if (
+          event.protocolVersion !== 1 ||
+          !Number.isSafeInteger(event.sequence) ||
+          typeof event.event !== 'string'
+        ) {
+          disconnect()
+          if (!res.writableEnded && !res.destroyed) res.end()
+          return
+        }
+        writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
+      },
+      onClose() {
+        disconnect()
+        if (!res.writableEnded && !res.destroyed) res.end()
+      },
+    })
+    await eventStream.start()
   } catch (error) {
     disconnect()
     if (!res.headersSent) sendError(res, error)
@@ -114,78 +125,6 @@ export async function handleExecutorEvents(req, res, client) {
       res.end(`event: error\ndata: ${JSON.stringify(errorBody(error))}\n\n`)
     }
   }
-}
-
-function createExecutorEventWriter(writeChunk) {
-  const pendingBlockUpdates = new Map()
-  let flushImmediate = null
-  let closed = false
-
-  const writeRaw = event => {
-    if (closed) return false
-    const writable = writeChunk(`id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`)
-    if (!writable) {
-      closed = true
-      if (flushImmediate) clearImmediate(flushImmediate)
-      flushImmediate = null
-      pendingBlockUpdates.clear()
-      return false
-    }
-    return true
-  }
-
-  const flush = () => {
-    if (flushImmediate) clearImmediate(flushImmediate)
-    flushImmediate = null
-    if (closed || pendingBlockUpdates.size === 0) return
-    const events = [...pendingBlockUpdates.values()]
-    pendingBlockUpdates.clear()
-    for (const event of events) {
-      if (!writeRaw(event)) return
-    }
-  }
-
-  const write = event => {
-    const key = coalescibleBlockUpdateKey(event)
-    if (!key) {
-      flush()
-      writeRaw(event)
-      return
-    }
-    pendingBlockUpdates.set(key, event)
-    if (!flushImmediate) {
-      flushImmediate = setImmediate(flush)
-    }
-  }
-
-  return {
-    write,
-    flush,
-    close() {
-      closed = true
-      if (flushImmediate) clearImmediate(flushImmediate)
-      flushImmediate = null
-      pendingBlockUpdates.clear()
-    },
-  }
-}
-
-function coalescibleBlockUpdateKey(event) {
-  if (event?.event !== 'response.block.updated') return null
-  const payload = isRecord(event.payload) ? event.payload : {}
-  const data = isRecord(payload.data) ? payload.data : {}
-  const updates = isRecord(data.updates) ? data.updates : {}
-  if (
-    typeof updates.content !== 'string' ||
-    Object.keys(updates).some(key => key !== 'content' && key !== 'status')
-  ) {
-    return null
-  }
-  const taskId = stringValue(payload.taskId)
-  const subtaskId = stringValue(payload.subtaskId)
-  const blockId = stringValue(data.blockId) ?? stringValue(data.block_id)
-  if (!taskId || !subtaskId || !blockId) return null
-  return [stringValue(payload.deviceId) ?? '', taskId, subtaskId, blockId].join(':')
 }
 
 function eventCursor(req) {
@@ -290,8 +229,4 @@ function singleHeader(value) {
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
-
-function stringValue(value) {
-  return typeof value === 'string' && value ? value : null
 }

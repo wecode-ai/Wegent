@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ApiError, createHttpClient } from '@/api/http'
 import { getConfiguredSocketBaseUrl, getRuntimeConfig } from '@/config/runtime'
 import { raceWithTimeout } from '@/lib/promise-timeout'
+import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
 import type { User } from '@/types/api'
 import {
   CloudConnectionContext,
@@ -16,6 +17,7 @@ import {
   getJwtExpiry,
   isCloudTokenExpired,
   normalizeCloudBackendUrl,
+  normalizeStoredCloudConnection,
   readStoredCloudConnection,
   saveStoredCloudConnection,
   type CloudConnectionRuntimeConfig,
@@ -83,8 +85,9 @@ function authWindowClosedPromise(handle: CloudAuthorizationHandle | void): Promi
   })
 }
 
-function snapshotFromStored(): CloudConnectionSnapshot {
-  const stored = readStoredCloudConnection()
+function snapshotFromConnection(
+  stored: ReturnType<typeof readStoredCloudConnection>
+): CloudConnectionSnapshot {
   if (!stored) return DISCONNECTED_STATE
   let normalizedConfig: CloudConnectionRuntimeConfig
   try {
@@ -136,6 +139,10 @@ function snapshotFromStored(): CloudConnectionSnapshot {
     connectedAt: migrated.connectedAt,
     error: null,
   }
+}
+
+function snapshotFromStored(): CloudConnectionSnapshot {
+  return snapshotFromConnection(readStoredCloudConnection())
 }
 
 function createCloudClient(config: CloudConnectionRuntimeConfig, token: string | null) {
@@ -313,7 +320,7 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     return
   }
 
-  saveStoredCloudConnection({
+  const stored = {
     backendUrl: snapshot.backendUrl,
     apiBaseUrl: snapshot.apiBaseUrl,
     socketBaseUrl: snapshot.socketBaseUrl,
@@ -324,6 +331,10 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     tokenExpiresAt: snapshot.tokenExpiresAt,
     user: snapshot.user,
     connectedAt: snapshot.connectedAt,
+  }
+  saveStoredCloudConnection(stored)
+  void updateAppPreferences({ cloudConnection: stored }).catch(error => {
+    console.error('[CloudConnection] Failed to persist desktop cloud connection', error)
   })
 }
 
@@ -339,6 +350,24 @@ interface CloudConnectionProviderProps {
 export function CloudConnectionProvider({ children }: CloudConnectionProviderProps) {
   const [snapshot, setSnapshot] = useState<CloudConnectionSnapshot>(() => snapshotFromStored())
   const initialRefreshStartedRef = useRef(false)
+  const desktopRestoreStartedRef = useRef(false)
+
+  useEffect(() => {
+    if (desktopRestoreStartedRef.current || snapshot.status !== 'disconnected') return
+    desktopRestoreStartedRef.current = true
+    void getAppPreferences()
+      .then(preferences => {
+        const stored = normalizeStoredCloudConnection(preferences.cloudConnection)
+        if (!stored) return
+        saveStoredCloudConnection(stored)
+        setSnapshot(current =>
+          current.status === 'disconnected' ? snapshotFromConnection(stored) : current
+        )
+      })
+      .catch(error => {
+        console.error('[CloudConnection] Failed to restore desktop cloud connection', error)
+      })
+  }, [snapshot.status])
 
   const applyConnectedSnapshot = useCallback((nextSnapshot: CloudConnectionSnapshot) => {
     persistSnapshot(nextSnapshot)
@@ -491,6 +520,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
 
   const disconnect = useCallback(() => {
     clearStoredCloudConnection()
+    void updateAppPreferences({ cloudConnection: null }).catch(error => {
+      console.error('[CloudConnection] Failed to clear desktop cloud connection', error)
+    })
     setSnapshot(DISCONNECTED_STATE)
     track('cloud_connection_changed', { connected: false })
   }, [])

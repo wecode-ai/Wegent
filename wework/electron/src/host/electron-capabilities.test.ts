@@ -8,10 +8,13 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
+  registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
+import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 
@@ -118,6 +121,72 @@ describe('registerBrowserHistoryCapabilities', () => {
   })
 })
 
+describe('registerAppUpdateCapabilities', () => {
+  test('validates channels and forwards the updater lifecycle', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const appUpdates = {
+      check: vi.fn(async () => ({ currentVersion: '0.2.6', version: '0.2.7' })),
+      download: vi.fn(async () => undefined),
+      downloadProgress: vi.fn(() => ({ downloadedBytes: 25, totalBytes: 100 })),
+      createInstallAction: vi.fn(() => vi.fn(async () => undefined)),
+    } as unknown as AppUpdateService
+    const installCompletions: Array<() => void | Promise<void>> = []
+    const context = {
+      principal: 'test',
+      deferUntilResponseSent: (completion: () => void | Promise<void>) =>
+        installCompletions.push(completion),
+    }
+
+    registerAppUpdateCapabilities(router, appUpdates)
+
+    await expect(
+      handlers.get('appUpdate.check')?.({ channel: 'stable' }, context)
+    ).resolves.toEqual({
+      currentVersion: '0.2.6',
+      version: '0.2.7',
+    })
+    await handlers.get('appUpdate.download')?.({}, context)
+    expect(await handlers.get('appUpdate.downloadProgress')?.({}, context)).toEqual({
+      downloadedBytes: 25,
+      totalBytes: 100,
+    })
+    await handlers.get('appUpdate.install')?.({}, context)
+
+    expect(appUpdates.check).toHaveBeenCalledWith('stable')
+    expect(appUpdates.download).toHaveBeenCalledOnce()
+    expect(appUpdates.downloadProgress).toHaveBeenCalledOnce()
+    expect(appUpdates.createInstallAction).toHaveBeenCalledOnce()
+    expect(installCompletions).toHaveLength(1)
+    await installCompletions[0]()
+    expect(() => handlers.get('appUpdate.check')?.({ channel: 'nightly' }, context)).toThrow(
+      'channel is invalid'
+    )
+  })
+
+  test('reports update capabilities as unavailable without an updater service', () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+
+    registerAppUpdateCapabilities(router, undefined)
+
+    expect(() =>
+      handlers.get('appUpdate.download')?.(
+        {},
+        { principal: 'test', deferUntilResponseSent: vi.fn() }
+      )
+    ).toThrow('App updates are unavailable')
+  })
+})
+
 describe('registerDesktopServiceCapabilities', () => {
   test('allowlists and forwards all migrated desktop capability contracts', async () => {
     const handlers = new Map<HostCapability, HostCapabilityHandler>()
@@ -138,6 +207,13 @@ describe('registerDesktopServiceCapabilities', () => {
       start: vi.fn(async () => undefined),
       stop: vi.fn(async () => undefined),
     } as unknown as WorkbenchPluginManager
+    const coreDshPlugins = {
+      listCoreDshPlugins: vi.fn(async () => []),
+      installCoreDshPlugin: vi.fn(async () => []),
+      updateCoreDshPlugin: vi.fn(async () => []),
+      setCoreDshPluginEnabled: vi.fn(async () => []),
+      uninstallCoreDshPlugin: vi.fn(async () => []),
+    }
     const developer = {
       openDevTools: vi.fn(),
       openLogDirectory: vi.fn(async () => undefined),
@@ -155,7 +231,11 @@ describe('registerDesktopServiceCapabilities', () => {
       'plugins.authorizeCapability',
     ] as const
 
-    registerDesktopServiceCapabilities(router, { feedback, plugins }, developer)
+    registerDesktopServiceCapabilities(
+      router,
+      { coreDshPlugins: () => coreDshPlugins, feedback, plugins },
+      developer
+    )
 
     expect(HOST_CAPABILITIES).toEqual(expect.arrayContaining(expectedCapabilities))
     expect([...handlers.keys()]).toEqual(expect.arrayContaining(expectedCapabilities))
@@ -219,5 +299,53 @@ describe('registerDesktopServiceCapabilities', () => {
     expect(plugins.list).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
+  })
+})
+
+describe('registerCoreDshPluginCapabilities', () => {
+  test('forwards the explicit Core DSH plugin operations', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const coreDshPlugins = {
+      listCoreDshPlugins: vi.fn(async () => []),
+      installCoreDshPlugin: vi.fn(async () => []),
+      updateCoreDshPlugin: vi.fn(async () => []),
+      setCoreDshPluginEnabled: vi.fn(async () => []),
+      uninstallCoreDshPlugin: vi.fn(async () => []),
+    }
+    const services = {
+      coreDshPlugins: () => coreDshPlugins,
+      feedback: {} as FeedbackBundleManager,
+      plugins: {} as WorkbenchPluginManager,
+    }
+
+    registerCoreDshPluginCapabilities(router, services)
+    await handlers.get('runtime.listCoreDshPlugins')?.({}, { principal: 'test' })
+    await handlers.get('runtime.installCoreDshPlugin')?.(
+      { spec: 'github:owner/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('runtime.updateCoreDshPlugin')?.(
+      { name: 'dsh-example' },
+      { principal: 'test' }
+    )
+    await handlers.get('runtime.setCoreDshPluginEnabled')?.(
+      { name: 'dsh-example', enabled: false },
+      { principal: 'test' }
+    )
+    await handlers.get('runtime.uninstallCoreDshPlugin')?.(
+      { name: 'dsh-example' },
+      { principal: 'test' }
+    )
+
+    expect(coreDshPlugins.listCoreDshPlugins).toHaveBeenCalledOnce()
+    expect(coreDshPlugins.installCoreDshPlugin).toHaveBeenCalledWith('github:owner/plugin')
+    expect(coreDshPlugins.updateCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
+    expect(coreDshPlugins.setCoreDshPluginEnabled).toHaveBeenCalledWith('dsh-example', false)
+    expect(coreDshPlugins.uninstallCoreDshPlugin).toHaveBeenCalledWith('dsh-example')
   })
 })

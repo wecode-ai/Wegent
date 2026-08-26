@@ -119,8 +119,9 @@ export function subscribeDshExecutorEvents(
       ) {
         return
       }
-      cursor = Math.max(cursor, event.sequence)
+      if (event.sequence <= cursor) return
       listener(event)
+      cursor = event.sequence
     }
     nextSource.onerror = () => {
       if (source !== nextSource) return

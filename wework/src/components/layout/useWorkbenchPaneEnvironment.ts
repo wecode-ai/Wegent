@@ -69,6 +69,12 @@ export function applySharedChangeRequestSnapshot(
   snapshot: TaskChangeRequestSnapshot
 ): EnvironmentInfo {
   if (snapshot.error || snapshot.stale) return environmentInfo
+  if (
+    environmentInfo.changeRequest &&
+    ['unavailable', 'unauthenticated', 'error'].includes(environmentInfo.changeRequest.state)
+  ) {
+    return environmentInfo
+  }
   const provider = snapshot.changeRequest?.provider ?? environmentInfo.changeRequest?.provider
   if (!provider) return environmentInfo
   return {
@@ -555,7 +561,7 @@ export function useWorkbenchPaneEnvironment({
   const refreshEnvironmentInfo = useCallback(async () => {
     await Promise.all([
       loadCurrentEnvironmentInfo({ force: true, showLoading: true }),
-      changeRequestMonitor?.refresh(),
+      changeRequestMonitor?.refresh({ shareInflight: false }),
     ])
   }, [changeRequestMonitor, loadCurrentEnvironmentInfo])
 

@@ -16,6 +16,7 @@ import {
   type MenuItemConstructorOptions,
   type WebContents,
 } from 'electron'
+import electronUpdater from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -49,10 +50,16 @@ import { createSingleFlight, presentWindow } from './host/window-presentation.js
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
-import { resolveStartupSplashTheme, StartupSplash } from './host/startup-splash.js'
+import {
+  resolveStartupSplashTheme,
+  StartupSplash,
+  type StartupSplashTheme,
+} from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
+import { AppUpdateService } from './host/app-update-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
   cleanupStaleTemporaryImages,
@@ -64,6 +71,11 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
+const { autoUpdater } = electronUpdater
+const updateBaseUrl =
+  process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
+  'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 
 const userDataPath =
   process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), 'io.wecode.wework')
@@ -102,6 +114,7 @@ let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
+let trayNativeStatus: TrayNativeStatusController | null = null
 let pendingTrayActions: TrayAction[] = []
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
@@ -109,6 +122,13 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdates = new AppUpdateService({
+  updater: autoUpdater,
+  currentVersion: () => app.getVersion(),
+  isPackaged: () => app.isPackaged,
+  prepareInstall: prepareApplicationShutdown,
+  updateBaseUrl,
+})
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -132,7 +152,6 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     items => Menu.buildFromTemplate(items),
     {
       copyPath: path => clipboard.writeText(path),
-      copyText: text => clipboard.writeText(text),
       openImage: async image => {
         const temporaryPath = image.localPath
           ? null
@@ -385,11 +404,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     runtimeError = null
     rendererHealth.ready()
     mainWindow?.show()
-    void startupSplash
-      ?.close({ capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim() })
-      .catch(error => {
-        console.error('[startup-splash] failed to close startup window', error)
-      })
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -407,6 +421,9 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
+    await startupSplash?.close({
+      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -608,13 +625,13 @@ async function showPopoutWindow(): Promise<void> {
   presentWindow(target)
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
     height: 960,
     title: 'Wework',
-    backgroundColor: '#101316',
+    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
     show: false,
     webPreferences: {
       backgroundThrottling: false,
@@ -625,6 +642,30 @@ async function createWindow(): Promise<void> {
       webviewTag: true,
     },
   })
+  startupSplash = new StartupSplash({
+    window: {
+      isDestroyed: () => mainWindow?.isDestroyed() ?? true,
+      isVisible: () => mainWindow?.isVisible() ?? false,
+      once: (event, listener) => {
+        if (event === 'closed') mainWindow?.once('closed', listener)
+        else mainWindow?.once('ready-to-show', listener)
+      },
+      show: () => mainWindow?.show(),
+      webContents: {
+        capturePage: async () => {
+          if (!mainWindow) throw new Error('Main window is unavailable')
+          return mainWindow.webContents.capturePage()
+        },
+        executeJavaScript: async code => {
+          if (!mainWindow) throw new Error('Main window is unavailable')
+          return mainWindow.webContents.executeJavaScript(code)
+        },
+        isDestroyed: () => mainWindow?.webContents.isDestroyed() ?? true,
+      },
+    },
+    theme: startupTheme,
+  })
+  const startupShown = startupSplash.show()
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -637,7 +678,10 @@ async function createWindow(): Promise<void> {
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
-  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'))
+  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
+    query: { theme: startupTheme },
+  })
+  await startupShown
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -722,14 +766,19 @@ function dispatchTrayAction(action: TrayAction): void {
 }
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
   return new ElectronTrayManager({
     createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
-    applyTitle: (tray, title) => {
-      tray.setImage(createTrayIcon(nativeImage, iconPath, title))
+    applyIcon: (tray, state) => {
+      tray.setImage(
+        createTrayIcon(nativeImage, iconPath, state.usageTitle, process.platform, {
+          runningCount: state.runningCount,
+          showRunningStatus: state.showRunningStatus,
+        })
+      )
       tray.setTitle('')
     },
   })
@@ -761,6 +810,8 @@ function installIpc(): void {
 async function shutdown(): Promise<void> {
   systemResume.stop()
   systemSleep.stop()
+  trayNativeStatus?.stop()
+  trayNativeStatus = null
   trayManager?.destroy()
   trayManager = null
   for (const workspaceWindow of workspaceWindows.values()) {
@@ -787,9 +838,14 @@ async function shutdown(): Promise<void> {
 }
 
 function requestApplicationShutdown(exit: () => void): void {
-  if (shutdownPromise) return
+  void prepareApplicationShutdown().finally(exit)
+}
+
+function prepareApplicationShutdown(): Promise<void> {
+  if (shutdownPromise) return shutdownPromise
   quitting = true
-  shutdownPromise = shutdown().finally(exit)
+  shutdownPromise = shutdown()
+  return shutdownPromise
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
@@ -843,7 +899,10 @@ async function configureDesktopRuntime(): Promise<void> {
     environment,
     dataDirectory: app.getPath('userData'),
     logDirectory: app.getPath('logs'),
-    onExecutorEvent: (event, payload) => systemSleep.handleExecutorEvent(event, payload),
+    onExecutorEvent: (event, payload) => {
+      systemSleep.handleExecutorEvent(event, payload)
+      trayNativeStatus?.handleExecutorEvent(event)
+    },
     hostPipe: new HostPipeServer(
       createElectronCapabilityRouter(
         () => mainWindow,
@@ -852,6 +911,8 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         embeddedBrowser,
         {
+          coreDshPlugins: () => desktopRuntime,
+          appUpdates,
           feedback,
           plugins: workbenchPlugins,
         },
@@ -879,7 +940,10 @@ async function configureDesktopRuntime(): Promise<void> {
           dockVisible: () => dockVisible,
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
-          traySetState: state => trayManager?.setState(state),
+          traySetState: state => {
+            trayManager?.setState(state)
+            void trayNativeStatus?.refresh()
+          },
           traySnapshot: () => trayManager?.snapshot() ?? null,
           takePendingTrayActions: () => {
             const actions = pendingTrayActions
@@ -955,6 +1019,14 @@ async function configureDesktopRuntime(): Promise<void> {
       )
     ),
   })
+  trayNativeStatus = new TrayNativeStatusController({
+    preferences,
+    requestExecutor: (method, params) => {
+      if (!desktopRuntime) return Promise.reject(new Error('Desktop runtime is unavailable'))
+      return desktopRuntime.requestExecutor(method, params)
+    },
+    apply: status => trayManager?.setNativeStatus(status),
+  })
   workbenchTabs = new WorkbenchTabController({
     runtime: desktopRuntime,
     surface: {
@@ -980,6 +1052,7 @@ function startDesktopRuntime(): Promise<void> {
   runtimeStartPromise = (async () => {
     await configureDesktopRuntime()
     await desktopRuntime?.start()
+    trayNativeStatus?.start()
     await loadPrimaryDshView()
     runtimePhase = 'ready'
   })()
@@ -1026,39 +1099,15 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
-    startupSplash = new StartupSplash({
-      createWindow: options => {
-        const target = new BrowserWindow(options)
-        return {
-          close: () => target.close(),
-          isDestroyed: () => target.isDestroyed(),
-          isVisible: () => target.isVisible(),
-          loadFile: (path, options) => target.loadFile(path, options),
-          once: (event, listener) => {
-            if (event === 'closed') target.once('closed', listener)
-            else target.once('ready-to-show', listener)
-          },
-          show: () => target.show(),
-          webContents: {
-            capturePage: () => target.webContents.capturePage(),
-            executeJavaScript: code => target.webContents.executeJavaScript(code),
-            isDestroyed: () => target.webContents.isDestroyed(),
-          },
-        }
-      },
-      htmlPath: resolve(packageRoot, 'dist/shell/startup-splash/index.html'),
-      theme: resolveStartupSplashTheme(
-        startupPreferences.appearanceMode,
-        nativeTheme.shouldUseDarkColors
-      ),
-    })
-    await Promise.all([startupSplash.show(), createWindow()])
+    await createWindow(
+      resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
+    )
     void startDesktopRuntime()
   })
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : resolve(packageRoot, 'resources')
+  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',

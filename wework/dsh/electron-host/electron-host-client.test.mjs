@@ -81,3 +81,33 @@ test('rejects capabilities not granted by Electron', async () => {
   )
   client.stop()
 })
+
+test('reports an unexpected Electron host pipe close exactly once', async () => {
+  const hostToDsh = new PassThrough()
+  const dshToHost = new PassThrough()
+  const disconnects = []
+  const client = new ElectronHostClient({
+    token: 'test-token',
+    input: hostToDsh,
+    output: dshToHost,
+    onDisconnect: error => disconnects.push(error),
+  })
+  dshToHost.once('data', () => {
+    hostToDsh.write(
+      `${JSON.stringify({
+        type: 'hello',
+        ok: true,
+        protocolVersion: 1,
+        capabilities: [],
+      })}\n`
+    )
+  })
+
+  await client.start()
+  hostToDsh.end()
+  await new Promise(resolve => setImmediate(resolve))
+  hostToDsh.destroy()
+
+  assert.equal(disconnects.length, 1)
+  assert.equal(disconnects[0].code, 'host_disconnected')
+})
