@@ -53,19 +53,47 @@ Wegent Web provides the browser interface for remote agents. Agents can use conf
 
 ## How it works
 
-Wegent Desktop works directly with local projects and its local runtime. It can connect to Wegent Backend for shared resources and execution devices. Wegent Web is a separate browser interface built on the same Backend.
+Wework is the Wegent desktop workbench. Electron owns desktop windows, system capabilities, and process management. DeepSeek Harness (DSH) is the embedded application and plugin runtime, and the Wework product UI is composed from a set of DSH plugins. Executor manages tasks and sessions, then drives Codex to perform the actual work in local projects.
 
 ```mermaid
 flowchart LR
-    User["User"] --> Desktop["Wegent Desktop"]
-    User --> Web["Wegent Web"]
-    Desktop --> Local["Local project and runtime"]
-    Desktop <--> Backend["Wegent Backend"]
-    Web <--> Backend
-    Backend --> Agents["Shared agents and knowledge"]
-    Backend --> Space["Project spaces"]
-    Backend --> Remote["Cloud and remote devices"]
+    Electron["Electron<br/>Desktop host"]
+
+    subgraph DSH["DSH Runtime"]
+        direction TB
+        Core["DSH Core<br/>Plugin discovery, dependency injection, and lifecycle"]
+        App["dsh-app-wework<br/>Wework product shell and UI extension points"]
+        UI["dsh-ui-*<br/>Tasks, project spaces, settings, apps, and automation"]
+        ElectronPlugin["dsh-electron-host<br/>Electron capability bridge"]
+        ExecutorPlugin["dsh-executor-runtime<br/>Task execution and event adapter"]
+        TerminalPlugin["dsh-terminal-runtime<br/>Local interactive terminals"]
+
+        Core --> App
+        Core --> UI
+        Core --> ElectronPlugin
+        Core --> ExecutorPlugin
+        Core --> TerminalPlugin
+        App --> UI
+    end
+
+    Executor["Executor<br/>Task and session execution"]
+    Codex["Codex<br/>Coding agent"]
+    Workspace["Local project<br/>Files and commands"]
+
+    Electron -->|"Starts and hosts"| Core
+    Electron -->|"Starts and supervises"| Executor
+    ElectronPlugin <-->|"Restricted desktop capabilities"| Electron
+    UI <-->|"User actions and UI updates"| ExecutorPlugin
+    ExecutorPlugin -->|"Create, follow up, approve, cancel"| Executor
+    Executor -->|"Status, messages, tool events, results"| ExecutorPlugin
+    Executor <-->|"Launch, control, and events"| Codex
+    Codex <-->|"Read, modify, and execute"| Workspace
+    TerminalPlugin <-->|"PTY"| Workspace
 ```
+
+DSH does not execute coding tasks itself. `dsh-app-wework` defines the product shell and extension points, `dsh-ui-*` provides the product modules, `dsh-electron-host` bridges restricted Electron capabilities, `dsh-executor-runtime` communicates bidirectionally with Executor throughout execution, and `dsh-terminal-runtime` manages local interactive terminals. Executor is the task execution layer, while Codex is the concrete coding agent it drives.
+
+Wework can also connect to Wegent Backend for shared project spaces, models, and remote execution devices. Wegent Web is a separate browser interface built on the same Backend.
 
 ## Quick start
 
