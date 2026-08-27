@@ -4,11 +4,14 @@
 
 """Tests for _build_vision_structure and _combine_text_contents in contexts module."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.services.chat.preprocessing.contexts import (
     _build_vision_structure,
     _combine_text_contents,
+    _process_attachment_context,
 )
 
 
@@ -114,3 +117,130 @@ class TestCombineTextContents:
         assert "doc1" in result[0]["text"]
         assert "doc2" in result[0]["text"]
         assert result[1]["text"] == "Q"
+
+
+def _image_context(**overrides):
+    data = {
+        "id": 41,
+        "context_type": "attachment",
+        "original_filename": "photo.png",
+        "mime_type": "image/png",
+        "file_size": 1024,
+        "file_extension": ".png",
+        "image_base64": "aW1hZ2U=",
+        "type_data": {"source": "quick_launch_preset"},
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+class TestProcessAttachmentContext:
+    def test_image_generation_model_uses_reference_image_capability(self, caplog):
+        caplog.set_level(
+            "INFO",
+            logger="app.services.chat.preprocessing.contexts",
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            task_id=10,
+            subtask_id=20,
+            model_config={
+                "modelType": "image",
+                "imageConfig": {
+                    "capabilities": {"supports_image_input": True},
+                },
+            },
+        )
+
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+        assert image_contents[0]["id"] == 41
+        assert (
+            "Added image input context: id=41 filename=photo.png "
+            "source=quick_launch_preset"
+        ) in caplog.text
+        assert "aW1hZ2U=" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "image_config",
+        [
+            {"capabilities": {"supports_image_input": False}},
+            {"max_reference_images": 0},
+            {"capabilities": {"max_reference_images": 0}},
+        ],
+    )
+    def test_image_generation_model_rejects_unsupported_reference_image(
+        self, image_config
+    ):
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            model_config={
+                "modelType": "image",
+                "imageConfig": image_config,
+            },
+        )
+
+        assert image_contents == []
+        assert "[Image Attachment: photo.png" in text_contents[0]
+
+    @pytest.mark.parametrize(
+        "image_config",
+        [
+            {},
+            {"capabilities": {}},
+            {"max_reference_images": 1},
+        ],
+    )
+    def test_image_generation_model_allows_reference_image_by_default(
+        self, image_config
+    ):
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            model_config={
+                "modelType": "image",
+                "imageConfig": image_config,
+            },
+        )
+
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+
+    @pytest.mark.parametrize(
+        ("model_capabilities", "expected_image_count"),
+        [
+            ({}, 0),
+            ({"supportsImage": False}, 0),
+            ({"supportsImage": True}, 1),
+        ],
+    )
+    def test_chat_model_requires_declared_image_capability(
+        self, model_capabilities, expected_image_count
+    ):
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            model_config={"modelCapabilities": model_capabilities},
+        )
+
+        assert len(image_contents) == expected_image_count

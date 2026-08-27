@@ -83,6 +83,20 @@ class TestExtractThinkingConfig:
         result = _extract_model_config(spec)
         assert result["think_config"] is None
 
+    @_DECRYPT_PATCH
+    def test_image_config_extracted(self, _decrypt):
+        """spec.imageConfig is forwarded to the image generation runtime."""
+        spec = _make_spec()
+        spec["modelType"] = "image"
+        spec["imageConfig"] = {
+            "size": "2048x2048",
+            "capabilities": {"supports_image_input": True},
+        }
+
+        result = _extract_model_config(spec)
+
+        assert result["imageConfig"] == spec["imageConfig"]
+
 
 class TestExtractTemperature:
     """Tests for temperature extraction from env."""
