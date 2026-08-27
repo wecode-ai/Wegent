@@ -194,6 +194,7 @@ async function handleMcpRequestAsync(
   }
 
   let result: unknown
+  let completedToolCall: McpToolCall | null = null
   if (message.method === 'initialize') {
     result = {
       protocolVersion: '2025-03-26',
@@ -213,13 +214,13 @@ async function handleMcpRequestAsync(
     const delayMs = state.responseDelays[nodeId] || 0
     if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
     const outcome = await callTool(name, args)
-    toolCalls.push({
+    completedToolCall = {
       timestamp: new Date().toISOString(),
       name,
       arguments: args,
       result: outcome.result,
       isError: outcome.isError,
-    })
+    }
     result = {
       content: [{ type: 'text', text: JSON.stringify(outcome.result) }],
       isError: outcome.isError,
@@ -233,7 +234,12 @@ async function handleMcpRequestAsync(
     'Content-Type': 'application/json',
     'Mcp-Session-Id': 'mock-mcp-session',
   })
-  res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }))
+  res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }), () => {
+    // Expose a tool call only after its MCP response has been fully flushed.
+    // Deletion E2E scenarios use this as the provider-fetch completion signal
+    // before observing the backend's guarded attachment-write stability window.
+    if (completedToolCall) toolCalls.push(completedToolCall)
+  })
 }
 
 function toolsForRequest(req: http.IncomingMessage, port: number): typeof tools {

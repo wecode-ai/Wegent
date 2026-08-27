@@ -173,7 +173,10 @@ function setupBatchAttachment() {
   })
 }
 
-async function openDingtalkMode(props: Partial<Parameters<typeof DocumentUpload>[0]> = {}) {
+async function openDingtalkMode(
+  props: Partial<Parameters<typeof DocumentUpload>[0]> = {},
+  options: { waitForDocumentList?: boolean } = {}
+) {
   render(
     <DocumentUpload
       open={true}
@@ -188,7 +191,9 @@ async function openDingtalkMode(props: Partial<Parameters<typeof DocumentUpload>
     />
   )
   fireEvent.click(screen.getByTestId('dingtalk-source-button'))
-  await screen.findByTestId('dingtalk-document-list')
+  if (options.waitForDocumentList !== false) {
+    await screen.findByTestId('dingtalk-document-list')
+  }
 }
 
 describe('DocumentUpload dingtalk source', () => {
@@ -231,6 +236,21 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-import-last-synced')).toHaveTextContent('Last refreshed')
+  })
+
+  it('does not retry a failed initial load until refresh is clicked', async () => {
+    mockGetDocs.mockRejectedValueOnce(new Error('directory unavailable'))
+    mockSyncDocs.mockResolvedValue({ added: 0, updated: 0, deleted: 0, total: 5 })
+
+    await openDingtalkMode({}, { waitForDocumentList: false })
+
+    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent('Failed to load')
+    await waitFor(() => expect(mockGetDocs).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+
+    await waitFor(() => expect(mockGetDocs).toHaveBeenCalledTimes(2))
+    expect(await screen.findByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
   })
 
   it('switches to the wikispace directory on tab click', async () => {

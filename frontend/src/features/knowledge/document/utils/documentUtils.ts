@@ -92,9 +92,9 @@ export function isDocumentEditable(
 
 /** Source governance metadata stored in source_config.external by the backend. */
 export interface ExternalDocumentSourceInfo {
-  provider?: string
+  provider: string
   resource_id?: string
-  title?: string
+  title: string
   url?: string
   /** 'accessible' | 'inaccessible' — undefined means not yet determined. */
   status?: string
@@ -116,5 +116,23 @@ export function getExternalSourceInfo(
   if (document.source_type !== 'external') return null
   const external = document.source_config?.external
   if (!external || typeof external !== 'object') return null
-  return external as ExternalDocumentSourceInfo
+  const source = external as Record<string, unknown>
+  if (typeof source.provider !== 'string' || typeof source.title !== 'string') return null
+
+  const optionalFields = ['resource_id', 'url', 'status', 'last_success_at', 'last_error'] as const
+  if (
+    optionalFields.some(field => source[field] !== undefined && typeof source[field] !== 'string')
+  ) {
+    return null
+  }
+
+  return {
+    provider: source.provider,
+    resource_id: source.resource_id as string | undefined,
+    title: source.title,
+    url: source.url as string | undefined,
+    status: source.status as string | undefined,
+    last_success_at: source.last_success_at as string | undefined,
+    last_error: source.last_error as string | undefined,
+  }
 }

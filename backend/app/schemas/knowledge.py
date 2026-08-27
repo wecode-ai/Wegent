@@ -9,9 +9,16 @@ Pydantic schemas for knowledge base and document management.
 import logging
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, PositiveInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PositiveInt,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.models.knowledge import ContentOrigin
 from app.schemas.base_role import BaseRole
@@ -1040,7 +1047,9 @@ class ExternalDocumentBatchImportRequest(BaseModel):
         max_length=32,
         description="External provider ID (e.g. 'dingtalk')",
     )
-    external_resource_ids: list[str] = Field(
+    external_resource_ids: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    ] = Field(
         ...,
         min_length=1,
         description="Provider-scoped external document IDs to import",

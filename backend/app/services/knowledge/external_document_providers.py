@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -23,6 +24,8 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
+
+EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS = 180
 
 
 class ExternalDocumentImportError(Exception):
@@ -193,12 +196,21 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             logger.error("mcp package not available for DingTalk document import")
             raise
 
-        async with streamablehttp_client(url=mcp_url) as (
+        async with streamablehttp_client(
+            url=mcp_url,
+            sse_read_timeout=EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS,
+        ) as (
             read_stream,
             write_stream,
             _,
         ):
-            async with ClientSession(read_stream, write_stream) as session:
+            async with ClientSession(
+                read_stream,
+                write_stream,
+                read_timeout_seconds=timedelta(
+                    seconds=EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS
+                ),
+            ) as session:
                 await session.initialize()
                 result = await session.call_tool(
                     "get_document_content", {"nodeId": node_id}

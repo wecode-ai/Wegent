@@ -1421,23 +1421,21 @@ export function DocumentUpload({
 
   // Render DingTalk import mode; the mode is only reachable through the source
   // picker button, which is hidden unless onDingtalkImport is provided.
-  const renderDingtalkMode = () => (
-    <DingtalkDocumentImport
-      onBack={handleBackFromDingtalkMode}
-      onImport={
-        onDingtalkImport ??
-        (async () => {
-          throw new Error('DingTalk import handler is not configured')
-        })
-      }
-      onDone={handleDingtalkDone}
-      folderId={folderId}
-      folderOptions={folderOptions}
-      onFolderChange={onFolderChange}
-      isSharedKnowledgeBase={isSharedKnowledgeBase}
-      canManageDocuments={canManageDocuments}
-    />
-  )
+  const renderDingtalkMode = () => {
+    if (!onDingtalkImport) return null
+    return (
+      <DingtalkDocumentImport
+        onBack={handleBackFromDingtalkMode}
+        onImport={onDingtalkImport}
+        onDone={handleDingtalkDone}
+        folderId={folderId}
+        folderOptions={folderOptions}
+        onFolderChange={onFolderChange}
+        isSharedKnowledgeBase={isSharedKnowledgeBase}
+        canManageDocuments={canManageDocuments}
+      />
+    )
+  }
 
   // Render mode selector
   const renderContent = () => {

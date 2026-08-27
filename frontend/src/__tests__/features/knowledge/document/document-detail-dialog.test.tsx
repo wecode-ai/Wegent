@@ -270,6 +270,27 @@ describe('DocumentDetailDialog external source info', () => {
 
     expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
   })
+
+  it.each([
+    { ...externalMeta, provider: 123 },
+    { ...externalMeta, title: null },
+    { ...externalMeta, url: { unsafe: true } },
+  ])('hides invalid external source metadata', invalidExternalMeta => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: { external: invalidExternalMeta },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
 })
 
 describe('DocumentDetailDialog processing errors', () => {

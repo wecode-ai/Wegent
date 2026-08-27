@@ -1995,7 +1995,6 @@ class KnowledgeService:
         """
         logger = logging.getLogger(__name__)
 
-        from app.services.context import context_service
         from app.services.knowledge.attachment_cleanup import (
             delete_attachment_best_effort,
         )
@@ -2101,49 +2100,19 @@ class KnowledgeService:
 
         # Delete associated attachment (context) if exists
         if attachment_id:
-            try:
-                deleted = context_service.delete_context(
-                    db=db,
-                    context_id=attachment_id,
-                    user_id=context_owner_user_id,
-                )
-                if deleted:
-                    logger.info(
-                        f"Deleted attachment context {attachment_id} for document {document_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to delete attachment context {attachment_id} for document {document_id}"
-                    )
-            except Exception as e:
-                # Log error but don't fail the document deletion
-                logger.error(
-                    f"Failed to delete attachment context {attachment_id}: {e!s}",
-                    exc_info=True,
-                )
+            delete_attachment_best_effort(
+                db=db,
+                owner_user_id=context_owner_user_id,
+                attachment_id=attachment_id,
+            )
 
         # Delete converted attachment if exists
         if converted_attachment_id:
-            try:
-                deleted = context_service.delete_context(
-                    db=db,
-                    context_id=converted_attachment_id,
-                    user_id=context_owner_user_id,
-                )
-                if deleted:
-                    logger.info(
-                        f"Deleted converted attachment context {converted_attachment_id} for document {document_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to delete converted attachment context {converted_attachment_id} for document {document_id}"
-                    )
-            except Exception as e:
-                # Log error but don't fail the document deletion
-                logger.error(
-                    f"Failed to delete converted attachment context {converted_attachment_id}: {e!s}",
-                    exc_info=True,
-                )
+            delete_attachment_best_effort(
+                db=db,
+                owner_user_id=context_owner_user_id,
+                attachment_id=converted_attachment_id,
+            )
 
         return DocumentDeleteResult(success=True, kb_id=kind_id)
 

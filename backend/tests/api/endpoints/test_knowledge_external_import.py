@@ -312,6 +312,19 @@ class TestImportExternalDocument:
 
 
 class TestImportExternalDocumentBatch:
+    @pytest.mark.parametrize("node_id", ["", "x" * 256])
+    def test_rejects_invalid_resource_id_items(
+        self,
+        import_client: TestClient,
+        node_id: str,
+    ) -> None:
+        response = import_client.post(
+            "/knowledge-bases/1/documents/external-import-batch",
+            json=_batch_import_payload([node_id]),
+        )
+
+        assert response.status_code == 422
+
     def test_creates_one_placeholder_per_document(
         self,
         import_client: TestClient,

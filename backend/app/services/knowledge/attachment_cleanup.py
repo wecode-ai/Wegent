@@ -41,7 +41,7 @@ def delete_attachment_best_effort(
                 "orphan cleanup",
                 attachment_id,
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - cleanup must remain best-effort
         logger.warning(
             "[Knowledge] Failed to delete attachment %s: %s; left for orphan "
             "cleanup",

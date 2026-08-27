@@ -198,7 +198,7 @@ export function DingtalkDocumentImport({
         return true
       } catch {
         // Keep whatever was loaded before; only the error flag flips.
-        setSourceState(key, { loading: false, loadFailed: true })
+        setSourceState(key, { loading: false, loaded: true, loadFailed: true })
         return false
       }
     },

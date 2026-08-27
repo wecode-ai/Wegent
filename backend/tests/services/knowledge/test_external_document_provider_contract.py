@@ -11,6 +11,8 @@ the suite and implements the small fixture hooks below; it inherits the whole
 contract coverage instead of rewriting it. DingTalk is the reference adapter.
 """
 
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -232,3 +234,59 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             return markdown
 
         monkeypatch.setattr(provider, "_fetch_document_markdown", fake_fetch)
+
+    @pytest.mark.asyncio
+    async def test_mcp_fetch_sets_explicit_read_timeouts(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import mcp
+        from mcp.client import streamable_http
+
+        observed: dict[str, object] = {}
+
+        @asynccontextmanager
+        async def fake_transport(**kwargs):
+            observed["transport"] = kwargs
+            yield ("read-stream", "write-stream", lambda: None)
+
+        class FakeClientSession:
+            def __init__(self, read_stream, write_stream, read_timeout_seconds):
+                observed["session"] = (
+                    read_stream,
+                    write_stream,
+                    read_timeout_seconds.total_seconds(),
+                )
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def initialize(self):
+                return None
+
+            async def call_tool(self, name, arguments):
+                observed["call"] = (name, arguments)
+                return SimpleNamespace(
+                    isError=False,
+                    content=[SimpleNamespace(type="text", text="# Imported")],
+                )
+
+        monkeypatch.setattr(streamable_http, "streamablehttp_client", fake_transport)
+        monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
+
+        provider = self.make_provider()
+        markdown = await provider._fetch_document_markdown(
+            "https://mcp.example.test/dingtalk",
+            "node-1",
+        )
+
+        assert markdown == "# Imported"
+        assert observed["transport"] == {
+            "url": "https://mcp.example.test/dingtalk",
+            "sse_read_timeout": 180,
+        }
+        assert observed["session"] == ("read-stream", "write-stream", 180.0)
+        assert observed["call"] == ("get_document_content", {"nodeId": "node-1"})

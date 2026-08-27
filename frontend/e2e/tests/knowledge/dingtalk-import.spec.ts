@@ -58,12 +58,12 @@ test.describe('External DingTalk document import', () => {
     const context = await createExternalImportScenario(request, caseName)
     activeContext = context
     let bodyError: unknown = null
+    let cleanupError: unknown = null
     try {
       await body(context)
     } catch (error) {
       bodyError = error
     } finally {
-      let cleanupError: unknown = null
       try {
         await cleanupExternalImportScenario(request, context)
       } catch (error) {
@@ -72,9 +72,9 @@ test.describe('External DingTalk document import', () => {
       if (cleanupError && bodyError) {
         console.error('Scenario cleanup failed (body failure reported first):', cleanupError)
       }
-      if (bodyError) throw bodyError
-      if (cleanupError) throw cleanupError
     }
+    if (bodyError) throw bodyError
+    if (cleanupError) throw cleanupError
   }
 
   test('imports one DingTalk document through the add-materials dialog', async ({
@@ -226,10 +226,10 @@ test.describe('External DingTalk document import', () => {
 
       // Retry uses the dedicated import entry and reuses the same record even
       // while the provider failure persists.
-      const callsBefore = await countContentFetches(request, EXTERNAL_IMPORT_NODES.api)
+      const callsBefore = await countCompletedContentFetches(request, EXTERNAL_IMPORT_NODES.api)
       await page.getByTestId(`retry-import-document-${failedDocument.id}`).click()
       await expect
-        .poll(async () => countContentFetches(request, EXTERNAL_IMPORT_NODES.api), {
+        .poll(async () => countCompletedContentFetches(request, EXTERNAL_IMPORT_NODES.api), {
           timeout: 45_000,
           message: 'The retry should fetch the external body again',
         })
@@ -290,11 +290,13 @@ test.describe('External DingTalk document import', () => {
       // The late task fetched the content but must not resurrect the document:
       // keep probing the deleted record while the delayed fetch settles.
       await expect
-        .poll(async () => countContentFetches(request, EXTERNAL_IMPORT_NODES.product), {
+        .poll(async () => countCompletedContentFetches(request, EXTERNAL_IMPORT_NODES.product), {
           timeout: 30_000,
-          message: 'The in-flight task should have fetched the external body',
+          message: 'The in-flight task should complete the external body fetch',
         })
         .toBeGreaterThan(0)
+      // The provider response is complete. Keep the deleted record under
+      // observation while the worker finishes its guarded attachment write.
       const deadline = Date.now() + 3000
       while (Date.now() < deadline) {
         const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
@@ -349,7 +351,10 @@ test.describe('External DingTalk document import', () => {
   })
 })
 
-async function countContentFetches(request: APIRequestContext, nodeId: string): Promise<number> {
+async function countCompletedContentFetches(
+  request: APIRequestContext,
+  nodeId: string
+): Promise<number> {
   const calls = await getMcpCalls(request)
   return calls.filter(
     call => call.name === 'get_document_content' && call.arguments?.nodeId === nodeId

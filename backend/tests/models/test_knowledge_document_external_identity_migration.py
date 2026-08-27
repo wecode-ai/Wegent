@@ -32,6 +32,13 @@ def _load_migration() -> ModuleType:
     return module
 
 
+def test_revision_extends_main_head() -> None:
+    migration = _load_migration()
+
+    assert migration.revision == "c5d6e7f8a9b0"
+    assert migration.down_revision == "7a4c2e9f1b30"
+
+
 def _migration_with_mock_op(
     monkeypatch: MonkeyPatch,
 ) -> tuple[ModuleType, MagicMock]:
