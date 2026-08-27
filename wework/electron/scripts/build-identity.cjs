@@ -37,9 +37,9 @@ function resolveBuildIdentity(environment = process.env) {
     'wss:',
   ])
 
-  if (!/^[A-Za-z0-9._-]+$/.test(identifier)) {
+  if (!/^[A-Za-z0-9.-]+$/.test(identifier)) {
     throw new Error(
-      `Wework brand identifier may only contain letters, numbers, '.', '_' and '-': ${path}`
+      `Wework brand identifier may only contain letters, numbers, '.' and '-': ${path}`
     )
   }
   validateFileName(productName, 'productName', path)
@@ -80,6 +80,9 @@ function optionalUrl(value, field, path, protocols) {
   }
   if (!protocols.includes(url.protocol)) {
     throw new Error(`Wework brand config ${field} must use ${protocols.join(' or ')}: ${path}`)
+  }
+  if (url.username || url.password) {
+    throw new Error(`Wework brand config ${field} may not contain credentials: ${path}`)
   }
   return text.replace(/\/+$/, '')
 }

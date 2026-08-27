@@ -70,6 +70,42 @@ test('rejects non-web backend URLs', async () => {
   )
 })
 
+test('rejects identifiers that are invalid macOS bundle identifiers', async () => {
+  const path = resolve(tmpdir(), `wework-brand-identifier-${process.pid}-${Date.now()}.json`)
+  await writeFile(
+    path,
+    JSON.stringify({
+      productName: 'Example Workbench',
+      identifier: 'com.example_workbench',
+    })
+  )
+
+  expect(() => resolveBuildIdentity({ WEWORK_BRAND_CONFIG: path })).toThrow(
+    "identifier may only contain letters, numbers, '.' and '-'"
+  )
+})
+
+test.each([
+  ['backendUrl', 'https://user@backend.example.com'],
+  ['backendUrl', 'https://:password@backend.example.com'],
+  ['socketUrl', 'wss://user@socket.example.com'],
+  ['socketUrl', 'wss://:password@socket.example.com'],
+])('rejects credentials in %s', async (field, value) => {
+  const path = resolve(tmpdir(), `wework-brand-credentials-${process.pid}-${Date.now()}.json`)
+  await writeFile(
+    path,
+    JSON.stringify({
+      productName: 'Example Workbench',
+      identifier: 'com.example.workbench',
+      [field]: value,
+    })
+  )
+
+  expect(() => resolveBuildIdentity({ WEWORK_BRAND_CONFIG: path })).toThrow(
+    `${field} may not contain credentials`
+  )
+})
+
 test('packages only product locales and skips individual static plugin signing', () => {
   expect(builderConfig.mac.electronLanguages).toEqual(['en', 'zh_CN'])
   expect(builderConfig.mac.signIgnore).toEqual(['/Contents/Resources/wework-core-plugins/'])
