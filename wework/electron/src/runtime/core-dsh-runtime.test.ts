@@ -233,6 +233,26 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
+  test('exposes Electron Node internals required by the DSH module loader', async () => {
+    const root = await temporaryDirectory('core-dsh-electron-node-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory: join(root.path, 'data'),
+      environment: {
+        WEWORK_NODE_PATH: '/managed/node',
+        WEWORK_NODE_RUNTIME_KIND: 'electron',
+      },
+      port: 3080,
+    })
+
+    expect(launch.args[0]).toBe('--expose-internals')
+    expect(launch.args[1]).toBe(
+      join(runtime.root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    )
+    await root.remove()
+  })
+
   test('preserves manually installed plugins and their build permissions', async () => {
     const root = await temporaryDirectory('core-dsh-user-plugin-')
     const firstRuntime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
