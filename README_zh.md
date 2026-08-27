@@ -162,6 +162,7 @@ pnpm --filter wework dev:mac
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [问题反馈](https://github.com/wecode-ai/Wegent/issues)
+- 钉钉社区群：“wework社区交流”，群号 `190890002451`
 - [Discord 社区](https://discord.gg/MVzJzyqEUp)
 - [开源许可证](LICENSE)
 
