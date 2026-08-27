@@ -40,6 +40,12 @@ from executor_manager.wecode.config.config import (
     WARMPOOL_TEMPLATE_NAME,
 )
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
+from executor_manager.wecode.executors.k8s.git_warmpool import (
+    runtime_ineligibility_reason as git_warmpool_runtime_ineligibility_reason,
+)
+from executor_manager.wecode.executors.k8s.git_warmpool import (
+    serialize_k8s_resource,
+)
 from executor_manager.wecode.executors.k8s.pod_lookup import (
     lookup_pod_owners_by_ip,
 )
@@ -549,6 +555,20 @@ class K8sExecutor(Executor):
                 template_name=WARMPOOL_TEMPLATE_NAME,
                 workload_type="executor",
             )
+            fallback_reason = (pod_result or {}).get("fallback_reason")
+            if fallback_reason:
+                logger.warning(
+                    "Executor warm pool falling back to direct Pod for task %s: %s",
+                    task_id,
+                    fallback_reason,
+                )
+                pod_result = self._create_direct_pod(
+                    task,
+                    executor_name,
+                    user_name,
+                    task_id,
+                    image,
+                )
         else:
             if EXECUTOR_WARMPOOL_ENABLED and not is_sandbox_task:
                 logger.info(
@@ -556,23 +576,12 @@ class K8sExecutor(Executor):
                     task_id,
                     executor_warmpool_reason or "shared_warmpool_disabled",
                 )
-            base_image = self._get_base_image_from_task(task)
-            if base_image:
-                logger.info(
-                    f"Using custom base image: {base_image} with InitContainer pattern"
-                )
-
-            pod = build_pod_configuration(
-                user_name,
-                executor_name,
-                K8S_NAMESPACE,
+            pod_result = self._create_direct_pod(
                 task,
-                image,
+                executor_name,
+                user_name,
                 task_id,
-                get_metadata_field(task, "mode", "default"),
-            )
-            pod_result = self._submit_kubernetes_pod(
-                pod, K8S_NAMESPACE, executor_name, task_id
+                image,
             )
 
         if not pod_result or pod_result.get("status") != "success":
@@ -582,6 +591,31 @@ class K8sExecutor(Executor):
                 else "Kubernetes pod creation failed"
             )
             raise RuntimeError(error_msg)
+
+    def _create_direct_pod(
+        self,
+        task: Dict[str, Any],
+        executor_name: str,
+        user_name: str,
+        task_id: str,
+        image: str,
+    ) -> Dict[str, Any]:
+        """Create the task-specific Pod used when warm-pool claims are unsafe."""
+        base_image = self._get_base_image_from_task(task)
+        if base_image:
+            logger.info(
+                "Using custom base image: %s with InitContainer pattern", base_image
+            )
+        pod = build_pod_configuration(
+            user_name,
+            executor_name,
+            K8S_NAMESPACE,
+            task,
+            image,
+            task_id,
+            get_metadata_field(task, "mode", "default"),
+        )
+        return self._submit_kubernetes_pod(pod, K8S_NAMESPACE, executor_name, task_id)
 
     def _executor_warmpool_ineligibility_reason(
         self, task: Dict[str, Any], image: str
@@ -678,6 +712,21 @@ class K8sExecutor(Executor):
         return any(
             repository.get(field) for field in ("gitUrl", "gitRepo", "gitRepoId")
         )
+
+    @staticmethod
+    def _discard_incompatible_warmpool_claim(
+        warmpool_client, executor_name: str, task_id: str
+    ) -> None:
+        try:
+            if warmpool_client.get_sandbox_claim(executor_name):
+                warmpool_client.delete_sandbox_claim(executor_name)
+        except Exception as error:
+            logger.warning(
+                "Failed to discard incompatible SandboxClaim '%s' for task %s: %s",
+                executor_name,
+                task_id,
+                error,
+            )
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait until Kubernetes pod is running and HTTP endpoint is available."""
@@ -1116,6 +1165,12 @@ class K8sExecutor(Executor):
 
         warmpool_client = WarmPoolClient(api_client, K8S_NAMESPACE)
         resolved_template_name = template_name or WARMPOOL_TEMPLATE_NAME
+        is_git_executor = workload_type == "executor" and self._task_has_git_repository(
+            task
+        )
+        expected_image = get_metadata_field(
+            task, "executor_image", EXECUTOR_DEFAULT_MAGE
+        )
         claim_labels = {}
         if workload_type == "executor":
             claim_labels = {
@@ -1126,6 +1181,39 @@ class K8sExecutor(Executor):
             }
 
         try:
+            if is_git_executor:
+                try:
+                    template = warmpool_client.get_sandbox_template(
+                        resolved_template_name
+                    )
+                    template_reason = git_warmpool_runtime_ineligibility_reason(
+                        self._task_git_url(task),
+                        template or {},
+                        expected_image,
+                        is_template=True,
+                    )
+                except Exception as error:
+                    logger.warning(
+                        "Failed to inspect warm-pool template '%s' for Git task %s: %s",
+                        resolved_template_name,
+                        task_id,
+                        error,
+                    )
+                    template_reason = "git_warmpool_capability_check_failed"
+                if template_reason:
+                    logger.warning(
+                        "Git warm-pool template rejected for task %s: %s",
+                        task_id,
+                        template_reason,
+                    )
+                    self._discard_incompatible_warmpool_claim(
+                        warmpool_client, executor_name, task_id
+                    )
+                    return {
+                        "status": "fallback",
+                        "fallback_reason": template_reason,
+                    }
+
             sandbox_status = self._handle_existing_warmpool_claim(
                 warmpool_client,
                 executor_name,
@@ -1220,6 +1308,44 @@ class K8sExecutor(Executor):
 
             # Patch Pod labels and annotations with task-specific data
             pod_name = sandbox_status.get("pod_name")
+            if is_git_executor:
+                pod_reason = "git_warmpool_capability_check_failed"
+                if pod_name:
+                    try:
+                        pod = warmpool_client.core_api.read_namespaced_pod(
+                            name=pod_name,
+                            namespace=K8S_NAMESPACE,
+                        )
+                        serialized_pod = serialize_k8s_resource(
+                            warmpool_client.api_client, pod
+                        )
+                        pod_reason = git_warmpool_runtime_ineligibility_reason(
+                            self._task_git_url(task),
+                            serialized_pod,
+                            expected_image,
+                            is_template=False,
+                        )
+                    except Exception as error:
+                        logger.warning(
+                            "Failed to inspect claimed warm-pool Pod '%s' for Git task %s: %s",
+                            pod_name,
+                            task_id,
+                            error,
+                        )
+                if pod_reason:
+                    logger.warning(
+                        "Claimed Git warm-pool Pod '%s' rejected for task %s: %s",
+                        pod_name or "unknown",
+                        task_id,
+                        pod_reason,
+                    )
+                    self._discard_incompatible_warmpool_claim(
+                        warmpool_client, executor_name, task_id
+                    )
+                    return {
+                        "status": "fallback",
+                        "fallback_reason": pod_reason,
+                    }
             if pod_name:
                 warmpool_client.patch_pod_metadata(
                     pod_name=pod_name,
