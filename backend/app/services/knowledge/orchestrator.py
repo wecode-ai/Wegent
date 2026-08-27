@@ -1741,12 +1741,18 @@ class KnowledgeOrchestrator:
         """
         from app.services.context import context_service
 
-        kb, has_access = KnowledgeService.get_knowledge_base(
-            db=db,
-            knowledge_base_id=document.kind_id,
-            user_id=document.user_id,
+        # The import entry point checks the caller's KB permission. The source
+        # credential owner need not belong to the KB after a document is moved.
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == document.kind_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
+            )
+            .first()
         )
-        if not kb or not has_access:
+        if kb is None:
             raise ValueError(
                 f"Knowledge base {document.kind_id} not found for external "
                 f"document {document.id}"

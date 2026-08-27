@@ -8,8 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
     DocumentSourceType,
@@ -33,11 +35,101 @@ from app.services.knowledge.external_document_providers import (
     ExternalSourceUnavailableError,
     get_external_document_provider,
 )
+from app.services.knowledge.index_state_machine import (
+    begin_external_import_attempt,
+    mark_document_index_succeeded,
+    prepare_document_index_enqueue,
+)
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.share import knowledge_share_service
 
 from .conftest import create_external_import_kb as _create_kb
 from .conftest import create_synced_node as _create_synced_node
+
+
+def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    configured_dingtalk: None,
+    dispatch_calls: list[dict],
+) -> None:
+    manager = User(user_name="target-owner", password_hash=test_user.password_hash)
+    test_db.add(manager)
+    test_db.commit()
+    source_id = _create_kb(test_db, test_user.id, "shared-source")
+    target_id = _create_kb(test_db, manager.id, "private-target")
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=source_id,
+        current_user_id=test_user.id,
+        target_user_id=manager.id,
+        role=MemberRole.Maintainer,
+    )
+    node = _create_synced_node(test_db, test_user.id, "moved-source")
+    document = external_document_import_service.import_document(
+        test_db, test_user, source_id, "dingtalk", node.dingtalk_node_id
+    )
+    assert mark_document_index_succeeded(test_db, document.id, 0)
+
+    result = KnowledgeService.transfer_documents_to_kb(
+        db=test_db,
+        source_kb_id=source_id,
+        target_kb_id=target_id,
+        document_ids=[document.id],
+        folder_ids=[],
+        user_id=manager.id,
+    )
+    assert result.success
+    assert (
+        KnowledgeService.get_knowledge_base(test_db, target_id, test_user.id)[1]
+        is False
+    )
+    target = test_db.get(Kind, target_id)
+    target.json = {
+        **target.json,
+        "spec": {
+            **target.json["spec"],
+            "retrievalConfig": {
+                "retriever_name": "target-retriever",
+                "embedding_config": {"model_name": "target-embedding"},
+            },
+        },
+    }
+    test_db.commit()
+    fetch = AsyncMock(
+        return_value=ExternalDocumentContent(
+            name="New title", file_extension="md", content=b"new body"
+        )
+    )
+    monkeypatch.setattr(
+        get_external_document_provider("dingtalk"), "fetch_content", fetch
+    )
+    monkeypatch.setattr(
+        "app.services.context.context_service.upload_attachment",
+        MagicMock(return_value=(SimpleNamespace(id=4321), None)),
+    )
+    index = MagicMock(return_value=SimpleNamespace(id="target-index"))
+    monkeypatch.setattr("app.tasks.knowledge_tasks.index_document_task.delay", index)
+
+    external_document_import_service.import_document(
+        test_db, manager, target_id, "dingtalk", node.dingtalk_node_id
+    )
+    attempt = begin_external_import_attempt(
+        test_db, document.id, dispatch_calls[-1]["expected_generation"]
+    )
+    assert attempt.should_execute
+    run_external_document_import(
+        test_db, document, test_user, generation=attempt.generation
+    )
+
+    test_db.refresh(document)
+    assert document.attachment_id == 4321
+    assert document.user_id == test_user.id
+    assert document.kind_id == target_id
+    fetch.assert_awaited_once_with(test_db, test_user, node.dingtalk_node_id)
+    assert index.call_args.kwargs["knowledge_base_id"] == str(target_id)
+    assert index.call_args.kwargs["user_id"] == manager.id
 
 
 @pytest.mark.parametrize("batch", [False, True])
@@ -92,6 +184,66 @@ def test_manager_reimports_with_original_importers_source_authorization(
 
 
 class TestExternalSourceUnavailable:
+    def test_old_source_failure_cannot_overwrite_newer_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        KnowledgeDocument.__table__.create(engine)
+        provider = SimpleNamespace(
+            fetch_content=AsyncMock(side_effect=ExternalSourceUnavailableError("gone"))
+        )
+        monkeypatch.setattr(
+            "app.services.knowledge.external_document_import.get_external_document_provider",
+            lambda provider_id: provider,
+        )
+        try:
+            with Session(engine) as old_worker:
+                document = KnowledgeDocument(
+                    kind_id=1,
+                    user_id=1,
+                    name="Source",
+                    file_extension="md",
+                    source_type="external",
+                    external_provider="dingtalk",
+                    external_resource_id="source",
+                    index_generation=1,
+                    index_status=DocumentIndexStatus.QUEUED,
+                )
+                old_worker.add(document)
+                old_worker.commit()
+                document_id = document.id
+                advanced = False
+
+                def complete_new_attempt(session: Session) -> None:
+                    nonlocal advanced
+                    if advanced:
+                        return
+                    advanced = True
+                    # A retry completes after the old failure becomes visible.
+                    with Session(engine) as new_worker:
+                        decision = prepare_document_index_enqueue(
+                            new_worker, document_id
+                        )
+                        assert decision.should_enqueue
+                        assert mark_document_index_succeeded(
+                            new_worker, document_id, decision.generation
+                        )
+
+                event.listen(old_worker, "after_commit", complete_new_attempt)
+                run_external_document_import(
+                    old_worker, document, SimpleNamespace(id=1), generation=1
+                )
+
+            with Session(engine) as reader:
+                current = reader.get(KnowledgeDocument, document_id)
+                assert current.index_generation == 2
+                assert current.index_status == DocumentIndexStatus.SUCCESS
+                assert current.external_source_config["status"] == "accessible"
+                assert "last_error" not in current.external_source_config
+                assert current.processing_error_payload is None
+        finally:
+            engine.dispose()
+
     def _create_live_document(
         self, test_db: Session, test_user: User
     ) -> KnowledgeDocument:
@@ -144,7 +296,10 @@ class TestExternalSourceUnavailable:
         assert document.is_active is False
         external = document.source_config["external"]
         assert external["status"] == "inaccessible"
-        assert external["last_error"] == "node not found"
+        assert external["last_error"] == (
+            "The external source is no longer accessible. Restore access "
+            "and retry the import."
+        )
         error = document.processing_error_payload
         assert error is not None
         assert error["code"] == "external_source_unavailable"

@@ -173,7 +173,8 @@ export function CreateKnowledgeBaseDialog({
 
   // Get the selected group for retrieval scope
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
-  const effectiveScope = scope || 'personal'
+  const effectiveScope =
+    showGroupSelector && selectedGroup ? selectedGroup.type : scope || 'personal'
   const effectiveGroupName =
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name

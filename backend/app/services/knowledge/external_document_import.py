@@ -514,7 +514,7 @@ def run_external_document_import(
             generation,
         )
     except ExternalSourceUnavailableError as exc:
-        _mark_external_source_unavailable(db, document, generation, str(exc))
+        _mark_external_source_unavailable(db, document, generation)
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
             document.id,
@@ -534,7 +534,6 @@ def _mark_external_source_unavailable(
     db: Session,
     document: KnowledgeDocument,
     generation: int,
-    message: str,
 ) -> None:
     """Mark the source inaccessible and record the initial import failure.
 
@@ -542,7 +541,7 @@ def _mark_external_source_unavailable(
     when this attempt's failure actually landed; a stale generation must not
     overwrite the outcome of a newer attempt.
     """
-    finalized = mark_document_index_failed(
+    mark_document_index_failed(
         db=db,
         document_id=document.id,
         generation=generation,
@@ -558,14 +557,6 @@ def _mark_external_source_unavailable(
             provider=document.external_provider,
         ),
     )
-    if not finalized:
-        return
-
-    document.update_external_source_config(
-        status="inaccessible",
-        last_error=message,
-    )
-    db.commit()
 
 
 def _mark_external_import_failed(

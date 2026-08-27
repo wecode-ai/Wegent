@@ -232,6 +232,7 @@ describe('DocumentDetailDialog external source info', () => {
     expect(info).toHaveTextContent('document.document.externalSource.lastImportedAt')
     const link = screen.getByTestId('external-source-link')
     expect(link).toHaveAttribute('href', 'https://alidocs.dingtalk.com/i/nodes/node-1')
+    expect(link).toHaveClass('min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0')
     // An accessible source never renders the inaccessible badge.
     expect(screen.queryByTestId('external-source-inaccessible')).not.toBeInTheDocument()
   })

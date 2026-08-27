@@ -412,7 +412,7 @@ export function DocumentDetailDialog({
                             href={externalSourceInfo.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex min-w-0 items-center gap-1 text-primary hover:underline"
+                            className="inline-flex min-h-[44px] min-w-[44px] items-center gap-1 text-primary hover:underline md:min-h-0 md:min-w-0"
                             data-testid="external-source-link"
                           >
                             <span className="truncate">

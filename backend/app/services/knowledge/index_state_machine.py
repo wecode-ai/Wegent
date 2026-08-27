@@ -570,6 +570,13 @@ def mark_document_index_failed(
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
     document.index_status = DocumentIndexStatus.FAILED
     document.updated_at = _utcnow()
+    if (
+        document.has_external_identity
+        and persisted_error.code == "external_source_unavailable"
+    ):
+        document.update_external_source_config(
+            status="inaccessible", last_error=persisted_error.message
+        )
 
     db.commit()
     _record_transition(

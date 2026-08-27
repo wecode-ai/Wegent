@@ -81,16 +81,6 @@ class ProviderContractSuite:
         assert provider is not None
         assert provider.provider_id == self.provider_id
 
-    def test_is_configured_reflects_user_configuration(
-        self,
-        test_user: User,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        provider = self.make_provider()
-        self.configure_user(monkeypatch, test_user)
-
-        assert provider.is_configured(test_user) is True
-
     def test_resolve_returns_display_metadata(
         self,
         test_db: Session,

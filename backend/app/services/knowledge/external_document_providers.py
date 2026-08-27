@@ -153,10 +153,6 @@ class ExternalDocumentProvider(ABC):
     provider_id: str
 
     @abstractmethod
-    def is_configured(self, user: User) -> bool:
-        """Return whether the user has this provider capability configured."""
-
-    @abstractmethod
     def resolve_importable(
         self,
         db: Session,
@@ -188,11 +184,6 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
     """DingTalk adapter backed by the user's DingTalk Docs MCP server."""
 
     provider_id = "dingtalk"
-
-    def is_configured(self, user: User) -> bool:
-        from app.services.dingtalk_doc_service import DingTalkDocService
-
-        return DingTalkDocService.is_configured(user)
 
     def resolve_importable(
         self,
