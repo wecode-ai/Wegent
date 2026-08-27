@@ -19,5 +19,15 @@ describe('dev-mac-app', () => {
     )
     expect(source).not.toContain('WEWORK_NODE_PATH=')
     expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).toContain('pnpm --dir electron prepare:package')
+    expect(source).toContain(
+      'export WEWORK_COMPONENT_RESOURCES_ROOT="$WEWORK_DIR/electron/resources"'
+    )
+    expect(source).not.toContain('pnpm run prepare:harness-runtime -- --materialize')
+
+    const electronNodeReset = source.indexOf('unset ELECTRON_RUN_AS_NODE')
+    const electronLaunch = source.indexOf('pnpm --dir electron dev')
+    expect(electronNodeReset).toBeGreaterThan(-1)
+    expect(electronNodeReset).toBeLessThan(electronLaunch)
   })
 })
