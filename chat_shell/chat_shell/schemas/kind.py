@@ -158,6 +158,12 @@ class SkillProviderConfig(BaseModel):
     )
 
 
+class SkillRuntimeConfig(BaseModel):
+    """Optional execution policies declared by a Skill."""
+
+    returnDirectTools: List[str] = Field(default_factory=list)
+
+
 class SkillSpec(BaseModel):
     """Skill specification"""
 
@@ -170,6 +176,7 @@ class SkillSpec(BaseModel):
     bindShells: Optional[List[str]] = None
     tools: Optional[List[SkillToolDeclaration]] = None
     provider: Optional[SkillProviderConfig] = None
+    runtime: Optional[SkillRuntimeConfig] = None
     mcpServers: Optional[Dict[str, Any]] = None
 
 

@@ -12,6 +12,7 @@ import type {
   RuntimeTaskCreateRequest,
   SkillRef,
 } from '@/types/api'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
@@ -1062,12 +1063,7 @@ export function createDeliveryApi(client: HttpClient) {
     },
     async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
       const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
-      const url = URL.createObjectURL(content)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = filename
-      anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      await saveBlobToDownloads(content, filename)
     },
     deleteLoopItemAttachment(attachmentId: string): Promise<void> {
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)

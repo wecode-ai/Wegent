@@ -1084,11 +1084,12 @@ async function main() {
     const harnessRuntimes = needsPackagedHarnessRuntime
       ? await prepareHarnessRuntimeRoots(appBinary)
       : null
+    const configuredElectronCoreRuntimeRoot =
+      process.env.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() || null
     const electronCoreRuntimeRoot =
       harnessRuntimes?.harnessRuntimeRoot ||
-      (usesReleasePackageRuntimeAssets
-        ? null
-        : process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null)
+      (usesReleasePackageRuntimeAssets ? null : configuredElectronCoreRuntimeRoot)
+    const electronCorePluginsRoot = harnessRuntimes?.corePluginsRoot || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1137,16 +1138,9 @@ async function main() {
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_EXECUTOR_PATH: executorBinary,
       WEWORK_USER_DATA_DIR: electronUserDataDirectory,
-      ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
       ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
         ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
         : {}),
-      ...(harnessRuntimes
-        ? {
-            WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
-          }
-        : {}),
-      ...(desktopScenario?.appEnvironment ?? {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',
@@ -1156,11 +1150,32 @@ async function main() {
           }
         : {}),
     }
-    if (usesReleasePackageRuntimeAssets) {
-      delete appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT
-      delete appEnvironment.WEWORK_NODE_PATH
+    for (const key of [
+      'ELECTRON_RUN_AS_NODE',
+      'WEGENT_APP_IPC_DEVICE_ID',
+      'WEGENT_APP_IPC_ENDPOINT',
+      'WEGENT_APP_IPC_OWNER_TOKEN',
+      'WEGENT_APP_IPC_TOKEN',
+      'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_EXECUTOR_BINARY',
+      'WEGENT_RUNTIME_AUTH_TOKEN',
+      'WEGENT_TASK_ID',
+      'WEGENT_TASK_WORKSPACE',
+      'WEWORK_CORE_DSH_COMMAND',
+      'WEWORK_CORE_DSH_URL',
+      'WEWORK_CORE_PLUGIN_ROOT',
+      'WEWORK_HARNESS_RESOURCE_ROOT',
+      'WEWORK_HARNESS_RUNTIME_ROOT',
+      'WEWORK_NODE_BIN',
+      'WEWORK_NODE_PATH',
+      'WEWORK_NODE_RUNTIME_ROOT',
+    ]) {
+      delete appEnvironment[key]
     }
-    delete appEnvironment.WEGENT_APP_IPC_DEVICE_ID
+    if (electronCoreRuntimeRoot) {
+      appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
+    }
+    Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
     const electronLaunchArguments =
       process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
         ? (() => {
@@ -1248,6 +1263,7 @@ async function main() {
       await verifyCoreDshUiPluginComposition({
         control,
         initialRendererLocation: ready.location,
+        pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
         runtimeRoot: electronCoreRuntimeRoot,
       })

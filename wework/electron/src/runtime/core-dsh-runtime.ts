@@ -1,7 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
-import { embeddedNodeArguments } from './embedded-node-runtime.js'
+import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -92,10 +92,11 @@ export type CommandRunner = (
 ) => Promise<void>
 
 export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
-  const runtime = await selectCoreDshRuntime(
-    options.runtimeRoot,
-    options.environment.WEWORK_CORE_PLUGIN_ROOT
-  )
+  const pluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
+  if (!pluginsRoot) {
+    throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
+  }
+  const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
@@ -107,7 +108,7 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   return {
     command: nodeCommand,
     entry: runtime.entry,
-    args: embeddedNodeArguments(options.environment, [
+    args: runtimeNodeArgs(options.environment, [
       runtime.entry,
       '--profile',
       PROFILE_NAME,
@@ -130,12 +131,10 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
 
 export async function selectCoreDshRuntime(
   root: string,
-  configuredPluginsRoot?: string
+  configuredPluginsRoot: string
 ): Promise<CoreDshRuntime> {
   const runtime = await selectBundledDshRuntime(root, 'core', CORE_DSH_VERSION)
-  const pluginsRoot = configuredPluginsRoot?.trim()
-    ? resolve(configuredPluginsRoot)
-    : runtime.pluginsRoot
+  const pluginsRoot = resolve(configuredPluginsRoot)
   const pluginRoots = Object.fromEntries(
     CORE_PLUGIN_PACKAGES.map(([packageName, directory]) => [
       packageName,

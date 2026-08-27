@@ -188,6 +188,7 @@ class Settings(BaseSettings):
     VIDEO_POLL_INTERVAL_SECONDS: int = 3
     VIDEO_MAX_POLL_COUNT: int = 600
     VIDEO_POLL_SCHEDULE_LEASE_SECONDS: int = 10
+    VIDEO_SHUTDOWN_HANDOFF_DELAY_SECONDS: int = 15
     VIDEO_RECOVERY_STALE_SECONDS: int = 10
     VIDEO_RECOVERY_LOOKBACK_HOURS: int = 1
     SEEDANCE_ASSET_BASE_URL: str = ""
@@ -311,6 +312,8 @@ class Settings(BaseSettings):
     # Celery configuration
     CELERY_BROKER_URL: Optional[str] = None  # If None/empty, uses REDIS_URL
     CELERY_RESULT_BACKEND: Optional[str] = None  # If None/empty, uses REDIS_URL
+    # Recover unacknowledged countdown tasks promptly after a worker restart.
+    CELERY_BROKER_VISIBILITY_TIMEOUT: int = 300
 
     # Celery default queue name (useful for separating preview and prod environments)
     CELERY_TASK_DEFAULT_QUEUE: str = "wegent_online"

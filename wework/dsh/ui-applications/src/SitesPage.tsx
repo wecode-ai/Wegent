@@ -313,7 +313,7 @@ export function SitesPage() {
   ])
   const smartAppsApi = useMemo(() => {
     if (!isLocalFirst) {
-      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }))
+      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }), apiBaseUrl)
     }
     if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
       return null
@@ -324,7 +324,8 @@ export function SitesPage() {
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      cloudConnection.apiBaseUrl
     )
   }, [
     apiBaseUrl,
@@ -649,7 +650,6 @@ export function SitesPage() {
           createError={createError}
           createNotice={createNotice}
           smartAppsEnabled={experimentalFeatures.enabled}
-          smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
             smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />

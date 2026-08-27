@@ -81,7 +81,18 @@ describe('desktop resource migration', () => {
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
     expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
+  test('does not include a separate Node runtime in desktop packages', async () => {
+    const [packageApp, builderConfig] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+    ])
+
+    expect(packageApp).not.toContain("resources', 'node-runtime")
+    expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
   test('launches the release builder through the Windows command interpreter', async () => {
@@ -119,8 +130,12 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain('const packagedResources = join(')
-    expect(source).toContain("['resources', 'harness-runtime']")
+    expect(source).toContain('const packagedResourcesRoot = join(')
+    expect(source).toContain(
+      "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
+    )
+    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
 

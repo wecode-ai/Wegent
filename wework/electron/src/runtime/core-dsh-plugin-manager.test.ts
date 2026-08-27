@@ -79,10 +79,10 @@ describe('CoreDshPluginManager', () => {
     await fixture.remove()
   })
 
-  test('uses Electron embedded Node arguments for plugin commands', async () => {
+  test('uses Electron runtime Node arguments for plugin commands', async () => {
     const runCommand = vi.fn(async () => ({ stdout: '', stderr: '' }))
     const fixture = await createFixture({
-      environment: { ELECTRON_RUN_AS_NODE: '1' },
+      environment: { WEWORK_NODE_RUNTIME_KIND: 'electron' },
       runCommand,
     })
 

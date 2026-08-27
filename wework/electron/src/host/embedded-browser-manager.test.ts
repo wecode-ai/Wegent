@@ -101,12 +101,53 @@ describe('EmbeddedBrowserManager lifecycle', () => {
 
     expect(manager.has('workspace-browser')).toBe(true)
     expect(manager.state('workspace-browser').url).toBe('https://example.test/')
+    expect(manager.state('workspace-browser').visible).toBe(true)
 
     finishNavigation?.()
     await expect(opening).resolves.toMatchObject({
       label: 'workspace-browser',
       url: 'https://example.test/',
     })
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('routes a popup to the current logical label and native browser identity', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    const nativeLabel = manager.state('workspace-browser').nativeLabel
+    manager.relabel('workspace-browser', 'workspace-browser-task-1')
+
+    const windowOpenHandler = contents.setWindowOpenHandler.mock.calls[0]?.[0] as
+      | ((details: { url: string }) => { action: string })
+      | undefined
+    expect(windowOpenHandler?.({ url: 'https://example.test/linked-page' })).toEqual({
+      action: 'deny',
+    })
+
+    const events = manager.readEvents(0)
+    expect(events.events).toContainEqual(
+      expect.objectContaining({
+        type: 'popup',
+        payload: expect.objectContaining({
+          parentLabel: 'workspace-browser-task-1',
+          parentNativeLabel: nativeLabel,
+          strategy: 'new-tab',
+          url: 'https://example.test/linked-page',
+        }),
+      })
+    )
     await rm(directory, { recursive: true, force: true })
   })
 

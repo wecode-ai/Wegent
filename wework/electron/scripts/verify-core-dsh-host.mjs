@@ -8,8 +8,11 @@ import { createInterface } from 'node:readline'
 import { prepareCoreDshLaunch } from '../dist/runtime/core-dsh-runtime.js'
 
 const requestedRoot = process.argv[2]
-if (!requestedRoot) {
-  throw new Error('Usage: pnpm verify:core-dsh-host <materialized-core-runtime-root>')
+const requestedPluginsRoot = process.argv[3]
+if (!requestedRoot || !requestedPluginsRoot) {
+  throw new Error(
+    'Usage: pnpm verify:core-dsh-host <materialized-core-runtime-root> <core-plugins-root>'
+  )
 }
 
 const home = await mkdtemp(join(tmpdir(), 'wework-electron-dsh-'))
@@ -25,6 +28,7 @@ try {
     dataDirectory: home,
     environment: {
       ...process.env,
+      WEWORK_CORE_PLUGIN_ROOT: resolve(requestedPluginsRoot),
       WEWORK_NODE_PATH: process.execPath,
     },
     port,
@@ -89,10 +93,7 @@ try {
     throw new Error(`Executor invocation failed: ${JSON.stringify(executorInvocation)}`)
   }
   assertDeepEqual(executorInvocation, { ok: true, result: { healthy: true } }, 'executor response')
-  const packagedAppHtml = await waitForText(
-    `http://127.0.0.1:${port}/wework/app/`,
-    child
-  )
+  const packagedAppHtml = await waitForText(`http://127.0.0.1:${port}/wework/app/`, child)
   if (
     !packagedAppHtml.includes('window.__WEWORK_RUNTIME_CONFIG__') ||
     !packagedAppHtml.includes('/wework/app/assets/')
@@ -124,7 +125,10 @@ try {
       )}`
     )
   }
-  const appBundle = await waitForText(new URL(appEntry.url, `http://127.0.0.1:${port}`).toString(), child)
+  const appBundle = await waitForText(
+    new URL(appEntry.url, `http://127.0.0.1:${port}`).toString(),
+    child
+  )
   if (!appBundle.includes("id: '@wegent/dsh-app-wework'")) {
     throw new Error('Wework app client bundle did not serve the expected module registration')
   }
@@ -322,10 +326,7 @@ async function waitForText(url, processHandle) {
 }
 
 function bootEntries(html) {
-  const prefixes = [
-    'globalThis["__DSH_BOOT__"] = ',
-    'window.__DSH_BOOT__ = ',
-  ]
+  const prefixes = ['globalThis["__DSH_BOOT__"] = ', 'window.__DSH_BOOT__ = ']
   const prefix = prefixes.find(candidate => html.includes(candidate))
   const start = prefix ? html.indexOf(prefix) : -1
   if (start < 0) throw new Error('DSH page did not inject a browser boot graph')

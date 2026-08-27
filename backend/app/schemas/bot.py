@@ -29,6 +29,8 @@ class BotCreate(BaseModel):
         "default"  # Namespace for the bot (group name or 'default')
     )
     is_active: bool = True
+    secondary_model_name: Optional[str] = None
+    secondary_model_namespace: Optional[str] = "default"
 
 
 class BotUpdate(BaseModel):
@@ -49,6 +51,8 @@ class BotUpdate(BaseModel):
     target_group_names: Optional[List[str]] = Field(default=None, max_length=100)
     namespace: Optional[str] = None  # Namespace for the bot (group name or 'default')
     is_active: Optional[bool] = None
+    secondary_model_name: Optional[str] = None
+    secondary_model_namespace: Optional[str] = None
 
 
 class BotInDB(BaseModel):
@@ -73,6 +77,8 @@ class BotInDB(BaseModel):
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
+    secondary_model_name: Optional[str] = None
+    secondary_model_namespace: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -100,6 +106,8 @@ class BotDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     user: Optional[UserInDB] = None
+    secondary_model_name: Optional[str] = None
+    secondary_model_namespace: Optional[str] = None
 
     class Config:
         from_attributes = True

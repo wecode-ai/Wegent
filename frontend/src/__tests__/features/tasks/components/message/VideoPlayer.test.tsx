@@ -76,6 +76,70 @@ describe('VideoPlayer', () => {
     expect(download.closest('.absolute.bottom-0')).toBeNull()
   })
 
+  it.each([
+    { label: 'landscape', videoWidth: 1280, videoHeight: 720, width: '359px', height: '202px' },
+    { label: 'portrait', videoWidth: 720, videoHeight: 1280, width: '202px', height: '359px' },
+    { label: 'square', videoWidth: 1024, videoHeight: 1024, width: '202px', height: '202px' },
+  ])('uses the compact message size for $label video', dimensions => {
+    const { container } = render(
+      <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
+    )
+    const player = screen.getByTestId('generated-video-player')
+    const video = container.querySelector('video') as HTMLVideoElement
+    Object.defineProperties(video, {
+      videoWidth: {
+        configurable: true,
+        value: dimensions.videoWidth,
+      },
+      videoHeight: {
+        configurable: true,
+        value: dimensions.videoHeight,
+      },
+    })
+
+    fireEvent.loadedMetadata(video)
+
+    expect(player).toHaveStyle({
+      width: dimensions.width,
+      height: dimensions.height,
+    })
+    expect(video).toHaveClass('h-full', 'object-contain')
+  })
+
+  it('shows a compact placeholder until the message video aspect ratio is known', () => {
+    const { container } = render(
+      <VideoPlayer videoUrl="https://example.com/result.mp4" useMessageDisplaySize />
+    )
+    const player = screen.getByTestId('generated-video-player')
+    const video = container.querySelector('video') as HTMLVideoElement
+
+    expect(player).toHaveStyle({
+      width: '202px',
+      height: '202px',
+    })
+    expect(screen.getByTestId('video-metadata-placeholder')).toHaveAccessibleName('video.loading')
+    expect(video).toHaveClass('opacity-0')
+
+    Object.defineProperties(video, {
+      videoWidth: {
+        configurable: true,
+        value: 720,
+      },
+      videoHeight: {
+        configurable: true,
+        value: 1280,
+      },
+    })
+    fireEvent.loadedMetadata(video)
+
+    expect(player).toHaveStyle({
+      width: '202px',
+      height: '359px',
+    })
+    expect(screen.queryByTestId('video-metadata-placeholder')).not.toBeInTheDocument()
+    expect(video).not.toHaveClass('opacity-0')
+  })
+
   it('seeks backward and forward with the arrow keys', () => {
     const { container } = render(
       <VideoPlayer videoUrl="https://example.com/result.mp4" duration={20} />
@@ -114,15 +178,25 @@ describe('VideoPlayer', () => {
     const play = jest.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
     const pause = jest.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation()
 
-    render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
+    const { container } = render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
 
     const overlay = screen.getByTestId('video-toggle-overlay')
+    const video = container.querySelector('video') as HTMLVideoElement
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: true,
+    })
+
     fireEvent.click(overlay)
     expect(play).toHaveBeenCalledTimes(1)
     expect(
       screen.getByTestId('video-playback-feedback').querySelector('.lucide-play')
     ).not.toBeNull()
 
+    Object.defineProperty(video, 'paused', {
+      configurable: true,
+      value: false,
+    })
     fireEvent.click(overlay)
     expect(pause).toHaveBeenCalledTimes(1)
     expect(
@@ -133,5 +207,28 @@ describe('VideoPlayer', () => {
       jest.advanceTimersByTime(450)
     })
     expect(screen.queryByTestId('video-playback-feedback')).not.toBeInTheDocument()
+  })
+
+  it('restarts an ended video before replaying it', () => {
+    const play = jest.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
+    const { container } = render(<VideoPlayer videoUrl="https://example.com/result.mp4" />)
+    const video = container.querySelector('video') as HTMLVideoElement
+
+    Object.defineProperties(video, {
+      paused: {
+        configurable: true,
+        value: true,
+      },
+      ended: {
+        configurable: true,
+        value: true,
+      },
+    })
+    video.currentTime = 12
+
+    fireEvent.click(screen.getByTestId('video-toggle-overlay'))
+
+    expect(video.currentTime).toBe(0)
+    expect(play).toHaveBeenCalledTimes(1)
   })
 })

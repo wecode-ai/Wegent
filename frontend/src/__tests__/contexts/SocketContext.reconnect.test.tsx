@@ -100,6 +100,7 @@ describe('SocketProvider reconnect notification', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockIo.mockReset()
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     mockGetToken.mockReturnValue('token')
@@ -133,7 +134,8 @@ describe('SocketProvider reconnect notification', () => {
       expect.objectContaining({
         autoConnect: false,
         reconnection: false,
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     socketApi!.onReconnect(mockReconnectCallback)
@@ -262,7 +264,8 @@ describe('SocketProvider reconnect notification', () => {
         reconnection: false,
         forceNew: true,
         multiplex: false,
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(mockIo.mock.calls[1][1]).toEqual(
@@ -271,7 +274,8 @@ describe('SocketProvider reconnect notification', () => {
         reconnection: false,
         forceNew: true,
         multiplex: false,
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(secondSocket.connect).toHaveBeenCalledTimes(1)
@@ -390,7 +394,8 @@ describe('SocketProvider reconnect notification', () => {
       expect.objectContaining({
         autoConnect: false,
         reconnection: false,
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(mockIo.mock.calls[0][1]).not.toHaveProperty('query')
@@ -406,7 +411,8 @@ describe('SocketProvider reconnect notification', () => {
         reconnection: false,
         forceNew: true,
         multiplex: false,
-        transports: ['websocket'],
+        transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')

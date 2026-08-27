@@ -264,6 +264,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
       autoConnect: false,
       reconnection: false,
       transports: this.options.transports,
+      tryAllTransports: true,
       timeout: this.options.timeout,
       forceNew: true,
       multiplex: false,

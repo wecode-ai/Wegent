@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.2.7-beta.3",
+  "version": "0.2.8-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,7 @@
     "build:dsh-app": "vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm run ai:verify:electron:build",
-    "build:release": "pnpm run prepare:electron && pnpm run prepare:codex --materialize && pnpm run prepare:dws && pnpm run build:dsh-app && pnpm --dir electron build:release",
+    "build:release": "pnpm run prepare:electron && pnpm run prepare:codex --materialize && pnpm run prepare:dws && pnpm --dir electron build:release",
     "build:mac": "pnpm run build:desktop",
     "build:windows": "pnpm run build:desktop",
     "build:mac:devtools": "WEWORK_RELEASE_DEVTOOLS=1 pnpm run build:desktop",

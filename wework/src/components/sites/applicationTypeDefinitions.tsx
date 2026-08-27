@@ -28,6 +28,8 @@ export interface ApplicationTypeDefinition {
   refresh: ApplicationCopy
   emptyTitle: ApplicationCopy
   emptyDescription: ApplicationCopy
+  unavailableTitle: ApplicationCopy
+  unavailableDescription: ApplicationCopy
   columns: readonly ApplicationCopy[]
   columnGridClassName: string
   create: ApplicationCreateStrategy
@@ -51,6 +53,11 @@ const siteDefinition: ApplicationTypeDefinition = {
   refresh: { key: 'refresh', fallback: '刷新站点' },
   emptyTitle: { key: 'empty_title', fallback: '还没有站点' },
   emptyDescription: { key: 'empty_description', fallback: '通过 Sites 创建你的第一个站点' },
+  unavailableTitle: { key: 'site_unavailable_title', fallback: '站点功能尚未推出' },
+  unavailableDescription: {
+    key: 'site_unavailable_description',
+    fallback: '功能开放后，你可以在这里创建、管理并发布站点。',
+  },
   columns: [
     { key: 'site_column', fallback: '站点' },
     { key: 'network_column', fallback: '网络' },
@@ -78,6 +85,14 @@ const miniProgramDefinition: ApplicationTypeDefinition = {
   emptyDescription: {
     key: 'mini_program_empty_description',
     fallback: '创建你的第一个小程序',
+  },
+  unavailableTitle: {
+    key: 'mini_program_unavailable_title',
+    fallback: '小程序功能尚未推出',
+  },
+  unavailableDescription: {
+    key: 'mini_program_unavailable_description',
+    fallback: '功能开放后，你可以在这里创建、管理并发布小程序。',
   },
   columns: [
     { key: 'mini_program_column', fallback: '小程序' },

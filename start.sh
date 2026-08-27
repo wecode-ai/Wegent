@@ -2264,7 +2264,17 @@ start_services() {
         echo ""
     fi
 
+    local LOCAL_LOG_ROOT="${WEGENT_LOCAL_LOG_DIR:-$SCRIPT_DIR/logs}"
+    local BACKEND_LOCAL_LOG_DIR="${BACKEND_LOG_DIR:-$LOCAL_LOG_ROOT/backend}"
+    local CHAT_SHELL_LOCAL_LOG_DIR="${CHAT_SHELL_LOG_DIR:-$LOCAL_LOG_ROOT/chat_shell}"
+    local LOCAL_LOG_FILE_ENABLED="${LOG_FILE_ENABLED:-true}"
+    mkdir -p "$BACKEND_LOCAL_LOG_DIR" "$CHAT_SHELL_LOCAL_LOG_DIR"
+
     echo -e "${BLUE}Starting services...${NC}"
+    if [ "$LOCAL_LOG_FILE_ENABLED" = "true" ]; then
+        echo -e "  Backend logs:    ${GREEN}$BACKEND_LOCAL_LOG_DIR/info.log${NC}"
+        echo -e "  Chat Shell logs: ${GREEN}$CHAT_SHELL_LOCAL_LOG_DIR/info.log${NC}"
+    fi
 
     # Common reload exclude patterns to avoid scanning .venv and __pycache__ directories
     # This significantly reduces CPU usage during development
@@ -2282,7 +2292,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "backend" "backend" \
-            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
+            "export INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export WEGENT_SOCKET_URL=\"$WEGENT_SOCKET_URL\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export CHAT_SHELL_URL=http://localhost:$CHAT_SHELL_PORT && export BACKEND_INTERNAL_URL=$TASK_API_DOMAIN && export WEGENT_BACKEND_PUBLIC_URL=$TASK_API_DOMAIN && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$BACKEND_LOCAL_LOG_DIR\" && source .venv/bin/activate && uvicorn app.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $BACKEND_PORT --log-level debug" \
             "$BACKEND_PORT"
     fi
 
@@ -2292,7 +2302,7 @@ start_services() {
         # --reload-dir: Watch shared module for changes (editable dependency)
         # --reload-exclude: Exclude .venv and __pycache__ to reduce CPU usage
         start_service "chat_shell" "chat_shell" \
-            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export CHAT_SHELL_REMOTE_STORAGE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export CHAT_SHELL_INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
+            "export CHAT_SHELL_MODE=http && export CHAT_SHELL_STORAGE_TYPE=remote && export CHAT_SHELL_REMOTE_STORAGE_URL=http://localhost:$BACKEND_PORT/api/internal && export CHAT_SHELL_REMOTE_STORAGE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export CHAT_SHELL_INTERNAL_SERVICE_TOKEN=\"\$INTERNAL_SERVICE_TOKEN\" && export EXECUTOR_MANAGER_URL=$EXECUTOR_MANAGER_URL && export LOG_LEVEL=DEBUG && export LOG_FILE_ENABLED=$LOCAL_LOG_FILE_ENABLED && export LOG_DIR=\"$CHAT_SHELL_LOCAL_LOG_DIR\" && source .venv/bin/activate && .venv/bin/python -m uvicorn chat_shell.main:app --reload --reload-dir . --reload-dir ../shared $RELOAD_EXCLUDE --host 0.0.0.0 --port $CHAT_SHELL_PORT --log-level debug" \
             "$CHAT_SHELL_PORT"
     fi
 

@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::{
+    ffi::OsString,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 
 use wegent_executor::process_environment::{normalized_process_path, process_env};
 
@@ -13,13 +16,19 @@ fn env_lock() -> MutexGuard<'static, ()> {
 
 struct EnvGuard {
     key: &'static str,
-    previous: Option<String>,
+    previous: Option<OsString>,
 }
 
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
+        let previous = std::env::var_os(key);
         std::env::set_var(key, value);
+        Self { key, previous }
+    }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::remove_var(key);
         Self { key, previous }
     }
 }
@@ -36,6 +45,9 @@ impl Drop for EnvGuard {
 
 #[test]
 fn normalized_process_path_adds_standard_developer_directories_once() {
+    let _lock = env_lock();
+    let _runtime = EnvGuard::remove("WEWORK_RUNTIME_BIN");
+    let _extra = EnvGuard::remove("WEGENT_EXTRA_PATHS");
     let path = normalized_process_path("/usr/bin:/opt/homebrew/bin:/bin");
 
     assert!(path.starts_with("/usr/bin:/opt/homebrew/bin:/bin"));
@@ -49,6 +61,7 @@ fn normalized_process_path_adds_standard_developer_directories_once() {
 fn process_env_merges_user_extra_paths_before_standard_developer_directories() {
     let _lock = env_lock();
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
+    let _runtime = EnvGuard::remove("WEWORK_RUNTIME_BIN");
     let _extra = EnvGuard::set("WEGENT_EXTRA_PATHS", "/custom/bin:/opt/homebrew/bin");
 
     let env = process_env(&[]);
@@ -60,9 +73,24 @@ fn process_env_merges_user_extra_paths_before_standard_developer_directories() {
 }
 
 #[test]
+fn process_env_keeps_the_wework_runtime_bin_first() {
+    let _lock = env_lock();
+    let _path = EnvGuard::set("PATH", "/usr/bin:/runtime/bin:/bin");
+    let _runtime = EnvGuard::set("WEWORK_RUNTIME_BIN", "/runtime/bin");
+    let _extra = EnvGuard::remove("WEGENT_EXTRA_PATHS");
+
+    let env = process_env(&[]);
+    let path = env.get("PATH").expect("PATH should be present");
+
+    assert!(path.starts_with("/runtime/bin:/usr/bin:/bin"));
+    assert_eq!(path.matches("/runtime/bin").count(), 1);
+}
+
+#[test]
 fn process_env_normalizes_explicit_path_overrides() {
     let _lock = env_lock();
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");
+    let _runtime = EnvGuard::remove("WEWORK_RUNTIME_BIN");
     let _extra = EnvGuard::set("WEGENT_EXTRA_PATHS", "/extra/bin");
 
     let env = process_env(&[("PATH".to_owned(), "/request/bin:/usr/bin".to_owned())]);

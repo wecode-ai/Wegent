@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
+import { runtimeNodeArgs } from './electron-node-runtime.js'
 import * as tar from 'tar'
-import { embeddedNodeArguments } from './embedded-node-runtime.js'
 import {
   selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
@@ -119,7 +119,7 @@ export async function prepareWorkbenchDshLaunch(
   }
   return {
     command: nodeCommand,
-    args: embeddedNodeArguments(environment, [
+    args: runtimeNodeArgs(environment, [
       runtime.entry,
       '--profile',
       options.manifest.entry.profile,
@@ -294,7 +294,7 @@ async function installPlugins(
   if (!packages.length) return
   await run(
     nodeCommand,
-    [
+    runtimeNodeArgs(environment, [
       runtime.entry,
       'plugin',
       '--profile',
@@ -302,7 +302,7 @@ async function installPlugins(
       'add',
       '--ignore-scripts',
       ...packages.map(path => `file:${path}`),
-    ],
+    ]),
     { cwd: runtime.root, env: environment }
   )
 }
@@ -331,7 +331,15 @@ async function installPluginSpecs(
   )
   await run(
     nodeCommand,
-    [runtime.entry, 'plugin', '--profile', profile, 'add', '--ignore-scripts', ...specs],
+    runtimeNodeArgs(environment, [
+      runtime.entry,
+      'plugin',
+      '--profile',
+      profile,
+      'add',
+      '--ignore-scripts',
+      ...specs,
+    ]),
     { cwd: runtime.root, env: environment }
   )
 }

@@ -20,11 +20,11 @@ describe('materializeBundledRuntimes', () => {
     const cache = join(root, 'cache')
     await mkdir(resources)
     const core = await runtimeArchive(resources, 'core', '0.1.1-rc.2', 'a')
-    const workbenchRc7 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.7', 'b')
-    const workbenchRc8 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'c')
+    const workbenchRc8 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'b')
+    const workbenchRc9 = await runtimeArchive(resources, 'workbench', '0.1.0-rc.9', 'c')
     await writeFile(
       join(resources, 'runtimes.json'),
-      JSON.stringify({ runtimes: [core, workbenchRc7, workbenchRc8] })
+      JSON.stringify({ runtimes: [core, workbenchRc8, workbenchRc9] })
     )
 
     await expect(materializeBundledRuntimes(resources, cache, ['core'])).resolves.toBe(cache)
@@ -32,18 +32,18 @@ describe('materializeBundledRuntimes', () => {
       readFile(join(cache, core.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"core"')
     await expect(
-      readFile(join(cache, workbenchRc7.sourceFingerprint, 'runtime.json'), 'utf8')
+      readFile(join(cache, workbenchRc8.sourceFingerprint, 'runtime.json'), 'utf8')
     ).rejects.toThrow()
     await expect(readFile(join(cache, 'runtimes.json'), 'utf8')).resolves.toContain(
-      workbenchRc8.sourceFingerprint
+      workbenchRc9.sourceFingerprint
     )
 
     await expect(materializeBundledRuntimes(resources, cache, ['workbench'])).resolves.toBe(cache)
     await expect(
-      readFile(join(cache, workbenchRc7.sourceFingerprint, 'runtime.json'), 'utf8')
+      readFile(join(cache, workbenchRc8.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"workbench"')
     await expect(
-      readFile(join(cache, workbenchRc8.sourceFingerprint, 'runtime.json'), 'utf8')
+      readFile(join(cache, workbenchRc9.sourceFingerprint, 'runtime.json'), 'utf8')
     ).resolves.toContain('"role":"workbench"')
 
     const coreMetadata = await stat(join(cache, core.sourceFingerprint, 'runtime.json'))

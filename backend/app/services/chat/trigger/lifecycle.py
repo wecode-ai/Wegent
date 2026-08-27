@@ -38,6 +38,9 @@ from app.stores.tasks import subtask_store
 
 logger = logging.getLogger(__name__)
 
+_TERMINAL_CARD_STATUSES = {"populated", "error"}
+_NONTERMINAL_CARD_STATUSES = {"pending", "partial_ready"}
+
 
 @dataclass
 class ExecutionSessionSetup:
@@ -71,10 +74,25 @@ def _merge_blocks(
             block_id = str(block.get("id") or "")
             if block_id and block_id in block_indexes:
                 existing = merged[block_indexes[block_id]]
-                merged[block_indexes[block_id]] = {
+                updated = {
                     **existing,
                     **{key: value for key, value in block.items() if value is not None},
                 }
+                if (
+                    existing.get("type") == "card"
+                    and existing.get("card_status") in _TERMINAL_CARD_STATUSES
+                    and block.get("card_status") in _NONTERMINAL_CARD_STATUSES
+                ):
+                    for key in (
+                        "status",
+                        "card_status",
+                        "card_data",
+                        "card_preview_data",
+                        "card_error",
+                    ):
+                        if key in existing:
+                            updated[key] = existing[key]
+                merged[block_indexes[block_id]] = updated
                 continue
             if block_id:
                 block_indexes[block_id] = len(merged)
@@ -438,6 +456,29 @@ async def _get_existing_subtask_result(subtask_id: int) -> Dict[str, Any]:
             exc,
         )
         return {}
+    finally:
+        db.close()
+
+
+async def persist_result_without_status(
+    subtask_id: int,
+    result: Dict[str, Any],
+) -> None:
+    """Persist result data while leaving the current subtask status unchanged."""
+    db = SessionLocal()
+    try:
+        subtask = task_stores.subtask_store.get_by_id(db, subtask_id=subtask_id)
+        if not subtask:
+            raise ValueError(f"Subtask {subtask_id} not found")
+        task_stores.subtask_store.update_result(
+            db,
+            subtask=subtask,
+            result=result,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

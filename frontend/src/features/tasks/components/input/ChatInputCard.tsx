@@ -162,6 +162,8 @@ function FrameImageSlot({
           <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
         </div>
       ) : (
+        // Client-created blob URLs intentionally bypass Next image optimization.
+        // eslint-disable-next-line @next/next/no-img-element
         <img src={blobUrl} alt={label} className="h-full w-full object-cover" />
       )}
       <div className="absolute inset-x-0 bottom-0 bg-black/55 px-1 py-0.5 text-center text-[10px] text-white">
@@ -295,6 +297,8 @@ export function ChatInputCard({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading,
+  showVideoControlsInChat,
+  hideDurationSelector,
   selectedResolution,
   onResolutionChange,
   availableResolutions,
@@ -342,6 +346,7 @@ export function ChatInputCard({
     !hasMessages &&
     !taskInputMessage.trim() &&
     selectedContexts.some(context => context.type === 'queue_message')
+  const shouldUseCompactInputSpacing = shouldUseCompactQueueSpacing || shouldCollapseSelectors
   const imageAttachments = useMemo(
     () =>
       attachmentState.attachments.filter(attachment => attachment.mime_type.startsWith('image/')),
@@ -759,7 +764,7 @@ export function ChatInputCard({
 
         {/* Chat Input with inline badge */}
         {!shouldHideChatInput && (
-          <div className={`px-4 ${shouldUseCompactQueueSpacing ? 'pt-1.5' : 'pt-3'}`}>
+          <div className={`px-4 ${shouldUseCompactInputSpacing ? 'pt-1.5' : 'pt-3'}`}>
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
@@ -802,7 +807,7 @@ export function ChatInputCard({
               // Expand/collapse props for input height toggle
               isExpanded={isInputExpanded}
               onExpandToggle={handleExpandToggle}
-              compactSpacing={shouldUseCompactQueueSpacing}
+              compactSpacing={shouldUseCompactInputSpacing}
               focusAtEndSignal={focusInputAtEndSignal}
             />
           </div>
@@ -886,6 +891,8 @@ export function ChatInputCard({
             selectedVideoModel={selectedVideoModel}
             onVideoModelChange={onVideoModelChange}
             isVideoModelsLoading={isVideoModelsLoading}
+            showVideoControlsInChat={showVideoControlsInChat}
+            hideDurationSelector={hideDurationSelector}
             selectedResolution={selectedResolution}
             onResolutionChange={onResolutionChange}
             availableResolutions={availableResolutions}
