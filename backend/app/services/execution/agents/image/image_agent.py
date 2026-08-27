@@ -21,7 +21,8 @@ from typing import List, Optional
 from app.core.shutdown import shutdown_manager
 from app.services.context import context_service
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
-from shared.prompts.constants import USER_QUESTION_MARKER, extract_user_question
+from shared.prompts.constants import normalize_generation_prompt
+from shared.telemetry.decorators import trace_async
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
@@ -47,6 +48,15 @@ class ImageAgent(PollingAgent):
     def name(self) -> str:
         return "ImageAgent"
 
+    @trace_async(
+        "image_agent.execute",
+        "backend.execution.image",
+        extract_attributes=lambda self, request, emitter: {
+            "task.id": str(request.task_id),
+            "subtask.id": str(request.subtask_id),
+            "attachment.count": len(request.attachments or []),
+        },
+    )
     async def execute(
         self,
         request: ExecutionRequest,
@@ -135,10 +145,14 @@ class ImageAgent(PollingAgent):
             # Sources:
             # 1) Attachments list (legacy)
             # 2) Vision content blocks in request.prompt
-            user_reference_images = [
-                *self._extract_reference_images(request),
-                *prompt_images,
-            ]
+            user_reference_images = list(
+                dict.fromkeys(
+                    [
+                        *self._extract_reference_images(request),
+                        *prompt_images,
+                    ]
+                )
+            )
 
             prompt = prompt_text
 
@@ -331,11 +345,11 @@ class ImageAgent(PollingAgent):
         - If text contains our context wrapper, prefer the actual user question part
         """
         if isinstance(prompt, str):
-            return extract_user_question(prompt), []
+            return normalize_generation_prompt(prompt), []
 
         if not isinstance(prompt, list):
             # Defensive fallback
-            return extract_user_question(str(prompt)), []
+            return normalize_generation_prompt(str(prompt)), []
 
         text_parts: list[str] = []
         images: list[str] = []
@@ -355,7 +369,7 @@ class ImageAgent(PollingAgent):
                     images.append(image_url)
 
         combined_text = "\n".join(text_parts).strip()
-        combined_text = extract_user_question(combined_text)
+        combined_text = normalize_generation_prompt(combined_text)
         return combined_text, images
 
     async def _analyze_intent(self, request: ExecutionRequest) -> ImageIntentResult:

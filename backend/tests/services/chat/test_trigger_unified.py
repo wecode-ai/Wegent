@@ -25,7 +25,11 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
 
     model_config = {
         "modelType": "image",
-        "imageConfig": {"size": "1024x1024", "quality": "high"},
+        "imageConfig": {
+            "size": "1024x1024",
+            "quality": "high",
+            "capabilities": {"supports_image_input": True},
+        },
     }
 
     trigger_unified._apply_image_generation_params(
@@ -36,6 +40,7 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
     assert model_config["imageConfig"] == {
         "size": "1512x648",
         "quality": "high",
+        "capabilities": {"supports_image_input": True},
     }
 
 

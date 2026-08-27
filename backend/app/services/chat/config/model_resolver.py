@@ -998,7 +998,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
             f"[model_resolver] _extract_model_config: modelType={model_category_type}"
         )
 
-    # Video generation config (when modelType='video')
+    # Generation configs for image/video models
+    image_config = model_spec.get("imageConfig")
     video_config = model_spec.get("videoConfig")
     raw_model_capabilities = model_spec.get("modelCapabilities")
     if raw_model_capabilities is None:
@@ -1052,6 +1053,8 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
         # User-configured temperature override
         "temperature": temperature,
     }
+    if image_config is not None:
+        result["imageConfig"] = image_config
     if model_capabilities:
         result["modelCapabilities"] = model_capabilities
     if codex_catalog_model_id:
