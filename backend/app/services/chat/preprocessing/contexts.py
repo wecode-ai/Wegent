@@ -1570,8 +1570,7 @@ async def prepare_contexts_for_chat(
     all_external_web_content_images = build_external_web_content_images(
         external_web_content_contexts
     )
-    model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-    supports_image = model_capabilities.get("supportsImage") is True
+    supports_image = _model_supports_image_input(model_config)
     external_web_content_images = (
         all_external_web_content_images if supports_image else []
     )
