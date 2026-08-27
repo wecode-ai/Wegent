@@ -154,7 +154,7 @@ import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
 import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
-import { requestBoardTaskStatusRecovery } from './taskStatusRecovery'
+import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import {
@@ -2454,7 +2454,6 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
-    let recoveryRequested = false
     const refreshItems = () => {
       const prepare =
         selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
@@ -2486,15 +2485,6 @@ export function CloudTodoWorkspace({
       void readBoard()
         .then(response => {
           if (!active) return
-          if (!recoveryRequested && services.runtimeWorkApi?.replayRuntimeTaskStatuses) {
-            recoveryRequested = true
-            void requestBoardTaskStatusRecovery({
-              api: services.runtimeWorkApi,
-              projectKey: selectedProjectKey,
-              items: response.items,
-              bindings: response.task_bindings ?? [],
-            })
-          }
           setDingtalkAuthPrompt(false)
           const boardContext = response.task_bindings
             ? {
@@ -2606,7 +2596,6 @@ export function CloudTodoWorkspace({
     runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
-    services.runtimeWorkApi,
   ])
   useEffect(
     () =>
@@ -3411,6 +3400,7 @@ export function CloudTodoWorkspace({
           ? taskComposerRequest.workflowNodeId
           : undefined
       await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+      rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       publishProjectSpaceTaskBindingChanged(address)
       setBoardRefreshNonce(value => value + 1)
       return async () => {

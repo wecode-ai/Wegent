@@ -270,6 +270,8 @@ import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
+  verifyTrackedTaskRunningStatus,
+  verifyTrackedTaskSettledStatus,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
@@ -2255,7 +2257,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     let associatedTaskTabTestId = null
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
     }
@@ -2323,7 +2328,10 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     let taskRowTestId
     let taskRowCompletionText = COMPLETION_TEXT
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       await control.command('waitFor', activeModelSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -2356,6 +2364,26 @@ last_updated = "2026-07-30T00:00:00Z"`
           testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeInitialTask.has(testId)
       )
       assert.ok(taskRowTestId, 'The initial task row identity was not found')
+      if (associatedTaskTabTestId) {
+        phase = 'project-space-running-task-synchronized'
+        await verifyTrackedTaskRunningStatus(control, associatedTaskTabTestId)
+      }
+      if (shouldRunDesktopCheckpoint('task-status-sync')) {
+        phase = 'project-space-settled-task-synchronized'
+        control.releaseInitialToolExecution()
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await verifyTrackedTaskSettledStatus(control)
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
       await verifyUserMessageNavigation({
         control,
         projectRowSelector,
