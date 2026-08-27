@@ -1,6 +1,7 @@
 import { APIRequestContext, expect, test } from '@playwright/test'
 import { REGULAR_USER } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
+import { createExternalImportRetrieval } from '../../utils/external-import-retrieval'
 import { EXTERNAL_IMPORT_MARKERS, EXTERNAL_IMPORT_NODES } from '../../utils/mock-provider-mcp'
 import {
   attachExternalImportEvidence,
@@ -27,16 +28,27 @@ import {
  * External document import closed-loop E2E.
  *
  * Runs against the real frontend, backend, and test database. Only the
- * DingTalk provider is simulated (mock MCP server); every Wegent API call is
+ * DingTalk and embedding providers are simulated; every Wegent API call is
  * real. Each scenario builds and cleans its own minimal data and never
  * depends on another scenario. The default Chat provider-native DingTalk
  * selection stays covered by provider-native-dingtalk.spec.ts.
  */
-test.describe.configure({ mode: 'serial' })
+// Run sequentially because the provider is shared, but do not skip independent
+// scenarios when an earlier one fails.
+test.describe.configure({ mode: 'default' })
 
 test.describe('External DingTalk document import', () => {
-  // Active scenario context for failure-evidence collection (serial mode).
+  // Active scenario context for failure-evidence collection.
   let activeContext: ExternalImportScenarioContext | null = null
+  let retrieval: Awaited<ReturnType<typeof createExternalImportRetrieval>>
+
+  test.beforeAll(async ({ request }) => {
+    retrieval = await createExternalImportRetrieval(request)
+  })
+
+  test.afterAll(async ({ request }) => {
+    if (retrieval) await retrieval.cleanup(request)
+  })
 
   test.afterEach(async ({ request }, testInfo) => {
     if (activeContext) {
@@ -55,7 +67,7 @@ test.describe('External DingTalk document import', () => {
     body: (context: ExternalImportScenarioContext) => Promise<void>
   ): Promise<void> {
     activeContext = null
-    const context = await createExternalImportScenario(request, caseName)
+    const context = await createExternalImportScenario(request, caseName, retrieval.config)
     activeContext = context
     let bodyError: unknown = null
     let cleanupError: unknown = null

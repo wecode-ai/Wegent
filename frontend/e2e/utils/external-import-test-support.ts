@@ -1,4 +1,5 @@
 import { APIRequestContext, expect, Page, TestInfo } from '@playwright/test'
+import type { RetrievalConfigDraft } from '../../src/types/knowledge'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient, createBackendRequestHeaders } from './api-client'
 import {
@@ -13,8 +14,8 @@ import {
  *
  * Every scenario builds its own minimal data (knowledge base, synced DingTalk
  * nodes) against the real backend and tears it down afterwards. Only the
- * DingTalk provider (the mock MCP server) is simulated; Wegent APIs are always
- * real requests.
+ * DingTalk and embedding providers are simulated; Wegent APIs are always real
+ * requests, including remote indexing and chunk reads.
  */
 
 export interface ExternalImportDocument {
@@ -56,7 +57,8 @@ async function expectOk(response: {
 /** Create an isolated KB, point DingTalk docs at the mock MCP, and sync the directory. */
 export async function createExternalImportScenario(
   request: APIRequestContext,
-  caseName: string
+  caseName: string,
+  retrievalConfig: RetrievalConfigDraft
 ): Promise<ExternalImportScenarioContext> {
   const apiClient = createApiClient(request)
   const login = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
@@ -73,12 +75,15 @@ export async function createExternalImportScenario(
       namespace: 'default',
       kb_type: 'classic',
       rag_config_mode: 'auto',
+      retrieval_config: retrievalConfig,
       summary_enabled: false,
     },
   })
   await expectOk(kbResponse)
-  const knowledgeBaseId = ((await kbResponse.json()) as { id: number }).id
+  const knowledgeBase = await kbResponse.json()
+  const knowledgeBaseId = (knowledgeBase as { id: number }).id
   expect(knowledgeBaseId).toBeTruthy()
+  expect(knowledgeBase.retrieval_config).toMatchObject({ ...retrievalConfig })
 
   await resetMockMcp(request)
   await configureDingTalkService(request, token, 'docs', true)

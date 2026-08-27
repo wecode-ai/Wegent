@@ -264,6 +264,9 @@ jobs:
           --health-timeout=5s
           --health-retries=3
 
+      qdrant:
+        image: qdrant/qdrant:v1.15.4
+
     steps:
       - name: Generate internal service token
         run: |
@@ -321,6 +324,9 @@ jobs:
           name: frontend-next-build
           path: .ci-artifacts
 
+      - name: Install Knowledge Runtime dependencies
+        run: uv sync --project knowledge_runtime --frozen
+
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
@@ -343,10 +349,22 @@ jobs:
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
           INIT_DATA_ENABLED: "true"
+          RAG_RUNTIME_MODE: remote
+          KNOWLEDGE_RUNTIME_URL: http://localhost:8200
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
           echo $! > backend.pid
+
+      - name: Start Knowledge Runtime
+        env:
+          KNOWLEDGE_RUNTIME_DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL: http://localhost:8000
+          LOG_FILE_ENABLED: "false"
+        run: |
+          nohup uv run --project knowledge_runtime --no-sync uvicorn knowledge_runtime.main:app \
+            --host 0.0.0.0 --port 8200 > knowledge_runtime/ci.log 2>&1 &
+          echo $! > knowledge_runtime/ci.pid
 
       - name: Start Chat Shell server
         working-directory: ./backend
@@ -389,10 +407,12 @@ jobs:
           }
 
           wait_for_url http://localhost:8000/api/docs \
+            && wait_for_url http://localhost:8200/internal/rag/health \
+            && wait_for_url http://qdrant:6333/readyz \
             && wait_for_url http://localhost:8100/health \
             && wait_for_url http://localhost:3000 \
             && wait_for_url http://localhost:9999/health \
-            || (cat backend/backend.log && cat backend/chat_shell.log && cat frontend/next-dev.log && cat frontend/mock-model-server.log && exit 1)
+            || (cat backend/backend.log knowledge_runtime/ci.log backend/chat_shell.log frontend/next-dev.log frontend/mock-model-server.log; exit 1)
 
       - name: Verify backend is running
         run: |
@@ -422,8 +442,17 @@ jobs:
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          E2E_QDRANT_URL: http://qdrant:6333
+          E2E_KNOWLEDGE_RUNTIME_URL: http://localhost:8200
           CI: true
         run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
+
+      - name: Stop Knowledge Runtime
+        if: always()
+        run: |
+          if [ -f knowledge_runtime/ci.pid ]; then
+            kill "$(cat knowledge_runtime/ci.pid)"
+          fi
 
       - name: Stop Mock Model Server
         if: always()
@@ -476,6 +505,7 @@ jobs:
           path: |
             backend/backend.log
             backend/chat_shell.log
+            knowledge_runtime/ci.log
             frontend/next-dev.log
             frontend/mock-model-server.log
           retention-days: 7

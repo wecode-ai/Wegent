@@ -116,6 +116,30 @@ e2e/
 └── config/            # Test configuration
 ```
 
+## 钉钉导入 remote 检索验证
+
+`tests/knowledge/dingtalk-import.spec.ts` 的 6 个场景由 CI 的
+`provider-native-chromium` 项目执行。Backend 必须设置 `RAG_RUNTIME_MODE=remote`
+和 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
+Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
+通过 `KNOWLEDGE_RUNTIME_DATABASE_URL` 和 `KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL` 连接。
+
+测试通过真实 API 创建并清理专用 Embedding Model、Retriever 和各场景知识库，
+知识库显式绑定检索配置，不依赖管理员预先配置。只模拟钉钉 MCP 和外部 embedding HTTP
+接口；导入任务、remote 索引、Qdrant 存储及分块读取均走真实链路。
+
+本地服务就绪后，在 `frontend` 目录执行：
+
+```bash
+E2E_QDRANT_URL=http://localhost:6333 \
+E2E_KNOWLEDGE_RUNTIME_URL=http://localhost:8200 \
+pnpm exec playwright test e2e/tests/knowledge/dingtalk-import.spec.ts \
+  --project=provider-native-chromium --workers=1
+```
+
+非默认端口另设 `E2E_BASE_URL`、`E2E_API_URL` 和 `MOCK_MODEL_SERVER_URL`。
+模拟 embedding 返回确定性的 32 维向量，只验证检索基础设施契约，不评估语义检索质量。
+
 ## Agent Conversation Regression
 
 `tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:
