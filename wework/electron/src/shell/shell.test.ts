@@ -55,11 +55,11 @@ describe('Electron startup shell', () => {
     })
 
     state.phase = 'failed'
-    state.error = 'profile install failed'
+    state.error = 'dsh-core startup timed out'
     listeners[0]?.()
     await vi.waitFor(() => {
       expect(elements.get('#runtime-status')?.textContent).toBe(
-        '运行时启动失败：profile install failed'
+        '运行时启动失败：dsh-core startup timed out'
       )
       expect(elements.get('#reload-dsh')?.textContent).toBe('重试启动')
       expect(elements.get('#runtime-overlay')?.dataset.phase).toBe('failed')

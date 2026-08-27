@@ -150,6 +150,8 @@ describe('desktop resource migration', () => {
 
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('electronInstallScript')
+    expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
+    expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
 
   test.each([

@@ -1181,23 +1181,7 @@ export function createDeliveryApi(client: HttpClient) {
         })
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
-        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
-          const updated = await client.patch<CloudLoopItem>(
-            '/v1/runtime-tasks/cloud-context/status',
-            {
-              ...task,
-              status: executionStatus,
-            }
-          )
-          console.info('[IssueTaskStatusSync] workflow task status persisted', {
-            deviceId: task.deviceId,
-            taskId: task.taskId,
-            executionStatus,
-            loopItemId: updated.id,
-            workflowNodeId: context.workflow_node_id,
-          })
-          return updated
-        }
+        if (item.workflow && context.workflow_node_id) return item
         if (item.execution_id != null) return item
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)

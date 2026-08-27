@@ -13,6 +13,7 @@ import {
 } from './workbench-runtime.js'
 
 const CORE_APP_PATH = '/'
+const CORE_DSH_START_TIMEOUT_MS = 120_000
 
 export interface DesktopRuntimeOptions {
   environment: NodeJS.ProcessEnv
@@ -220,6 +221,7 @@ export class DesktopRuntime {
       ...(cwd ? { cwd } : {}),
       logDirectory: this.options.logDirectory,
       logFileName: 'dsh-core-runtime.log',
+      startTimeoutMs: CORE_DSH_START_TIMEOUT_MS,
       env: {
         ...runtimeEnvironment,
         ...this.options.hostPipe.environment(),
