@@ -204,6 +204,152 @@ def test_rolling_channels_never_move_backwards(
     )
 
 
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_same_version_repairs_incomplete_rolling_channels(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.3"}
+    ).encode()
+
+    assert module.release_advances_channel(
+        client,
+        "releases",
+        "wework",
+        path,
+        (("wework", electron_manifest),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_older_release_rejects_incomplete_newer_rolling_channels(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.4"}
+    ).encode()
+
+    with pytest.raises(SystemExit, match="Newer release channel 1.2.4 is incomplete"):
+        module.release_advances_channel(
+            client,
+            "releases",
+            "wework",
+            path,
+            (("wework", electron_manifest),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_complete_same_version_rolling_channels_are_reused(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.3"}
+    ).encode()
+    client.objects[f"wework/{electron_manifest}"] = b"version: 1.2.3\n"
+
+    assert not module.release_advances_channel(
+        client,
+        "releases",
+        "wework",
+        path,
+        (("wework", electron_manifest),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_channel_repair_uploads_electron_manifest_before_channel_entry(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    channel_manifest = tmp_path / "stable-windows-x86_64.json"
+    if script_name == "upload-mac-release-to-s3.py":
+        channel_manifest = tmp_path / "stable-darwin-aarch64.json"
+    channel_manifest.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    (tmp_path / electron_manifest).write_text("version: 1.2.3\n", encoding="utf-8")
+    remote_channel = f"wework/{channel_manifest.name}"
+    client.objects[remote_channel] = json.dumps({"version": "1.2.3"}).encode()
+    uploaded = []
+    monkeypatch.setattr(
+        module,
+        "upload_electron_manifest",
+        lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
+    )
+    monkeypatch.setattr(
+        module,
+        "upload_channel_manifest",
+        lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
+    )
+
+    if script_name == "upload-mac-release-to-s3.py":
+        repaired = module.publish_channel(
+            client,
+            "releases",
+            "wework",
+            "wework",
+            tmp_path,
+            "stable",
+            "darwin-aarch64",
+        )
+    else:
+        repaired = module.publish_channel(
+            client,
+            "releases",
+            "wework",
+            tmp_path,
+            "stable",
+        )
+
+    assert repaired
+    assert uploaded == [electron_manifest, channel_manifest.name]
+
+
 def write_runtime_pair(tmp_path: Path, kind: str, suffix: str) -> tuple[Path, Path]:
     archive = tmp_path / f"{kind}-runtime-macos-arm64-{suffix}.tar.gz"
     descriptor = archive.with_name(archive.name.removesuffix(".tar.gz") + ".json")
