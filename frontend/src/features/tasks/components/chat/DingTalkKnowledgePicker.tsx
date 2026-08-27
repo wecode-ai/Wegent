@@ -6,17 +6,10 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import {
-  ChevronRight,
-  Database,
-  ExternalLink,
-  FileText,
-  Folder,
-  FolderOpen,
-  RefreshCw,
-} from 'lucide-react'
+import { ChevronRight, ExternalLink, FolderOpen, RefreshCw } from 'lucide-react'
 
 import { LongTextTooltip, TruncatedText } from '@/components/common/long-text'
+import { DingtalkNodeIcon } from '@/components/icons/DingtalkNodeIcon'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ContextItem, DingTalkDocContext } from '@/types/context'
@@ -430,7 +423,7 @@ export function DingTalkWikispaceRows({
                 data-testid={`knowledge-picker-dingtalk-space-${node.dingtalk_node_id}`}
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  <Database className="h-4 w-4 shrink-0 text-text-muted" />
+                  <DingtalkNodeIcon node={node} />
                   <span className="min-w-0">
                     <TruncatedText
                       text={node.name}
@@ -591,6 +584,7 @@ function DingTalkDocumentNode({
   forceOpen: boolean
   onToggle: (node: DingtalkDocNode) => void
 }) {
+  const { t } = useTranslation('knowledge')
   const isFolder = node.node_type === 'folder'
   const hasChildren = (node.children ?? []).length > 0
   const [open, setOpen] = useState(depth < 1 || forceOpen)
@@ -602,18 +596,29 @@ function DingTalkDocumentNode({
   const selectionKey = getDingTalkSelectionKey(node.source, node.dingtalk_node_id)
   const nodeState = getDingTalkNodeState([node], selectedIds)
   const selected = isFolder ? nodeState.selected : selectedIds.has(selectionKey)
-  const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
 
   return (
     <div>
       <div
-        className="group flex min-h-11 w-full items-center justify-between gap-2 rounded-md pr-2 text-left text-sm hover:bg-surface"
-        style={{ paddingLeft: 8 + depth * 16 }}
+        className="group relative flex min-h-11 w-full items-center rounded-md text-left text-sm hover:bg-surface"
+        style={{ paddingLeft: depth * 16 }}
       >
-        {isFolder && hasChildren ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-0 right-0 h-px bg-border"
+          style={{ left: depth * 16 + 44 }}
+        />
+        {hasChildren ? (
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded hover:bg-surface"
+            aria-expanded={open}
+            aria-label={t(
+              open
+                ? 'document.upload.dingtalk.collapseFolder'
+                : 'document.upload.dingtalk.expandFolder',
+              { name: node.name }
+            )}
             onClick={() => setOpen(!open)}
             data-testid={`knowledge-picker-dingtalk-node-expander-${node.source}-${node.dingtalk_node_id}`}
           >
@@ -642,21 +647,27 @@ function DingTalkDocumentNode({
           data-testid={`knowledge-picker-dingtalk-node-${node.source}-${node.dingtalk_node_id}`}
         >
           <span className="flex min-w-0 items-center gap-2">
-            <Icon className="h-4 w-4 shrink-0 text-text-muted" />
+            <DingtalkNodeIcon node={node} expanded={open} />
             <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
           </span>
-          {!isFolder ? <SelectionIndicator checked={selected} /> : null}
+          {!isFolder ? (
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+              <SelectionIndicator checked={selected} />
+            </span>
+          ) : null}
         </button>
         {isFolder ? (
-          <KnowledgeSelectionControl
-            state={selected ? 'checked' : nodeState.partiallySelected ? 'mixed' : 'unchecked'}
-            onToggle={() => onToggle(node)}
-            label={node.name}
-            testId={`knowledge-picker-dingtalk-node-select-${node.source}-${node.dingtalk_node_id}`}
-          />
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center">
+            <KnowledgeSelectionControl
+              state={selected ? 'checked' : nodeState.partiallySelected ? 'mixed' : 'unchecked'}
+              onToggle={() => onToggle(node)}
+              label={node.name}
+              testId={`knowledge-picker-dingtalk-node-select-${node.source}-${node.dingtalk_node_id}`}
+            />
+          </span>
         ) : null}
       </div>
-      {isFolder && open
+      {open
         ? (node.children ?? []).map(child => (
             <DingTalkDocumentNode
               key={getDingTalkSelectionKey(child.source, child.dingtalk_node_id)}

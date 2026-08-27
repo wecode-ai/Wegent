@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookOpen,
   Building2,
   ChevronRight,
   Cloud,
@@ -1482,7 +1483,7 @@ export function KnowledgeSourcePicker({
                       key: 'dingtalk:wikispace' as SourceKey,
                       label: tChat('dingtalkDocs.wikispaceTab'),
                       count: dingtalkTrees.wikispaceTotalCount,
-                      icon: Database,
+                      icon: BookOpen,
                     },
                   ] as const
                 ).map(section => {
@@ -1512,7 +1513,12 @@ export function KnowledgeSourcePicker({
                       }
                     >
                       <span className="flex min-w-0 items-center gap-2">
-                        <SectionIcon className="h-4 w-4 shrink-0 text-text-muted" />
+                        <SectionIcon
+                          className={cn(
+                            'h-4 w-4 shrink-0',
+                            sectionActive ? 'text-primary' : 'text-text-muted'
+                          )}
+                        />
                         <TruncatedText
                           text={section.label}
                           focusable={false}

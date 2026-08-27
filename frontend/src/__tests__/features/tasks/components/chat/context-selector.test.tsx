@@ -1327,7 +1327,11 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
+    const wikiSource = screen.getByTestId('knowledge-picker-dingtalk-wikispace')
+    expect(wikiSource.querySelector('svg')).toHaveClass('lucide-book-open', 'text-text-muted')
+    fireEvent.click(wikiSource)
+    expect(wikiSource.querySelector('svg')).toHaveClass('lucide-book-open', 'text-primary')
+    expect(wikiSource.querySelector('svg')).not.toHaveClass('text-text-muted')
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()

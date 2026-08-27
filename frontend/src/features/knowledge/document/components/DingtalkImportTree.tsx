@@ -4,18 +4,8 @@
 
 'use client'
 
-import {
-  BookOpen,
-  ChevronRight,
-  File,
-  FileSpreadsheet,
-  FileText,
-  Folder,
-  FolderOpen,
-  Link2,
-  Presentation,
-  Table2,
-} from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
+import { DingtalkNodeIcon } from '@/components/icons/DingtalkNodeIcon'
 import Link from 'next/link'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -23,21 +13,6 @@ import { cn } from '@/lib/utils'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ExternalDocumentImportStatuses } from '@/apis/knowledge'
 import type { DocumentIndexStatus } from '@/types/knowledge'
-
-const FILE_ICONS = new Map<string, { icon: typeof FileText; className: string }>([
-  ['adoc', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
-  ['docx', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
-  ['pdf', { icon: FileText, className: 'text-error' }],
-  ['txt', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
-  ['md', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
-  ['dlink', { icon: Link2, className: 'text-blue-600 dark:text-blue-400' }],
-  ['able', { icon: Table2, className: 'text-primary' }],
-  ['axls', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
-  ['xlsx', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
-  ['csv', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
-  ['appt', { icon: Presentation, className: 'text-orange-600 dark:text-orange-400' }],
-  ['pptx', { icon: Presentation, className: 'text-orange-600 dark:text-orange-400' }],
-])
 
 const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
   success: 'document.upload.dingtalk.imported',
@@ -136,8 +111,6 @@ function ImportTreeNode({
   const { query, selectedIds, expandedKeys, disabled, onToggle, onExpand } = props
   const searching = Boolean(query.trim())
   const folder = node.node_type === 'folder'
-  const wikiRoot =
-    folder && node.source === 'wikispace' && node.dingtalk_node_id === node.workspace_id
   const hasChildren = Boolean(node.children?.length)
   const importable = isImportable(node, props.aiTableConfigured)
   const importStatus = importable ? props.importStatuses[node.dingtalk_node_id] : undefined
@@ -154,14 +127,6 @@ function ImportTreeNode({
   const open = expandedKeys.has(key) || searching
   const visible = filterImportTree([node], query)[0]
   if (!visible) return null
-  const fileIcon = FILE_ICONS.get(node.extension ?? '')
-  const Icon = wikiRoot
-    ? BookOpen
-    : folder
-      ? open
-        ? FolderOpen
-        : Folder
-      : (fileIcon?.icon ?? File)
   const selectDisabled = disabled || !ids.length || (folder && searching)
   return (
     <>
@@ -207,16 +172,7 @@ function ImportTreeNode({
           }
           data-testid={`dingtalk-node-name-${node.dingtalk_node_id}`}
         >
-          <Icon
-            className={cn(
-              'h-4 w-4 shrink-0',
-              wikiRoot
-                ? 'text-primary'
-                : folder
-                  ? 'text-text-secondary'
-                  : (fileIcon?.className ?? 'text-text-muted')
-            )}
-          />
+          <DingtalkNodeIcon node={node} expanded={open} />
           <span className="truncate">{node.name}</span>
           {folder && (
             <span
