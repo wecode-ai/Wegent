@@ -370,6 +370,14 @@ Frontend、Executor、Executor Manager、Shared、Chat Shell、Chat Core、Docke
 或相关构建配置变化时运行，因此 Wework-only PR 不会再启动无关的平台 E2E。
 Draft PR 跳过昂贵的 E2E，转为 Ready for review 后再运行。
 
+平台浏览器与 API E2E 使用五个隔离数据库分片。普通套件按 `1/5` 分片；
+provider-native 的三个 serial spec 根据历史耗时分别放入三个较短的普通分片，
+并在单个 job 内保持 `workers=1`，避免共享 provider 配置并发写入，同时消除把
+全部串行覆盖集中到一个长尾分片的问题。两次 Playwright 调用写入不同的 blob
+文件，防止后一次运行覆盖普通套件报告。PR、定时任务和手动运行仍合并并上传 HTML
+报告；merge queue 保留每个分片的 blob report、失败 trace 和后端日志，但不等待
+不参与质量门禁的 HTML 合并任务。
+
 完整的平台 E2E 每天 UTC 02:00 定时运行；完整 Wework E2E 每天 UTC 04:00 定时
 运行。定时任务与 PR、merge queue 使用不同的 concurrency group，互相不会取消。
 

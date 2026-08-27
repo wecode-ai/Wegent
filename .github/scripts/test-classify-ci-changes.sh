@@ -286,6 +286,9 @@ assert_case "cache warmup classifier validates all modules" "$all_true" \
 assert_case "cache policy changes validate all modules" "$all_true" \
   ".github/scripts/test-ci-cache-policy.sh"
 
+assert_case "merge queue CI policy changes validate all modules" "$all_true" \
+  ".github/scripts/test-merge-queue-ci-policy.sh"
+
 assert_case "release workflow changes validate all modules" "$all_true" \
   ".github/workflows/publish-image.yml"
 

@@ -394,6 +394,16 @@ related build configuration changes, so a Wework-only PR no longer starts an
 unrelated platform E2E suite. Draft PRs skip expensive E2E and run it after they
 become ready for review.
 
+Platform browser and API E2E use five isolated-database shards. The ordinary
+suite is split five ways. Its three serial provider-native specs are assigned
+to three historically shorter ordinary shards and keep `workers=1` inside each
+job. This prevents concurrent writes to shared provider configuration without
+concentrating all serial coverage in one long-tail shard. The two Playwright
+invocations write distinct blob files so the provider run cannot replace the
+ordinary report. PR, scheduled, and manual runs still merge and upload the HTML
+report. Merge queue runs retain each shard's blob report, failure traces, and
+backend logs without waiting for the non-gating HTML merge job.
+
 The full platform E2E suite runs daily at 02:00 UTC, and the full Wework E2E
 suite runs daily at 04:00 UTC. Scheduled runs use a different concurrency group
 from PR and merge-queue runs, so they do not cancel each other.

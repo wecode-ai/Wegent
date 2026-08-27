@@ -298,8 +298,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
+        include:
+          - shardIndex: 1
+            shardTotal: 5
+            providerNativeSpec: e2e/tests/tasks/provider-native-chat.spec.ts
+          - shardIndex: 2
+            shardTotal: 5
+            providerNativeSpec: ""
+          - shardIndex: 3
+            shardTotal: 5
+            providerNativeSpec: ""
+          - shardIndex: 4
+            shardTotal: 5
+            providerNativeSpec: e2e/tests/tasks/provider-native-state-and-contract.spec.ts
+          - shardIndex: 5
+            shardTotal: 5
+            providerNativeSpec: e2e/tests/tasks/provider-native-dingtalk.spec.ts
 
     services:
       mysql:
@@ -467,21 +481,28 @@ jobs:
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          PLAYWRIGHT_BLOB_OUTPUT_FILE: blob-report/report-standard-${{ matrix.shardIndex }}.zip
           CI: true
         run: |
           pnpm exec playwright test --project=chromium --project=api \
             --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Run Provider-native E2E tests serially
-        if: matrix.shardIndex == 1
+        if: matrix.providerNativeSpec != ''
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_SHARD_INDEX: ${{ matrix.shardIndex }}
+          PLAYWRIGHT_BLOB_OUTPUT_FILE: blob-report/report-provider-${{ matrix.shardIndex }}.zip
+          PROVIDER_NATIVE_SPEC: ${{ matrix.providerNativeSpec }}
           CI: true
-        run: pnpm exec playwright test --project=provider-native-chromium --workers=1 --no-deps
+        run: |
+          pnpm exec playwright test "$PROVIDER_NATIVE_SPEC" \
+            --project=provider-native-chromium \
+            --workers=1 \
+            --no-deps
 
       - name: Stop Mock Model Server
         if: always()
@@ -1031,7 +1052,7 @@ jobs:
   merge-reports:
     name: Merge Test Reports
     needs: [changes, e2e-tests, executor-e2e-tests]
-    if: always() && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
+    if: always() && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true'))
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -1040,35 +1061,12 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
-      - name: Download shard 1 blob report
+      - name: Download blob reports
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: blob-report-1
+          pattern: blob-report-*
           path: all-blob-reports
-
-      - name: Download shard 2 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-2
-          path: all-blob-reports
-
-      - name: Download shard 3 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-3
-          path: all-blob-reports
-
-      - name: Download shard 4 blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-4
-          path: all-blob-reports
-
-      - name: Download executor blob report
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: blob-report-executor
-          path: all-blob-reports
+          merge-multiple: true
 
       - name: Merge reports
         working-directory: ./frontend
@@ -1102,6 +1100,7 @@ jobs:
           EXECUTOR_BUILD_RESULT: ${{ needs.build-executor-e2e-runtime.result }}
           PLATFORM_E2E_RESULT: ${{ needs.e2e-tests.result }}
           EXECUTOR_E2E_RESULT: ${{ needs.executor-e2e-tests.result }}
+          REPORT_REQUIRED: ${{ github.event_name != 'merge_group' }}
           REPORT_RESULT: ${{ needs.merge-reports.result }}
         run: |
           if [[ "$CHANGES_RESULT" != "success" ]]; then
@@ -1127,4 +1126,6 @@ jobs:
           assert_success "$EXECUTOR_BUILD_RESULT" "Executor E2E build"
           assert_success "$PLATFORM_E2E_RESULT" "Platform E2E"
           assert_success "$EXECUTOR_E2E_RESULT" "Executor E2E"
-          assert_success "$REPORT_RESULT" "E2E report merge"
+          if [[ "$REPORT_REQUIRED" == "true" ]]; then
+            assert_success "$REPORT_RESULT" "E2E report merge"
+          fi
