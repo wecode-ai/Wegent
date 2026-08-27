@@ -24,7 +24,6 @@ export interface UserPreferences {
     string,
     {
       use_user_config?: boolean
-      use_proxy?: boolean
     }
   > | null
 }
