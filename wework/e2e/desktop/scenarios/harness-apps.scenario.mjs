@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { createZipFixture, extractSingleRootZipFixture } from '../modules/zip-fixtures.mjs'
 
 const INSTALLATION_ID = 'dsh-e2e-smoke'
-const RC7_INSTALLATION_ID = 'dsh-e2e-smoke-rc7'
+const IMPORTED_INSTALLATION_ID = 'dsh-e2e-smoke-imported'
 const CREATED_INSTALLATION_ID = 'dsh-e2e-created'
 const APP_ROUTE = `/app/harness-${INSTALLATION_ID}`
 const MODEL_LABEL = 'Desktop E2E Chat'
@@ -194,7 +194,11 @@ async function createLocalDshPlugin(resultDir) {
 export async function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
   const packagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8')
   const localDshPluginPath = await createLocalDshPlugin(resultDir)
-  const rc7PackagePath = await createHarnessPackage(resultDir, RC7_INSTALLATION_ID, '0.1.0-rc.7')
+  const importedPackagePath = await createHarnessPackage(
+    resultDir,
+    IMPORTED_INSTALLATION_ID,
+    '0.1.0-rc.8'
+  )
   const sharedPackagePath = await createHarnessPackage(resultDir, INSTALLATION_ID, '0.1.0-rc.8', {
     archiveName: 'dsh-e2e-shared-0.0.9',
     version: '0.0.9',
@@ -723,17 +727,17 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('dropPaths', '[data-testid="smart-apps-owned-page"]', {
         value: JSON.stringify([
           {
-            uri: pathToFileURL(rc7PackagePath).href,
-            name: 'dsh-e2e-smoke-rc7.zip',
+            uri: pathToFileURL(importedPackagePath).href,
+            name: 'dsh-e2e-smoke-imported.zip',
             mimeType: 'application/zip',
           },
         ]),
       })
       await control.command(
         'waitFor',
-        `[data-testid="smart-app-created-item-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
         {
-          text: 'DSH E2E Smoke 0.1.0-rc.7',
+          text: 'DSH E2E Smoke 0.1.0-rc.8',
           timeoutMs: uiTimeoutMs,
         }
       )
@@ -782,26 +786,26 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await captureScreenshot(control, 'harness-apps-05a-exported.png', 'body')
 
-      const rc7ModelSelector = `[data-testid="harness-app-model-${RC7_INSTALLATION_ID}"]`
-      await control.command('select', rc7ModelSelector, {
+      const importedModelSelector = `[data-testid="harness-app-model-${IMPORTED_INSTALLATION_ID}"]`
+      await control.command('select', importedModelSelector, {
         by: 'label',
         value: MODEL_LABEL,
       })
-      await control.command('waitFor', rc7ModelSelector, {
+      await control.command('waitFor', importedModelSelector, {
         enabled: true,
         stableMs: 300,
         timeoutMs: 30_000,
       })
       await control.command(
         'clickWhenEnabled',
-        `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="harness-app-start-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: 30_000,
         }
       )
       await control.command(
         'waitFor',
-        `[data-testid="harness-app-launch-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="harness-app-launch-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: 30_000,
         }
@@ -816,7 +820,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await control.command(
         'waitFor',
-        `[data-testid="app-iframe-harness-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="app-iframe-harness-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: 600_000,
         }
@@ -832,24 +836,31 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await control.command(
         'waitFor',
-        `${activeWorkspaceContentSelector} [data-testid="harness-app-open-${RC7_INSTALLATION_ID}"]`,
+        `${activeWorkspaceContentSelector} [data-testid="harness-app-open-${IMPORTED_INSTALLATION_ID}"]`,
         { timeoutMs: 30_000 }
       )
       await control.command(
         'click',
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${RC7_INSTALLATION_ID}"]`
+        `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${IMPORTED_INSTALLATION_ID}"]`
       )
       await control.command(
         'waitFor',
-        `[data-testid="smart-app-stop-menu-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="smart-app-stop-menu-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('click', `[data-testid="smart-app-stop-menu-${RC7_INSTALLATION_ID}"]`)
-      await control.command('waitFor', `[data-testid="harness-app-start-${RC7_INSTALLATION_ID}"]`, {
-        timeoutMs: 30_000,
-      })
+      await control.command(
+        'click',
+        `[data-testid="smart-app-stop-menu-${IMPORTED_INSTALLATION_ID}"]`
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="harness-app-start-${IMPORTED_INSTALLATION_ID}"]`,
+        {
+          timeoutMs: 30_000,
+        }
+      )
 
       const modelSelector = `[data-testid="harness-app-model-${INSTALLATION_ID}"]`
       const initialModelKey = await control.command('getValue', modelSelector)
@@ -1149,25 +1160,25 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await control.command(
         'waitFor',
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${RC7_INSTALLATION_ID}"]`,
+        `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
       )
       await control.command(
         'click',
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${RC7_INSTALLATION_ID}"]`
+        `${activeWorkspaceContentSelector} [data-testid="smart-app-actions-${IMPORTED_INSTALLATION_ID}"]`
       )
       await control.command(
         'waitFor',
-        `[data-testid="smart-app-remove-local-${RC7_INSTALLATION_ID}"]`,
+        `[data-testid="smart-app-remove-local-${IMPORTED_INSTALLATION_ID}"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
       )
       await control.command(
         'click',
-        `[data-testid="smart-app-remove-local-${RC7_INSTALLATION_ID}"]`
+        `[data-testid="smart-app-remove-local-${IMPORTED_INSTALLATION_ID}"]`
       )
       await control.command('waitFor', '[data-testid="smart-app-remove-local-confirm"]', {
         timeoutMs: uiTimeoutMs,
@@ -1175,7 +1186,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('click', '[data-testid="smart-app-remove-local-confirm"]')
       await waitForElementCount(
         control,
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${RC7_INSTALLATION_ID}"]`,
+        `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${IMPORTED_INSTALLATION_ID}"]`,
         0,
         uiTimeoutMs,
         'Removing an imported workbench left its card visible in My'
