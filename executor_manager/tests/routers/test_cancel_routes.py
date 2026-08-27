@@ -14,9 +14,12 @@ class DirectCancelExecutor:
     def __init__(self) -> None:
         self.requested_executor_name: str | None = None
 
-    def _get_container_port(self, executor_name: str) -> tuple[int, None]:
+    def get_container_address(self, executor_name: str) -> dict:
         self.requested_executor_name = executor_name
-        return 10005, None
+        return {
+            "status": "success",
+            "base_url": "http://10.0.0.8:8080",
+        }
 
     def cancel_task(self, task_id: int, subtask_id: int | None = None) -> dict:
         raise AssertionError("Known executors must not use task discovery")
@@ -26,7 +29,7 @@ class DiscoveryCancelExecutor:
     def __init__(self) -> None:
         self.cancelled_task: tuple[int, int | None] | None = None
 
-    def _get_container_port(self, executor_name: str) -> tuple[int, None]:
+    def get_container_address(self, executor_name: str) -> dict:
         raise AssertionError("Empty executor names must use task discovery")
 
     def cancel_task(self, task_id: int, subtask_id: int | None = None) -> dict:
@@ -75,8 +78,7 @@ async def test_v1_cancel_uses_known_executor_directly(mocker) -> None:
     assert result["executor_name"] == "wegent-task-test"
     assert executor.requested_executor_name == "wegent-task-test"
     client.post.assert_awaited_once_with(
-        f"http://{routers.DEFAULT_DOCKER_HOST}:10005"
-        "/api/tasks/cancel?task_id=101&subtask_id=55"
+        "http://10.0.0.8:8080/api/tasks/cancel?task_id=101&subtask_id=55"
     )
 
 
