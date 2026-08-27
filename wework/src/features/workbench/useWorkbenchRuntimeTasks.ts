@@ -181,7 +181,10 @@ export function useWorkbenchRuntimeTasks({
   )
 
   const openRuntimeTask = useCallback(
-    async (address: RuntimeTaskAddress) => {
+    async (
+      address: RuntimeTaskAddress,
+      options?: { fallbackProject?: ProjectWithTasks | null }
+    ) => {
       const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
         item.deviceWorkspaces.some(
           workspace =>
@@ -193,7 +196,7 @@ export function useWorkbenchRuntimeTasks({
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
           ) ?? runtimeProjectToProject(runtimeProjectWork))
-        : null
+        : (options?.fallbackProject ?? null)
 
       writeLastProjectId(user.id, project?.id ?? null)
       openRuntimeTaskView(address, project, {
@@ -473,7 +476,9 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
-        await openRuntimeTask(response.target)
+        await openRuntimeTask(response.target, {
+          fallbackProject: state.currentProject,
+        })
         await refreshWorkLists()
       } catch (error) {
         dispatch({
@@ -482,7 +487,14 @@ export function useWorkbenchRuntimeTasks({
         })
       }
     },
-    [dispatch, executorClient, openRuntimeTask, refreshWorkLists, state.currentRuntimeTask]
+    [
+      dispatch,
+      executorClient,
+      openRuntimeTask,
+      refreshWorkLists,
+      state.currentProject,
+      state.currentRuntimeTask,
+    ]
   )
 
   const getRuntimeGoal = useCallback(

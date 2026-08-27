@@ -889,8 +889,10 @@ function RuntimeTaskForkProbe() {
       <span data-testid="fork-current-runtime-task">
         {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
       </span>
+      <span data-testid="fork-current-project">{workbench.state.currentProject?.id ?? 'none'}</span>
       <button
         type="button"
+        data-testid="open-fork-source"
         onClick={() =>
           void workbench.openRuntimeTask({
             deviceId: 'device-1',
@@ -903,6 +905,7 @@ function RuntimeTaskForkProbe() {
       </button>
       <button
         type="button"
+        data-testid="fork-current-runtime-task-action"
         onClick={() =>
           void workbench.forkCurrentRuntimeTask({
             deviceId: 'device-1',
@@ -2477,16 +2480,18 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeTaskForkProbe />, services)
 
-    await userEvent.click(await screen.findByText('open fork source'))
+    await userEvent.click(await screen.findByTestId('open-fork-source'))
     await waitFor(() =>
       expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-a')
     )
+    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
 
-    await userEvent.click(screen.getByText('fork current runtime task'))
+    await userEvent.click(screen.getByTestId('fork-current-runtime-task-action'))
 
     await waitFor(() =>
       expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
     )
+    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
     expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
 
     refreshRequest.resolve(
@@ -2520,6 +2525,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         totalTasks: 1,
       })
     )
+    await waitFor(() => expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7'))
   })
 
   test('keeps a project task globally pinned while executor refresh is stale', async () => {
