@@ -162,6 +162,7 @@ Bug reports, documentation improvements, code contributions, and new ways of usi
 - [Contributing Guide](CONTRIBUTING.md)
 - [Security Policy](SECURITY.md)
 - [GitHub Issues](https://github.com/wecode-ai/Wegent/issues)
+- DingTalk Community: “wework社区交流”, group ID `190890002451`
 - [Discord Community](https://discord.gg/MVzJzyqEUp)
 - [License](LICENSE)
 
