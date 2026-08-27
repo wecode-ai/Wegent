@@ -1,7 +1,7 @@
 {
   "name": "@wegent/wework-electron",
   "private": true,
-  "version": "0.2.7-beta.1",
+  "version": "0.2.7-beta.4",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",

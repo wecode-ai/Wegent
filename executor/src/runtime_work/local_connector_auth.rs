@@ -722,7 +722,7 @@ fn plugin_command(program: &Path, rest: &[String]) -> Command {
         }
         cmd
     } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
-        let mut cmd = Command::new("powershell");
+        let mut cmd = Command::new("pwsh");
         cmd.args([
             "-NoProfile",
             "-NonInteractive",
@@ -975,7 +975,7 @@ mod tests {
             &["login".to_owned(), "中文".to_owned()],
         );
         let command = command.as_std();
-        assert_eq!(command.get_program(), "powershell");
+        assert_eq!(command.get_program(), "pwsh");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [

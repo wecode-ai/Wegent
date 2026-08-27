@@ -2037,12 +2037,8 @@ async fn read_shared_turn_notifications(
         {
             waiting_for_initial_progress = false;
         }
-        let auto_approve_mcp_tool_call = options.auto_approve_mcp_tool_calls
-            && message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "mcpServer/elicitation/request")
-            && is_mcp_tool_call_approval(message_params(&message));
+        let auto_approve_mcp_tool_call =
+            options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
         if !auto_approve_mcp_tool_call {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message.clone());
@@ -2059,6 +2055,7 @@ async fn read_shared_turn_notifications(
                 &message,
                 request_user_input_answers.clone(),
                 response_error_tx.clone(),
+                options.auto_approve_mcp_tool_calls,
             )?;
             continue;
         }
@@ -2247,9 +2244,21 @@ fn spawn_shared_request_user_input_response(
     message: &Value,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
+    auto_approve_mcp_tool_calls: bool,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
+    if auto_approve_mcp_tool_calls {
+        if let Some(response) = mcp_tool_call_request_user_input_response(message_params(message)) {
+            let client = client.clone();
+            tokio::spawn(async move {
+                if let Err(error) = client.send_response(request_id, response).await {
+                    let _ = response_error_tx.send(error);
+                }
+            });
+            return Ok(());
+        }
+    }
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
     };
@@ -5202,6 +5211,36 @@ const MCP_ELICITATION_ALLOW: &str = "Allow";
 const MCP_ELICITATION_ALLOW_SESSION: &str = "Allow for this session";
 const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
 const MCP_ELICITATION_DECLINE: &str = "Decline";
+const MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval_";
+
+fn is_mcp_tool_call_approval_request(message: &Value) -> bool {
+    match message.get("method").and_then(Value::as_str) {
+        Some("item/tool/requestUserInput") => {
+            mcp_tool_call_request_user_input_response(message_params(message)).is_some()
+        }
+        Some("mcpServer/elicitation/request") => is_mcp_tool_call_approval(message_params(message)),
+        _ => false,
+    }
+}
+
+fn mcp_tool_call_request_user_input_response(params: &Value) -> Option<Value> {
+    let questions = params.get("questions")?.as_array()?;
+    let [question] = questions.as_slice() else {
+        return None;
+    };
+    let question_id = question.get("id")?.as_str()?;
+    let call_id = question_id.strip_prefix(MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX)?;
+    if call_id.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "answers": {
+            question_id: {
+                "answers": [MCP_ELICITATION_ALLOW]
+            }
+        }
+    }))
+}
 
 async fn receive_mcp_server_elicitation_response(
     message: &Value,

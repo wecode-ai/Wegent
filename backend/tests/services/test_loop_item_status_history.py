@@ -15,6 +15,11 @@ from app.schemas.cloud_project import (
 )
 from app.schemas.delivery import LoopItemCreate, LoopItemTaskBind, LoopItemUpdate
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.loop_item_status_history import (
+    is_processing_status,
+    later_project_status,
+    project_status_transition,
+)
 from app.services.loop_items.service import loop_item_service
 
 
@@ -162,6 +167,80 @@ def test_from_equals_to_adds_nothing(test_db, test_user) -> None:
         LoopItemUpdate(version=item.version, status="inbox"),
     )
     assert len(_history(updated)) == 1
+
+
+def test_processing_boundary_uses_project_status_order(test_db, test_user) -> None:
+    project = _make_project(test_db, test_user)
+
+    direct_to_review = project_status_transition(
+        project,
+        previous_status="inbox",
+        current_status="in_review",
+    )
+    later_transition = project_status_transition(
+        project,
+        previous_status="in_progress",
+        current_status="in_review",
+    )
+
+    assert direct_to_review.entered_processing is True
+    assert later_transition.entered_processing is False
+    assert is_processing_status(project, "pending") is True
+    assert is_processing_status(project, "completed") is True
+    assert is_processing_status(project, "inbox") is False
+
+
+def test_processing_boundary_can_follow_a_custom_status(test_db, test_user) -> None:
+    project = _make_project(test_db, test_user)
+    project.metadata_json = {
+        "board_config": CloudProjectBoardConfig(
+            processing_start_status_id="doing",
+            statuses=[
+                CloudProjectBoardStatus(id="new", name="新建", color="gray"),
+                CloudProjectBoardStatus(id="triage", name="评估", color="blue"),
+                CloudProjectBoardStatus(id="doing", name="处理中", color="orange"),
+                CloudProjectBoardStatus(id="done", name="完成", color="green"),
+            ],
+        ).model_dump()
+    }
+
+    assert (
+        project_status_transition(
+            project,
+            previous_status="new",
+            current_status="triage",
+        ).entered_processing
+        is False
+    )
+    assert (
+        project_status_transition(
+            project,
+            previous_status="triage",
+            current_status="done",
+        ).entered_processing
+        is True
+    )
+
+
+def test_workflow_projection_only_advances_board_status() -> None:
+    project = CloudProject(metadata_json={})
+
+    assert (
+        later_project_status(
+            project,
+            current_status="in_review",
+            candidate_status="pending",
+        )
+        == "in_review"
+    )
+    assert (
+        later_project_status(
+            project,
+            current_status="pending",
+            candidate_status="in_progress",
+        )
+        == "in_progress"
+    )
 
 
 def test_status_removal_bulk_clear_appends_entries(test_db, test_user) -> None:

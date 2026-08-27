@@ -109,6 +109,9 @@ export function shouldReplaceRuntimeTaskProjection(
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
+  if (current.cachedProjection !== candidate.cachedProjection) {
+    return current.cachedProjection === true
+  }
   const currentCompleted = isRuntimeTaskAuthoritativeCompletion(current)
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 

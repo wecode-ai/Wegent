@@ -54,6 +54,8 @@ import {
   writeCodexConfig,
 } from './desktop-build-flows.mjs'
 
+import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
+
 import { DesktopE2EServer } from './desktop-server.mjs'
 
 import {
@@ -950,6 +952,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       executorHome,
+      electronUserDataDirectory,
       homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
@@ -1073,11 +1076,19 @@ async function main() {
       )
     }
 
-    const harnessRuntimes =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps'
-        ? await prepareHarnessRuntimeRoots(appBinary)
-        : null
-    const electronCoreRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
+    const needsPackagedHarnessRuntime =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
+      (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
+    const usesReleasePackageRuntimeAssets =
+      desktopScenario?.usesReleasePackageRuntimeAssets === true
+    const harnessRuntimes = needsPackagedHarnessRuntime
+      ? await prepareHarnessRuntimeRoots(appBinary)
+      : null
+    const electronCoreRuntimeRoot =
+      harnessRuntimes?.harnessRuntimeRoot ||
+      (usesReleasePackageRuntimeAssets
+        ? null
+        : process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null)
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1127,12 +1138,15 @@ async function main() {
       WEWORK_EXECUTOR_PATH: executorBinary,
       WEWORK_USER_DATA_DIR: electronUserDataDirectory,
       ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
+      ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
+        ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
+        : {}),
       ...(harnessRuntimes
         ? {
             WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
-            WEWORK_NODE_RUNTIME_ROOT: harnessRuntimes.nodeRuntimeRoot,
           }
         : {}),
+      ...(desktopScenario?.appEnvironment ?? {}),
       ...(RUNS_PLUGIN_E2E
         ? {
             GIT_CONFIG_COUNT: '1',
@@ -1141,6 +1155,10 @@ async function main() {
             WEWORK_E2E_NATIVE_CODEX_HOME: nativeCodexHome,
           }
         : {}),
+    }
+    if (usesReleasePackageRuntimeAssets) {
+      delete appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT
+      delete appEnvironment.WEWORK_NODE_PATH
     }
     delete appEnvironment.WEGENT_APP_IPC_DEVICE_ID
     const electronLaunchArguments =
@@ -1218,12 +1236,29 @@ async function main() {
     } else {
       await declineInitialTelemetryConsent(control)
     }
-    if (RUNS_PLUGIN_E2E) {
+    if (RUNS_PLUGIN_E2E && !shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
       phase = 'blank-codex-home-initialization'
       await initializeBlankCodexHome({
         codexHome,
         control,
       })
+    }
+    if (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
+      phase = 'core-dsh-ui-plugin-composition'
+      await verifyCoreDshUiPluginComposition({
+        control,
+        initialRendererLocation: ready.location,
+        restartDesktopApp,
+        runtimeRoot: electronCoreRuntimeRoot,
+      })
+      if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
+        console.log(
+          `Wework desktop plugin E2E segment ${DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
+        )
+        return
+      }
+    }
+    if (RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
         control.url,
@@ -3842,6 +3877,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
+    await desktopScenario?.cleanup?.()
     await rm(codexSqliteHome, { recursive: true, force: true })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])

@@ -7,10 +7,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.project_chat import (
-    LoopItemExecutionClaim,
-    LoopItemExecutionDeviceClaim,
-)
+from app.schemas.project_chat import LoopItemExecutionClaim
 
 
 @pytest.mark.parametrize(
@@ -23,10 +20,6 @@ from app.schemas.project_chat import (
                 "executionDeviceId": "device-1",
                 "deviceCapacity": 20,
             },
-        ),
-        (
-            LoopItemExecutionDeviceClaim,
-            {"executionDeviceId": "device-1", "deviceCapacity": 20},
         ),
     ],
 )

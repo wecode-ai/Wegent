@@ -9,6 +9,7 @@ const STORAGE_ENTRIES = {
 export async function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
+      await control.command('snapshot', 'body')
       const originBeforeRestart = await control.command('getLocationOrigin', 'body')
       for (const [key, value] of Object.entries(STORAGE_ENTRIES)) {
         assert.equal(

@@ -31,6 +31,8 @@ export const DESKTOP_CHECKPOINTS = [
   'running-conversation-history',
   'codex-notification-isolation',
   'split-workbench',
+  'release-package-startup',
+  'component-update',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
@@ -54,6 +56,7 @@ export const DESKTOP_CHECKPOINTS = [
 ]
 
 export const PLUGIN_SEGMENTS = [
+  'core-dsh-ui-plugin-composition',
   'core-dsh-plugin-management',
   'plugin-marketplace-lifecycle',
   'plugin-lifecycle',

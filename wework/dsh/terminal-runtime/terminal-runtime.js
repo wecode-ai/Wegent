@@ -362,10 +362,10 @@ function terminalEnvironment(base, overrides) {
 
 function terminalShell(platform, environment) {
   if (platform === 'win32') {
-    const executable = environment.COMSPEC?.trim() || 'powershell.exe'
+    const executable = environment.COMSPEC?.trim() || 'pwsh.exe'
     return {
       executable,
-      args: executable.toLowerCase().includes('powershell') ? ['-NoLogo'] : [],
+      args: /pwsh|powershell/i.test(executable) ? ['-NoLogo'] : [],
     }
   }
   const configured = environment.SHELL?.trim()

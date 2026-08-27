@@ -6,14 +6,15 @@ import { describe, expect, test } from 'vitest'
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const legacyRustDesktopDirectory = ['src', ['t', 'a', 'u', 'r', 'i'].join('')].join('-')
 const scripts = [
+  'scripts/dev-executor-sidecar.cmd',
   'electron/scripts/copy-static.mjs',
   'electron/scripts/package-app.mjs',
   'electron/scripts/prepare-package-assets.mjs',
   'scripts/dev-mac-app.sh',
+  'scripts/dev-windows-app.ps1',
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
-  'scripts/prepare-execution-runtime.mjs',
   'scripts/prepare-harness-runtime.mjs',
 ]
 
@@ -21,6 +22,10 @@ describe('desktop resource migration', () => {
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
+    const devAppWatcher = await readFile(
+      join(weworkRoot, 'scripts/dev-wework-app-watch.mjs'),
+      'utf8'
+    )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe(
@@ -28,6 +33,7 @@ describe('desktop resource migration', () => {
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
+    expect(packageJson.scripts['dev:windows']).toContain('scripts/dev-windows-app.ps1')
     expect(packageJson.scripts['ai:verify:electron:prepare']).toBe(
       'node scripts/prepare-ai-verify-electron.mjs'
     )
@@ -38,6 +44,9 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['build:dsh-app']).toBe(
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'
     )
+    expect(devAppWatcher).toContain('outDir: appWebRoot')
+    expect(devAppWatcher).toContain('emptyOutDir: true')
+    expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
   })
 
@@ -71,8 +80,19 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
-    expect(source).toContain("run(pnpmCommand, ['prepare:execution-runtime', '--materialize']")
+    expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
+  test('does not include a separate Node runtime in desktop packages', async () => {
+    const [packageApp, builderConfig] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+    ])
+
+    expect(packageApp).not.toContain("resources', 'node-runtime")
+    expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
   test('launches the release builder through the Windows command interpreter', async () => {
@@ -80,12 +100,6 @@ describe('desktop resource migration', () => {
 
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
-  })
-
-  test('signs the packaged Node runtime with the configured macOS keychain', async () => {
-    const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
-
-    expect(source).toContain("identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH")
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -133,7 +147,6 @@ describe('desktop resource migration', () => {
   test.each([
     'resources/icons/icon.icns',
     'resources/icons/icon.ico',
-    'resources/bundled-execution-runtimes/node.json',
     'resources/bundled-harness-runtime/.resource-placeholder',
     'resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json',
     'resources/bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',

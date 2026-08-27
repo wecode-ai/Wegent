@@ -267,42 +267,21 @@ describe('startLocalRobotQueueDispatcher', () => {
     vi.useRealTimers()
   })
 
-  it('claims from every local-capable device', async () => {
+  it('lets Executor IPC supply the only local execution device identity', async () => {
     const claimNext = vi
       .fn()
-      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(execution({ execution_device_id: 'app-device' }))
+      .mockResolvedValue(null)
     const { services: svc, mocks } = services({
       claimNext,
-      devices: [
-        { device_id: 'local-device', device_type: 'local' },
-        { device_id: 'app-device', device_type: 'app' },
-      ],
     })
     const stop = startLocalRobotQueueDispatcher(svc)
     await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
     await vi.runOnlyPendingTimersAsync()
-    expect(claimNext).toHaveBeenNthCalledWith(1, {
-      execution_device_id: 'local-device',
-      lease_seconds: 300,
-    })
-    expect(claimNext).toHaveBeenNthCalledWith(2, {
-      execution_device_id: 'app-device',
+    expect(claimNext).toHaveBeenCalledWith({
       lease_seconds: 300,
     })
     expect(mocks.createRuntimeTask).toHaveBeenCalledOnce()
-    stop()
-  })
-
-  it('does not invent a fallback device when no devices resolve', async () => {
-    const claimNext = vi.fn().mockResolvedValueOnce(execution()).mockResolvedValue(null)
-    const listDevices = vi.fn(async () => [])
-    const { services: svc, mocks } = services({ claimNext, listDevices })
-    const stop = startLocalRobotQueueDispatcher(svc)
-    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
-    await vi.runOnlyPendingTimersAsync()
-    expect(claimNext).not.toHaveBeenCalled()
-    expect(mocks.createRuntimeTask).not.toHaveBeenCalled()
     stop()
   })
 
@@ -317,85 +296,6 @@ describe('startLocalRobotQueueDispatcher', () => {
     // Runtime acceptance is recorded separately; the lease keeper starts 60s later.
     await vi.advanceTimersByTimeAsync(60_000)
     expect(heartbeat).toHaveBeenCalledWith(1, 'local-device', 'codex-queue-1', 300)
-    stop()
-  })
-
-  it('forwards the complete backend V2 intent and reports runtime start', async () => {
-    const runtimeOrigin = {
-      type: 'project_automation',
-      cloudProjectId: 'P-1',
-      loopItemId: 'T-1',
-      rule_id: 'rule-9',
-      run_id: 'run-4',
-      event: { type: 'task.created', taskId: 'T-1' },
-    }
-    const runtimeContext = {
-      project: { kind: 'application', value: '{"id":"P-1","name":"Project"}' },
-      task: { kind: 'application', value: '{"id":"T-1","title":"Run me"}' },
-      event: { kind: 'application', value: '{"type":"task.created"}' },
-      projectChat: { kind: 'application', value: 'backend bound-task context' },
-    }
-    const cloudClaimNext = vi
-      .fn()
-      .mockResolvedValueOnce(
-        execution({
-          runtime_task_id: 'codex-queue-7',
-          runtime_payload: {
-            taskId: 'codex-queue-7',
-            message: 'backend robot prompt',
-            teamId: 3,
-            runtime: 'codex',
-            title: 'Claim-time title',
-            cloudProjectId: 'P-1',
-            modelId: 'local-model',
-            modelType: 'runtime',
-            modelOptions: { collaborationMode: 'default' },
-            bot: [{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }],
-            standaloneChatWorkspace: true,
-            origin: runtimeOrigin,
-            additionalContext: runtimeContext,
-          },
-        })
-      )
-      .mockResolvedValue(null)
-    const runtimeStart = vi.fn(async () => execution({ status: 'running' }))
-    const createRuntimeTask = vi.fn(async () => ({
-      accepted: true,
-      deviceId: 'local-device',
-      taskId: 'codex-queue-7',
-      workspacePath: '/tmp/workspace',
-    }))
-    const { services: svc, mocks } = services({
-      cloudClaimNext,
-      runtimeStart,
-      createRuntimeTask,
-      claimNext: vi.fn(async () => null),
-    })
-    const stop = startLocalRobotQueueDispatcher(svc)
-    await vi.advanceTimersByTimeAsync(LOCAL_QUEUE_POLL_MS)
-    await vi.runOnlyPendingTimersAsync()
-
-    const call = mocks.createRuntimeTask.mock.calls[0][0] as Record<string, unknown>
-    expect(call.taskId).toBe('codex-queue-7')
-    expect(call.message).toBe('backend robot prompt')
-    expect(call.teamId).toBe(3)
-    expect(call.bot).toEqual([{ id: 'LA-1', name: 'Bot', shell_type: 'codex' }])
-    expect(call.executionRequest).toBeUndefined()
-    expect(call.modelConfig).toBeUndefined()
-    expect(call.modelId).toBe('local-model')
-    expect(call.modelType).toBe('runtime')
-    expect(call.standaloneChatWorkspace).toBe(true)
-    expect(call.ephemeral).toBeUndefined()
-    expect(call.origin).toEqual(runtimeOrigin)
-    expect(call.additionalContext).toEqual(runtimeContext)
-    expect(mocks.listModels).not.toHaveBeenCalled()
-    expect(runtimeStart).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 1, cloud_project_id: 'P-1' }),
-      'local-device',
-      'codex-queue-7',
-      'backend robot prompt',
-      'local-model'
-    )
     stop()
   })
 

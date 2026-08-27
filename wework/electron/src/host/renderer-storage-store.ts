@@ -29,7 +29,12 @@ export class RendererStorageStore {
   update(update: RendererStorageUpdate): Promise<void> {
     return this.serial(async () => {
       const state = await this.readFile()
-      const entries = update.clear ? {} : { ...(state?.entries ?? {}) }
+      const entries = Object.create(null) as Record<string, string>
+      if (!update.clear && state) {
+        for (const [key, value] of Object.entries(state.entries)) {
+          entries[key] = value
+        }
+      }
       for (const [key, value] of Object.entries(update.changes)) {
         if (value === null) {
           delete entries[key]

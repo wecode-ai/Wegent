@@ -45,6 +45,7 @@ export function useProjectRuntimeTaskComposer({
         taskRequest,
         runtime: 'codex',
         attachments: options.attachments,
+        ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
         optimisticUserMessage: options.optimisticUserMessage,
         executionModel: options.executionModel,
         collaborationMode: 'default',

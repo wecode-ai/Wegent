@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -38,7 +39,7 @@ def _device(db: Session, user: User) -> None:
 
 
 def test_sync_capacity_requires_matching_runtime_identity(
-    test_db: Session, test_user: User
+    test_db: Session, test_user: User, caplog
 ) -> None:
     _device(test_db, test_user)
     online = {
@@ -51,8 +52,12 @@ def test_sync_capacity_requires_matching_runtime_identity(
         },
     }
 
-    with patch(
-        "app.services.device.capacity.cache_manager.get_sync", return_value=online
+    with (
+        patch(
+            "app.services.device.capacity.cache_manager.get_sync",
+            return_value=online,
+        ),
+        caplog.at_level(logging.DEBUG, logger="app.services.device.capacity"),
     ):
         capacity = get_runtime_capacity_sync(
             test_db,
@@ -61,6 +66,9 @@ def test_sync_capacity_requires_matching_runtime_identity(
         )
 
     assert capacity is None
+    assert "runtime_capacity_unavailable reason=invalid_snapshot" in caplog.text
+    assert "expected_instance_id=runtime-1" in caplog.text
+    assert "reported_instance_id=different-runtime" in caplog.text
 
 
 def test_pull_capacity_uses_current_observation(

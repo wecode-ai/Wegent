@@ -16,8 +16,21 @@ import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 import { installFrontendRecoveryBridge } from '@/lib/frontendRecovery'
-import { initializeWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
+import { DshClientContextProvider } from '@/features/dsh-runtime/DshClientContextProvider'
 import { initializeDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+
+import type { Context } from '@deepseek-ai/cordis'
+
+interface WeworkAppRuntime {
+  mount(container: HTMLElement, context: Context): Promise<() => void>
+}
+
+declare global {
+  interface Window {
+    __DSH_BOOT__?: unknown
+    __WEWORK_APP_RUNTIME__?: WeworkAppRuntime
+  }
+}
 
 const isSystemDragPanel = isDesktopRuntime() && window.location.pathname.endsWith('/system-drag')
 if (!isSystemDragPanel) {
@@ -34,23 +47,27 @@ if (!isSystemDragPanel) {
 }
 const performanceDiagnostics = isSystemDragPanel ? null : installPerformanceDiagnostics()
 
-function renderApp(): void {
-  createRoot(document.getElementById('root')!).render(
+async function mountApp(container: HTMLElement, context: Context | null): Promise<() => void> {
+  const root = createRoot(container)
+  root.render(
     <StrictMode>
-      {performanceDiagnostics ? (
-        <Profiler id="wework-root" onRender={recordReactCommit}>
+      <DshClientContextProvider context={context}>
+        {performanceDiagnostics ? (
+          <Profiler id="wework-root" onRender={recordReactCommit}>
+            <App />
+          </Profiler>
+        ) : (
           <App />
-        </Profiler>
-      ) : (
-        <App />
-      )}
+        )}
+      </DshClientContextProvider>
     </StrictMode>
   )
+  return () => root.unmount()
 }
 
-function renderStartupFailure(error: unknown): void {
-  console.error('[Wework] Failed to initialize the plugin runtime:', error)
-  createRoot(document.getElementById('root')!).render(
+function renderStartupFailure(container: HTMLElement, error: unknown): void {
+  console.error('[Wework] Failed to initialize the desktop frontend:', error)
+  createRoot(container).render(
     <main
       className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground"
       data-testid="workbench-startup-error"
@@ -58,7 +75,7 @@ function renderStartupFailure(error: unknown): void {
       <section className="max-w-md space-y-4 rounded-lg border border-border bg-card p-6">
         <h1 className="heading-section">Wework 启动失败</h1>
         <p className="text-chat text-muted-foreground">
-          智能工作台运行时初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
+          Wework 桌面前端初始化失败。请重试；如果问题持续，请打开调试面板查看日志。
         </p>
         <button
           className="rounded-md bg-primary px-3 py-2 text-primary-foreground"
@@ -73,24 +90,39 @@ function renderStartupFailure(error: unknown): void {
   )
 }
 
-let shouldRenderApp = true
-try {
-  await initializeDesktopLocalStoragePersistence()
-} catch (error) {
-  renderStartupFailure(error)
-  shouldRenderApp = false
-}
-if (!isSystemDragPanel && shouldRenderApp) {
-  try {
-    await installWeworkAutomationBridge()
-  } catch (error) {
-    console.error('[Wework] Failed to install the automation bridge:', error)
+const desktopStorageReady = initializeDesktopLocalStoragePersistence().then(
+  () => null,
+  error => error
+)
+
+async function mountWework(container: HTMLElement, context: Context | null): Promise<() => void> {
+  const storageError = await desktopStorageReady
+  if (storageError !== null) {
+    renderStartupFailure(container, storageError)
+    return () => {}
+  }
+  if (!isSystemDragPanel) {
+    try {
+      await installWeworkAutomationBridge()
+    } catch (error) {
+      console.error('[Wework] Failed to install the automation bridge:', error)
+    }
   }
   try {
-    await initializeWorkbenchPluginRuntime()
+    return await mountApp(container, context)
   } catch (error) {
-    renderStartupFailure(error)
-    shouldRenderApp = false
+    renderStartupFailure(container, error)
+    return () => {}
   }
 }
-if (shouldRenderApp) renderApp()
+
+if (window.__DSH_BOOT__) {
+  window.__WEWORK_APP_RUNTIME__ = {
+    mount: (container, context) => mountWework(container, context),
+  }
+  window.dispatchEvent(new Event('wework:app-runtime-ready'))
+} else {
+  const container = document.getElementById('root')
+  if (!container) throw new Error('Wework root element is missing')
+  await mountWework(container, null)
+}
