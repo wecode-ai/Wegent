@@ -1,11 +1,11 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.2.8-beta.1",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prepare:electron": "pnpm --dir electron install --frozen-lockfile",
+    "prepare:electron": "pnpm --dir electron install --frozen-lockfile && node electron/node_modules/electron/install.js",
     "dev:desktop": "pnpm run prepare:electron && pnpm --dir electron dev",
     "dev:mac": "bash scripts/dev-mac-app.sh",
     "dev:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/dev-windows-app.ps1",

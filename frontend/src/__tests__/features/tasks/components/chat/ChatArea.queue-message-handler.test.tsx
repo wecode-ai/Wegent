@@ -821,6 +821,88 @@ describe('ChatArea queue message handler mounting', () => {
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('make roadmap')
   })
 
+  it('keeps quick launch preset attachments when the user uploads another file', async () => {
+    ;(
+      userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
+    ).prepareQuickLaunchPreset.mockResolvedValue({
+      function_id: 'create_ppt',
+      preset_id: 'roadmap',
+      attachments: [
+        {
+          id: 901,
+          filename: 'roadmap-template.pdf',
+          file_size: 2048,
+          mime_type: 'application/pdf',
+          status: 'ready',
+          text_length: 120,
+          error_message: null,
+          error_code: null,
+          subtask_id: null,
+          file_extension: '.pdf',
+          created_at: '2026-06-04T00:00:00Z',
+        },
+      ],
+    })
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-preset-trigger'))
+    await waitFor(() => {
+      expect(mockAddExistingAttachment).toHaveBeenCalled()
+    })
+
+    const inputProps = mockChatInputCard.mock.calls.at(-1)?.[0] as {
+      onFileSelect: (files: File | File[]) => Promise<void>
+    }
+    const file = new File(['manual'], 'manual.txt', { type: 'text/plain' })
+    await act(async () => {
+      await inputProps.onFileSelect(file)
+    })
+
+    expect(mockHandleFileSelect).toHaveBeenCalledWith(file)
+    expect(mockHandleAttachmentRemove).not.toHaveBeenCalledWith(901)
+  })
+
+  it('adds quick launch preset attachments when user attachments already exist', async () => {
+    mockAttachments = [{ id: 700 }]
+    ;(
+      userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }
+    ).prepareQuickLaunchPreset.mockResolvedValue({
+      function_id: 'create_ppt',
+      preset_id: 'roadmap',
+      attachments: [
+        {
+          id: 901,
+          filename: 'roadmap-template.pdf',
+          file_size: 2048,
+          mime_type: 'application/pdf',
+          status: 'ready',
+          text_length: 120,
+          error_message: null,
+          error_code: null,
+          subtask_id: null,
+          file_extension: '.pdf',
+          created_at: '2026-06-04T00:00:00Z',
+        },
+      ],
+    })
+
+    render(<ChatArea teams={[]} isTeamsLoading={false} taskType="chat" showRepositorySelector />)
+
+    fireEvent.click(screen.getByTestId('quick-preset-trigger'))
+
+    await waitFor(() => {
+      expect(
+        (userApis as unknown as { prepareQuickLaunchPreset: jest.Mock }).prepareQuickLaunchPreset
+      ).toHaveBeenCalledWith({
+        function_id: 'create_ppt',
+        preset_id: 'roadmap',
+      })
+    })
+    expect(mockAddExistingAttachment).toHaveBeenCalledWith(expect.objectContaining({ id: 901 }))
+    expect(mockHandleAttachmentRemove).not.toHaveBeenCalledWith(700)
+  })
+
   it('leaves device mode when quick action selects a ClaudeCode team with non-Claude protocol', () => {
     render(
       <ChatArea teams={[]} isTeamsLoading={false} taskType="task" showRepositorySelector={false} />

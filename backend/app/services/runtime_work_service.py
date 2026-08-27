@@ -2553,30 +2553,6 @@ async def _runtime_task_workspace_path(
     return _workspace_path_for_runtime_task(result, address.local_task_id)
 
 
-async def replay_runtime_task_statuses(
-    *,
-    user_id: int,
-    device_id: str,
-    task_ids: list[str],
-) -> dict[str, Any]:
-    """Replay selected Runtime task states through the existing event stream."""
-
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=device_id,
-            method="runtime.tasks.status.replay",
-            payload={"taskIds": task_ids},
-        )
-    except RuntimeRpcError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to replay Runtime task status: {exc}",
-        ) from exc
-    _raise_runtime_rpc_failure(result)
-    return result
-
-
 def _workspace_path_for_runtime_task(
     result: dict[str, Any],
     local_task_id: str,

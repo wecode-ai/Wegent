@@ -66,8 +66,6 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
-  RuntimeTaskStatusReplayRequest,
-  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -2483,11 +2481,6 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
-    replayRuntimeTaskStatuses(
-      data: RuntimeTaskStatusReplayRequest
-    ): Promise<RuntimeTaskStatusReplayResponse> {
-      return requestWithLocalDevice('runtime.tasks.status.replay', data)
-    },
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()

@@ -750,7 +750,6 @@ impl RuntimeWorkRpcHandler {
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
             "runtime.tasks.running_count" => Ok(self.running_task_count()),
-            "runtime.tasks.status.replay" => self.replay_task_statuses(payload).await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
