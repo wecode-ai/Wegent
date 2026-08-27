@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import CustomHTTPException, StructuredValidationException
 from app.models.kind import Kind
-from app.models.knowledge import ContentOrigin, KnowledgeDocument, KnowledgeFolder
+from app.models.knowledge import (
+    ContentOrigin,
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeFolder,
+)
 from app.models.user import User
 from app.schemas.knowledge import MAX_TRANSFER_RESOURCE_COUNT, TransferDocumentsResponse
 from app.schemas.namespace import GroupRole
@@ -571,6 +576,7 @@ class KnowledgeTransferService:
                 KnowledgeDocument.kind_id == source_kb_id,
             )
             .with_for_update()
+            .populate_existing()
             .all()
         )
 
@@ -590,6 +596,20 @@ class KnowledgeTransferService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Generated Code Wiki content is read-only",
                 error_code=GENERATED_CONTENT_READ_ONLY,
+            )
+
+        not_ready = [
+            document.name
+            for document in source_documents
+            if document.has_external_identity
+            and (
+                document.index_status != DocumentIndexStatus.SUCCESS
+                or document.attachment_id <= 0
+            )
+        ]
+        if not_ready:
+            raise StructuredValidationException(
+                "EXTERNAL_DOCUMENT_NOT_READY", {"names": sorted(not_ready)}
             )
 
         return tuple(source_documents)

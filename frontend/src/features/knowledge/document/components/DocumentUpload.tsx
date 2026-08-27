@@ -100,7 +100,6 @@ interface DocumentUploadProps {
   ) => Promise<DocumentCreationResult[]>
   onWebAdd?: (url: string, name?: string) => Promise<void>
   onDingtalkImport?: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
-  isSharedKnowledgeBase?: boolean
   canManageDocuments?: boolean
   /** Deprecated compatibility props. kb_type no longer limits uploads. */
   kbType?: string
@@ -125,7 +124,6 @@ function DocumentUploadSession({
   onUploadComplete,
   onWebAdd,
   onDingtalkImport,
-  isSharedKnowledgeBase = false,
   canManageDocuments = true,
   folderId = 0,
   folderOptions = [],
@@ -751,7 +749,6 @@ function DocumentUploadSession({
                 onDone={() => sourceCompleted('dingtalk')}
                 onDraftChange={setDingtalkHasDraft}
                 renderFooter={(action, status) => footer('dingtalk', action, status)}
-                isSharedKnowledgeBase={isSharedKnowledgeBase}
                 canManageDocuments={canManageDocuments}
               />
             </TabsContent>

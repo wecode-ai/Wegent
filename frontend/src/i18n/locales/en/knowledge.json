@@ -433,6 +433,7 @@
           "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
           "DUPLICATE_EXTERNAL_DOCUMENTS": "The same external document already exists in the target knowledge base",
+          "EXTERNAL_DOCUMENT_NOT_READY": "Wait for external documents to finish importing, or retry successfully, before transferring them",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
       },
@@ -619,7 +620,7 @@
         "folderDocumentCount": "Importable: {{count}}",
         "folderDocumentCountHint": "Importable documents, including all descendants",
         "limitError": "At most 50 documents can be imported at once. Reduce the selection and retry",
-        "sharedHint": "Imported content will be visible to knowledge base members",
+        "sharedHint": "Imported content follows the target knowledge base's access permissions",
         "noPermission": "You do not have permission to add documents to this knowledge base",
         "resultCreated": "Created {{count}}",
         "resultUpdated": "updated {{count}}",

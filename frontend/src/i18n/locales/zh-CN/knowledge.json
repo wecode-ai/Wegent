@@ -433,6 +433,7 @@
           "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
           "DUPLICATE_EXTERNAL_DOCUMENTS": "目标知识库中已存在同一外部文档",
+          "EXTERNAL_DOCUMENT_NOT_READY": "请等待外部文档导入完成，或重试成功后再转移",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
       },
@@ -619,7 +620,7 @@
         "folderDocumentCount": "可导入 {{count}} 篇",
         "folderDocumentCountHint": "可导入文档数，包含所有下级",
         "limitError": "一次最多导入 50 篇文档，请减少选择后重试",
-        "sharedHint": "导入的内容将对知识库成员可见",
+        "sharedHint": "导入后的内容遵循目标知识库的访问权限",
         "noPermission": "你没有在当前知识库添加文档的权限",
         "resultCreated": "新建 {{count}} 篇",
         "resultUpdated": "更新 {{count}} 篇",

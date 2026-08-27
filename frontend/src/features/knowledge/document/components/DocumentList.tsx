@@ -1648,7 +1648,6 @@ export function DocumentList({
         onUploadComplete={handleUploadComplete}
         onWebAdd={handleWebAdd}
         onDingtalkImport={handleDingtalkImport}
-        isSharedKnowledgeBase={Boolean(groupInfo) && groupInfo?.groupType !== 'personal'}
         canManageDocuments={canUploadDocuments}
         kbType={documentViewOf(knowledgeBase.kb_type) ?? undefined}
         folderId={selectedUploadFolderId}

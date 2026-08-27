@@ -51,16 +51,24 @@ test.describe('External DingTalk document import', () => {
   })
 
   test.afterEach(async ({ request }, testInfo) => {
-    if (activeContext) {
-      await attachExternalImportEvidence(testInfo, request, activeContext).catch(() => null)
+    if (!activeContext) return
+    const context = activeContext
+    activeContext = null
+    try {
+      await attachExternalImportEvidence(testInfo, request, context)
+    } catch (error) {
+      console.error('Failed to attach external import evidence:', error)
+    } finally {
+      try {
+        await cleanupExternalImportScenario(request, context)
+      } catch (error) {
+        if (testInfo.status === 'passed') throw error
+        console.error('Scenario cleanup failed (body failure reported first):', error)
+      }
     }
   })
 
-  /**
-   * Run one scenario: build fresh data, run the body, then tear the data down.
-   * The body failure is reported first; a cleanup failure is logged but never
-   * masks it, and still fails the test when the body passed.
-   */
+  /** Build fresh data and run the body; afterEach collects evidence before cleanup. */
   async function runScenario(
     request: APIRequestContext,
     caseName: string,
@@ -69,24 +77,7 @@ test.describe('External DingTalk document import', () => {
     activeContext = null
     const context = await createExternalImportScenario(request, caseName, retrieval.config)
     activeContext = context
-    let bodyError: unknown = null
-    let cleanupError: unknown = null
-    try {
-      await body(context)
-    } catch (error) {
-      bodyError = error
-    } finally {
-      try {
-        await cleanupExternalImportScenario(request, context)
-      } catch (error) {
-        cleanupError = error
-      }
-      if (cleanupError && bodyError) {
-        console.error('Scenario cleanup failed (body failure reported first):', cleanupError)
-      }
-    }
-    if (bodyError) throw bodyError
-    if (cleanupError) throw cleanupError
+    await body(context)
   }
 
   test('distinguishes supported formats from missing provider configuration', async ({

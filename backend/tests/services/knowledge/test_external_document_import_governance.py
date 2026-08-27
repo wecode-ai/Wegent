@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import StructuredValidationException
 from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
@@ -22,6 +23,7 @@ from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
+    KnowledgeFolderCreate,
 )
 from app.schemas.share import MemberRole
 from app.services.knowledge.external_document_import import (
@@ -35,6 +37,7 @@ from app.services.knowledge.external_document_providers import (
     ExternalSourceUnavailableError,
     get_external_document_provider,
 )
+from app.services.knowledge.folder_service import KnowledgeFolderService
 from app.services.knowledge.index_state_machine import (
     begin_external_import_attempt,
     mark_document_index_succeeded,
@@ -45,6 +48,137 @@ from app.services.share import knowledge_share_service
 
 from .conftest import create_external_import_kb as _create_kb
 from .conftest import create_synced_node as _create_synced_node
+
+
+def test_importing_copy_cannot_be_transferred(
+    test_db: Session,
+    test_user: User,
+    configured_dingtalk: None,
+    dispatch_calls: list[dict],
+) -> None:
+    source_id = _create_kb(test_db, test_user.id, "source")
+    target_id = _create_kb(test_db, test_user.id, "target")
+    node = _create_synced_node(test_db, test_user.id, "pending-source")
+    document = external_document_import_service.import_document(
+        test_db, test_user, source_id, "dingtalk", node.dingtalk_node_id
+    )
+    attempt = begin_external_import_attempt(
+        test_db, document.id, dispatch_calls[-1]["expected_generation"]
+    )
+
+    with pytest.raises(StructuredValidationException) as exc_info:
+        KnowledgeService.transfer_documents_to_kb(
+            test_db, source_id, target_id, [document.id], [], test_user.id
+        )
+
+    assert exc_info.value.error_code == "EXTERNAL_DOCUMENT_NOT_READY"
+    current = KnowledgeService.get_document(test_db, document.id, test_user.id)
+    assert current.kind_id == source_id
+    assert current.index_generation == attempt.generation
+    assert current.index_status == DocumentIndexStatus.QUEUED
+    assert len(dispatch_calls) == 1
+
+
+@pytest.mark.parametrize("selection", ["single", "batch", "folder"])
+@pytest.mark.parametrize(
+    ("index_status", "attachment_id"),
+    [
+        (state, 4321)
+        for state in DocumentIndexStatus
+        if state != DocumentIndexStatus.SUCCESS
+    ]
+    + [(DocumentIndexStatus.SUCCESS, 0)],
+)
+def test_not_ready_copy_rejects_entire_transfer(
+    test_db: Session,
+    test_user: User,
+    selection: str,
+    index_status: DocumentIndexStatus,
+    attachment_id: int,
+) -> None:
+    source_id = _create_kb(test_db, test_user.id, "source")
+    target_id = _create_kb(test_db, test_user.id, "target")
+    folder = KnowledgeFolderService.create_folder(
+        test_db, source_id, test_user.id, KnowledgeFolderCreate(name="Folder")
+    )
+    documents = []
+    for resource_id in ("ready", "not-ready"):
+        document = KnowledgeService.create_external_document(
+            test_db,
+            source_id,
+            test_user.id,
+            name=resource_id,
+            external_provider="dingtalk",
+            external_resource_id=resource_id,
+            folder_id=folder.id,
+            external_meta={"title": resource_id},
+        )
+        document.index_status = DocumentIndexStatus.SUCCESS
+        document.attachment_id = 4321
+        documents.append(document)
+    blocked = documents[-1]
+    blocked.index_status = index_status
+    blocked.attachment_id = attachment_id
+    test_db.commit()
+    document_ids = (
+        [doc.id for doc in documents] if selection == "batch" else [blocked.id]
+    )
+
+    with pytest.raises(StructuredValidationException) as exc_info:
+        KnowledgeService.transfer_documents_to_kb(
+            test_db,
+            source_id,
+            target_id,
+            [] if selection == "folder" else document_ids,
+            [folder.id] if selection == "folder" else [],
+            test_user.id,
+        )
+
+    assert exc_info.value.error_code == "EXTERNAL_DOCUMENT_NOT_READY"
+    assert exc_info.value.payload == {"names": ["not-ready"]}
+    assert KnowledgeService.list_documents(test_db, target_id, test_user.id) == []
+    assert (
+        KnowledgeFolderService.get_folder_tree(test_db, target_id, test_user.id) == []
+    )
+    remaining = KnowledgeService.list_documents(test_db, source_id, test_user.id)
+    assert {doc.id for doc in remaining} == {doc.id for doc in documents}
+    assert all(doc.folder_id == folder.id for doc in remaining)
+    assert blocked.index_status == index_status
+
+
+def test_transfer_checks_latest_state_not_cached_success(
+    test_db: Session,
+    test_user: User,
+) -> None:
+    source_id = _create_kb(test_db, test_user.id, "source")
+    target_id = _create_kb(test_db, test_user.id, "target")
+    document = KnowledgeService.create_external_document(
+        test_db,
+        source_id,
+        test_user.id,
+        name="copy",
+        external_provider="dingtalk",
+        external_resource_id="source",
+        folder_id=0,
+        external_meta={"title": "Source"},
+    )
+    document.attachment_id = 4321
+    assert mark_document_index_succeeded(test_db, document.id, 0)
+    # Model a refresh committed after this session cached the successful copy.
+    test_db.connection().execute(
+        KnowledgeDocument.__table__.update()
+        .where(KnowledgeDocument.id == document.id)
+        .values(index_status=DocumentIndexStatus.QUEUED, index_generation=1)
+    )
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+
+    with pytest.raises(StructuredValidationException) as exc_info:
+        KnowledgeService.transfer_documents_to_kb(
+            test_db, source_id, target_id, [document.id], [], test_user.id
+        )
+
+    assert exc_info.value.error_code == "EXTERNAL_DOCUMENT_NOT_READY"
+    assert KnowledgeService.list_documents(test_db, target_id, test_user.id) == []
 
 
 def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
@@ -70,6 +204,8 @@ def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
     document = external_document_import_service.import_document(
         test_db, test_user, source_id, "dingtalk", node.dingtalk_node_id
     )
+    document.attachment_id = 1234
+    test_db.commit()
     assert mark_document_index_succeeded(test_db, document.id, 0)
 
     result = KnowledgeService.transfer_documents_to_kb(

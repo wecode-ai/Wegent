@@ -74,8 +74,6 @@ interface DingtalkDocumentImportProps {
   onDone?: () => void
   onDraftChange: (hasDraft: boolean) => void
   renderFooter: (action: ReactNode, status?: ReactNode) => ReactNode
-  /** Whether the current knowledge base is shared with other members */
-  isSharedKnowledgeBase?: boolean
   /** Whether the user may manage documents in the current knowledge base */
   canManageDocuments?: boolean
 }
@@ -86,7 +84,6 @@ export function DingtalkDocumentImport({
   onDone,
   onDraftChange,
   renderFooter,
-  isSharedKnowledgeBase = false,
   canManageDocuments = true,
 }: DingtalkDocumentImportProps) {
   const { t } = useTranslation('knowledge')
@@ -319,15 +316,13 @@ export function DingtalkDocumentImport({
           </Popover>
         </div>
 
-        {isSharedKnowledgeBase && (
-          <div
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-surface p-2 text-xs text-text-secondary"
-            data-testid="dingtalk-import-shared-hint"
-          >
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{t('document.upload.dingtalk.sharedHint')}</span>
-          </div>
-        )}
+        <div
+          className="flex shrink-0 items-center gap-2 rounded-lg bg-surface p-2 text-xs text-text-secondary"
+          data-testid="dingtalk-import-shared-hint"
+        >
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{t('document.upload.dingtalk.sharedHint')}</span>
+        </div>
 
         {result !== null ? (
           resultItems.length > 0 && (

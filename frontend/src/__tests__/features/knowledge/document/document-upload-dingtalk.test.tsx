@@ -72,8 +72,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.folderDocumentCountHint':
           'Importable documents, including all descendants',
         'document.upload.dingtalk.limitError': 'At most 50 documents can be imported at once',
-        'document.upload.dingtalk.sharedHint':
-          'Imported content will be visible to knowledge base members',
+        'document.upload.dingtalk.sharedHint': dingtalk.sharedHint,
         'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
         'document.upload.dingtalk.resultCreated': 'Created {{count}}',
         'document.upload.dingtalk.resultUpdated': 'updated {{count}}',
@@ -1057,11 +1056,11 @@ describe('DocumentUpload dingtalk source', () => {
     expect(trigger).toHaveTextContent('Target')
   })
 
-  it('warns that imported content is visible to members of a shared knowledge base', async () => {
-    await openDingtalkMode({ isSharedKnowledgeBase: true })
+  it('always explains that imported content follows knowledge base permissions', async () => {
+    await openDingtalkMode()
 
     expect(screen.getByTestId('dingtalk-import-shared-hint')).toHaveTextContent(
-      'Imported content will be visible to knowledge base members'
+      "Imported content follows the target knowledge base's access permissions"
     )
   })
 
