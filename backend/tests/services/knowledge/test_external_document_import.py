@@ -4,7 +4,7 @@
 
 """Service tests for single external document import."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -118,6 +118,39 @@ class TestProviderRegistry:
 
 
 class TestImportDocument:
+    def test_same_source_creates_independent_copies_in_different_kbs(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        first_kb_id = _create_kb(test_db, test_user.id, "external-copy-kb-a")
+        second_kb_id = _create_kb(test_db, test_user.id, "external-copy-kb-b")
+        node = _create_synced_node(
+            test_db, test_user.id, "cross-kb-external-doc", name="Shared Source"
+        )
+
+        first = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=first_kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+        second = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=second_kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+
+        assert first.id != second.id
+        assert (first.kind_id, second.kind_id) == (first_kb_id, second_kb_id)
+        assert first.external_resource_id == second.external_resource_id
+        assert dispatched == [first.id, second.id]
+
     def test_dispatch_failure_marks_placeholder_retryable(
         self,
         test_db: Session,
@@ -352,7 +385,7 @@ class TestImportDocument:
                 folder_id=folder.id,
             )
 
-    def test_reimport_of_successful_document_is_rejected(
+    def test_reimport_of_successful_document_refreshes_same_record(
         self,
         test_db: Session,
         test_user: User,
@@ -384,26 +417,24 @@ class TestImportDocument:
         first.folder_id = folder.id
         test_db.commit()
 
-        with pytest.raises(ExternalDocumentImportError) as exc_info:
-            external_document_import_service.import_document(
-                db=test_db,
-                user=test_user,
-                knowledge_base_id=kb_id,
-                provider_id="dingtalk",
-                external_resource_id=node.dingtalk_node_id,
-            )
+        refreshed = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
 
-        assert exc_info.value.status_code == 409
-        assert "already imported" in str(exc_info.value).lower()
         assert test_db.query(KnowledgeDocument).count() == 1
         test_db.refresh(first)
+        assert refreshed.id == first.id
         assert first.name == "My Renamed Doc"
         assert first.folder_id == folder.id
-        assert first.is_active is True
-        assert first.index_status == DocumentIndexStatus.SUCCESS
-        assert dispatched == [first.id]
+        assert first.is_active is False
+        assert first.index_status == DocumentIndexStatus.QUEUED
+        assert dispatched == [first.id, first.id]
 
-    def test_reimport_while_in_progress_is_rejected(
+    def test_reimport_while_in_progress_reuses_current_attempt(
         self,
         test_db: Session,
         test_user: User,
@@ -422,17 +453,53 @@ class TestImportDocument:
         )
         assert document.index_status == DocumentIndexStatus.QUEUED
 
-        with pytest.raises(ExternalDocumentImportError) as exc_info:
-            external_document_import_service.import_document(
-                db=test_db,
-                user=test_user,
-                knowledge_base_id=kb_id,
-                provider_id="dingtalk",
-                external_resource_id=node.dingtalk_node_id,
-            )
+        existing = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
 
-        assert exc_info.value.status_code == 409
+        assert existing.id == document.id
+        assert existing.index_status == DocumentIndexStatus.QUEUED
         # Only the initial dispatch happened; no second task was queued.
+        assert dispatch_calls == [{"document_id": document.id}]
+
+    def test_reimport_reuses_stale_active_attempt_without_resolving_source(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatch_calls: list[dict],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        node = _create_synced_node(
+            test_db, test_user.id, "stale-active-source", name="Stale Active"
+        )
+        document = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+        document.updated_at = datetime.now(timezone.utc).replace(
+            tzinfo=None
+        ) - timedelta(days=1)
+        node.is_active = False
+        test_db.commit()
+
+        reused = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
+
+        assert reused.id == document.id
+        assert reused.index_status == DocumentIndexStatus.QUEUED
         assert dispatch_calls == [{"document_id": document.id}]
 
     def test_reimport_after_delete_creates_new_document(
@@ -508,6 +575,49 @@ class TestImportDocument:
 
 
 class TestImportDocuments:
+    def test_validates_all_settled_updates_before_dispatching_any(
+        self,
+        test_db: Session,
+        test_user: User,
+        configured_dingtalk: None,
+        dispatched: list[int],
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        first_node = _create_synced_node(
+            test_db, test_user.id, "batch-validate-first", name="First"
+        )
+        second_node = _create_synced_node(
+            test_db, test_user.id, "batch-validate-second", name="Second"
+        )
+        first = external_document_import_service.import_document(
+            test_db, test_user, kb_id, "dingtalk", first_node.dingtalk_node_id
+        )
+        second = external_document_import_service.import_document(
+            test_db, test_user, kb_id, "dingtalk", second_node.dingtalk_node_id
+        )
+        first.index_status = DocumentIndexStatus.SUCCESS
+        second.index_status = DocumentIndexStatus.SUCCESS
+        first.is_active = True
+        second.is_active = True
+        second_node.is_active = False
+        test_db.commit()
+
+        with pytest.raises(ExternalDocumentImportError):
+            external_document_import_service.import_documents(
+                db=test_db,
+                user=test_user,
+                knowledge_base_id=kb_id,
+                provider_id="dingtalk",
+                external_resource_ids=[
+                    first_node.dingtalk_node_id,
+                    second_node.dingtalk_node_id,
+                ],
+            )
+
+        test_db.refresh(first)
+        assert first.index_status == DocumentIndexStatus.SUCCESS
+        assert dispatched == [first.id, second.id]
+
     def test_creates_one_placeholder_per_document(
         self,
         test_db: Session,
@@ -528,10 +638,11 @@ class TestImportDocuments:
         )
 
         assert result.requested_count == 2
-        assert [document.name for document in result.imported] == ["Batch A", "Batch B"]
-        assert result.skipped_existing == []
-        assert sorted(dispatched) == sorted(document.id for document in result.imported)
-        for document in result.imported:
+        assert [document.name for document in result.created] == ["Batch A", "Batch B"]
+        assert result.updated == []
+        assert result.processing == []
+        assert sorted(dispatched) == sorted(document.id for document in result.created)
+        for document in result.created:
             assert document.source_type == DocumentSourceType.EXTERNAL
             assert document.external_provider == "dingtalk"
             assert document.index_status == DocumentIndexStatus.QUEUED
@@ -559,7 +670,9 @@ class TestImportDocuments:
         )
 
         assert result.requested_count == 1
-        assert len(result.imported) == 1
+        assert len(result.created) == 1
+        assert result.updated == []
+        assert result.processing == []
         assert len(dispatched) == 1
 
     def test_rejects_batch_over_the_fifty_document_cap(
@@ -586,7 +699,7 @@ class TestImportDocuments:
         assert exc_info.value.status_code == 400
         assert dispatched == []
 
-    def test_skips_settled_documents_and_imports_new_ones(
+    def test_updates_settled_documents_and_imports_new_ones(
         self,
         test_db: Session,
         test_user: User,
@@ -604,7 +717,7 @@ class TestImportDocuments:
             provider_id="dingtalk",
             external_resource_id=existing_node.dingtalk_node_id,
         )
-        # A settled document stays unchanged; refreshing requires delete + import.
+        # A settled document refreshes in place while a new source creates a copy.
         existing.index_status = DocumentIndexStatus.SUCCESS
         test_db.commit()
         new_node = _create_synced_node(test_db, test_user.id, "o" * 32, name="New Doc")
@@ -621,13 +734,12 @@ class TestImportDocuments:
         )
 
         assert result.requested_count == 2
-        assert len(result.imported) == 1
-        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
-            (existing_node.dingtalk_node_id, "Old Doc")
-        ]
-        assert dispatched == [existing.id, result.imported[0].id]
+        assert [document.name for document in result.created] == ["New Doc"]
+        assert [document.id for document in result.updated] == [existing.id]
+        assert result.processing == []
+        assert dispatched == [existing.id, existing.id, result.created[0].id]
 
-    def test_skips_documents_still_being_processed(
+    def test_reports_documents_still_being_processed(
         self,
         test_db: Session,
         test_user: User,
@@ -655,10 +767,9 @@ class TestImportDocuments:
             external_resource_ids=[busy_node.dingtalk_node_id],
         )
 
-        assert result.imported == []
-        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
-            (busy_node.dingtalk_node_id, "Busy Doc")
-        ]
+        assert result.created == []
+        assert result.updated == []
+        assert [document.id for document in result.processing] == [busy.id]
         assert dispatch_calls == [{"document_id": busy.id}]
 
     def test_rejects_invalid_item_before_creating_any_placeholder(

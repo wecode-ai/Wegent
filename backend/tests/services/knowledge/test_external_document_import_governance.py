@@ -326,7 +326,7 @@ class TestConcurrentDuplicateIdentity:
         test_db.rollback()
         assert test_db.query(KnowledgeDocument).count() == 1
 
-    def test_import_rejects_identity_created_by_concurrent_request(
+    def test_import_reuses_identity_created_by_concurrent_request(
         self,
         test_db: Session,
         test_user: User,
@@ -349,8 +349,8 @@ class TestConcurrentDuplicateIdentity:
             source_config={"external": {"provider": "dingtalk"}},
             external_provider="dingtalk",
             external_resource_id=node.dingtalk_node_id,
-            index_status=DocumentIndexStatus.SUCCESS,
-            is_active=True,
+            index_status=DocumentIndexStatus.QUEUED,
+            is_active=False,
         )
         test_db.add(loser)
         test_db.commit()
@@ -373,20 +373,19 @@ class TestConcurrentDuplicateIdentity:
             staticmethod(raise_integrity_error),
         )
 
-        with pytest.raises(ExternalDocumentImportError) as exc_info:
-            external_document_import_service.import_document(
-                db=test_db,
-                user=test_user,
-                knowledge_base_id=kb_id,
-                provider_id="dingtalk",
-                external_resource_id=node.dingtalk_node_id,
-            )
+        result = external_document_import_service.import_document(
+            db=test_db,
+            user=test_user,
+            knowledge_base_id=kb_id,
+            provider_id="dingtalk",
+            external_resource_id=node.dingtalk_node_id,
+        )
 
-        assert exc_info.value.status_code == 409
+        assert result.id == loser.id
         assert test_db.query(KnowledgeDocument).count() == 1
         assert dispatch_calls == []
 
-    def test_concurrent_settle_is_reported_as_skipped(
+    def test_settled_document_is_reported_as_updated(
         self,
         test_db: Session,
         test_user: User,
@@ -417,10 +416,9 @@ class TestConcurrentDuplicateIdentity:
             external_resource_ids=[settled_node.dingtalk_node_id],
         )
 
-        assert result.imported == []
-        assert [(item.resource_id, item.name) for item in result.skipped_existing] == [
-            (settled_node.dingtalk_node_id, "Settled Doc")
-        ]
+        assert result.created == []
+        assert [document.id for document in result.updated] == [settled.id]
+        assert result.processing == []
 
     def test_batch_does_not_hide_unrelated_integrity_error(
         self,

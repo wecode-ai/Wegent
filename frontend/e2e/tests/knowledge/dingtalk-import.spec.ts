@@ -143,7 +143,7 @@ test.describe('External DingTalk document import', () => {
     })
   })
 
-  test('duplicate import is skipped; delete then import creates a fresh copy', async ({
+  test('reimport updates the same document with the latest external content', async ({
     page,
     request,
   }) => {
@@ -152,8 +152,8 @@ test.describe('External DingTalk document import', () => {
       const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
         EXTERNAL_IMPORT_NODES.product,
       ])
-      expect(imported.imported).toHaveLength(1)
-      const documentId = imported.imported[0].id
+      expect(imported.created).toHaveLength(1)
+      const documentId = imported.created[0].id
       await waitForDocument(request, context.token, context.knowledgeBaseId, 'E2E_产品说明')
 
       await configureMockImport(request, {
@@ -164,27 +164,22 @@ test.describe('External DingTalk document import', () => {
 
       await openKnowledgeBase(page, context.knowledgeBaseId)
       await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product])
-      await expect(page.getByTestId('dingtalk-import-result')).toContainText('skipped 1')
+      await expect(page.getByTestId('dingtalk-import-result')).toContainText('updated 1')
       await page.getByTestId('dingtalk-import-done').click()
 
-      const unchangedChunks = await getDocumentChunks(request, context.token, documentId)
-      expect(unchangedChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
-      expect(unchangedChunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV2)
-
-      await deleteDocument(request, context.token, documentId)
-      const fresh = await importViaApi(request, context.token, context.knowledgeBaseId, [
-        EXTERNAL_IMPORT_NODES.product,
-      ])
-      expect(fresh.imported).toHaveLength(1)
-      const freshDocument = await waitForDocument(
+      const updatedDocument = await waitForDocument(
         request,
         context.token,
         context.knowledgeBaseId,
-        'E2E_产品说明'
+        'E2E_产品说明',
+        { status: 'success' }
       )
-      expect(freshDocument.id).not.toBe(documentId)
-      const freshChunks = await getDocumentChunks(request, context.token, freshDocument.id)
-      expect(freshChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
+      expect(updatedDocument.id).toBe(documentId)
+      const updatedChunks = await getDocumentChunks(request, context.token, documentId)
+      expect(updatedChunks).toContain(EXTERNAL_IMPORT_MARKERS.productV2)
+      expect(updatedChunks).not.toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      const documents = await listDocuments(request, context.token, context.knowledgeBaseId)
+      expect(documents).toHaveLength(1)
     })
   })
 
@@ -281,8 +276,8 @@ test.describe('External DingTalk document import', () => {
       const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
         EXTERNAL_IMPORT_NODES.product,
       ])
-      expect(imported.imported).toHaveLength(1)
-      const documentId = imported.imported[0].id
+      expect(imported.created).toHaveLength(1)
+      const documentId = imported.created[0].id
 
       await deleteDocument(request, context.token, documentId)
 

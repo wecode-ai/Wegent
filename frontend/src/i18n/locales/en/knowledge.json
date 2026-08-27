@@ -432,6 +432,7 @@
           "DOCS_NOT_FOUND": "Specified documents not found in the source knowledge base",
           "TRANSFER_SELECTION_LIMIT_EXCEEDED": "A transfer can include at most 200 documents and folders",
           "DUPLICATE_DOCUMENT_NAMES": "Documents with the same name already exist in the target knowledge base",
+          "DUPLICATE_EXTERNAL_DOCUMENTS": "The same external document already exists in the target knowledge base",
           "KB_INSUFFICIENT_PERMISSION": "You do not have permission to operate on this knowledge base"
         }
       },
@@ -604,7 +605,7 @@
         "limitError": "At most 50 documents can be imported at once. Reduce the selection and retry",
         "sharedHint": "Imported content will be visible to knowledge base members",
         "noPermission": "You do not have permission to add documents to this knowledge base",
-        "result": "Imported {{count}}, skipped {{skipped}} already-imported documents",
+        "result": "Created {{created}}, updated {{updated}}, processing {{processing}}",
         "done": "Done"
       },
       "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."

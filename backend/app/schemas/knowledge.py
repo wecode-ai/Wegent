@@ -1158,18 +1158,12 @@ class KnowledgeDocumentResponse(BaseModel):
         from_attributes = True
 
 
-class ExternalDocumentBatchImportSkipped(BaseModel):
-    """An external resource skipped because it was already imported."""
-
-    external_resource_id: str
-    name: str
-
-
 class ExternalDocumentBatchImportResponse(BaseModel):
     """Response schema for a batch external document import."""
 
-    imported: list[KnowledgeDocumentResponse]
-    skipped_existing: list[ExternalDocumentBatchImportSkipped]
+    created: list[KnowledgeDocumentResponse]
+    updated: list[KnowledgeDocumentResponse]
+    processing: list[KnowledgeDocumentResponse]
     requested_count: int = Field(
         description="Number of distinct external resources in the request"
     )

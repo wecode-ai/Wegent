@@ -49,7 +49,6 @@ from app.schemas.knowledge import (
     DocumentMoveRequest,
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
-    ExternalDocumentBatchImportSkipped,
     ExternalDocumentImportRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
@@ -798,10 +797,10 @@ async def import_external_document(
     """
     Import one external provider document into this knowledge base.
 
-    Creates a placeholder document immediately, then a background task fetches
-    the external body and reuses the regular conversion and indexing pipeline.
-    A resource already present in the knowledge base is rejected. Delete the
-    existing document before importing a fresh copy.
+    A new resource creates a placeholder immediately. An existing settled copy
+    refreshes in place while preserving its Wegent name and folder; an active
+    copy is returned without dispatching duplicate work. Background tasks reuse
+    the regular conversion and indexing pipeline.
     """
     try:
         result = external_document_import_service.import_document(
@@ -853,8 +852,8 @@ async def import_external_document_batch(
 
     Creates one placeholder document per distinct external resource; background
     tasks then fetch each body and reuse the regular conversion and indexing
-    pipeline. Already-imported resources are left unchanged and reported as
-    skipped. To import a fresh copy, delete the existing document first.
+    pipeline. Existing settled documents refresh in place; active attempts are
+    reused without dispatching duplicate work.
     """
     try:
         result = external_document_import_service.import_documents(
@@ -881,22 +880,25 @@ async def import_external_document_batch(
         {
             "knowledge_base_id": str(knowledge_base_id),
             "provider": data.provider,
-            "imported_count": str(len(result.imported)),
-            "skipped_count": str(len(result.skipped_existing)),
+            "created_count": str(len(result.created)),
+            "updated_count": str(len(result.updated)),
+            "processing_count": str(len(result.processing)),
             "user_id": str(current_user.id),
         },
     )
 
     return ExternalDocumentBatchImportResponse(
-        imported=[
+        created=[
             KnowledgeDocumentResponse.model_validate(document)
-            for document in result.imported
+            for document in result.created
         ],
-        skipped_existing=[
-            ExternalDocumentBatchImportSkipped(
-                external_resource_id=item.resource_id, name=item.name
-            )
-            for item in result.skipped_existing
+        updated=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.updated
+        ],
+        processing=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.processing
         ],
         requested_count=result.requested_count,
     )

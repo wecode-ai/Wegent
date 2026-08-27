@@ -493,6 +493,50 @@ class KnowledgeTransferService:
             )
 
     @staticmethod
+    def validate_transfer_external_identities(
+        db: Session,
+        source_documents: tuple[KnowledgeDocument, ...],
+        target_kb_id: int,
+    ) -> None:
+        """Reject moving an external copy onto the same copy in the target KB."""
+        external_documents = [
+            document
+            for document in source_documents
+            if document.external_provider and document.external_resource_id
+        ]
+        if not external_documents:
+            return
+
+        providers = {document.external_provider for document in external_documents}
+        resource_ids = {
+            document.external_resource_id for document in external_documents
+        }
+        target_identities = {
+            (provider, resource_id)
+            for provider, resource_id in db.query(
+                KnowledgeDocument.external_provider,
+                KnowledgeDocument.external_resource_id,
+            ).filter(
+                KnowledgeDocument.kind_id == target_kb_id,
+                KnowledgeDocument.external_provider.in_(providers),
+                KnowledgeDocument.external_resource_id.in_(resource_ids),
+            )
+        }
+        duplicate_names = sorted(
+            document.name
+            for document in external_documents
+            if (
+                document.external_provider,
+                document.external_resource_id,
+            )
+            in target_identities
+        )
+        if duplicate_names:
+            raise StructuredValidationException(
+                "DUPLICATE_EXTERNAL_DOCUMENTS", {"names": duplicate_names}
+            )
+
+    @staticmethod
     def transfer_documents_mutate(
         source_documents: tuple[KnowledgeDocument, ...],
         old_to_new_folder: dict[int, int],
@@ -549,6 +593,27 @@ class KnowledgeTransferService:
             )
 
         return tuple(source_documents)
+
+    @staticmethod
+    def lock_transfer_target_knowledge_base(db: Session, target_kb_id: int) -> Kind:
+        """Serialize target mutations with document creation in that KB."""
+        target_kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == target_kb_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
+            )
+            .with_for_update()
+            .first()
+        )
+        if target_kb is None:
+            raise CustomHTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target knowledge base not found",
+                error_code=TARGET_KB_NOT_FOUND,
+            )
+        return target_kb
 
     @staticmethod
     def cleanup_empty_folders(
@@ -786,6 +851,14 @@ class KnowledgeTransferService:
                 target_kb_id=target_kb_id,
             )
 
+        # External document creation locks the same KB row. Holding this lock
+        # through identity validation and mutation prevents a concurrent import
+        # from turning an explicit conflict into a unique-index failure.
+        target_kb = KnowledgeTransferService.lock_transfer_target_knowledge_base(
+            db=db,
+            target_kb_id=target_kb_id,
+        )
+
         selection = KnowledgeTransferService.load_transfer_selection(
             db=db,
             document_ids=all_doc_ids,
@@ -799,6 +872,11 @@ class KnowledgeTransferService:
         )
 
         KnowledgeTransferService.validate_transfer_document_names(
+            db=db,
+            source_documents=docs,
+            target_kb_id=target_kb_id,
+        )
+        KnowledgeTransferService.validate_transfer_external_identities(
             db=db,
             source_documents=docs,
             target_kb_id=target_kb_id,

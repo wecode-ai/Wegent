@@ -168,8 +168,9 @@ export async function importViaApi(
   externalResourceIds: string[],
   folderId = 0
 ): Promise<{
-  imported: Array<{ id: number; name: string }>
-  skipped_existing: Array<{ external_resource_id: string; name: string }>
+  created: Array<{ id: number; name: string }>
+  updated: Array<{ id: number; name: string }>
+  processing: Array<{ id: number; name: string }>
 }> {
   const response = await request.post(
     `${PROVIDER_NATIVE_API_URL}/api/knowledge-bases/${knowledgeBaseId}/documents/external-import-batch`,

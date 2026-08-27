@@ -750,8 +750,9 @@ export function DocumentList({
     onDocumentsChanged?.()
 
     return {
-      importedCount: result.imported.length,
-      skippedCount: result.skipped_existing.length,
+      createdCount: result.created.length,
+      updatedCount: result.updated.length,
+      processingCount: result.processing.length,
     }
   }
 

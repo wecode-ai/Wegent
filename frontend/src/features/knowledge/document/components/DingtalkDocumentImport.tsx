@@ -32,8 +32,9 @@ const MAX_IMPORT_DOCUMENTS = 50
 type DingtalkSourceKey = 'docs' | 'wikispace'
 
 export interface DingtalkBatchImportSummary {
-  importedCount: number
-  skippedCount: number
+  createdCount: number
+  updatedCount: number
+  processingCount: number
 }
 
 interface SourceState {
@@ -416,8 +417,9 @@ export function DingtalkDocumentImport({
             <Check className="w-4 h-4 text-primary flex-shrink-0" />
             <span>
               {t('document.upload.dingtalk.result', {
-                count: result.importedCount,
-                skipped: result.skippedCount,
+                created: result.createdCount,
+                updated: result.updatedCount,
+                processing: result.processingCount,
               })}
             </span>
           </div>

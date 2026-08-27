@@ -223,7 +223,7 @@ class TestImportExternalDocument:
 
         assert response.status_code == 404
 
-    def test_reimport_of_successful_document_is_rejected(
+    def test_reimport_of_successful_document_updates_same_record(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -256,12 +256,12 @@ class TestImportExternalDocument:
             json=_import_payload(node.dingtalk_node_id),
         )
 
-        assert second.status_code == 409
-        assert "already imported" in second.json()["detail"]
+        assert second.status_code == 201
+        assert second.json()["id"] == document_id
         assert test_db.query(KnowledgeDocument).count() == 1
-        assert dispatched == [document_id]
+        assert dispatched == [document_id, document_id]
 
-    def test_rejects_reimport_while_import_in_progress(
+    def test_reimport_while_processing_reuses_same_record(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -283,7 +283,9 @@ class TestImportExternalDocument:
             json=_import_payload(node.dingtalk_node_id),
         )
 
-        assert second.status_code == 409
+        assert second.status_code == 201
+        assert second.json()["id"] == first.json()["id"]
+        assert dispatched == [first.json()["id"]]
 
     def test_rejects_importer_without_manage_permission(
         self,
@@ -332,13 +334,14 @@ class TestImportExternalDocumentBatch:
         assert response.status_code == 201
         data = response.json()
         assert data["requested_count"] == 2
-        assert len(data["imported"]) == 2
-        assert data["skipped_existing"] == []
-        imported_ids = {item["id"] for item in data["imported"]}
+        assert len(data["created"]) == 2
+        assert data["updated"] == []
+        assert data["processing"] == []
+        imported_ids = {item["id"] for item in data["created"]}
         assert imported_ids == set(dispatched)
-        names = {item["name"] for item in data["imported"]}
+        names = {item["name"] for item in data["created"]}
         assert names == {"Batch One", "Batch Two"}
-        for item in data["imported"]:
+        for item in data["created"]:
             assert item["source_type"] == "external"
             assert item["external_provider"] == "dingtalk"
             assert item["index_status"] == "queued"
@@ -362,7 +365,9 @@ class TestImportExternalDocumentBatch:
         assert response.status_code == 201
         data = response.json()
         assert data["requested_count"] == 1
-        assert len(data["imported"]) == 1
+        assert len(data["created"]) == 1
+        assert data["updated"] == []
+        assert data["processing"] == []
         assert len(dispatched) == 1
 
     def test_rejects_batch_over_fifty_documents(
@@ -393,7 +398,7 @@ class TestImportExternalDocumentBatch:
         documents = test_db.query(KnowledgeDocument).count()
         assert documents == 0
 
-    def test_skips_documents_still_being_processed(
+    def test_reports_documents_still_being_processed(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -411,7 +416,7 @@ class TestImportExternalDocumentBatch:
             json=_import_payload(existing_node.dingtalk_node_id),
         )
         assert first.status_code == 201
-        # The placeholder is still QUEUED: the batch reports it as skipped
+        # The placeholder is still QUEUED: the batch reports it as processing
         # instead of queueing a second concurrent import.
         assert len(dispatched) == 1
 
@@ -425,18 +430,14 @@ class TestImportExternalDocumentBatch:
         assert response.status_code == 201
         data = response.json()
         assert data["requested_count"] == 2
-        assert len(data["imported"]) == 1
-        assert data["imported"][0]["name"] == "New Doc"
-        assert data["skipped_existing"] == [
-            {
-                "external_resource_id": existing_node.dingtalk_node_id,
-                "name": "Existing Doc",
-            }
-        ]
+        assert len(data["created"]) == 1
+        assert data["created"][0]["name"] == "New Doc"
+        assert data["updated"] == []
+        assert [item["id"] for item in data["processing"]] == [first.json()["id"]]
         # Only the new placeholder was dispatched beyond the original import.
         assert len(dispatched) == 2
 
-    def test_skips_settled_documents_in_batch(
+    def test_updates_settled_documents_in_batch(
         self,
         import_client: TestClient,
         test_db: Session,
@@ -474,15 +475,13 @@ class TestImportExternalDocumentBatch:
 
         assert response.status_code == 201
         data = response.json()
-        assert len(data["imported"]) == 1
-        assert data["skipped_existing"] == [
-            {
-                "external_resource_id": existing_node.dingtalk_node_id,
-                "name": "Settled Doc",
-            }
-        ]
-        # Only the new document was dispatched; the settled one is unchanged.
-        assert dispatched.count(document_id) == 1
+        assert [item["name"] for item in data["created"]] == ["New Doc"]
+        assert [item["id"] for item in data["updated"]] == [document_id]
+        assert data["processing"] == []
+        test_db.refresh(document)
+        assert document.index_status == DocumentIndexStatus.QUEUED
+        assert document.is_active is False
+        assert dispatched.count(document_id) == 2
 
     def test_places_batch_in_target_folder(
         self,
@@ -507,7 +506,7 @@ class TestImportExternalDocumentBatch:
         )
 
         assert response.status_code == 201
-        assert response.json()["imported"][0]["folder_id"] == folder.id
+        assert response.json()["created"][0]["folder_id"] == folder.id
 
     def test_rejects_folder_of_other_knowledge_base(
         self,

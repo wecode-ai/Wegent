@@ -432,6 +432,7 @@
           "DOCS_NOT_FOUND": "源知识库中未找到指定文档",
           "TRANSFER_SELECTION_LIMIT_EXCEEDED": "每次最多转移 200 个文档和文件夹",
           "DUPLICATE_DOCUMENT_NAMES": "目标知识库中已存在同名文档",
+          "DUPLICATE_EXTERNAL_DOCUMENTS": "目标知识库中已存在同一外部文档",
           "KB_INSUFFICIENT_PERMISSION": "您没有操作该知识库的权限"
         }
       },
@@ -604,7 +605,7 @@
         "limitError": "一次最多导入 50 篇文档，请减少选择后重试",
         "sharedHint": "导入的内容将对知识库成员可见",
         "noPermission": "你没有在当前知识库添加文档的权限",
-        "result": "已导入 {{count}} 篇，跳过 {{skipped}} 篇已导入文档",
+        "result": "新建 {{created}} 篇，更新 {{updated}} 篇，处理中 {{processing}} 篇",
         "done": "完成"
       },
       "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"

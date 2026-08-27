@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 import sqlalchemy as sa
 from pytest import MonkeyPatch
+from sqlalchemy import inspect as sa_inspect
 
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
@@ -58,14 +59,14 @@ def _legacy_engine() -> sa.engine.Engine:
 def _columns(connection) -> set[str]:
     return {
         column["name"]
-        for column in sa.inspect(connection).get_columns("knowledge_documents")
+        for column in sa_inspect(connection).get_columns("knowledge_documents")
     }
 
 
 def _index_names(connection) -> set[str]:
     return {
         index["name"]
-        for index in sa.inspect(connection).get_indexes("knowledge_documents")
+        for index in sa_inspect(connection).get_indexes("knowledge_documents")
     }
 
 

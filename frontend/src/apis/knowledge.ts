@@ -161,17 +161,17 @@ export interface ExternalDocumentBatchImportRequest {
 }
 
 export interface ExternalDocumentBatchImportResult {
-  imported: KnowledgeDocument[]
-  skipped_existing: Array<{ external_resource_id: string; name: string }>
+  created: KnowledgeDocument[]
+  updated: KnowledgeDocument[]
+  processing: KnowledgeDocument[]
   requested_count: number
 }
 
 /**
  * Import several external provider documents into a knowledge base.
  *
- * Creates one placeholder document per distinct new external resource.
- * Already-imported resources are left unchanged and reported as skipped.
- * The backend fetches each new external body and indexes it in the background.
+ * Creates one placeholder per new external resource, refreshes settled copies
+ * in place, and reports copies whose existing attempt is still processing.
  */
 export async function importExternalDocumentBatch(
   knowledgeBaseId: number,
