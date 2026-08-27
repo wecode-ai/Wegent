@@ -1,7 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
-import { embeddedNodeArguments } from './embedded-node-runtime.js'
+import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
 const PROFILE_NAME = 'wework-core'
@@ -107,7 +107,7 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
   return {
     command: nodeCommand,
     entry: runtime.entry,
-    args: embeddedNodeArguments(options.environment, [
+    args: runtimeNodeArgs(options.environment, [
       runtime.entry,
       '--profile',
       PROFILE_NAME,
