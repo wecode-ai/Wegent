@@ -123,7 +123,7 @@ Backend 转发 `runtime.tasks.send`。executor 根据本地 LocalTask 的 opaque
 
 executor 在 `turn/start` 前启动首个有效进展的看门狗，避免 Codex 卡在 MCP 初始化等启动阶段时让 Wework 永久显示“正在思考”。默认超时为 180 秒，可以通过 `WEGENT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS` 调整。用户输入回显、声明仍会重试的错误和子 agent 事件不算有效进展；首个 assistant、reasoning 或 tool item 到达后立即关闭这个启动看门狗，因此已经开始执行的长工具调用不会被误杀。启动超时后，executor 会结束卡住的共享 app-server、让当前 turn 以明确错误结束，并在用户重试或发送下一条消息时启动新进程。Wework 必须保留原用户消息和失败卡片，重试时发送与失败 turn 绑定的同一条用户输入，不能留下空白 assistant 消息或误发更早的消息。
 
-排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。Tauri 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
+排查“回复文本已经完整，但侧栏和 composer 仍显示运行中”时，应按同一组 `deviceId + taskId + subtaskId` 串联正式版日志。 Electron 先记录收到并转发 `response.completed`、`response.failed` 或 `response.incomplete`；本地 chat stream 随后记录终止事件命中的订阅数量；pane 层记录终止事件是被接受，还是因为 task/device 不匹配而被丢弃；最后 Workbench Provider 记录 `runtime_task_settled` 已分发。日志只记录运行时身份、事件类型和 block 数量，不记录回复正文或凭据。缺少哪一段日志，就表示终止状态停在对应边界之前。
 
 ### 前端生命周期投影
 
@@ -162,7 +162,7 @@ Backend 只做用户、设备和 LocalTask 归属校验，然后把 `deviceId + 
 
 Codex 原生任务的持久消息只以 `thread/turns/list` 和 `thread/items/list` 为信源。executor 不得把 `runtimeHandle.messages` 或其他 LocalTask 缓存并入 Provider transcript；缺失的持久消息必须修复 Codex 事件记录或分页读取主路径。前端可以用实时事件维护尚未持久化的内存 live projection；后台收到引导成功事件时，必须结算引导队列并把已确认的用户消息写入源对话的 live projection，避免用户在 provider 尚未覆盖运行中 turn 时切回后看不到消息。Provider 覆盖同一 turn 后由分页 transcript 整体接管；live projection 不得持久化，也不得与 Provider 分页消息做并集合并。
 
-同一 turn 的实时流和 Provider 快照可能用不同结构表达同一条 assistant 文本，例如实时事件产生 `block:text`，而恢复旧会话时的快照返回 `assistant_text`。前端合并 turn 时必须把内容完全相同、类型为这两种互补表示的 item 视为同一消息，并以快照表示替换实时表示；不能只按 item id 合并，否则旧会话追问时会把同一段流式文本渲染两次。相同类型的同文 item 仍按各自 id 保留，避免删除模型确实连续输出的重复消息。该边界由 `runtimeConversationTurns` 单元测试和 `streaming-text` 真实 Tauri E2E 覆盖。
+同一 turn 的实时流和 Provider 快照可能用不同结构表达同一条 assistant 文本，例如实时事件产生 `block:text`，而恢复旧会话时的快照返回 `assistant_text`。前端合并 turn 时必须把内容完全相同、类型为这两种互补表示的 item 视为同一消息，并以快照表示替换实时表示；不能只按 item id 合并，否则旧会话追问时会把同一段流式文本渲染两次。相同类型的同文 item 仍按各自 id 保留，避免删除模型确实连续输出的重复消息。该边界由 `runtimeConversationTurns` 单元测试和 `streaming-text` 真实 Electron E2E 覆盖。
 
 用户也可以从 composer 的上下文用量入口手动压缩本机 Codex LocalTask：
 
@@ -202,19 +202,19 @@ executor 对原生 Codex 会话通过 app-server `thread/archive`、`thread/unar
 
 `cleanup-preview` 和 `cleanup` 只面向已归档 LocalTask 的残留文件，包括 executor 管理的 Git worktree 目录、LocalTask 记录、会话日志、运行时 handle 中记录的本地附件，以及本机附件草稿路径。清理目标必须从归档项的 `deviceId + workspacePath + localTaskId + threadId/runtimeHandle` 推导并做路径安全校验，只能删除 executor 管理目录、standalone chat 目录或本地附件草稿目录下的文件；普通 Project 根目录、未归档会话、运行中任务和未被前端提交的归档项不能被清理。
 
-如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会使用 LocalTask 自己的 `workspacePath` 调用设备级 `runtime.worktrees.delete`；即使侧栏把任务分组在 Project 主目录下，也不能把分组目录作为删除目标。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree，并删除已经为空的 `<worktreeId>` 外层目录。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。
+如果被归档的 LocalTask 使用 Executor 管理的 Git worktree，归档成功后 Wework 会使用 LocalTask 自己的 `workspacePath` 调用设备级 `runtime.worktrees.delete`；即使侧栏把任务分组在 Project 主目录下，也不能把分组目录作为删除目标。Executor 先把 tracked、staged、unstaged 和未被 ignore 的 untracked 文件写入隐藏引用 `refs/wegent/worktree-snapshots/*`，快照成功后才通过 Git 删除 worktree，并删除已经为空的 `<worktreeId>` 外层目录。快照失败时必须保留目录并返回错误，不能丢弃未提交变更。取消归档或继续发送消息时，如果原目录已经被清理，Executor 会从快照引用恢复到原路径。这个生命周期只针对 runtime LocalTask 的 worktree，不改变 Project 主工作区。通过消息 fork 出来的 LocalTask 可以共享源任务的托管 worktree；删除其中一个归档任务时，若仍有其他 LocalTask 引用该路径，只清理该任务自己的附件，不能删除共享 worktree。
 
 ### Worktree 设置与生命周期
 
 Worktree 设置是设备级状态，持久化在 `$WEGENT_EXECUTOR_HOME/runtime-work/worktrees.json`，不能写入浏览器偏好或 Backend 用户设置。默认根目录为空值，解析到当前 Executor workspace 下的 `worktrees`；自动清理默认开启，默认保留 15 个。修改根目录只影响后续创建，旧根目录会保留在 `knownRoots` 中，以便继续列出、恢复和安全清理已有 worktree。
 
-Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。删除前先归档关联任务并保存快照。归档残留清理使用 Worktree Manager 的当前根目录和 `knownRoots` 做路径安全校验，不依赖固定的历史目录名；扫描已知根目录时会顺带删除旧版本遗留的空 `<worktreeId>` 目录。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
+Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.worktrees.prepare/list/delete/restore/prune` 管理工作树。创建目标固定为 `<resolvedRoot>/<worktreeId>/<repositoryName>`；列表按仓库分组并附带关联 LocalTask。Worktree 的创建 ID 只用于路径、快照和生命周期归属；执行 lease 记录实际运行的 LocalTask ID，因此 fork 任务能在源 worktree 空闲时继续，而两个任务不能同时写同一个 worktree。Executor 重启时依据 lease 中的实际任务 ID 标记中断任务失败。删除前先归档关联任务并保存快照。归档残留清理使用 Worktree Manager 的当前根目录和 `knownRoots` 做路径安全校验，不依赖固定的历史目录名；扫描已知根目录时会顺带删除旧版本遗留的空 `<worktreeId>` 目录。自动清理在创建和设置更新后触发，只会清理明确关联到已归档任务且超过保留数量的最久未使用工作树；没有当前 Executor 任务记录的工作树不会被自动清理。后续继续任务时会按需恢复。隔离运行的 Executor 会从自己的 `WEGENT_EXECUTOR_HOME` 派生默认工作树目录，避免测试或开发实例管理正式实例的工作树。
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 Tauri asset protocol 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Tauri App 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Electron app 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
-消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 Tauri `convertFileSrc` 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
+消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 
 executor 从原生 Codex session 发现用户消息时，会把 `local_images`、`localImages` 或 `images` 中的本机图片路径写入用户可见文本，保持刷新后仍能看到“用户提到了哪些文件”。如果这些路径在当前设备上可读、是图片 MIME 类型且不超过 5 MB，executor 会额外生成只用于 transcript 渲染的 ready 附件，并把 `local_preview_url` 写成 data URL。这个预览附件不代表 Backend 持久化附件，也不会上传或同步到中心库。
 
@@ -251,7 +251,7 @@ POST /api/runtime-work/create
 
 Backend 根据请求中的项目映射或独立设备工作区解析目标设备和目录，构造一次临时 execution request，然后调用设备 RPC `runtime.tasks.create`。这个流程不会 `db.add()` 任何 `TaskResource` 或 `Subtask`。
 
-在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Tauri command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
+在打包 Wework App 的 `local-first` 模式下，创建任务不经过 Backend HTTP API。Wework 在前端本地 service 中根据选中的 `deviceId + workspacePath` 构造 executor 需要的最小 `executionRequest`，通过 Electron IPC command 发送到 executor sidecar 的 app IPC，再由 executor 直接执行 `runtime.tasks.create`。这个 payload 必须包含 `workspacePath`、用户消息、运行时模型配置和本地用户上下文；如果没有工作区路径，Wework 必须在调用 executor 前失败。该路径仍然只使用 app 界面和 executor 两个本机进程，不启动本地 Backend。
 
 项目模式创建任务时，Wework 的执行工作区只有两种来源：`current_workspace` 使用项目主目录，`git_worktree` 通过目标设备的 `runtime.worktrees.prepare` 创建独立工作树。路径由该设备的 Worktree 设置、运行时任务 id 和项目目录名稳定拼出，不能由 UI 拼接任意路径。工作树创建请求可以携带显式 `branch`；如果没有显式分支，默认分支必须读取项目主目录的当前 Git 分支，而不是 Git 默认分支或 `HEAD` 字样。分支列表只负责展示可选分支，当前分支应排在第一位，其余分支保持 Git 返回顺序。
 

@@ -505,6 +505,40 @@ class RemoteWorkspaceService:
             return None
         return payload if isinstance(payload, dict) else None
 
+    def executor_alive(
+        self,
+        executor_name: str,
+        executor_namespace: Optional[str] = None,
+    ) -> bool:
+        """Return False only when executor_manager confirms the pod is gone.
+
+        Mirrors ``_get_executor_payload`` but interprets the result:
+        - 200 + status=success  → True
+        - 200 + "No pod found"   → False (pod confirmed missing)
+        - Any other failure path → True (treat as alive; let dispatch surface the real error)
+
+        Used by dispatch to soft-verify a subtask whose ``executor_deleted_at``
+        is False, so a pod lost outside the normal cleanup path still triggers
+        recovery instead of failing dispatch.
+        """
+        payload = self._get_executor_payload(
+            executor_name=executor_name,
+            executor_namespace=executor_namespace,
+        )
+        if payload is None:
+            return True
+        if str(payload.get("status", "")).lower() == "success":
+            return True
+        error_msg = str(payload.get("error_msg") or "")
+        if "No pod found for executor" in error_msg:
+            logger.info(
+                "[remote_workspace] executor pod missing executor_name=%s executor_namespace=%s",
+                executor_name,
+                executor_namespace,
+            )
+            return False
+        return True
+
     def _ensure_sandbox_available(
         self,
         db: Session,

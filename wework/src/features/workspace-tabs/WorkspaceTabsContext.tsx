@@ -4,6 +4,7 @@ import { navigateTo, toBrowserPath } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
+  dispatchWorkspaceTabsClosed,
   inferWorkspaceTabKind,
   moveWorkspaceTab,
   parseWorkspaceLocation,
@@ -16,6 +17,7 @@ import {
   type WorkspaceTabLabels,
 } from './workspaceTabs'
 import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -38,6 +40,7 @@ type WorkspaceTabsAction =
   | { type: 'closeOthers'; tabId: string }
   | { type: 'restoreClosed'; restored: WorkspaceTab }
   | { type: 'move'; sourceId: string; targetId: string }
+  | { type: 'syncFixed'; tabs: WorkspaceTab[] }
   | { type: 'updateActive'; updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>> }
 
 interface WorkspaceTabsProviderProps {
@@ -46,6 +49,9 @@ interface WorkspaceTabsProviderProps {
   storageScope: string
   labels: WorkspaceTabLabels
   startupTabKind?: Exclude<WorkspaceTabKind, 'auxiliary'>
+  fixedTabs?: WorkspaceTab[]
+  startupTabId?: string
+  restoreSessionTabs?: boolean
   children: ReactNode
 }
 
@@ -65,47 +71,56 @@ function normalizePersistedTab(tab: WorkspaceTab, labels: WorkspaceTabLabels): W
     tab.kind === 'board' &&
     tab.contentRoute === '/todo' &&
     ['工作项', '项目空间', 'Work items', 'Project spaces'].includes(tab.title)
-  return isLegacyDefaultBoard ? { ...tab, title: labels.board } : tab
+  const normalized = { ...tab, fixed: tab.fixed === true }
+  return isLegacyDefaultBoard ? { ...normalized, title: labels.board } : normalized
 }
 
 function loadPersistedTabs(
   scope: string,
   pathname: string,
   search: string,
-  labels: WorkspaceTabLabels
+  labels: WorkspaceTabLabels,
+  fixedTabs: WorkspaceTab[],
+  restoreSessionTabs: boolean
 ): WorkspaceTabsState {
   const location = parseWorkspaceLocation(pathname, search)
-  try {
-    const parsed = JSON.parse(
-      localStorage.getItem(workspaceTabsStorageKey(scope)) ?? 'null'
-    ) as PersistedWorkspaceTabs | null
-    if (parsed && Array.isArray(parsed.tabs)) {
-      const tabs = parsed.tabs.filter(validTab).map(tab => normalizePersistedTab(tab, labels))
-      if (tabs.length > 0) {
-        const requested = location.tabId
-          ? tabs.find(tab => tab.id === location.tabId)
-          : tabs.find(tab => tab.contentRoute === location.contentRoute)
-        return {
-          tabs,
-          activeTabId:
-            requested?.id ?? tabs.find(tab => tab.id === parsed.activeTabId)?.id ?? tabs[0].id,
-          closedTabs: [],
+  if (restoreSessionTabs) {
+    try {
+      const parsed = JSON.parse(
+        localStorage.getItem(workspaceTabsStorageKey(scope)) ?? 'null'
+      ) as PersistedWorkspaceTabs | null
+      if (parsed && Array.isArray(parsed.tabs)) {
+        const tabs = parsed.tabs.filter(validTab).map(tab => normalizePersistedTab(tab, labels))
+        if (tabs.length > 0) {
+          const requested = location.tabId
+            ? tabs.find(tab => tab.id === location.tabId)
+            : tabs.find(tab => tab.contentRoute === location.contentRoute)
+          return {
+            tabs,
+            activeTabId:
+              requested?.id ?? tabs.find(tab => tab.id === parsed.activeTabId)?.id ?? tabs[0].id,
+            closedTabs: [],
+          }
         }
       }
+    } catch {
+      // Invalid persisted state is replaced by the route-derived tab below.
     }
-  } catch {
-    // Invalid persisted state is replaced by the route-derived tab below.
   }
 
   const kind = inferWorkspaceTabKind(pathname)
-  const defaultTabs = (['task', 'board', 'agent'] as const).map(defaultKind =>
-    createWorkspaceTab(defaultKind, labels)
-  )
+  const defaultTabs =
+    fixedTabs.length > 0
+      ? fixedTabs
+      : (['task', 'board', 'agent'] as const).map(defaultKind =>
+          createWorkspaceTab(defaultKind, labels)
+        )
   const matchingDefault = defaultTabs.find(tab => tab.kind === kind)
   const routeTab = createWorkspaceTab(kind, labels, {
     id: location.tabId ?? matchingDefault?.id,
     title: location.tabTitle ?? workspaceTabTitle(kind, location.contentRoute, labels),
     contentRoute: location.contentRoute,
+    fixed: matchingDefault?.fixed,
   })
   const tabs = matchingDefault
     ? defaultTabs.map(tab => (tab.id === matchingDefault.id ? routeTab : tab))
@@ -117,6 +132,13 @@ function replaceTabRoute(tab: WorkspaceTab) {
   const browserPath = toBrowserPath(workspaceTabRoute(tab))
   window.history.replaceState({}, '', browserPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function sessionRestorableTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
+  return tabs.filter(tab => {
+    const pathname = tab.contentRoute.split('?', 1)[0]
+    return resolveDshRoute(pathname)?.restorePolicy !== 'none'
+  })
 }
 
 function workspaceTabsReducer(
@@ -181,7 +203,7 @@ function workspaceTabsReducer(
       return { ...state, tabs: [...state.tabs, action.tab], activeTabId: action.tab.id }
     case 'close': {
       const closingTab = state.tabs.find(tab => tab.id === action.tabId)
-      if (!closingTab) return state
+      if (!closingTab || closingTab.fixed) return state
       const next = closeWorkspaceTab(state.tabs, state.activeTabId, action.tabId, action.fallback)
       return {
         ...next,
@@ -191,9 +213,14 @@ function workspaceTabsReducer(
     case 'closeOthers': {
       const tab = state.tabs.find(candidate => candidate.id === action.tabId)
       if (!tab) return state
-      const closedTabs = state.tabs.filter(candidate => candidate.id !== action.tabId).reverse()
+      const retainedTabs = state.tabs.filter(
+        candidate => candidate.fixed || candidate.id === tab.id
+      )
+      const closedTabs = state.tabs
+        .filter(candidate => !candidate.fixed && candidate.id !== action.tabId)
+        .reverse()
       return {
-        tabs: [tab],
+        tabs: retainedTabs,
         activeTabId: tab.id,
         closedTabs: [...closedTabs, ...state.closedTabs].slice(0, 10),
       }
@@ -212,6 +239,53 @@ function workspaceTabsReducer(
         ...state,
         tabs: moveWorkspaceTab(state.tabs, action.sourceId, action.targetId),
       }
+    case 'syncFixed': {
+      const fixedIds = new Set(action.tabs.map(tab => tab.id))
+      const currentById = new Map(state.tabs.map(tab => [tab.id, tab]))
+      const bootstrapReplacementById = new Map<string, string>()
+      const bootstrapByFixedId = new Map<string, WorkspaceTab>()
+      if (!state.tabs.some(tab => tab.fixed)) {
+        const availableBootstrapTabs = state.tabs.filter(tab => !tab.fixed && !fixedIds.has(tab.id))
+        for (const fixedTab of action.tabs) {
+          if (currentById.has(fixedTab.id)) continue
+          const bootstrapTab = availableBootstrapTabs.find(
+            tab =>
+              !bootstrapReplacementById.has(tab.id) &&
+              tab.kind === fixedTab.kind &&
+              (fixedTab.kind !== 'auxiliary' || tab.contentRoute === fixedTab.contentRoute)
+          )
+          if (bootstrapTab) {
+            bootstrapReplacementById.set(bootstrapTab.id, fixedTab.id)
+            bootstrapByFixedId.set(fixedTab.id, bootstrapTab)
+          }
+        }
+      }
+      const syncedFixedTabs = action.tabs.map(tab => {
+        const current = currentById.get(tab.id)
+        if (current && !tab.contentRoute.startsWith('/app/harness-')) {
+          return {
+            ...tab,
+            kind: current.kind,
+            title: current.title,
+            contentRoute: current.contentRoute,
+          }
+        }
+        const bootstrap = bootstrapByFixedId.get(tab.id)
+        return bootstrap ? { ...tab, contentRoute: bootstrap.contentRoute } : tab
+      })
+      const ordinaryTabs = state.tabs
+        .filter(tab => !fixedIds.has(tab.id) && !bootstrapReplacementById.has(tab.id))
+        .map(tab => (tab.fixed ? { ...tab, fixed: false } : tab))
+      const tabs = [...syncedFixedTabs, ...ordinaryTabs]
+      const replacedActiveTabId = bootstrapReplacementById.get(state.activeTabId)
+      return {
+        ...state,
+        tabs,
+        activeTabId: tabs.some(tab => tab.id === (replacedActiveTabId ?? state.activeTabId))
+          ? (replacedActiveTabId ?? state.activeTabId)
+          : (tabs[0]?.id ?? state.activeTabId),
+      }
+    }
     case 'updateActive':
       return {
         ...state,
@@ -228,27 +302,44 @@ export function WorkspaceTabsProvider({
   storageScope,
   labels,
   startupTabKind,
+  fixedTabs = [],
+  startupTabId,
+  restoreSessionTabs = true,
   children,
 }: WorkspaceTabsProviderProps) {
   const startupTabApplied = useRef(false)
   const [state, dispatch] = useReducer(
     workspaceTabsReducer,
     undefined,
-    (): WorkspaceTabsState => loadPersistedTabs(storageScope, pathname, search, labels)
+    (): WorkspaceTabsState =>
+      loadPersistedTabs(storageScope, pathname, search, labels, fixedTabs, restoreSessionTabs)
   )
+
+  useEffect(() => {
+    if (fixedTabs.length > 0) dispatch({ type: 'syncFixed', tabs: fixedTabs })
+  }, [fixedTabs])
 
   useEffect(() => {
     dispatch({ type: 'routeChanged', pathname, search, labels })
   }, [labels, pathname, search])
 
   useEffect(() => {
-    if (startupTabApplied.current || !startupTabKind) return
-    startupTabApplied.current = true
+    if (startupTabApplied.current || (!startupTabKind && !startupTabId)) return
     const location = parseWorkspaceLocation(pathname, search)
     if (pathname !== '/' || location.tabId || location.contentRoute !== '/') return
-    const existingStartupTab = state.tabs.find(tab => tab.kind === startupTabKind)
+    if (
+      startupTabId &&
+      fixedTabs.some(tab => tab.id === startupTabId) &&
+      !state.tabs.some(tab => tab.id === startupTabId)
+    ) {
+      return
+    }
+    startupTabApplied.current = true
+    const existingStartupTab =
+      state.tabs.find(tab => tab.id === startupTabId) ??
+      state.tabs.find(tab => tab.kind === startupTabKind)
     if (existingStartupTab?.id === state.activeTabId) return
-    const startupTab = existingStartupTab ?? createWorkspaceTab(startupTabKind, labels)
+    const startupTab = existingStartupTab ?? createWorkspaceTab(startupTabKind ?? 'task', labels)
     flushSync(() =>
       dispatch(
         existingStartupTab
@@ -257,19 +348,32 @@ export function WorkspaceTabsProvider({
       )
     )
     navigateTo(workspaceTabRoute(startupTab))
-  }, [labels, pathname, search, startupTabKind, state.activeTabId, state.tabs])
+  }, [
+    fixedTabs,
+    labels,
+    pathname,
+    search,
+    startupTabId,
+    startupTabKind,
+    state.activeTabId,
+    state.tabs,
+  ])
 
   useEffect(() => {
+    if (!restoreSessionTabs) return
     try {
+      const tabs = sessionRestorableTabs(state.tabs)
       const persisted: PersistedWorkspaceTabs = {
-        activeTabId: state.activeTabId,
-        tabs: state.tabs,
+        activeTabId: tabs.some(tab => tab.id === state.activeTabId)
+          ? state.activeTabId
+          : (tabs[0]?.id ?? ''),
+        tabs,
       }
       persistWorkspaceTabs(storageScope, persisted.tabs, persisted.activeTabId)
     } catch {
       // Tabs remain usable in memory when persistence is unavailable.
     }
-  }, [state, storageScope])
+  }, [restoreSessionTabs, state, storageScope])
 
   const selectTab = useCallback(
     (tabId: string, updates?: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
@@ -294,9 +398,12 @@ export function WorkspaceTabsProvider({
 
   const closeTab = useCallback(
     (tabId: string) => {
+      const closingTab = state.tabs.find(tab => tab.id === tabId)
+      if (!closingTab || closingTab.fixed) return
       const fallback = createWorkspaceTab('task', labels)
       const next = closeWorkspaceTab(state.tabs, state.activeTabId, tabId, fallback)
       flushSync(() => dispatch({ type: 'close', tabId, fallback }))
+      dispatchWorkspaceTabsClosed([tabId])
       const nextActive = next.tabs.find(tab => tab.id === next.activeTabId) ?? next.tabs[0]
       navigateTo(workspaceTabRoute(nextActive))
     },
@@ -307,7 +414,11 @@ export function WorkspaceTabsProvider({
     (tabId: string) => {
       const tab = state.tabs.find(candidate => candidate.id === tabId)
       if (!tab) return
+      const closedTabIds = state.tabs
+        .filter(candidate => !candidate.fixed && candidate.id !== tabId)
+        .map(candidate => candidate.id)
       flushSync(() => dispatch({ type: 'closeOthers', tabId }))
+      dispatchWorkspaceTabsClosed(closedTabIds)
       navigateTo(workspaceTabRoute(tab))
     },
     [state.tabs]

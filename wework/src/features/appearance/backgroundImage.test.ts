@@ -1,52 +1,44 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
 import {
   backgroundImageUrl,
   removeWorkbenchBackground,
   selectWorkbenchBackground,
 } from './backgroundImage'
 
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path}`),
-  invoke: vi.fn(),
-  isTauri: vi.fn(),
+const { invokeDesktopHost } = vi.hoisted(() => ({
+  invokeDesktopHost: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost }))
 
 describe('workbench background image service', () => {
   beforeEach(() => {
-    vi.mocked(isTauri).mockReturnValue(true)
-    vi.mocked(open).mockReset()
-    vi.mocked(invoke).mockReset()
+    invokeDesktopHost.mockReset()
   })
 
-  test('imports the selected image through the managed Tauri command', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/source.png')
-    vi.mocked(invoke).mockResolvedValue('/app-data/background.png')
+  test('returns the selected Electron desktop file', async () => {
+    invokeDesktopHost.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/source.png'],
+    })
 
-    await expect(selectWorkbenchBackground('dark')).resolves.toBe('/app-data/background.png')
-    expect(invoke).toHaveBeenCalledWith('import_workbench_background', {
-      sourcePath: '/tmp/source.png',
-      theme: 'dark',
+    await expect(selectWorkbenchBackground('dark')).resolves.toBe('/tmp/source.png')
+    expect(invokeDesktopHost).toHaveBeenCalledWith('dialog.open', {
+      properties: ['openFile'],
+      filters: [{ name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
     })
   })
 
   test('does not import when the picker is cancelled', async () => {
-    vi.mocked(open).mockResolvedValue(null)
+    invokeDesktopHost.mockResolvedValue({ canceled: true, filePaths: [] })
 
     await expect(selectWorkbenchBackground('light')).resolves.toBeNull()
-    expect(invoke).not.toHaveBeenCalled()
   })
 
-  test('removes managed images and converts their display URL', async () => {
+  test('removes the configured image and converts its display URL', async () => {
     await removeWorkbenchBackground('light')
 
-    expect(invoke).toHaveBeenCalledWith('remove_workbench_background', { theme: 'light' })
-    expect(backgroundImageUrl('/app-data/background.webp')).toBe(
-      'asset://localhost//app-data/background.webp'
-    )
-    expect(convertFileSrc).toHaveBeenCalledWith('/app-data/background.webp')
+    expect(invokeDesktopHost).not.toHaveBeenCalled()
+    expect(backgroundImageUrl('/app-data/background.webp')).toBe('file:///app-data/background.webp')
   })
 })

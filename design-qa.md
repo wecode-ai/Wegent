@@ -1,48 +1,85 @@
-**Comparison Target**
+# Applications layout design QA
 
-- Source visual truth: `/Users/hongyu9/.wework/workspace/attachments/draft/1787208914557/image.png`
-- IME defect evidence: `/Users/hongyu9/.wework/workspace/attachments/draft/1787209843976/image.png`
-- Implementation screenshot: `/Volumes/OuterHD/OuterIdeaProjects/Wegent/wework/test-results/ai-verify/issue-composer-rich-editor.png`
-- Rich-content screenshot: `/Volumes/OuterHD/OuterIdeaProjects/Wegent/wework/test-results/ai-verify/issue-composer-rich-editor-content.png`
-- Combined comparison: `/Volumes/OuterHD/OuterIdeaProjects/Wegent/wework/test-results/ai-verify/issue-composer-comparison.png`
-- State: Wework real Tauri app, light theme, local “我的任务” project, fullscreen new-Issue editor.
-- Viewport and density: implementation capture `2560 × 1440` physical pixels, approximately `1280 × 720` CSS pixels at `2×`; source capture `3840 × 1996` physical pixels. Both were proportionally fitted to `1280 × 720` canvases before the side-by-side comparison.
+## Comparison target
 
-**Full-view Comparison**
+- Source visual truth:
+  - My: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-72fff9de-aa43-4eb8-92ae-2765bf454277.png`
+  - Market: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-46eee616-97d2-4f73-8cca-99ffd9a945c5.png`
+  - Site: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-9be266aa-53d7-415f-be2f-dfd5709c5ba2.png`
+  - Mini Program: `/Users/junlong5/.codex/generated_images/01a03d17-3e77-7ef2-a61b-ba2ab3de9a90/exec-f3bb0013-fcbe-4036-b20c-eb4a9bad8a13.png`
+- Rendered implementation:
+  - Market: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/market-iteration-1.png`
+  - My empty: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/owned-iteration-1.png`
+  - My with card: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/owned-card-iteration-1.png`
+  - Site: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/site-iteration-1.png`
+  - Mini Program: `/Users/junlong5/Documents/ai3c_workspace/Wegent/wework/test-results/design-qa/miniapp-iteration-1.png`
 
-- The title, property controls, divider, editor column, footer, radii, neutral colors, and panel elevation remain consistent with the supplied screen.
-- The description region now fills the available vertical space. The Markdown/file hint is anchored at the bottom of that region instead of appearing near the middle of the page.
-- The plain textarea has been replaced by the existing BlockNote editor, preserving the product’s Notion-like block controls, Markdown shortcuts, slash commands, nested lists, and semantic headings.
+## Environment and normalization
 
-**Focused Region Comparison**
+- Runtime: isolated packaged Electron application, local-first mode, light theme, Chinese locale.
+- CSS viewport: `1386 x 869`; implementation capture: `2772 x 1738`; `deviceScaleFactor: 2`.
+- Source visuals: `1584 x 993`; conceptual desktop density `1`.
+- Both sets use the same desktop aspect ratio. Comparisons were normalized by full-frame aspect ratio and application content bounds. Geometry findings use Electron CSS-pixel metrics, not raw image pixels.
+- State: disconnected cloud marketplace, local owned collection, unavailable Site and Mini Program services.
 
-- The supplied red-box region was inspected against the lower editor region in the implementation screenshot. The misplaced helper text is resolved and no longer indicates a prematurely ended input area.
-- The editor content region was inspected in the real Tauri rich-content screenshot. Typography, spacing, foreground/background balance, and copy use existing Wework tokens; no new raster or decorative assets are involved.
+## Full-view comparison evidence
 
-**Required Fidelity Surfaces**
+The four source images and five Electron captures covering four application states were opened together in the same comparison input. The implementation preserves the selected visual hierarchy: constant Applications header, invariant primary tabs, one aligned context toolbar, matching neutral controls, and a shared bordered content surface.
 
-- Fonts and typography: existing Wework semantic typography is preserved; title, metadata, body, hint, and footer retain the expected hierarchy.
-- Spacing and layout rhythm: the editor is a flex-filling region with a stable minimum height; the footer remains fixed and visible.
-- Colors and visual tokens: unchanged neutral Wework tokens; no new literal application-chrome colors.
-- Image quality and assets: no visual assets were added or replaced.
-- Copy and content: existing localized title, placeholder, Markdown/file hint, draft status, and submit copy are preserved.
+Measured Electron geometry across Market, My, Site, and Mini Program:
 
-**Comparison History**
+- Shared content container: `1120px` wide.
+- Context toolbar: `1056 x 36`, `left: 285`, `top: 242.8828125` in every state.
+- Site and Mini Program unavailable surfaces: `1056 x 320`, `left: 285`, `top: 298.8828125`.
+- Owned card: `520 x 211`; with the `16px` grid gap, two tracks resolve exactly to `(1056 - 16) / 2 = 520px`.
 
-- Earlier P1: the fixed-height textarea ended around the upper half of the fullscreen panel, leaving the helper text visually stranded. Fix: made the document column and description region consume the remaining height and gave the block editor a full-height container. Post-fix evidence: `issue-composer-comparison.png`.
-- Earlier P1: the fullscreen description was a raw textarea rather than a Typora/Notion-style editing surface. Fix: reused the existing BlockNote Markdown editor and retained file paste/drop behavior. Post-fix evidence: `issue-composer-rich-editor.png` and `issue-composer-rich-editor-content.png`.
-- Earlier P1: confirming Chinese Pinyin with Space inside a nested list could leave intermediate pinyin and committed Chinese as separate content. Fix: editor changes are buffered during native composition and published only after WebKit finalizes `compositionend`; Space and ordinary Enter remain untouched. Post-fix evidence: focused IME regression tests.
+No horizontal or vertical layout shift was observed while switching all four states.
 
-**Interaction Verification**
+## Focused region comparison evidence
 
-- Opened the new-Issue composer and expanded it in an isolated real Tauri session.
-- Verified the description is `contenteditable`, occupies the fullscreen document region, accepts content, and keeps the footer visible.
-- Verified title and editor updates, draft autosave state, fullscreen layout, and rich editor rendering.
-- Unit coverage verifies Markdown loading/emission, file paste/drop, draft persistence, creation, continuous creation, IME Space confirmation buffering, and first-press Enter after composition.
-- Real-Tauri debug logs were checked; no browser console error was recorded for the changed flow.
+- Header and action slot: the My actions align with the title block and retain outline/primary hierarchy; Site and Mini Program use the same inverse-neutral Create control.
+- Primary and secondary navigation: the application underline tabs remain fixed while Market/My use the selected segmented control treatment.
+- Toolbar: search, marketplace selects, and owned filters share the same height, radius, border, and focus token.
+- Empty states: Market, Site, and Mini Program share one 320px surface and icon/title/body rhythm, with state-specific copy.
+- Card: the isolated created-workbench fixture confirms the target two-column width, 211px height, icon/title hierarchy, semantic status color, divider, model selector, and right-aligned action group.
 
-**Residual Test Gap**
+## Findings
 
-- Automated desktop control cannot drive the macOS Chinese candidate window itself. The composition/Space state boundary and first-press Enter behavior are covered directly in regression tests, while the same editor is verified in real Tauri.
+- No actionable P0, P1, or P2 differences remain.
+- P3: the isolated My capture contains one created card rather than the two installed cards in the source. This is test-data variance; grid metrics and a rendered real card confirm the selected two-column geometry.
+
+Required fidelity surfaces:
+
+- Fonts and typography: existing Wework font stack, semantic sizes, weights, line heights, truncation, and wrapping match the source hierarchy.
+- Spacing and layout rhythm: shared width, fixed toolbar position, 16px card gap, surface radius, borders, and vertical rhythm match the selected design.
+- Colors and tokens: neutral application chrome, blue experimental badge/focus, and green semantic runtime state are correctly scoped.
+- Image quality and assets: no raster product imagery is required; all visible symbols use the existing Lucide icon library and render sharply at `@2x`.
+- Copy and content: constant Applications title/subtitle and state-specific marketplace/Site/Mini Program copy match the approved direction.
+- Accessibility and responsiveness: semantic tabs and labels are retained, focus rings use shared tokens, desktop controls are 36px, and mobile variants remain at least 44px.
+
+## Interaction and runtime checks
+
+- Switched Market to My and back through the segmented navigation.
+- Switched Smart Workbench, Site, and Mini Program through the primary tab list.
+- Exercised the owned `Installed` zero-result filter and recovered with `All`.
+- Created an isolated blank workbench and verified the resulting real card.
+- Verified disconnected marketplace, Site unavailable, and Mini Program unavailable states.
+- Electron debug snapshot reported `workbench.error: null` and no runtime logs.
+- The isolated Electron session was stopped and the temporary fixture directory was moved to Trash.
+
+## Comparison history
+
+- Pass 1: compared all four valid post-build Electron captures with their source visuals. No P0/P1/P2 findings were identified, so no post-comparison visual fix iteration was required.
+- A pre-build stale package capture was discarded as build troubleshooting and was not used as design-QA evidence.
+
+## Implementation checklist
+
+- [x] Constant header and 1120px application shell
+- [x] Fixed primary tabs and header action slot
+- [x] Shared 36px context toolbar in all four states
+- [x] Segmented Market/My navigation
+- [x] Equal two-column card geometry and aligned actions
+- [x] State-specific unavailable copy and icons
+- [x] Real Electron interaction, geometry, screenshot, and error verification
 
 final result: passed

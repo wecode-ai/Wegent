@@ -27,14 +27,15 @@ describe('createDeliveryApi queue and assignment routes', () => {
     ).toBe(false)
   })
 
-  it('closes and reopens default-board tasks with the runtime lifecycle', () => {
-    expect(nextTaskTrackingStatus('in_progress', 'succeeded', { completeOnSuccess: true })).toBe(
-      'completed'
-    )
-    expect(nextTaskTrackingStatus('completed', 'running', { completeOnSuccess: true })).toBe(
-      'in_progress'
-    )
+  it('moves completed runtime tasks to review until the user completes them', () => {
+    expect(nextTaskTrackingStatus('inbox', 'queued')).toBe('pending')
+    expect(nextTaskTrackingStatus('pending', 'queued')).toBeNull()
+    expect(nextTaskTrackingStatus('in_progress', 'succeeded')).toBe('in_review')
+    expect(nextTaskTrackingStatus('completed', 'running')).toBe('in_progress')
     expect(nextTaskTrackingStatus('in_review', 'archived')).toBe('completed')
+    expect(nextTaskTrackingStatus('in_progress', 'cancelled')).toBe('in_review')
+    expect(nextTaskTrackingStatus('pending', 'failed')).toBe('in_review')
+    expect(nextTaskTrackingStatus('pending', 'succeeded')).toBe('in_review')
   })
 
   it('lists loop items with queue filters', async () => {
@@ -235,6 +236,34 @@ describe('createDeliveryApi task tracking', () => {
     expect(post).toHaveBeenCalledTimes(2)
   })
 
+  test('creates default My Tasks items in inbox before runtime status synchronization', async () => {
+    const inboxItem = {
+      ...trackedItem,
+      cloud_project_id: DEFAULT_WORK_ITEM_PROJECT_ID,
+      status: 'inbox' as const,
+    }
+    const get = vi.fn().mockRejectedValue(new ApiError('Cloud context not found', 404))
+    const post = vi.fn().mockResolvedValueOnce(inboxItem).mockResolvedValueOnce(undefined)
+    const api = createDeliveryApi(clientWith({ get, post }))
+
+    await api.trackProjectTask(
+      DEFAULT_WORK_ITEM_PROJECT_ID,
+      { deviceId: 'local-device', taskId: 'runtime-1' },
+      'Runtime task',
+      ''
+    )
+
+    expect(post).toHaveBeenNthCalledWith(
+      1,
+      `/v1/cloud-projects/${DEFAULT_WORK_ITEM_PROJECT_ID}/loop-items`,
+      {
+        title: 'Runtime task',
+        description: '',
+        status: 'inbox',
+      }
+    )
+  })
+
   test('reuses a created board item when binding is retried', async () => {
     const get = vi.fn().mockRejectedValue(new ApiError('Cloud context not found', 404))
     const post = vi
@@ -283,8 +312,8 @@ describe('createDeliveryApi task tracking', () => {
     expect(patch).toHaveBeenCalledOnce()
   })
 
-  test('completes a successful runtime task on the default work-item project', async () => {
-    const completedItem = { ...trackedItem, status: 'completed', version: 2 }
+  test('moves a successful runtime task on the default work-item project to review', async () => {
+    const reviewedItem = { ...trackedItem, status: 'in_review', version: 2 }
     const context = {
       loop_item_id: trackedItem.id,
       loop_item: trackedItem,
@@ -294,16 +323,39 @@ describe('createDeliveryApi task tracking', () => {
       },
     } as CloudTaskContext
     const get = vi.fn().mockResolvedValue(context)
-    const patch = vi.fn().mockResolvedValue(completedItem)
+    const patch = vi.fn().mockResolvedValue(reviewedItem)
     const api = createDeliveryApi(clientWith({ get, patch }))
 
     await expect(
       api.updateTaskTrackingStatus({ deviceId: 'local-device', taskId: 'runtime-1' }, 'succeeded')
-    ).resolves.toEqual(completedItem)
+    ).resolves.toEqual(reviewedItem)
     expect(patch).toHaveBeenCalledWith('/v1/loop-items/WEG-1', {
       version: 1,
-      status: 'completed',
+      status: 'in_review',
     })
+  })
+
+  test('leaves robot execution status projection to the backend state machine', async () => {
+    const managedItem = {
+      ...trackedItem,
+      execution_id: 42,
+      status: 'in_review' as const,
+    }
+    const context = {
+      loop_item_id: managedItem.id,
+      loop_item: managedItem,
+    } as CloudTaskContext
+    const get = vi.fn().mockResolvedValue(context)
+    const patch = vi.fn()
+    const api = createDeliveryApi(clientWith({ get, patch }))
+
+    await expect(
+      api.updateTaskTrackingStatus(
+        { deviceId: 'cloud-device', taskId: 'managed-runtime' },
+        'running'
+      )
+    ).resolves.toEqual(managedItem)
+    expect(patch).not.toHaveBeenCalled()
   })
 
   test('serializes rapid runtime status updates for the same board task', async () => {
@@ -342,14 +394,14 @@ describe('createDeliveryApi task tracking', () => {
     releaseRunningUpdate?.()
 
     await expect(running).resolves.toMatchObject({ status: 'in_progress', version: 2 })
-    await expect(succeeded).resolves.toMatchObject({ status: 'completed', version: 3 })
+    await expect(succeeded).resolves.toMatchObject({ status: 'in_review', version: 3 })
     expect(patch).toHaveBeenNthCalledWith(1, `/v1/loop-items/${trackedItem.id}`, {
       version: 1,
       status: 'in_progress',
     })
     expect(patch).toHaveBeenNthCalledWith(2, `/v1/loop-items/${trackedItem.id}`, {
       version: 2,
-      status: 'completed',
+      status: 'in_review',
     })
   })
 

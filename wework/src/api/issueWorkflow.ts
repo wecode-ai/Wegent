@@ -2,6 +2,7 @@ import type {
   CloudLoopItem,
   IssueWorkflowInstance,
   ProjectWorkflowDefinition,
+  WorkflowNodeDefinition,
   WorkflowNodeInstance,
 } from './deliveries'
 
@@ -14,6 +15,12 @@ export interface WorkflowTaskBinding {
   task_id: string
   workflow_node_id?: string | null
   linked_at?: string
+}
+
+export function workflowNodeExecutionMode(
+  node: Pick<WorkflowNodeDefinition, 'execution_mode' | 'automation_rule_id'>
+): 'human' | 'robot' {
+  return node.execution_mode ?? (node.automation_rule_id ? 'robot' : 'human')
 }
 
 export function instantiateIssueWorkflow(
@@ -29,7 +36,12 @@ export function instantiateIssueWorkflow(
     stage_mode: stageMode,
     advancement_policy: advancementPolicy,
     coordinator_prompt: definition.coordinator_prompt ?? '',
+    approval_policy: definition.approval_policy ?? 'required',
     ai_automation_rule_id: definition.ai_automation_rule_id ?? null,
+    orchestration_status: 'idle',
+    active_run_id: null,
+    active_plan_version: null,
+    current_stage_id: null,
     nodes: (stageMode === 'dag' ? definition.nodes : []).map(node => ({
       ...node,
       status: node.depends_on.length === 0 ? 'ready' : 'blocked',

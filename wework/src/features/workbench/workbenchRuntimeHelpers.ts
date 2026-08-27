@@ -1,5 +1,5 @@
-import { joinDevicePath } from '@/lib/device-workspace-path'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
+import { buildConversationWorkspacePath } from '@/lib/runtime-conversation-workspace'
 import {
   normalizeRuntimeWorkspacePath,
   runtimeProjectToProject,
@@ -12,6 +12,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskCreateRequest,
+  RuntimeTaskPinRequest,
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
@@ -21,9 +22,6 @@ import { normalizeRuntimeTaskSummary } from './runtimeTaskLifecycle/projection'
 export const STANDALONE_PROJECT_ID = 0
 export const EMPTY_MESSAGE_TASK_TITLE = '新对话'
 export const MAX_RUNTIME_TASK_TITLE_LENGTH = 60
-
-const DEFAULT_CONVERSATION_WORKSPACE_NAME = 'new-chat'
-const MAX_CONVERSATION_WORKSPACE_NAME_LENGTH = 20
 
 export async function createConversationWorkspace(
   deviceApi: {
@@ -38,47 +36,6 @@ export async function createConversationWorkspace(
   const workspacePath = buildConversationWorkspacePath(homeDirectory, message, taskId)
   await deviceApi.createDirectory(deviceId, workspacePath)
   return workspacePath
-}
-
-function buildConversationWorkspacePath(
-  homeDirectory: string,
-  message: string,
-  taskId: string
-): string {
-  return joinDevicePath(
-    homeDirectory,
-    'Documents',
-    'Codex',
-    formatConversationWorkspaceDate(new Date()),
-    conversationWorkspaceName(message, taskId)
-  )
-}
-
-function formatConversationWorkspaceDate(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-function slugifyConversationWorkspaceName(message: string): string {
-  const words = message.match(/[A-Za-z0-9]+/g) ?? []
-  const name = words.length > 0 ? words.map(word => word.toLowerCase()).join('-') : ''
-  return trimConversationWorkspaceName(name || DEFAULT_CONVERSATION_WORKSPACE_NAME)
-}
-
-function conversationWorkspaceName(message: string, taskId: string): string {
-  const suffix = taskId
-    .replace(/[^A-Za-z0-9]+/g, '')
-    .slice(-8)
-    .toLowerCase()
-  const name = slugifyConversationWorkspaceName(message)
-  return suffix ? `${name}-${suffix}` : name
-}
-
-function trimConversationWorkspaceName(name: string): string {
-  const trimmed = name.slice(0, MAX_CONVERSATION_WORKSPACE_NAME_LENGTH).replace(/-+$/g, '')
-  return trimmed || DEFAULT_CONVERSATION_WORKSPACE_NAME
 }
 
 export function getRuntimeTaskRouteKey(route: RuntimeTaskRoute): string {
@@ -228,6 +185,98 @@ export function updateRuntimeWorkTask(
       deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
     })),
     chats: runtimeWork.chats.map(updateWorkspace),
+  }
+}
+
+export function getRuntimeTaskThreadId(task: RuntimeTaskSummary): string | null {
+  const explicitThreadId = task.threadId?.trim()
+  if (explicitThreadId) return explicitThreadId
+
+  const runtimeHandleThreadId = [task.runtimeHandle?.threadId, task.runtimeHandle?.thread_id].find(
+    value => typeof value === 'string' && value.trim()
+  )
+  if (typeof runtimeHandleThreadId === 'string') return runtimeHandleThreadId.trim()
+
+  const taskId = task.taskId.trim()
+  return task.runtime === 'codex' && !task.optimistic && taskId ? taskId : null
+}
+
+function runtimeWorkspaceMatchesTaskPinRequest(
+  workspace: RuntimeDeviceWorkspace,
+  request: RuntimeTaskPinRequest,
+  stateDeviceId?: string | null
+): boolean {
+  return [stateDeviceId, workspace.deviceId, workspace.remoteHostId].some(
+    deviceId => deviceId === request.deviceId
+  )
+}
+
+export function findRuntimeTaskForPinRequest(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeTaskSummary | null {
+  if (!runtimeWork) return null
+
+  for (const projectWork of runtimeWork.projects) {
+    for (const workspace of projectWork.deviceWorkspaces) {
+      if (
+        !runtimeWorkspaceMatchesTaskPinRequest(
+          workspace,
+          request,
+          projectWork.project.stateDeviceId
+        )
+      ) {
+        continue
+      }
+      const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+      if (task) return task
+    }
+  }
+
+  for (const workspace of runtimeWork.chats) {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request)) continue
+    const task = workspace.tasks.find(item => getRuntimeTaskThreadId(item) === request.threadId)
+    if (task) return task
+  }
+
+  return null
+}
+
+export function updateRuntimeWorkTaskPinned(
+  runtimeWork: RuntimeWorkListResponse | null | undefined,
+  request: RuntimeTaskPinRequest
+): RuntimeWorkListResponse | null {
+  if (!runtimeWork) return null
+
+  const updateWorkspace = (
+    workspace: RuntimeDeviceWorkspace,
+    stateDeviceId?: string | null
+  ): RuntimeDeviceWorkspace => {
+    if (!runtimeWorkspaceMatchesTaskPinRequest(workspace, request, stateDeviceId)) {
+      return workspace
+    }
+
+    const tasks = workspace.tasks.map(task => {
+      if (getRuntimeTaskThreadId(task) !== request.threadId) return task
+      return normalizeRuntimeTaskSummary({
+        ...task,
+        pinned: request.pinned,
+        ...(!request.pinned ? { pinnedOrder: undefined } : {}),
+      })
+    })
+    if (tasks.every((task, index) => task === workspace.tasks[index])) return workspace
+    return { ...workspace, tasks }
+  }
+
+  return {
+    ...runtimeWork,
+    projects: runtimeWork.projects.map(projectWork => ({
+      ...projectWork,
+      deviceWorkspaces: projectWork.deviceWorkspaces.map(workspace =>
+        updateWorkspace(workspace, projectWork.project.stateDeviceId)
+      ),
+    })),
+    chats: runtimeWork.chats.map(workspace => updateWorkspace(workspace)),
   }
 }
 

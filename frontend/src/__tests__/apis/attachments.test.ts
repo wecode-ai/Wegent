@@ -3,9 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  createAttachmentDownloadUrl,
   downloadAttachment,
   fetchAttachmentFile,
   formatsToAcceptString,
+  getAttachmentPlayback,
   getErrorMessageFromCode,
 } from '@/apis/attachments'
 
@@ -116,6 +118,80 @@ describe('downloadAttachment', () => {
       ),
       download: 'report.pdf',
     })
+  })
+})
+
+describe('createAttachmentDownloadUrl', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.restoreAllMocks()
+  })
+
+  it('returns a browser-native URL with a short-lived token', async () => {
+    localStorage.setItem('auth_token', 'test-token')
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ download_token: 'playback-token' }),
+    }) as typeof fetch
+
+    await expect(createAttachmentDownloadUrl(42)).resolves.toBe(
+      '/api/attachments/42/download?download_token=playback-token'
+    )
+  })
+})
+
+describe('getAttachmentPlayback', () => {
+  const originalFetch = global.fetch
+
+  afterEach(() => {
+    global.fetch = originalFetch
+    localStorage.clear()
+    jest.restoreAllMocks()
+  })
+
+  it('returns direct playback metadata for an authenticated attachment', async () => {
+    localStorage.setItem('auth_token', 'test-token')
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        playback_url: 'https://media.example.com/material.mp4',
+        cover_url: 'https://media.example.com/material-cover.jpg',
+      }),
+    }) as typeof fetch
+
+    await expect(getAttachmentPlayback(42)).resolves.toEqual({
+      playback_url: 'https://media.example.com/material.mp4',
+      cover_url: 'https://media.example.com/material-cover.jpg',
+    })
+    expect(global.fetch).toHaveBeenCalledWith('/api/attachments/42/playback', {
+      method: 'GET',
+      headers: { Authorization: 'Bearer test-token' },
+    })
+  })
+
+  it('uses the share token without an authorization header', async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        playback_url: '/api/attachments/42/download?share_token=share-token',
+      }),
+    }) as typeof fetch
+
+    await getAttachmentPlayback(42, 'share-token')
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      '/api/attachments/42/playback?share_token=share-token',
+      {
+        method: 'GET',
+        headers: {},
+      }
+    )
   })
 })
 

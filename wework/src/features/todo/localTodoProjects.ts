@@ -1,4 +1,5 @@
 import type { ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import { runtimeProjectToProject } from '@/lib/runtime-project'
 
 export function resolveLocalTodoProjects(
   projects: ProjectWithTasks[],
@@ -8,20 +9,17 @@ export function resolveLocalTodoProjects(
 
   for (const runtimeProject of runtimeWork?.projects ?? []) {
     const project = runtimeProject.project
-    if (
-      typeof project.id !== 'number' ||
-      project.kind === 'remote' ||
-      project.source === 'remote_project'
-    ) {
+    if (project.kind === 'remote' || project.source === 'remote_project') {
       continue
     }
-    const existing = resolved.get(project.id)
-    resolved.set(project.id, {
+    const localProject = runtimeProjectToProject(runtimeProject)
+    const existing = resolved.get(localProject.id)
+    resolved.set(localProject.id, {
       ...existing,
-      id: project.id,
-      name: project.name,
-      description: project.description ?? existing?.description,
-      color: project.color ?? existing?.color,
+      ...localProject,
+      description: localProject.description ?? existing?.description,
+      color: localProject.color ?? existing?.color,
+      config: localProject.config ?? existing?.config,
       tasks: existing?.tasks ?? [],
     })
   }

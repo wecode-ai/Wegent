@@ -4,46 +4,108 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  AI_VERIFY_ACTIONS,
+  acknowledgeStartedCommand,
   appExitMessage,
+  buildSourceRuntimeEnvironment,
   monitorAppProcess,
+  parseArgs,
+  prepareElectronApp,
   readSessionForCleanup,
+  resolveElectronLaunch,
+  resolveHostTarget,
   resolveCommandTimeout,
+  resolveOptionalBoolean,
   resolveStartupTimeout,
   startupFailureMessage,
-  takeWritableCommandPoll,
+  validateStartOptions,
 } from './ai-verify.mjs'
 
-function commandPoll(response) {
-  return {
-    response,
-    timer: setTimeout(() => {}, 60_000),
-    closed: false,
-  }
-}
+describe('AI_VERIFY_ACTIONS', () => {
+  test('preserves the complete legacy command surface', () => {
+    expect(AI_VERIFY_ACTIONS).toEqual({
+      capture: 'capture',
+      'capture-browser': 'captureEmbeddedBrowser',
+      'capture-popout': 'capturePopoutWindow',
+      'capture-workspace': 'captureWorkspaceWindow',
+      snapshot: 'snapshot',
+      debug: 'getWorkbenchDebugSnapshot',
+      'active-element': 'getActiveElementTestId',
+      click: 'click',
+      'click-at': 'clickAt',
+      'click-then-macrotask': 'clickThenMacrotask',
+      'context-menu': 'contextMenu',
+      'seed-local-project': 'seedLocalProject',
+      'preview-plugin-import': 'previewPluginImport',
+      'import-plugin-package': 'importPluginPackage',
+      'set-local-proxy-url': 'setLocalProxyUrl',
+      'set-storage': 'setLocalStorageItem',
+      'get-storage': 'getLocalStorageItem',
+      'remove-storage': 'removeLocalStorageItem',
+      origin: 'getLocationOrigin',
+      'restart-core-dsh': 'restartCoreDsh',
+      'terminal-snapshot': 'readLocalTerminalSnapshot',
+      reload: 'reloadApp',
+      'close-to-tray': 'closeMainWindowToTray',
+      'request-close': 'requestMainWindowClose',
+      'dismiss-popout': 'dismissPopoutWindow',
+      drag: 'drag',
+      'drop-file': 'dropFile',
+      'drop-paths': 'dropPaths',
+      fill: 'fill',
+      'get-attribute': 'getAttribute',
+      hover: 'hover',
+      metrics: 'getElementMetrics',
+      navigate: 'navigate',
+      'paste-paths': 'pastePaths',
+      'pointer-move': 'pointerMove',
+      press: 'press',
+      submit: 'submit',
+      'scroll-into-view': 'scrollIntoView',
+      'select-text': 'selectText',
+      'show-popout': 'showPopoutWindow',
+      'system-drag-drop': 'completeSystemDragDrop',
+      'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
+      'wait-for': 'waitFor',
+      'window-focus-snapshot': 'getWindowFocusSnapshot',
+      text: 'getText',
+    })
+  })
+})
 
-describe('takeWritableCommandPoll', () => {
-  test('skips disconnected responses and returns the next writable poll', () => {
-    const disconnected = commandPoll({ destroyed: true, writableEnded: false })
-    const closed = commandPoll({ destroyed: false, writableEnded: false })
-    closed.closed = true
-    const ended = commandPoll({ destroyed: false, writableEnded: true })
-    const writable = commandPoll({ destroyed: false, writableEnded: false })
-    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
-
-    expect(takeWritableCommandPoll([disconnected, closed, ended, writable])).toBe(writable)
-    expect(clearTimeoutSpy).toHaveBeenCalledTimes(4)
-
-    clearTimeoutSpy.mockRestore()
+describe('acknowledgeStartedCommand', () => {
+  test('accepts the start acknowledgement for a pending command', () => {
+    expect(
+      acknowledgeStartedCommand(new Map([['command-1', {}]]), {
+        id: 'command-1',
+        clientId: 'client-1',
+      })
+    ).toEqual({ status: 200, value: { ok: true } })
   })
 
-  test('returns undefined when every pending response is stale', () => {
-    const stalePolls = [
-      commandPoll({ destroyed: true, writableEnded: false }),
-      commandPoll({ destroyed: false, writableEnded: true }),
-    ]
+  test('rejects acknowledgements for commands that are no longer pending', () => {
+    expect(
+      acknowledgeStartedCommand(new Map(), {
+        id: 'missing-command',
+        clientId: 'client-1',
+      })
+    ).toEqual({
+      status: 404,
+      value: { error: 'Unknown command missing-command' },
+    })
+  })
+})
 
-    expect(takeWritableCommandPoll(stalePolls)).toBeUndefined()
-    expect(stalePolls).toHaveLength(0)
+describe('parseArgs', () => {
+  test('preserves explicit empty values', () => {
+    expect(parseArgs(['set-local-proxy-url', '--value', ''])).toEqual({
+      command: 'set-local-proxy-url',
+      options: { value: '' },
+    })
+  })
+
+  test('still rejects a missing value', () => {
+    expect(() => parseArgs(['set-local-proxy-url', '--value'])).toThrow('Missing value for --value')
   })
 })
 
@@ -90,10 +152,10 @@ describe('startupFailureMessage', () => {
 
   test('distinguishes launcher preparation from WebView connection', () => {
     expect(startupFailureMessage({ pid: null }, 120000)).toContain(
-      'the Tauri launcher had not started'
+      'the desktop launcher had not started'
     )
     expect(startupFailureMessage({ pid: 42 }, 120000)).toContain(
-      'the Tauri launcher was still waiting for its WebView'
+      'the desktop launcher was still waiting for its renderer'
     )
   })
 })
@@ -167,4 +229,198 @@ describe('resolveCommandTimeout', () => {
       expect(resolveCommandTimeout(timeout)).toBe(30000)
     }
   )
+})
+
+describe('resolveOptionalBoolean', () => {
+  test('preserves an omitted option', () => {
+    expect(resolveOptionalBoolean(undefined, 'visible')).toBeUndefined()
+  })
+
+  test('parses explicit boolean values', () => {
+    expect(resolveOptionalBoolean('true', 'visible')).toBe(true)
+    expect(resolveOptionalBoolean('false', 'visible')).toBe(false)
+  })
+
+  test('rejects ambiguous values', () => {
+    expect(() => resolveOptionalBoolean('yes', 'visible')).toThrow(
+      '--visible must be "true" or "false"'
+    )
+  })
+})
+
+describe('validateStartOptions', () => {
+  test('accepts the Electron start options', () => {
+    expect(() =>
+      validateStartOptions({
+        'codex-home-initialization': 'true',
+        packaged: 'false',
+        timeout: '180000',
+      })
+    ).not.toThrow()
+  })
+
+  test('rejects the removed desktop runtime option', () => {
+    expect(() => validateStartOptions({ runtime: 'electron' })).toThrow(
+      'Unexpected option for start: --runtime'
+    )
+  })
+
+  test('rejects an invalid packaged option', () => {
+    expect(() => validateStartOptions({ packaged: 'yes' })).toThrow(
+      '--packaged must be "true" or "false"'
+    )
+  })
+})
+
+describe('resolveElectronLaunch', () => {
+  test('launches the Electron development binary from the source application directory', () => {
+    expect(
+      resolveElectronLaunch({
+        packaged: false,
+        sourceBinary: '/electron/Electron',
+      })
+    ).toMatchObject({
+      command: '/electron/Electron',
+      args: ['.'],
+    })
+  })
+
+  test('launches the packaged application without source arguments', () => {
+    expect(
+      resolveElectronLaunch({
+        packaged: true,
+        sourceBinary: '/electron/Electron',
+        platform: 'darwin',
+        arch: 'arm64',
+      })
+    ).toMatchObject({
+      args: [],
+    })
+  })
+})
+
+describe('prepareElectronApp', () => {
+  test.each([
+    [false, 'ai:verify:electron:prepare'],
+    [true, 'ai:verify:electron:build'],
+  ])('runs the required preparation when packaged is %s', async (packaged, script) => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged,
+      environment: {},
+      platform: 'darwin',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith('pnpm', ['run', script], {
+      cwd: expect.any(String),
+      env: { CI: '1' },
+      stdio: 'inherit',
+    })
+  })
+
+  test('uses an explicitly configured packaged app without rebuilding', async () => {
+    const spawnProcess = vi.fn()
+
+    await expect(
+      prepareElectronApp({
+        packaged: true,
+        environment: { WEWORK_ELECTRON_APP_BIN: '/tmp/custom-wework' },
+        spawnProcess,
+      })
+    ).resolves.toBeUndefined()
+
+    expect(spawnProcess).not.toHaveBeenCalled()
+  })
+
+  test('wraps the preparation command for Windows', async () => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged: false,
+      environment: {},
+      platform: 'win32',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith(
+      process.env.ComSpec || 'cmd.exe',
+      ['/c', 'pnpm.cmd', 'run', 'ai:verify:electron:prepare'],
+      expect.objectContaining({
+        env: { CI: '1' },
+        stdio: 'inherit',
+      })
+    )
+  })
+
+  test('preserves an explicitly configured CI value', async () => {
+    const child = new EventEmitter()
+    const spawnProcess = vi.fn(() => child)
+    const result = prepareElectronApp({
+      packaged: false,
+      environment: { CI: 'custom' },
+      platform: 'darwin',
+      spawnProcess,
+    })
+
+    child.emit('exit', 0)
+
+    await expect(result).resolves.toBeUndefined()
+    expect(spawnProcess).toHaveBeenCalledWith(
+      'pnpm',
+      ['run', 'ai:verify:electron:prepare'],
+      expect.objectContaining({
+        env: { CI: 'custom' },
+      })
+    )
+  })
+
+  test('reports a failed packaged app build', async () => {
+    const child = new EventEmitter()
+    const result = prepareElectronApp({
+      packaged: true,
+      environment: {},
+      platform: 'darwin',
+      spawnProcess: () => child,
+    })
+    const expectation = expect(result).rejects.toThrow('Electron package build exited with code 1')
+
+    child.emit('exit', 1)
+
+    await expectation
+  })
+})
+
+describe('resolveHostTarget', () => {
+  test.each([
+    ['darwin', 'arm64', 'aarch64-apple-darwin'],
+    ['darwin', 'x64', 'x86_64-apple-darwin'],
+    ['linux', 'x64', 'x86_64-unknown-linux-gnu'],
+    ['win32', 'x64', 'x86_64-pc-windows-msvc'],
+  ])('maps %s/%s to %s', (platform, arch, target) => {
+    expect(resolveHostTarget(platform, arch)).toBe(target)
+  })
+
+  test('rejects unsupported source platforms', () => {
+    expect(() => resolveHostTarget('win32', 'arm64')).toThrow(
+      'Unsupported Electron source platform: win32/arm64'
+    )
+  })
+})
+
+describe('buildSourceRuntimeEnvironment', () => {
+  test('lets Electron provide Node without preparing packaged Node resources', async () => {
+    const environment = await buildSourceRuntimeEnvironment('darwin', 'arm64')
+
+    expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
+    expect(environment.WEWORK_EXECUTOR_PATH).toContain('/debug/wegent-executor')
+    expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
+  })
 })

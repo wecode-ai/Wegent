@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+
 const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
 const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
 const FIRST_PROMPT = 'SPLIT LEFT TASK'
@@ -362,13 +364,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         })
         return true
       }
-      if (
-        request.method === 'POST' &&
-        url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-      ) {
-        json(response, 200, null)
-        return true
-      }
       if (request.method === 'GET' && url.pathname === '/api/v1/cloud-projects') {
         json(response, 200, { items: [] })
         return true
@@ -436,11 +431,73 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
       await verifyMultilineComposerCaret(control, captureScreenshot)
       const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
+      const firstTaskId = firstTaskRow.replace('runtime-local-task-row-', '')
+      const completedTaskSnapshot = await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === firstTaskId &&
+          snapshot.workbench?.isBootstrapping === false,
+        'The completed task did not expose its runtime address',
+        uiTimeoutMs
+      )
+      const firstTaskDeviceId = completedTaskSnapshot.workbench.currentRuntimeTask.deviceId
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
+      const restoredPaneId = 'pane-e2e-completed-task'
+      const restoredPaneKey = `runtime:${firstTaskDeviceId}:${firstTaskId}`
+      const restoredSplitState = JSON.stringify({
+        version: 3,
+        state: {
+          version: 3,
+          groups: [],
+          activeView: {
+            type: 'single',
+            layout: {
+              version: 2,
+              root: {
+                id: restoredPaneId,
+                type: 'pane',
+                paneKey: restoredPaneKey,
+              },
+              focusedPaneId: restoredPaneId,
+            },
+          },
+        },
+      })
+      assert.equal(
+        await control.command('setLocalStorageItem', 'body', {
+          value: JSON.stringify({
+            key: 'wework:workbench-split-groups:v3:fixed-task',
+            value: restoredSplitState,
+          }),
+        }),
+        restoredSplitState,
+        'The completed task pane state could not be persisted before reload'
+      )
+
+      const readyCountBeforeCompletedTaskReload = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await control.awaitReadyAfter(readyCountBeforeCompletedTaskReload)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.isBootstrapping === false &&
+          Number(snapshot.workbench?.runtimeWorkSummary?.totalTasks ?? 0) >= 1,
+        'Reloading did not finish hydrating the completed task',
+        uiTimeoutMs
+      )
+      await assertPaneConversation(control, PANE_SELECTOR, `${FIRST_PROMPT}_COMPLETE`)
+      assert.equal(
+        Number(await control.command('getElementCount', COMPOSER)),
+        0,
+        'The startup blank pane replaced the persisted completed task'
+      )
+      await captureScreenshot(control, '00a-completed-task-restored-from-blank-startup.png', 'body')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER, { stableMs: 500 })
       const secondTaskRow = await createTask(control, SECOND_PROMPT, taskTimeoutMs)
-      const firstTaskId = firstTaskRow.replace('runtime-local-task-row-', '')
       const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
 
       await expandProject(control, uiTimeoutMs)
@@ -753,7 +810,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       const readyCountBeforeReload = control.readyCount
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCountBeforeReload)
-      await control.command('waitFor', PANE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.isBootstrapping === false &&
+          Number(snapshot.workbench?.runtimeWorkSummary?.totalTasks ?? 0) >= 2,
+        'Reloading did not finish bootstrapping both split tasks',
+        uiTimeoutMs
+      )
+      await waitForElementCount(control, PANE_SELECTOR, 2, uiTimeoutMs)
       assert.equal(
         Number(await control.command('getElementCount', PANE_SELECTOR)),
         2,

@@ -4,6 +4,7 @@
 
 """Resolve the only live capacity truth for one Runtime installation."""
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.services.device.local_provider import LocalDeviceProvider
 from app.services.device.runtime_route import resolve_runtime_route_identity
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,12 +85,67 @@ def get_runtime_capacity_sync(
 ) -> RuntimeCapacity | None:
     route = _runtime_route(db, owner_user_id, device_id)
     if route is None:
+        logger.debug(
+            "runtime_capacity_unavailable reason=route_unresolved "
+            "owner_user_id=%s device_id=%s",
+            owner_user_id,
+            device_id,
+        )
         return None
     runtime_device_id, expected_instance_id = route
     online_info = cache_manager.get_sync(
         LocalDeviceProvider.generate_online_key(owner_user_id, runtime_device_id)
     )
-    return _parse_capacity(online_info, expected_instance_id)
+    capacity = _parse_capacity(online_info, expected_instance_id)
+    if capacity is None:
+        reported_instance_id = (
+            str(online_info.get("runtime_instance_id") or "").strip()
+            if isinstance(online_info, dict)
+            else ""
+        )
+        logger.debug(
+            "runtime_capacity_unavailable reason=invalid_snapshot "
+            "owner_user_id=%s device_id=%s runtime_device_id=%s "
+            "expected_instance_id=%s reported_instance_id=%s "
+            "online_info_type=%s capacity_type=%s",
+            owner_user_id,
+            device_id,
+            runtime_device_id,
+            expected_instance_id,
+            reported_instance_id,
+            type(online_info).__name__,
+            (
+                type(online_info.get("runtime_capacity")).__name__
+                if isinstance(online_info, dict)
+                else "missing"
+            ),
+        )
+    return capacity
+
+
+def validate_runtime_capacity_observation_sync(
+    db: Session,
+    *,
+    owner_user_id: int,
+    device_id: str,
+    runtime_instance_id: str,
+    runtime_capacity: Any,
+) -> RuntimeCapacity | None:
+    """Validate a pull-time capacity snapshot against the canonical route."""
+
+    route = _runtime_route(db, owner_user_id, device_id)
+    if route is None:
+        return None
+    _, expected_instance_id = route
+    if runtime_instance_id != expected_instance_id:
+        return None
+    return _parse_capacity(
+        {
+            "runtime_instance_id": runtime_instance_id,
+            "runtime_capacity": runtime_capacity,
+        },
+        expected_instance_id,
+    )
 
 
 async def get_runtime_capacity(

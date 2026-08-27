@@ -48,7 +48,7 @@ import {
   resultDir,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   waitForLogPattern,
   waitForMacosSleepAssertion,
   withTimeout,
@@ -64,6 +64,10 @@ async function waitForProcessExit(processId, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(message)
+}
+
+function desktopWindowLogPath() {
+  return join(resultDir, 'app.log')
 }
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
@@ -122,6 +126,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
 
 async function verifyBackgroundTaskWindowLifecycle({
   app,
+  appBundlePath,
   appIdentifier,
   composerSelector,
   control,
@@ -202,9 +207,9 @@ async function verifyBackgroundTaskWindowLifecycle({
       controlClientIdBeforeClose,
       'The original WebView did not register a control client ID'
     )
-    const readyEvidenceBeforeClose = await waitForExecutorReadyEvidence(executorLogPath)
+    const readyEvidenceBeforeClose = await waitForExecutorRuntimeEvidence(control, executorLogPath)
     const executorProcessId = readyEvidenceBeforeClose.processIds.at(-1)
-    assert.ok(executorProcessId, 'The executor stdio-ready log did not include a process ID')
+    assert.ok(executorProcessId, 'The desktop runtime did not include an executor process ID')
     assert.equal(processIsAlive(app.pid), true, 'The Wework process was not alive before close')
     assert.equal(
       processIsAlive(executorProcessId),
@@ -218,7 +223,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('click', '[data-testid="runtime-task-close-confirm-button"]')
-    await waitForLogPattern(join(resultDir, `wework-tauri-${app.pid}.log`), /windowWillClose:/)
+    await waitForLogPattern(desktopWindowLogPath(app.pid), /windowWillClose:/)
     assert.equal(processIsAlive(app.pid), true, 'Closing to tray terminated the Wework process')
     assert.equal(
       processIsAlive(executorProcessId),
@@ -236,7 +241,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       assertionIds: backgroundAssertionIds,
     })
 
-    await reactivateMacApplication(appIdentifier)
+    await reactivateMacApplication(appIdentifier, appBundlePath)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,
@@ -260,7 +265,7 @@ async function verifyBackgroundTaskWindowLifecycle({
       'A closed WebView control client was able to steal a replacement WebView command'
     )
     await reopenedTaskWait
-    const readyEvidenceAfterReopen = await waitForExecutorReadyEvidence(executorLogPath)
+    const readyEvidenceAfterReopen = await waitForExecutorRuntimeEvidence(control, executorLogPath)
     assert.deepEqual(
       readyEvidenceAfterReopen.processIds,
       [executorProcessId],
@@ -577,7 +582,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     `${JSON.stringify({ before: cacheBeforeArchive, after: cacheAfterArchive }, null, 2)}\n`,
     'utf8'
   )
-  await reopenCurrentTurnNavigationTask(
+  const activeApp = await reopenCurrentTurnNavigationTask(
     control,
     composerSelector,
     restartDesktopApp,
@@ -587,12 +592,13 @@ async function verifyBackgroundTaskWindowLifecycle({
   await verifyTurnNavigationTracksVisibleTurnMessages(control)
   if (process.platform === 'darwin') {
     setPhase('quit-after-close-to-tray')
-    const appProcessId = app.pid
-    const tauriLogPath = join(resultDir, `wework-tauri-${appProcessId}.log`)
-    const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
+    const appProcessId = activeApp.pid
+    const desktopLogPath = desktopWindowLogPath(appProcessId)
+    const desktopLogLengthBeforeClose = (await readFile(desktopLogPath, 'utf8').catch(() => ''))
+      .length
     await control.command('closeMainWindowToTray', 'body')
-    await waitForLogPattern(tauriLogPath, /windowWillClose:/, {
-      fromOffset: tauriLogLengthBeforeClose,
+    await waitForLogPattern(desktopLogPath, /windowWillClose:/, {
+      fromOffset: desktopLogLengthBeforeClose,
     })
     assert.equal(
       processIsAlive(appProcessId),
@@ -605,13 +611,51 @@ async function verifyBackgroundTaskWindowLifecycle({
       appProcessId,
       'Wework remained alive after quitting from macOS while the main window was closed to tray'
     )
+    const forcedExitApp = await restartDesktopApp()
+    const runtimeDiagnostics = JSON.parse(
+      await control.command('getDesktopRuntimeDiagnostics', 'body')
+    )
+    const forcedExitDshPid = Number(runtimeDiagnostics.coreDshPid)
+    const forcedExitExecutorPid = Number(runtimeDiagnostics.executorPid)
+    assert.ok(forcedExitDshPid > 0, 'Core DSH PID was unavailable before forced Electron exit')
+    assert.ok(forcedExitExecutorPid > 0, 'Executor PID was unavailable before forced Electron exit')
+
+    process.kill(forcedExitApp.pid, 'SIGKILL')
+    await Promise.all([
+      waitForProcessExit(forcedExitApp.pid, 'Wework remained alive after the forced Electron exit'),
+      waitForProcessExit(
+        forcedExitDshPid,
+        'Core DSH remained alive after its Electron owner exited'
+      ),
+      waitForProcessExit(
+        forcedExitExecutorPid,
+        'Executor remained alive after its Electron owner exited'
+      ),
+    ])
+    await writeFile(
+      join(resultDir, 'forced-electron-exit-lifecycle.json'),
+      `${JSON.stringify(
+        {
+          appProcessId: forcedExitApp.pid,
+          coreDshProcessId: forcedExitDshPid,
+          executorProcessId: forcedExitExecutorPid,
+          appAlive: processIsAlive(forcedExitApp.pid),
+          coreDshAlive: processIsAlive(forcedExitDshPid),
+          executorAlive: processIsAlive(forcedExitExecutorPid),
+        },
+        null,
+        2
+      )}\n`
+    )
     await restartDesktopApp()
   }
   return taskRowTestId
 }
 
 async function verifyPopoutWindowLifecycle(control, composerSelector) {
-  await control.command('showPopoutWindow', 'body')
+  await control.command('showPopoutWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   try {
     if (process.platform === 'darwin') {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 2_000))
@@ -628,7 +672,9 @@ async function verifyPopoutWindowLifecycle(control, composerSelector) {
     await control.command('dismissPopoutWindow', 'body')
   }
   const reopenStartedAt = Date.now()
-  await control.command('showPopoutWindow', 'body')
+  await control.command('showPopoutWindow', 'body', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   const reopenDurationMs = Date.now() - reopenStartedAt
   try {
     assert.ok(
@@ -681,6 +727,7 @@ async function attachAndSendOnlyFile(control, composerSelector) {
 
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
+  appBundlePath,
   appIdentifier,
   composerSelector,
   control,
@@ -748,13 +795,14 @@ async function verifyAttachmentOnlySidebarLifecycle({
 
   if (process.platform === 'darwin') {
     const readyCountBeforeClose = control.readyCount
-    const tauriLogPath = join(resultDir, `wework-tauri-${app.pid}.log`)
-    const tauriLogLengthBeforeClose = (await readFile(tauriLogPath, 'utf8').catch(() => '')).length
+    const desktopLogPath = desktopWindowLogPath(app.pid)
+    const desktopLogLengthBeforeClose = (await readFile(desktopLogPath, 'utf8').catch(() => ''))
+      .length
     await control.command('closeMainWindowToTray', 'body')
-    await waitForLogPattern(tauriLogPath, /windowWillClose:/, {
-      fromOffset: tauriLogLengthBeforeClose,
+    await waitForLogPattern(desktopLogPath, /windowWillClose:/, {
+      fromOffset: desktopLogLengthBeforeClose,
     })
-    await reactivateMacApplication(appIdentifier)
+    await reactivateMacApplication(appIdentifier, appBundlePath)
     await withTimeout(
       control.awaitReadyAfter(readyCountBeforeClose),
       WORKBENCH_READY_TIMEOUT_MS,

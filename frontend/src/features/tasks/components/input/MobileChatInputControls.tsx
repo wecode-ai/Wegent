@@ -15,8 +15,9 @@ import React, {
 } from 'react'
 import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
-import ModelSelector, { type Model } from '../selector/ModelSelector'
+import type { Model } from '../selector/ModelSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
+import VideoSettingsPopover from '../selector/VideoSettingsPopover'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
 import MobileRepositorySelector from '../selector/MobileRepositorySelector'
 import MobileBranchSelector from '../selector/MobileBranchSelector'
@@ -48,7 +49,7 @@ import SkillSelectorPopover from '../selector/SkillSelectorPopover'
 import { getChatSendState } from './chatSendState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
-import type { VideoGenerationMode } from '@/apis/models'
+import type { AspectRatioOption, ResolutionOption, VideoGenerationMode } from '@/apis/models'
 
 const MOBILE_ACTION_MENU_WIDTH = 224
 const MOBILE_ACTION_MENU_MARGIN = 12
@@ -107,6 +108,19 @@ export interface MobileChatInputControlsProps {
   selectedVideoModel?: Model | null
   onVideoModelChange?: (model: Model) => void
   isVideoModelsLoading?: boolean
+  showVideoControlsInChat?: boolean
+  selectedResolution?: string
+  onResolutionChange?: (resolution: string) => void
+  availableResolutions?: string[]
+  resolutionOptions?: ResolutionOption[]
+  selectedRatio?: string
+  onRatioChange?: (ratio: string) => void
+  availableRatios?: string[]
+  ratioOptions?: AspectRatioOption[]
+  selectedDuration?: number
+  onDurationChange?: (duration: number) => void
+  availableDurations?: number[]
+  hideDurationSelector?: boolean
 
   // State flags
   isStreaming: boolean
@@ -183,6 +197,19 @@ export function MobileChatInputControls({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
+  showVideoControlsInChat = false,
+  selectedResolution = '720p',
+  onResolutionChange,
+  availableResolutions,
+  resolutionOptions,
+  selectedRatio = '16:9',
+  onRatioChange,
+  availableRatios,
+  ratioOptions,
+  selectedDuration = 5,
+  onDurationChange,
+  availableDurations,
+  hideDurationSelector = false,
   isStreaming,
   isStopping,
   hasMessages,
@@ -213,7 +240,8 @@ export function MobileChatInputControls({
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
-  const isGenerationMode = taskType === 'image' || taskType === 'video'
+  const isVideoMode = taskType === 'video' || showVideoControlsInChat
+  const isGenerationMode = taskType === 'image' || isVideoMode
   const showAttachmentAction = isGenerationMode
     ? selectedVideoGenerationMode !== 'first_last_frame'
     : supportsAttachments(selectedTeam)
@@ -241,7 +269,11 @@ export function MobileChatInputControls({
     teamRequiresWorkspace(selectedTeam) &&
     effectiveRequiresWorkspace !== false
   const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
-  const hasSecondaryActions = showAttachmentAction || showChatContexts || showSkillAction
+  const showVideoSettings = Boolean(
+    isVideoMode && onResolutionChange && onRatioChange && onDurationChange
+  )
+  const hasSecondaryActions =
+    showAttachmentAction || showChatContexts || showSkillAction || showVideoSettings
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
       setMoreMenuOpen(false)
@@ -460,6 +492,24 @@ export function MobileChatInputControls({
           >
             {hasSecondaryActions && (
               <div className="flex flex-col">
+                {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
+                  <VideoSettingsPopover
+                    selectedRatio={selectedRatio}
+                    onRatioChange={onRatioChange}
+                    availableRatios={availableRatios ?? ['16:9', '9:16', '1:1']}
+                    ratioOptions={ratioOptions}
+                    selectedDuration={selectedDuration}
+                    onDurationChange={onDurationChange}
+                    availableDurations={availableDurations ?? [5, 10]}
+                    selectedResolution={selectedResolution}
+                    onResolutionChange={onResolutionChange}
+                    availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
+                    resolutionOptions={resolutionOptions}
+                    disabled={isStreaming}
+                    showDuration={!hideDurationSelector}
+                    triggerVariant="menu-item"
+                  />
+                )}
                 {showAttachmentAction && (
                   <AttachmentButton
                     onFileSelect={handleAttachmentFileSelect}
@@ -552,7 +602,7 @@ export function MobileChatInputControls({
 
       {/* Right: Agent selector, Model selector, Send button */}
       <div className="ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden">
-        {taskType === 'video' && onVideoGenerationModeChange && (
+        {isVideoMode && onVideoGenerationModeChange && (
           <VideoGenerationModeSelector
             modes={videoGenerationModes}
             value={selectedVideoGenerationMode}
@@ -560,14 +610,14 @@ export function MobileChatInputControls({
             disabled={isStreaming}
           />
         )}
-        {taskType === 'video' && onVideoModelChange && (
+        {isVideoMode && onVideoModelChange && (
           <div className="flex-1 min-w-0 overflow-hidden">
-            <ModelSelector
+            <MobileModelSelector
               selectedModel={selectedVideoModel ?? null}
               setSelectedModel={model => model && onVideoModelChange(model)}
               forceOverride={false}
               setForceOverride={() => {}}
-              selectedTeam={null}
+              selectedTeam={selectedTeam}
               disabled={isStreaming}
               isLoading={isVideoModelsLoading}
               modelCategoryType="video"

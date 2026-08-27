@@ -88,9 +88,11 @@ export interface UnifiedMessage {
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
+      model_display_name?: string
       resolution?: string
       ratio?: string
       duration?: number
+      generation_mode_id?: string
     }
   }
   sources?: SourceReference[]
@@ -246,6 +248,11 @@ export type Event =
       sources?: UnifiedMessage['sources']
       hasError?: boolean
       errorMessage?: string
+    }
+  | {
+      type: 'CHAT_BLOCK_UPDATED'
+      subtaskId: number
+      block: Partial<MessageBlock> & { id: string }
     }
   | { type: 'CHAT_ERROR'; subtaskId: number; error: string; messageId?: number; errorType?: string }
   | { type: 'CHAT_CANCELLED'; subtaskId: number }

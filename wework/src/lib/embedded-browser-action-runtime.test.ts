@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 const actionScript = readFileSync(
-  join(process.cwd(), 'src-tauri/src/embedded_browser_action.js'),
+  join(process.cwd(), 'electron/src/host/browser-runtime/embedded_browser_action.js'),
   'utf8'
 )
 

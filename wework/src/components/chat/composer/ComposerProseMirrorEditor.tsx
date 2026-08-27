@@ -20,6 +20,7 @@ import { Slice, type Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, EditorState, Plugin, TextSelection } from 'prosemirror-state'
 import { Decoration, DecorationSet, EditorView } from 'prosemirror-view'
 import type { PluginReference } from '@/features/plugins/pluginNavigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { ComposerMentionNodeView } from './ComposerMentionNodeView'
 import { ComposerLinkNodeView } from './ComposerLinkNodeView'
 import type { ComposerLinkPayload } from './composerLinks'
@@ -74,12 +75,14 @@ interface ComposerProseMirrorEditorProps {
   ) => void
   onClick: () => void
   onFocus: () => void
+  onReady?: () => void
   disabled?: boolean
   placeholder: string
   testId: string
   rows: number
   textareaRef: RefObject<HTMLElement | null>
   className: string
+  nativeEmptyCaret?: boolean
 }
 
 const EXTERNAL_VALUE_META = 'composer-external-value'
@@ -91,6 +94,7 @@ export const ComposerProseMirrorEditor = forwardRef<
 >(function ComposerProseMirrorEditor(props, forwardedRef) {
   const mountRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const pendingFocusRef = useRef(false)
   const textareaRefRef = useRef(props.textareaRef)
   const callbacksRef = useRef(props)
   const internalValueRef = useRef(props.value)
@@ -110,7 +114,13 @@ export const ComposerProseMirrorEditor = forwardRef<
         return viewRef.current?.dom ?? null
       },
       focus() {
-        viewRef.current?.focus()
+        const view = viewRef.current
+        if (!view) {
+          pendingFocusRef.current = true
+          return
+        }
+        pendingFocusRef.current = false
+        view.focus()
       },
       getSnapshot() {
         return viewRef.current ? readComposerSnapshot(viewRef.current.state) : emptySnapshot()
@@ -160,7 +170,13 @@ export const ComposerProseMirrorEditor = forwardRef<
                 if (
                   !state.selection.empty ||
                   !state.selection.$head.parent.isTextblock ||
-                  state.selection.$head.parent.content.size > 0
+                  state.selection.$head.parent.content.size > 0 ||
+                  // WKWebView and explicitly native composers need the only
+                  // empty text position to remain native so programmatic focus
+                  // can start a platform text input session.
+                  ((!isElectronRuntime() || callbacksRef.current.nativeEmptyCaret) &&
+                    state.doc.childCount === 1 &&
+                    state.doc.firstChild?.content.size === 0)
                 ) {
                   return null
                 }
@@ -400,6 +416,11 @@ export const ComposerProseMirrorEditor = forwardRef<
     ;(textareaRefRef.current as { current: HTMLElement | null }).current = view.dom
     defineComposerValueProperty(view)
     callbacksRef.current.onSnapshotChange(readComposerSnapshot(view.state))
+    callbacksRef.current.onReady?.()
+    if (pendingFocusRef.current) {
+      pendingFocusRef.current = false
+      view.focus()
+    }
 
     return () => {
       if (inputFrameRequest !== null) window.cancelAnimationFrame(inputFrameRequest)

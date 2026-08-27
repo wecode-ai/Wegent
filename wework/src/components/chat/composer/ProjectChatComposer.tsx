@@ -30,9 +30,10 @@ import {
   type ComposerTextareaHandle,
 } from './ComposerTextarea'
 import { ProjectWorkBar } from './ProjectWorkBar'
+import { resolveBranchNameGenerationSource } from '@/lib/branch-name'
 import { useAutoResizeTextarea } from './useAutoResizeTextarea'
 import { debugComposerEvent, textMetrics } from './composerDebug'
-import type { QuickPhrase } from '@/tauri/appPreferences'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import {
   resolveDataTransferWorkspacePaths,
@@ -60,6 +61,7 @@ interface ProjectChatComposerProps {
   disabledReason?: string
   placeholder: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -109,6 +111,7 @@ interface ProjectChatComposerProps {
   isStreaming?: boolean
   onPause?: () => void
   showWorkspaceMenu?: boolean
+  collapseWhenIdle?: boolean
   inputLeadingContext?: ReactNode
   /** Called when Backspace is pressed on an empty composer (e.g. dismiss Plugin Creator). */
   onDismissInputLeadingContext?: () => void
@@ -138,6 +141,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       disabledReason,
       placeholder,
       inputTestId,
+      nativeEmptyCaret,
       submitButtonTestId,
       models,
       selectedModel,
@@ -187,6 +191,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       isStreaming = false,
       onPause,
       showWorkspaceMenu,
+      collapseWhenIdle = false,
       inputLeadingContext,
       onDismissInputLeadingContext,
       toolbarLeadingContext,
@@ -348,6 +353,11 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
             onListBranches={projectWork.onListBranches}
             onCheckoutBranch={projectWork.onCheckoutBranch}
             onCreateBranch={projectWork.onCreateBranch}
+            onGenerateBranchName={projectWork.onGenerateBranchName}
+            branchNameSource={resolveBranchNameGenerationSource(
+              value,
+              projectWork.branchNameSource
+            )}
             worktreeBranch={projectWork.worktreeBranch}
             onWorktreeBranchChange={projectWork.onWorktreeBranchChange}
             showClearButton={projectWork.showProjectClearButton}
@@ -368,6 +378,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           className={cn(
             'relative z-10 flex min-h-[76px] w-full flex-col rounded-[26px] border bg-background px-4 pb-1.5 pt-2 transition-colors',
             styles.form,
+            collapseWhenIdle && styles.collapseWhenIdle,
             isDraggingFiles ? 'border-focus ring-2 ring-focus/20' : 'border-border/45'
           )}
           onClickCapture={() => setShortComposerExpanded(true)}
@@ -436,6 +447,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
           <ComposerTextarea
             ref={composerRef}
             testId={inputTestId}
+            nativeEmptyCaret={nativeEmptyCaret}
             textareaRef={textareaRef}
             value={value}
             onChange={handleComposerChange}

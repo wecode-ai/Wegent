@@ -54,7 +54,7 @@ export default function TaskHistorySection({
   onSelectMultiple,
 }: TaskHistorySectionProps) {
   const { t } = useTranslation()
-  const { projectTaskIds, projects } = useProjectContext()
+  const { projectTaskIds } = useProjectContext()
 
   // Filter out tasks that are already in projects from history lists.
   const filteredPersonalTasks = useMemo(
@@ -66,13 +66,7 @@ export default function TaskHistorySection({
     [groupTasks, projectTaskIds]
   )
 
-  const hasProjectsWithTasks = projects.some(project => project.tasks && project.tasks.length > 0)
-
-  if (
-    filteredGroupTasks.length === 0 &&
-    filteredPersonalTasks.length === 0 &&
-    !hasProjectsWithTasks
-  ) {
+  if (isSearchResult && filteredGroupTasks.length === 0 && filteredPersonalTasks.length === 0) {
     return (
       <div className="text-center py-8 text-xs text-text-muted">{t('common:tasks.no_tasks')}</div>
     )

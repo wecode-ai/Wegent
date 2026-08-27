@@ -273,6 +273,8 @@ def _generate_params_to_dict(generate_params: Any) -> Optional[dict[str, Any]]:
         "resolution": getattr(generate_params, "resolution", None),
         "ratio": getattr(generate_params, "ratio", None),
         "duration": getattr(generate_params, "duration", None),
+        "model": getattr(generate_params, "model", None),
+        "model_display_name": getattr(generate_params, "model_display_name", None),
         "generation_mode_id": getattr(generate_params, "generation_mode_id", None),
         "size": getattr(generate_params, "size", None),
     }

@@ -7,7 +7,7 @@ use std::{
     future::Future,
     io::{Cursor, Write},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard, OnceLock},
     time::Duration,
 };
 
@@ -39,6 +39,43 @@ use wegent_executor::{
 
 const TEST_PROCESS_TIMEOUT_SECONDS: u64 = 3600;
 
+struct EnvLockGuard {
+    _guard: MutexGuard<'static, ()>,
+}
+
+async fn env_lock() -> EnvLockGuard {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    EnvLockGuard {
+        _guard: LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment lock should be available"),
+    }
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = &self.previous {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
 #[tokio::test]
 async fn local_backend_registers_all_python_local_device_events() {
     let transport = RecordingTransport::default();
@@ -68,6 +105,7 @@ async fn local_backend_registers_all_python_local_device_events() {
         "terminal:resize",
         "terminal:close",
         "runtime:rpc",
+        "runtime.tasks.available",
         "device:upgrade",
         "device:run_extension",
     ] {
@@ -132,6 +170,14 @@ async fn capability_sync_event_returns_ack_and_heartbeat_uses_reporter() {
 
 #[tokio::test]
 async fn default_local_backend_runner_wires_capability_sync_and_code_server_session() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let codex_home = executor_home.path().join("codex");
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
     let transport = RecordingTransport::default();
     let config = local_backend_config();
     let session_dir = config.local_workspace_root.join("code-session");

@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -53,6 +53,7 @@ mod collection;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod plugin_install;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
@@ -84,13 +85,18 @@ use super::{
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
-        codex_thread_in_progress_turn_id, runtime_status_is_running, search_result_item,
-        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
+        codex_thread_in_progress_turn_id, codex_thread_terminal_task_status,
+        runtime_status_is_running, search_result_item, workspace_response, RuntimeTaskLink,
+        RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
-        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
-        user_message_presentations,
+        append_completed_transcript_messages, append_runtime_handle_message,
+        append_runtime_handle_user_message_presentation, append_unique_transcript_messages,
+        bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
+        clear_completed_transcript_messages, clear_runtime_handle_messages,
+        clear_transcript_snapshot_messages, completed_transcript_messages,
+        set_runtime_handle_messages, set_transcript_snapshot_messages,
+        transcript_snapshot_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -101,10 +107,10 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
-        restore_cloud_project_id, restore_origin, runtime_task_id, runtime_task_title,
-        set_runtime_task_title, string_field, timestamp_ms_field, workspace_group_path,
-        workspace_path,
+        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
+        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
+        timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
 };
@@ -116,6 +122,7 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
@@ -144,7 +151,6 @@ fn worktree_error_code(error: &str) -> &'static str {
         "worktree_git_common_dir_unwritable",
         "worktree_ref_not_found",
         "worktree_target_conflict",
-        "worktree_device_mismatch",
         "worktree_persistent_storage_unverified",
     ]
     .into_iter()
@@ -163,7 +169,6 @@ struct SpawnTurnRequest {
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
     resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
 }
 
@@ -334,18 +339,30 @@ struct CodexModelProviderInfo {
 }
 
 fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let configured_provider = crate::agents::configured_inference_model_provider();
+    current_codex_model_provider(config_response, &configured_provider)
+}
+
+fn current_codex_model_provider(
+    config_response: &Value,
+    configured_provider: &str,
+) -> CodexModelProviderInfo {
     let config = config_response
         .get("config")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let current_provider = string_from_map(&config, "modelProvider")
+    let runtime_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
                 && provider != "wework-catalog"
-        })
-        .unwrap_or_else(crate::agents::configured_inference_model_provider);
+        });
+    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
+        configured_provider.to_owned()
+    } else {
+        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
+    };
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -444,8 +461,7 @@ pub struct RuntimeWorkRpcHandler {
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
-    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
-    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
+    active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
@@ -480,13 +496,14 @@ struct WorktreeReconciliationState {
     last_attempt: Option<Instant>,
 }
 
-struct ActiveTurnCancellation {
+struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
     managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    codex_turn: Option<ActiveCodexTurn>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -509,6 +526,7 @@ struct ActiveCodexTurn {
 
 #[derive(Clone)]
 struct ActiveCodexTranscriptItems {
+    thread_id: String,
     turn_id: String,
     items: Vec<Value>,
 }
@@ -623,8 +641,7 @@ impl RuntimeWorkRpcHandler {
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
-            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
-            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
+            active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
@@ -723,16 +740,21 @@ impl RuntimeWorkRpcHandler {
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
         if !matches!(
             method,
-            "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
+            "runtime.tasks.running_count"
+                | "runtime.worktrees.capabilities"
+                | "runtime.worktrees.preflight"
         ) && self.reconcile_worktrees_once().await
         {
             self.resume_persisted_turns().await;
         }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
+            "runtime.tasks.running_count" => Ok(self.running_task_count()),
+            "runtime.tasks.status.replay" => self.replay_task_statuses(payload).await,
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
@@ -784,6 +806,8 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await
@@ -863,6 +887,11 @@ impl RuntimeWorkRpcHandler {
             )),
         }
     }
+}
+
+fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
 }
 
 include!("handler/helpers.rs");

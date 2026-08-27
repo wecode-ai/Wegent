@@ -5,6 +5,81 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) async fn replay_task_statuses(&self, payload: Value) -> Result<Value, AppIpcError> {
+        let task_ids = payload
+            .get("taskIds")
+            .or_else(|| payload.get("task_ids"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| AppIpcError::new("bad_request", "taskIds is required"))?;
+        let requested = task_ids
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|task_id| !task_id.is_empty())
+            .collect::<HashSet<_>>();
+        if requested.is_empty() {
+            return Err(AppIpcError::new(
+                "bad_request",
+                "taskIds must contain at least one task",
+            ));
+        }
+
+        let links = self.collect_links(false).await;
+        let mut replayed = Vec::new();
+        for link in links {
+            if !requested.contains(link.local_task_id.as_str()) {
+                continue;
+            }
+            let request = runtime_event_request_from_link(&link);
+            let normalized_status = link.status.trim().to_lowercase();
+            let normalized_turn_status = link
+                .turn_status
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase();
+            let (event, status) = if normalized_status == "failed"
+                || normalized_status == "error"
+                || normalized_turn_status == "failed"
+            {
+                ("response.failed", "failed")
+            } else if normalized_status == "cancelled"
+                || normalized_status == "canceled"
+                || normalized_turn_status == "interrupted"
+            {
+                ("response.incomplete", "cancelled")
+            } else if !link.running && link.completed_at.is_some() {
+                ("response.completed", "completed")
+            } else {
+                ("runtime.task.status", "running")
+            };
+            emit_response_event(
+                &self.event_tx,
+                &self.device_id,
+                event,
+                &link.local_task_id,
+                &request,
+                json!({
+                    "status": status,
+                    "replayed": true,
+                    "updatedAt": link.updated_at,
+                    "completedAt": link.completed_at,
+                }),
+            );
+            replayed.push(link.local_task_id);
+        }
+
+        let missing = requested
+            .into_iter()
+            .filter(|task_id| !replayed.iter().any(|replayed_id| replayed_id == task_id))
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "success": true,
+            "replayedTaskIds": replayed,
+            "missingTaskIds": missing,
+        }))
+    }
+
     pub(super) async fn read_codex_recent_turns(&self, thread_id: &str) -> Result<Value, String> {
         load_codex_transcript(
             &self.codex_app_server,
@@ -226,6 +301,58 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| runtime_session_id_from_payload(&payload));
         let running_hint = local_link.as_ref().is_some_and(|link| link.running);
         let local_execution_running = self.is_active_local_task(&local_task_id);
+        if local_execution_running && !refresh {
+            if let Some(link) = local_link
+                .as_ref()
+                .filter(|link| runtime_has_provider_transcript_reader(&link.runtime))
+            {
+                let mut messages = transcript_snapshot_messages(link);
+                append_unique_transcript_messages(
+                    &mut messages,
+                    cached_runtime_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    completed_transcript_messages(link),
+                );
+                append_unique_transcript_messages(
+                    &mut messages,
+                    self.active_codex_transcript_messages(&local_task_id),
+                );
+                if !messages.is_empty() {
+                    let presentation_page_messages = messages.clone();
+                    attach_user_message_presentations_for_page(
+                        &mut messages,
+                        user_message_presentations(link),
+                        &presentation_page_messages,
+                        false,
+                        false,
+                    );
+                    log_runtime_transcript_finished(RuntimeTranscriptLog {
+                        started_at,
+                        local_task_id: &local_task_id,
+                        thread_id: session_id.as_deref().unwrap_or(""),
+                        source: "active_runtime_cache",
+                        refresh,
+                        running_hint,
+                        limit,
+                        before_cursor: before_cursor.as_deref(),
+                        after_cursor: after_cursor.as_deref(),
+                        message_count: messages.len(),
+                        running: true,
+                    });
+                    return Ok(cached_transcript_response(
+                        link,
+                        messages,
+                        None,
+                        true,
+                        limit,
+                        before_cursor.as_deref(),
+                        after_cursor.as_deref(),
+                    ));
+                }
+            }
+        }
         if let Some(link) = local_link.as_ref().filter(|link| {
             link.ephemeral
                 || !runtime_has_provider_transcript_reader(&link.runtime)
@@ -361,6 +488,24 @@ impl RuntimeWorkRpcHandler {
             remove_superseded_transcript_turns(&mut messages, &link.runtime_handle);
         }
         attach_legacy_thread_preview(&mut messages, &thread, page_before_cursor.is_some());
+        if before_cursor.is_none() && after_cursor.is_none() && !include_full_content {
+            let snapshot_changed = local_link.as_ref().is_some_and(|link| {
+                link.thread_id.as_deref() == Some(thread_id.as_str())
+                    && transcript_snapshot_messages(link) != messages
+            });
+            if snapshot_changed {
+                let snapshot_messages = messages.clone();
+                self.store.update_task(&local_task_id, |link| {
+                    if link.thread_id.as_deref() == Some(thread_id.as_str()) {
+                        set_transcript_snapshot_messages(
+                            &mut link.runtime_handle,
+                            &thread_id,
+                            snapshot_messages,
+                        );
+                    }
+                });
+            }
+        }
         let running = local_execution_running || codex_thread_has_in_progress_turn(&thread);
         let message_count = messages.len();
         log_runtime_transcript_finished(RuntimeTranscriptLog {

@@ -199,6 +199,10 @@ async fn runtime_task_forwards_all_local_project_roots_to_codex() {
         .find(|call| call["method"] == "thread/start")
         .expect("thread/start should be recorded");
     assert_eq!(thread_start["params"]["historyMode"], "paginated");
+    assert!(
+        calls.iter().all(|call| call["method"] != "thread/name/set"),
+        "new paginated threads must not use the unsupported legacy name mutation"
+    );
 
     let listed = handler
         .handle_runtime_rpc(json!({
@@ -266,8 +270,13 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude task should be accepted");
     assert_eq!(created["accepted"], true);
     assert_eq!(created["runtime"], "claude_code");
+    let mut runtime_events = recv_events_until(&mut events, |runtime_events| {
+        runtime_events.iter().any(|event| {
+            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
+        })
+    })
+    .await;
     wait_for_text_occurrence_count(&log_path, "CALL\n", 1).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let sent = handler
         .handle_runtime_rpc(json!({
@@ -295,8 +304,16 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
         .expect("Claude follow-up should be accepted");
     assert_eq!(sent["accepted"], true);
     assert_eq!(sent["runtime"], "claude_code");
+    runtime_events.extend(
+        recv_events_until(&mut events, |runtime_events| {
+            runtime_events.iter().any(|event| {
+                event["event"] == "response.completed"
+                    && event["payload"]["runtime"] == "claude_code"
+            })
+        })
+        .await,
+    );
     wait_for_text_occurrence_count(&log_path, "CALL\n", 2).await;
-    wait_until_task_idle(&handler, "claude-task-1").await;
 
     let log = fs::read_to_string(&log_path).expect("Claude args should be logged");
     let calls = log
@@ -337,12 +354,6 @@ async fn claude_runtime_task_uses_conversation_events_and_resumes_follow_up() {
     assert_eq!(messages[2]["role"], "user");
     assert_eq!(messages[3]["role"], "assistant");
 
-    let runtime_events = recv_events_until(&mut events, |runtime_events| {
-        runtime_events.iter().any(|event| {
-            event["event"] == "response.completed" && event["payload"]["runtime"] == "claude_code"
-        })
-    })
-    .await;
     assert!(runtime_events.iter().any(|event| {
         event["event"] == "response.created" && event["payload"]["runtime"] == "claude_code"
     }));
@@ -557,7 +568,7 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
             .is_some()
             && find_runtime_event(runtime_events, "response.block.updated", |event| {
                 let data = &event["payload"]["data"];
-                data["updates"]["content"] == "Inspecting workspace."
+                data["updates"]["content_delta"] == "workspace."
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
@@ -613,8 +624,8 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         process_block_id
     );
     assert_eq!(
-        process_updated["payload"]["data"]["updates"]["content"],
-        "Inspecting workspace."
+        process_updated["payload"]["data"]["updates"]["content_delta"],
+        "workspace."
     );
     assert_eq!(
         process_updated["payload"]["data"]["updates"]["status"],
@@ -946,7 +957,9 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
         .expect("completed turn should fork");
     assert_eq!(forked["accepted"], true);
     assert_eq!(forked["source"]["taskId"], "source-task-1");
+    assert_eq!(forked["source"]["workspacePath"], "/tmp/project");
     assert_eq!(forked["target"]["taskId"], "thread-fork-1");
+    assert_eq!(forked["target"]["workspacePath"], "/tmp/project");
 
     let listed = handler
         .handle_runtime_rpc(json!({"method": "runtime.tasks.list", "payload": {}}))
@@ -1962,6 +1975,148 @@ async fn runtime_tasks_forward_and_accept_mcp_form_elicitation() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_auto_approve_mcp_tool_calls_with_full_access() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-tool-approval-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-tool-approval-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-tool-approval-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_tool_approval(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-tool-approval",
+                "workspacePath": "/tmp/project",
+                "message": "enable auto merge",
+                "executionRequest": {
+                    "task_id": 3003,
+                    "subtask_id": 4003,
+                    "prompt": "enable auto merge",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    wait_until_task_idle(&handler, "local-task-mcp-tool-approval").await;
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["action"] == "accept"
+            && call["result"]["content"].is_null()
+    })
+    .await;
+
+    let mut runtime_events = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        runtime_events.push(event);
+    }
+    assert!(
+        find_runtime_event(&runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_none(),
+        "full access should not surface MCP tool approval as request_user_input"
+    );
+}
+
+#[tokio::test]
+async fn runtime_tasks_auto_approve_legacy_mcp_tool_prompts_with_full_access() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-tool-prompt-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-tool-prompt-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-tool-prompt-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_tool_request_user_input(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-tool-prompt",
+                "workspacePath": "/tmp/project",
+                "message": "read the current board item",
+                "executionRequest": {
+                    "task_id": 3004,
+                    "subtask_id": 4004,
+                    "prompt": "read the current board item",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    wait_until_task_idle(&handler, "local-task-mcp-tool-prompt").await;
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["answers"]["mcp_tool_call_approval_call-board"]["answers"][0]
+                == "Allow"
+    })
+    .await;
+
+    let mut runtime_events = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        runtime_events.push(event);
+    }
+    assert!(
+        find_runtime_event(&runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_none(),
+        "full access should not surface legacy MCP tool approval as request_user_input"
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_unblocks_pending_request_user_input() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2769,6 +2924,94 @@ async fn runtime_tasks_guidance_corrects_a_stale_turn_id_and_retries_once() {
 }
 
 #[tokio::test]
+async fn completed_turn_accepts_follow_up_after_late_guidance_response() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-guidance-completion-race-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-guidance-completion-race-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-guidance-completion-race-log", "jsonl");
+    let steer_release_path = temp_path("runtime-guidance-completion-race-release", "flag");
+    let fake_codex = write_fake_codex_turn_completes_during_steer(&log_path, &steer_release_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-guidance-completion-race",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request(
+                    "first turn",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-guidance-completion-race").await;
+
+    let guidance_handler = handler.clone();
+    let guidance = tokio::spawn(async move {
+        guidance_handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.tasks.guidance",
+                "payload": {
+                    "workspacePath": "/tmp/project",
+                    "taskId": "local-task-guidance-completion-race",
+                    "message": "finish with this guidance",
+                    "clientGuidanceId": "guide-completion-race"
+                }
+            }))
+            .await
+    });
+    wait_for_response_event(&mut events, "response.completed", "turn-1").await;
+    fs::write(&steer_release_path, b"release").expect("steer response should be released");
+    let guided = guidance
+        .await
+        .expect("guidance task should not panic")
+        .expect("guidance should finish after the turn completes");
+    assert_eq!(guided["accepted"], true);
+
+    let follow_up = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.send",
+            "payload": {
+                "workspacePath": "/tmp/project",
+                "taskId": "local-task-guidance-completion-race",
+                "message": "follow up after the visible completion",
+                "executionRequest": codex_execution_request(
+                    "follow up after the visible completion",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("follow-up should return a contract response");
+
+    assert_eq!(
+        follow_up["accepted"], true,
+        "a late guidance response must not restore the completed task's running state: {follow_up}"
+    );
+}
+
+#[tokio::test]
 async fn refreshed_transcript_resumes_the_thread_before_reading_its_snapshot() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -2878,6 +3121,63 @@ async fn refreshed_transcript_reads_without_resuming_an_active_thread() {
         }))
         .await
         .expect("refresh should read the active thread");
+
+    assert_eq!(transcript["success"], true);
+    wait_for_method_count(&log_path, "thread/turns/list", 1).await;
+    let calls = read_json_lines(&log_path);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call["method"] == "thread/resume")
+            .count(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn active_transcript_without_a_snapshot_reads_provider_history() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-active-transcript-no-snapshot-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-active-transcript-no-snapshot-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-active-transcript-no-snapshot-log", "jsonl");
+    let fake_codex = write_fake_codex_hanging_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-active-transcript-no-snapshot",
+                "workspacePath": "/tmp/project",
+                "message": "first turn",
+                "executionRequest": codex_execution_request("first turn", "/tmp/project", "gpt-5.5")
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    wait_until_task_running(&handler, "local-task-active-transcript-no-snapshot").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let transcript = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.transcript",
+            "payload": {
+                "taskId": "local-task-active-transcript-no-snapshot",
+                "workspacePath": "/tmp/project"
+            }
+        }))
+        .await
+        .expect("active transcript should restore provider history");
 
     assert_eq!(transcript["success"], true);
     wait_for_method_count(&log_path, "thread/turns/list", 1).await;
@@ -3839,6 +4139,24 @@ fn write_fake_codex_mcp_elicitation(log_path: &Path) -> PathBuf {
     )
 }
 
+fn write_fake_codex_mcp_tool_approval(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-tool-approval",
+        r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"GitHub","mode":"form","message":"Allow GitHub to enable pull request auto-merge?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session"]}}}"#,
+        0,
+    )
+}
+
+fn write_fake_codex_mcp_tool_request_user_input(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-tool-request-user-input",
+        r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"call-board","questions":[{"id":"mcp_tool_call_approval_call-board","header":"Approve app tool call?","question":"Allow the wework_space MCP server to run tool \"get_board_item\"?","options":[{"label":"Allow","description":"Run the tool and continue."},{"label":"Allow for this session","description":"Run the tool and remember this choice for this session."},{"label":"Cancel","description":"Cancel this tool call."}]}],"autoResolutionMs":null}}"#,
+        0,
+    )
+}
+
 fn write_fake_codex_interaction(
     log_path: &Path,
     executable_prefix: &str,
@@ -3983,6 +4301,75 @@ fn write_fake_codex_hanging_turn(log_path: &Path) -> PathBuf {
 
 fn write_fake_codex_hanging_turn_with_steer_mismatch(log_path: &Path) -> PathBuf {
     write_fake_codex_hanging_turn_inner(log_path, true)
+}
+
+fn write_fake_codex_turn_completes_during_steer(
+    log_path: &Path,
+    steer_release_path: &Path,
+) -> PathBuf {
+    let path = temp_path("fake-codex-guidance-completion-race", "sh");
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_file(steer_release_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+STEER_RELEASE_PATH='{}'
+turn_count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"thread-1","cwd":"/tmp/project","name":"Runtime task","preview":"runtime","path":"/tmp/codex/thread-1.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"inProgress","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/unsubscribe"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"unsubscribed"}}}}'
+      ;;
+    *'"method":"thread/resume"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1"}}}}}}'
+      ;;
+    *'"method":"thread/read"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-1","cwd":"/tmp/project","turns":[]}}}}}}'
+      ;;
+    *'"method":"thread/turns/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/items/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/goal/get"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"goal":null}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-'"$turn_count"'","status":"inProgress"}}}}}}'
+      ;;
+    *'"method":"turn/steer"'*)
+      printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"turn-1","status":"completed","items":[]}}}}}}'
+      while [ ! -f "$STEER_RELEASE_PATH" ]; do
+        sleep 0.02
+      done
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"turnId":"turn-1"}}}}'
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        steer_release_path.display()
+    );
+    write_executable(&path, &content);
+    path
 }
 
 fn write_fake_codex_concurrent_send(log_path: &Path) -> PathBuf {

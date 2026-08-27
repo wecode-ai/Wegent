@@ -1,11 +1,10 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
-
 import {
   createProjectTaskTrackingSingleFlight,
+  DEFAULT_WORK_ITEM_PROJECT_ID,
   enqueueIssueWorkflowMutation,
   enqueueTaskTrackingMutation,
-  isDefaultWorkItemProject,
   nextTaskTrackingStatus,
+  type TaskExecutionStatus,
   type CloudLoopItemAttachment,
   type CloudLoopItem,
   type CloudLoopItemExecution,
@@ -31,13 +30,14 @@ import {
 } from '@/api/issueWorkflow'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { openLocalFile } from '@/lib/local-terminal'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
+import { readDroppedFiles } from '@/desktop/droppedFiles'
+import type { Attachment, RuntimeProjectPluginRef, RuntimeTaskAddress } from '@/types/api'
 import {
   localProjectAssociationFromTags,
   localProjectAssociationTag,
   visibleLoopItemTags,
 } from '@/api/localProjectAssociation'
+import { desktopFileUrl } from '@/components/chat/assistantMarkdownLinks'
 
 type LocalRequest = <T>(
   method: string,
@@ -82,6 +82,7 @@ interface LocalTaskBindingRecord {
   task_title: string | null
   backend_task_id: number | null
   workflow_node_id?: string | null
+  binding_type: 'system' | 'user'
   linked_at: string
 }
 
@@ -120,6 +121,8 @@ export interface LocalProjectChatAgent {
   executionDeviceId: string | null
   localProjectId: number | null
   maxConcurrentExecutions: number
+  workspacePolicy: 'project' | 'git_worktree'
+  plugins: RuntimeProjectPluginRef[]
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
@@ -174,6 +177,7 @@ export interface LocalLoopItemExecution {
   agent_system_prompt: string
   agent_model?: string | null
   agent_max_concurrent_executions: number
+  agent_plugins?: RuntimeProjectPluginRef[]
   /** Available only on a successful claim and never persisted with the queue row. */
   runtime_payload?: Record<string, unknown> | null
 }
@@ -214,6 +218,12 @@ function localProject(record: LocalLoopItemRecord): CloudProject {
       typeof record.metadata.card_display === 'object' &&
       !Array.isArray(record.metadata.card_display)
         ? (record.metadata.card_display as CloudProject['card_display'])
+        : undefined,
+    pull_request_automation:
+      record.metadata.pull_request_automation &&
+      typeof record.metadata.pull_request_automation === 'object' &&
+      !Array.isArray(record.metadata.pull_request_automation)
+        ? (record.metadata.pull_request_automation as CloudProject['pull_request_automation'])
         : undefined,
     workflow_definition:
       record.metadata.workflow_definition &&
@@ -367,6 +377,8 @@ type LocalAgentRecord = Record<string, unknown> & {
   execution_device_id?: string | null
   local_project_id?: number | null
   max_concurrent_executions?: number
+  workspace_policy?: 'project' | 'git_worktree'
+  plugins?: RuntimeProjectPluginRef[]
   created_by_user_id?: number | null
   version?: number
   created_at?: string
@@ -396,6 +408,8 @@ function localAgent(record: LocalAgentRecord): LocalProjectChatAgent {
     executionDeviceId: record.execution_device_id ?? null,
     localProjectId: record.local_project_id ?? null,
     maxConcurrentExecutions,
+    workspacePolicy: record.workspace_policy === 'git_worktree' ? 'git_worktree' : 'project',
+    plugins: record.plugins ?? [],
     createdByUserId: record.created_by_user_id ?? null,
     version: record.version ?? 1,
     createdAt: record.created_at ?? '',
@@ -425,6 +439,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionDeviceId?: string | null
         localProjectId?: number | null
         maxConcurrentExecutions?: number
+        workspacePolicy?: LocalProjectChatAgent['workspacePolicy']
+        plugins?: RuntimeProjectPluginRef[]
       }
     ): Promise<LocalProjectChatAgent> {
       if (input.runtime !== 'codex') {
@@ -442,6 +458,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_device_id: input.executionDeviceId ?? null,
           local_project_id: input.localProjectId ?? null,
           max_concurrent_executions: input.maxConcurrentExecutions ?? 1,
+          workspace_policy: input.workspacePolicy ?? 'project',
+          plugins: input.plugins ?? [],
           created_by_user_id: currentUserId ?? null,
         },
       })
@@ -464,6 +482,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
         executionDeviceId?: string | null
         localProjectId?: number | null
         maxConcurrentExecutions?: number
+        workspacePolicy?: LocalProjectChatAgent['workspacePolicy']
+        plugins?: RuntimeProjectPluginRef[]
       }
     ): Promise<LocalProjectChatAgent> {
       if (input.runtime && input.runtime !== 'codex') {
@@ -484,6 +504,8 @@ export function createLocalProjectChatAgentApi(request: LocalRequest, currentUse
           execution_device_id: input.executionDeviceId,
           local_project_id: input.localProjectId,
           max_concurrent_executions: input.maxConcurrentExecutions,
+          workspace_policy: input.workspacePolicy,
+          plugins: input.plugins,
         },
       })
       return localAgent(record)
@@ -642,6 +664,12 @@ function localTask(record: LocalLoopItemRecord, project?: CloudProject): CloudLo
       !Array.isArray(record.metadata.workflow)
         ? (record.metadata.workflow as CloudLoopItem['workflow'])
         : null,
+    execution_config:
+      record.metadata.execution_config &&
+      typeof record.metadata.execution_config === 'object' &&
+      !Array.isArray(record.metadata.execution_config)
+        ? (record.metadata.execution_config as CloudLoopItem['execution_config'])
+        : null,
     local_project_id: localProjectAssociation?.id ?? null,
     local_project_name: localProjectAssociation?.name || null,
     assignee_name:
@@ -697,7 +725,7 @@ async function fileInput(file: File) {
 
 function localAccess(record: LocalAccessRecord) {
   return {
-    url: convertFileSrc(record.path),
+    url: desktopFileUrl(record.path),
     expires_in_seconds: 0,
   }
 }
@@ -782,6 +810,7 @@ export function createLocalDeliveryApi(
         tags?: string[]
         board_config?: CloudProject['board_config']
         card_display?: CloudProject['card_display']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         version: number
       }
@@ -828,16 +857,12 @@ export function createLocalDeliveryApi(
       })
       rememberTasks(projectId, records)
       const items = records.map(record => localTask(record))
-      const taskBindings = await Promise.all(
-        items.map(item =>
-          request<LocalTaskBindingRecord[]>('todos.bindings', {
-            task_id: item.id,
-          })
-        )
-      )
+      const taskBindings = await request<LocalTaskBindingRecord[]>('todos.bindings.batch', {
+        task_ids: items.map(item => item.id),
+      })
       return {
         items,
-        task_bindings: taskBindings.flat().map(record => ({
+        task_bindings: taskBindings.map(record => ({
           ...record,
           id: Number(record.id),
         })),
@@ -886,6 +911,8 @@ export function createLocalDeliveryApi(
         local_project_id?: number | null
         local_project_name?: string | null
         workflow?: CloudLoopItem['workflow']
+        execution_config?: CloudLoopItem['execution_config']
+        automation_rule_id?: string | null
       }
     ) {
       const localProjectLabel =
@@ -907,6 +934,7 @@ export function createLocalDeliveryApi(
           parent_id: data.parent_id ?? null,
           tags: [...(data.tags ?? []), ...localProjectLabel],
           ...(data.workflow ? { workflow: data.workflow } : {}),
+          ...(data.execution_config ? { execution_config: data.execution_config } : {}),
         },
       })
       taskProjects.set(record.id, projectId)
@@ -1109,10 +1137,15 @@ export function createLocalDeliveryApi(
     ) {
       return trackProjectTaskOnce(projectId, task, async () => {
         try {
-          const existing = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
-            device_id: task.deviceId,
-            task_id: task.taskId,
-          })
+          const existing = await request<LocalTaskBindingRecord>(
+            String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+              ? 'runtime_tasks.system_context'
+              : 'runtime_tasks.user_context',
+            {
+              device_id: task.deviceId,
+              task_id: task.taskId,
+            }
+          )
           if (existing.loop_item_id) {
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
@@ -1122,26 +1155,56 @@ export function createLocalDeliveryApi(
         const item = await api.createLoopItem(projectId, {
           title: taskTitle,
           description,
-          status: 'pending',
+          status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
         })
         await api.bindTask(item.id, task, taskTitle)
         return { item }
       })
     },
-    async updateTaskTrackingStatus(
-      task: RuntimeTaskAddress,
-      executionStatus: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
-    ) {
+    async updateTaskTrackingStatus(task: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) {
       return enqueueTaskTrackingMutation(task, async () => {
+        console.info('[IssueTaskStatusSync] local status update requested', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+        })
         let context: CloudTaskContext
         try {
-          context = await api.findCloudContextForTask(task)
-        } catch {
+          const binding = await request<LocalTaskBindingRecord>('runtime_tasks.context', {
+            device_id: task.deviceId,
+            task_id: task.taskId,
+          })
+          console.info('[IssueTaskStatusSync] local task binding resolved', {
+            deviceId: task.deviceId,
+            taskId: task.taskId,
+            executionStatus,
+            bindingType: binding.binding_type,
+            loopItemId: binding.loop_item_id,
+            workflowNodeId: binding.workflow_node_id,
+          })
+          const projectRecords = await request<LocalLoopItemRecord[]>('projects.list')
+          const projectRecord = projectRecords.find(
+            record => record.id === binding.cloud_project_id
+          )
+          if (!projectRecord) return null
+          context = {
+            ...binding,
+            id: binding.id,
+            project: localProject(projectRecord),
+            loop_item: binding.loop_item_id ? await api.getLoopItem(binding.loop_item_id) : null,
+          }
+        } catch (error) {
+          console.warn('[IssueTaskStatusSync] local task binding lookup failed', {
+            deviceId: task.deviceId,
+            taskId: task.taskId,
+            executionStatus,
+            error: error instanceof Error ? error.message : String(error),
+          })
           return null
         }
         if (!context.loop_item_id || !context.loop_item) return null
         const item = context.loop_item
-        if (item.workflow && context.workflow_node_id) {
+        if (executionStatus !== 'queued' && item.workflow && context.workflow_node_id) {
           return enqueueIssueWorkflowMutation(item.id, async () => {
             const current = await api.getLoopItem(item.id)
             if (!current.workflow) return current
@@ -1156,20 +1219,26 @@ export function createLocalDeliveryApi(
               `${task.deviceId}:${task.taskId}`,
               stageTaskIds
             )
-            return api.updateLoopItem(current.id, {
+            const updated = await api.updateLoopItem(current.id, {
               version: current.version,
               workflow,
               status: workflowBoardStatus(workflow),
             })
+            console.info('[IssueTaskStatusSync] local workflow task status persisted', {
+              deviceId: task.deviceId,
+              taskId: task.taskId,
+              executionStatus,
+              loopItemId: updated.id,
+              workflowNodeId: context.workflow_node_id,
+            })
+            return updated
           })
         }
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, { version: item.version, status: nextStatus })
           : item
@@ -1203,6 +1272,7 @@ export function createLocalDeliveryApi(
       await request('runtime_tasks.unbind', {
         device_id: task.deviceId,
         task_id: task.taskId,
+        item_id: _itemId,
       })
     },
     async findLoopItemForTask(task: RuntimeTaskAddress) {

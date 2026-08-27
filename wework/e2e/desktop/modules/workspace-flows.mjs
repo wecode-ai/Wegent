@@ -14,7 +14,6 @@ import {
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
-  ensureModelOptionVisible,
   join,
   modelOptionIdCandidates,
   revealGroupedModelOption,
@@ -164,11 +163,23 @@ async function waitForStableSnapshot(control, predicate, message) {
   throw new Error(`${message}: ${JSON.stringify(lastSnapshot)}`)
 }
 
+const HARNESS_MILESTONE_SCREENSHOTS = new Set([
+  'harness-apps-03-marketplace.png',
+  'harness-apps-03a-official-running.png',
+  'harness-apps-03b4-plugin-reloaded.png',
+  'harness-apps-04a-publish-dialog-zh.png',
+  'harness-apps-08-native-page.png',
+  'harness-apps-09-running.png',
+  'harness-apps-15-returned-to-marketplace.png',
+  'harness-apps-16-experimental-disabled.png',
+])
+
 async function captureVerificationScreenshot(control, name, selector = 'body') {
-  if (
-    process.env.WEWORK_E2E_SCREENSHOTS === 'final' &&
-    !name.endsWith('04-task-completed-after-reopen.png')
-  ) {
+  const screenshotMode = process.env.WEWORK_E2E_SCREENSHOTS
+  if (screenshotMode === 'final' && !name.endsWith('04-task-completed-after-reopen.png')) {
+    return null
+  }
+  if (screenshotMode === 'harness-milestones' && !HARNESS_MILESTONE_SCREENSHOTS.has(name)) {
     return null
   }
   const screenshotPath = join(resultDir, name)
@@ -235,7 +246,11 @@ async function verifyWorkspaceDocumentTabs(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-tabs-01-project-spaces-active.png')
 
-  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  const initialTaskTabId = workspaceTabIds(initialSnapshot, 'task')[0]?.slice(
+    'workspace-tab-'.length
+  )
+  assert.ok(initialTaskTabId, 'The initial task tab could not be identified')
+  await control.command('click', `[data-testid="workspace-tab-select-${initialTaskTabId}"]`)
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -274,15 +289,15 @@ async function verifyWorkspaceTabsWithoutExperiments(control) {
     await control.command('snapshot', '[data-testid="workspace-tab-strip"]')
   )
   assert.ok(
-    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-task-')),
+    workspaceTabIds(tabStripSnapshot, 'task').length > 0,
     'Disabling experiments removed the task tab'
   )
   assert.ok(
-    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-agent-')),
+    workspaceTabIds(tabStripSnapshot, 'agent').length > 0,
     'Disabling experiments removed the Agent tab'
   )
   assert.ok(
-    tabStripSnapshot.testIds.some(testId => testId.startsWith('workspace-tab-board-')),
+    workspaceTabIds(tabStripSnapshot, 'board').length > 0,
     'Disabling experiments removed the project-space tab'
   )
 
@@ -315,13 +330,10 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command(
-    'clickWhenEnabled',
-    '[data-testid="general-default-workspace-tab-board-button"]'
-  )
+  await control.command('clickWhenEnabled', '[data-testid="general-fixed-tab-startup-fixed-board"]')
   await control.command(
     'waitFor',
-    '[data-testid="general-default-workspace-tab-board-button"][aria-pressed="true"]',
+    '[data-testid="general-fixed-tab-startup-fixed-board"][aria-pressed="true"]',
     { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await captureVerificationScreenshot(control, 'workspace-startup-tab-01-board-selected.png')
@@ -341,7 +353,7 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   })
   await captureVerificationScreenshot(control, 'workspace-startup-tab-02-board-active.png')
 
-  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -350,13 +362,10 @@ async function verifyDefaultWorkspaceStartupTab(control) {
   await control.command('waitFor', '[data-testid="general-settings-page"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command(
-    'clickWhenEnabled',
-    '[data-testid="general-default-workspace-tab-task-button"]'
-  )
+  await control.command('clickWhenEnabled', '[data-testid="general-fixed-tab-startup-fixed-task"]')
   await control.command(
     'waitFor',
-    '[data-testid="general-default-workspace-tab-task-button"][aria-pressed="true"]',
+    '[data-testid="general-fixed-tab-startup-fixed-task"][aria-pressed="true"]',
     { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
   await control.command('navigate', 'body', { value: '/' })
@@ -378,9 +387,9 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   const boardTabs = workspaceTabIds(JSON.parse(await control.command('snapshot', 'body')), 'board')
   assert.ok(boardTabs.length > 0, 'The workspace issue flow requires an existing board tab')
-  const boardTabSuffix = boardTabs[0].slice('workspace-tab-board-'.length)
-  const boardTabSelector = `[data-testid="workspace-tab-select-board-${boardTabSuffix}"]`
-  const boardContentSelector = `[data-testid="workspace-tab-content-board-${boardTabSuffix}"]`
+  const boardTabId = boardTabs[0].slice('workspace-tab-'.length)
+  const boardTabSelector = `[data-testid="workspace-tab-select-${boardTabId}"]`
+  const boardContentSelector = `[data-testid="workspace-tab-content-${boardTabId}"]`
 
   await control.command('click', boardTabSelector)
   await control.command('waitFor', `${boardTabSelector}[aria-selected="true"]`, {
@@ -390,6 +399,30 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
+  const projectName = 'Workspace Issue E2E'
+  await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: projectName,
+  })
+  await control.command('click', '[data-testid="cloud-project-location-local"]')
+  await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${boardContentSelector} [data-testid="cloud-project-header-title"]`,
+    {
+      text: projectName,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
 
   await control.command('click', `${boardContentSelector} [data-testid="cloud-create-issue"]`)
   await control.command('waitFor', '[data-testid="workspace-issue-composer"]', {
@@ -520,35 +553,53 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  await waitForControlValue(
-    control,
-    `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
-    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
-    'Fullscreen Issue creation did not persist the composed title'
-  )
   await captureVerificationScreenshot(
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
   )
+  const issueStatusSelector = `${boardContentSelector} [data-testid="cloud-todo-detail-status"]`
+  await control.command('select', issueStatusSelector, { value: 'pending' })
+  assert.equal(
+    await control.command('getValue', issueStatusSelector),
+    'pending',
+    'The Issue did not enter pending before verifying its task composer'
+  )
+  await control.command(
+    'clickWhenEnabled',
+    `${boardContentSelector} [data-testid="cloud-todo-save"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-save"]`, {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-create-task"]`)
-  await control.command(
-    'waitFor',
-    `${boardContentSelector} [data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]`,
-    {
+  const activeTaskPanel = `${boardContentSelector} [data-testid="cloud-todo-panel-stack"][data-conversation-open="true"]`
+  const taskPanelBackdrop = '[data-testid="ai-chat-modal-backdrop"][data-presentation="sidebar"]'
+  await control.command('waitFor', activeTaskPanel, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', taskPanelBackdrop, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', taskPanelBackdrop, {
+      value: 'data-presentation',
       visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
+    }),
+    'sidebar',
+    'Creating a task from an Issue did not open the embedded conversation sidebar'
   )
-  await control.command(
-    'waitFor',
-    `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  const taskComposerSelector = `${boardContentSelector} [data-testid="work-item-new-task-chat-panel"]`
+  await control.command('waitFor', '[data-testid="work-item-new-task-chat-panel"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const taskComposerSelector = '[data-testid="work-item-new-task-chat-panel"]'
   const modelSelectorButton = `${taskComposerSelector} [data-testid="model-selector-button"]`
   const currentModelLabel = await control.command('getText', modelSelectorButton, {
     visible: true,
@@ -559,7 +610,23 @@ async function verifyWorkspaceIssueCreation(control) {
         label: PROVIDER_SWITCH_OFFICIAL_LABEL,
       }
     : { id: DEFAULT_MODEL_ID, label: DEFAULT_MODEL_LABEL }
-  await ensureModelOptionVisible(control, targetModel.id, modelSelectorButton)
+  await control.command('clickWhenEnabled', modelSelectorButton, {
+    stableMs: 100,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    visible: true,
+  })
+  await control.command('waitFor', '[data-testid="model-selector-menu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('hover', '[data-testid="model-control-menu-model"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="model-selector-submenu"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   let targetOptionId = await visibleModelOptionId(control, modelOptionIdCandidates(targetModel.id))
   if (!targetOptionId) {
     await revealGroupedModelOption(control, modelOptionIdCandidates(targetModel.id))
@@ -581,14 +648,32 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await captureVerificationScreenshot(
-    control,
-    'workspace-issue-03-new-task-sidebar.png',
-    boardContentSelector
+  const addContextButton = `${taskComposerSelector} [data-testid="add-context-button"]`
+  await control.command('click', addContextButton, { visible: true })
+  await control.command('waitFor', '[data-testid="set-goal-button"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="set-goal-button"]', { visible: true })
+  const goalDraftSnapshot = JSON.parse(await control.command('snapshot', taskComposerSelector))
+  assert.equal(
+    goalDraftSnapshot.testIds.includes('goal-draft-pill'),
+    true,
+    'Selecting Goal mode did not activate the Goal draft'
   )
-  await control.command('click', `${boardContentSelector} [data-testid="ai-chat-modal-close"]`)
+  await captureVerificationScreenshot(control, 'workspace-issue-03-new-task-sidebar.png')
+  await control.command('hover', '[data-testid="goal-draft-pill"]', {
+    visible: true,
+  })
+  await control.command('click', '[data-testid="cancel-goal-draft-button"]', { visible: true })
+  const cancelledGoalSnapshot = JSON.parse(await control.command('snapshot', taskComposerSelector))
+  assert.equal(
+    cancelledGoalSnapshot.testIds.includes('goal-draft-pill'),
+    false,
+    'Cancelling Goal mode left the Goal draft active'
+  )
+  await control.command('click', `${taskPanelBackdrop} [data-testid="ai-chat-modal-close"]`)
 
-  await control.command('click', `${boardContentSelector} [data-testid="cloud-todo-detail-close"]`)
   await control.command('click', boardTabSelector)
   await control.command('waitFor', `${boardContentSelector} [data-testid="cloud-todo-workspace"]`, {
     visible: true,
@@ -596,7 +681,7 @@ async function verifyWorkspaceIssueCreation(control) {
   })
   await control.command(
     'waitFor',
-    `${boardContentSelector} [data-testid="cloud-todo-column-inbox"]`,
+    `${boardContentSelector} [data-testid="cloud-todo-column-pending"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_ISSUE',
       visible: true,
@@ -701,11 +786,11 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
       snapshot.testIds.includes(`workspace-tab-content-board-${activeBoardTabSuffix}`) &&
       !snapshot.testIds.includes('cloud-todo-board-loading') &&
       snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
-    'The work-item board did not settle on the completed tracked task'
+    'The work-item board did not settle on the tracked task awaiting confirmation'
   )
   await control.command(
     'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-column-completed"]`,
+    `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`,
     {
       text: 'WEWORK_DESKTOP_E2E_TASK',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -713,7 +798,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   )
   await captureVerificationScreenshot(
     control,
-    'workspace-05-completed-on-board.png',
+    'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
   const boardCardSelector = [
@@ -761,13 +846,6 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('click', '[data-testid="ai-chat-modal-close"]', {
     visible: true,
   })
-  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="cloud-todo-detail-close"]', {
-    visible: true,
-  })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-todo-workspace"][data-embedded="false"]`,
@@ -788,7 +866,10 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
 }
 
 function workspaceTabIds(snapshot, kind) {
-  return snapshot.testIds.filter(testId => testId.startsWith(`workspace-tab-${kind}-`))
+  return snapshot.testIds.filter(
+    testId =>
+      testId === `workspace-tab-fixed-${kind}` || testId.startsWith(`workspace-tab-${kind}-`)
+  )
 }
 
 function allWorkspaceTabIds(snapshot) {
@@ -811,7 +892,7 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('waitFor', '[data-testid="workspace-tab-strip"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid^="workspace-tab-select-task-"]')
+  await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
   await control.command('waitFor', '[data-tab-kind="task"][aria-selected="true"]', {
     text: '任务',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -964,6 +1045,22 @@ async function verifyWorkspaceTabIsolation(control) {
   )
   await captureVerificationScreenshot(control, 'workspace-tabs-isolation-02-project-spaces.png')
 
+  await control.command('click', `[data-testid="workspace-tab-select-${firstTaskId}"]`)
+  await control.command('waitFor', firstTaskComposer, {
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getValue', firstTaskComposer),
+    '第一个任务标签草稿',
+    'Switching through a project-space tab discarded the task draft'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-tabs-isolation-02b-task-restored-after-project-space.png',
+    firstTaskContent
+  )
+
   const firstAgentId = initialAgentIds[0].slice('workspace-tab-'.length)
   const firstAgentContent = `[data-testid="workspace-tab-content-${firstAgentId}"]`
   const firstAgentWebview = `${firstAgentContent} [data-testid="app-iframe-wegent"]`
@@ -1001,11 +1098,26 @@ async function verifyWorkspaceTabIsolation(control) {
     'The first Agent webview did not retain its localStorage write'
   )
   await new Promise(resolvePromise => setTimeout(resolvePromise, 3000))
-  await control.command('click', `[data-testid="workspace-tab-close-${firstAgentId}"]`)
+
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('click', '[data-testid="workspace-tab-add-agent"]')
+  const withTemporaryAgent = await waitForSnapshot(
+    control,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    'The explicit new-Agent action did not create an ordinary Agent tab'
+  )
+  const temporaryAgentTestId = workspaceTabIds(withTemporaryAgent, 'agent').find(
+    testId => !initialAgentIds.includes(testId)
+  )
+  assert.ok(temporaryAgentTestId, 'The ordinary Agent tab identity was not observable')
+  const temporaryAgentId = temporaryAgentTestId.slice('workspace-tab-'.length)
+  await control.command('click', `[data-testid="workspace-tab-close-${temporaryAgentId}"]`)
   await waitForSnapshot(
     control,
-    snapshot => !snapshot.testIds.includes(`workspace-tab-${firstAgentId}`),
-    'Closing the first Agent tab did not remove its webview host'
+    snapshot =>
+      workspaceTabIds(snapshot, 'agent').length === 1 &&
+      snapshot.testIds.includes(`workspace-tab-${firstAgentId}`),
+    'Closing the ordinary Agent tab removed or replaced the fixed Agent tab'
   )
   await new Promise(resolvePromise => setTimeout(resolvePromise, 1500))
 
@@ -1013,10 +1125,12 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withSecondAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 1,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
     'The explicit new-Agent action did not reopen an Agent tab'
   )
-  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent')[0]
+  const secondAgentTestId = workspaceTabIds(withSecondAgent, 'agent').find(
+    testId => !initialAgentIds.includes(testId)
+  )
   assert.ok(secondAgentTestId, 'The second Agent tab identity was not observable')
   const secondAgentId = secondAgentTestId.slice('workspace-tab-'.length)
   const secondAgentContent = `[data-testid="workspace-tab-content-${secondAgentId}"]`
@@ -1048,11 +1162,11 @@ async function verifyWorkspaceTabIsolation(control) {
   await control.command('click', '[data-testid="workspace-tab-add-agent"]')
   const withThirdAgent = await waitForSnapshot(
     control,
-    snapshot => workspaceTabIds(snapshot, 'agent').length === 2,
+    snapshot => workspaceTabIds(snapshot, 'agent').length === 3,
     'The explicit new-Agent action did not create an independent Agent tab'
   )
   const thirdAgentTestId = workspaceTabIds(withThirdAgent, 'agent').find(
-    testId => testId !== secondAgentTestId
+    testId => !initialAgentIds.includes(testId) && testId !== secondAgentTestId
   )
   assert.ok(thirdAgentTestId, 'The third Agent tab identity was not observable')
   const thirdAgentId = thirdAgentTestId.slice('workspace-tab-'.length)

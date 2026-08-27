@@ -15,23 +15,32 @@ import {
   isRuntimeTaskBusyError,
 } from '@/features/workbench/runtimePaneStatus'
 import {
+  appendAcceptedRuntimeConversationMessage,
   abortRuntimeConversationHydration,
   applyRuntimeConversationAction,
   beginRuntimeConversationHydration,
   completeRuntimeConversationHydration,
   getRuntimeConversationMessages,
+  getRuntimeConversationTurnIds,
   removeRuntimeConversationTurn,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
-import { resolveTemporaryChatActiveModel } from '@/features/workbench/temporaryChatModelContext'
 import {
+  resolveTemporaryChatActiveModel,
+  resolveTemporaryChatModelSelection,
+} from '@/features/workbench/temporaryChatModelContext'
+import {
+  consumeRuntimeTaskLifecycleBlock,
+  type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type {
@@ -40,27 +49,22 @@ import type {
   ModelType,
   ProjectWithTasks,
   RuntimeSendRequest,
+  RuntimeGoalCreateInput,
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
-const QUEUED_MESSAGE_RETRY_DELAY_MS = 250
-const QUEUED_MESSAGE_MAX_BUSY_RETRIES = 40
-
-function createUserMessage(
-  content: string,
-  attachments: Attachment[],
-  id = `side-user-${Date.now()}`
-): WorkbenchMessage {
-  const createdAt = new Date().toISOString()
-  return {
-    id,
-    role: 'user',
-    content,
-    attachments: attachments.length > 0 ? persistAttachmentReferences(attachments) : undefined,
-    status: 'done',
-    createdAt,
+export interface RuntimeTaskComposerCreateOptions {
+  attachments: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput
+  executionModel: {
+    modelId?: string
+    modelType?: ModelType | null
+    modelOptions?: ModelOptions
   }
+  optimisticUserMessage: WorkbenchMessage & { role: 'user' }
+  onError: (message: string) => void
+  onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
 }
 
 interface TemporaryChatPanelProps {
@@ -73,22 +77,14 @@ interface TemporaryChatPanelProps {
   initialAddress?: RuntimeTaskAddress | null
   createTask?: (
     message: string,
-    options: {
-      attachments: Attachment[]
-      executionModel: {
-        modelId?: string
-        modelType?: ModelType | null
-        modelOptions?: ModelOptions
-      }
-      onError: (message: string) => void
-      onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-    }
+    options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
+  allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
   projectWork?: ProjectWorkControls
@@ -112,6 +108,7 @@ export function TemporaryChatPanel({
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
+  allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
   projectWork,
@@ -142,6 +139,14 @@ export function TemporaryChatPanel({
     () => resolveTemporaryChatActiveModel(projectChat.models, state.runtimeWork, address),
     [address, projectChat.models, state.runtimeWork]
   )
+  const activeModelSelection = useMemo(
+    () => resolveTemporaryChatModelSelection(state.runtimeWork, address),
+    [address, state.runtimeWork]
+  )
+  const globalSelectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
+  const globalSelectedModelOptions =
+    projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+  const taskModelIdentityPending = Boolean(address && !activeModelSelection)
   const sideChatProjectChat = useMemo(
     () => ({
       ...projectChat,
@@ -164,6 +169,7 @@ export function TemporaryChatPanel({
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [goalDraftActive, setGoalDraftActive] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -179,6 +185,7 @@ export function TemporaryChatPanel({
   )
   const busy = sending || paneStatus.isBusy
   const queuedMessageSendInFlightIdsRef = useRef(new Set<string>())
+  const queuedMessageBusyBlocksRef = useRef(new Map<string, RuntimeTaskLifecycleSnapshot | null>())
   const queuedMessagesRef = useRef(queuedMessages)
   const createdAddressKeyRef = useRef<string | null>(null)
   const autoSubmittedInitialInputRef = useRef(false)
@@ -186,6 +193,10 @@ export function TemporaryChatPanel({
   useEffect(() => {
     queuedMessagesRef.current = queuedMessages
   }, [queuedMessages])
+
+  useEffect(() => {
+    queuedMessageBusyBlocksRef.current.clear()
+  }, [address])
 
   const updateAddress = useCallback(
     (nextAddress: RuntimeTaskAddress | null) => {
@@ -231,7 +242,7 @@ export function TemporaryChatPanel({
           return
         }
         lifecycleStore.syncTranscript(address, transcript, {
-          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
         const nextMessages = completeRuntimeConversationHydration(
           address,
@@ -262,7 +273,7 @@ export function TemporaryChatPanel({
         refresh: true,
       })
       lifecycleStore.syncTranscript(address, transcript, {
-        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
       })
       const nextMessages = completeRuntimeConversationHydration(
         address,
@@ -309,11 +320,27 @@ export function TemporaryChatPanel({
   }, [address, subscribeRuntimeTaskStream])
 
   const selectedModelFields = useMemo(() => {
-    const selectedModel = projectChat.getSelectedModel?.() ?? projectChat.selectedModel
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-    return selectedModelExecutionFields(selectedModel, selectedModelOptions)
-  }, [projectChat])
+    if (address && activeModelSelection) {
+      return {
+        modelId: activeModelSelection.modelName,
+        modelType: activeModelSelection.modelType,
+        modelOptions: activeModelSelection.options ?? {},
+      }
+    }
+    return selectedModelExecutionFields(globalSelectedModel, globalSelectedModelOptions)
+  }, [activeModelSelection, address, globalSelectedModel, globalSelectedModelOptions])
+
+  useEffect(() => {
+    if (!address) return
+    console.info('[runtime-v2] task conversation identity resolved', {
+      deviceId: address.deviceId,
+      taskId: address.taskId,
+      taskModel: activeModelSelection?.modelName ?? null,
+      taskModelType: activeModelSelection?.modelType ?? null,
+      resolvedCatalogModel: activeModel?.name ?? null,
+      globalComposerModel: globalSelectedModel?.name ?? null,
+    })
+  }, [activeModel, activeModelSelection, address, globalSelectedModel])
 
   const sendQueuedMessage = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage) => {
@@ -326,67 +353,89 @@ export function TemporaryChatPanel({
       )
 
       try {
-        for (let attempt = 0; attempt <= QUEUED_MESSAGE_MAX_BUSY_RETRIES; attempt += 1) {
-          let sendError: string | null = null
-          const messageAttachments = queuedMessage.attachments ?? []
-          const attachmentIds = remoteAttachmentIds(messageAttachments)
-          const attachments = localRuntimeAttachments(messageAttachments)
-          const sent = await sendRuntimePaneMessage(
-            {
-              address,
-              message: queuedMessage.content,
-              clientUserMessageId: queuedMessage.id,
-              ...(sendEphemeral ? { ephemeral: true } : {}),
-              ...(queuedMessage.modelId
-                ? {
-                    modelId: queuedMessage.modelId,
-                    modelType: queuedMessage.modelType,
-                  }
-                : {}),
-              ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
-              ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-              ...(attachments.length > 0 ? { attachments } : {}),
-              ...runtimeContext,
+        let sendError: string | null = null
+        const messageAttachments = queuedMessage.attachments ?? []
+        const attachmentIds = remoteAttachmentIds(messageAttachments)
+        const attachments = localRuntimeAttachments(messageAttachments)
+        const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
+        const sent = await sendRuntimePaneMessage(
+          {
+            address,
+            message: queuedMessage.content,
+            clientUserMessageId: queuedMessage.id,
+            ...(sendEphemeral ? { ephemeral: true } : {}),
+            ...(queuedMessage.modelId
+              ? {
+                  modelId: queuedMessage.modelId,
+                  modelType: queuedMessage.modelType,
+                }
+              : {}),
+            ...(queuedMessage.modelOptions ? { modelOptions: queuedMessage.modelOptions } : {}),
+            ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+            ...(attachments.length > 0 ? { attachments } : {}),
+            ...runtimeContext,
+          },
+          {
+            onError: message => {
+              sendError = message
             },
-            {
-              onError: message => {
-                sendError = message
-              },
-            }
+          }
+        )
+        if (sent) {
+          queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+          const activeTurnId = lifecycleStore.getTask(address)?.turn.id ?? null
+          setMessages(
+            appendAcceptedRuntimeConversationMessage(
+              address,
+              createRuntimeUserMessage(queuedMessage.content, queuedMessage.attachments ?? [], {
+                id: queuedMessage.id,
+              }),
+              activeTurnId,
+              turnIdsBeforeSend
+            )
           )
-          if (sent) {
-            setMessages(
-              applyRuntimeConversationAction(address, {
-                type: 'user_added',
-                message: createUserMessage(
-                  queuedMessage.content,
-                  queuedMessage.attachments ?? [],
-                  queuedMessage.id
-                ),
-              })
-            )
-            setQueuedMessages(messages =>
-              messages.filter(message => message.id !== queuedMessage.id)
-            )
-            return
-          }
-          if (!isRuntimeTaskBusyError(sendError) || attempt === QUEUED_MESSAGE_MAX_BUSY_RETRIES) {
-            setQueuedMessages(messages =>
-              messages.map(message =>
-                message.id === queuedMessage.id
-                  ? { ...message, status: 'failed', error: sendError || '发送失败' }
-                  : message
-              )
-            )
-            return
-          }
-          await new Promise(resolve => window.setTimeout(resolve, QUEUED_MESSAGE_RETRY_DELAY_MS))
+          setQueuedMessages(messages => messages.filter(message => message.id !== queuedMessage.id))
+          return
         }
+        const blockedByBusy = isRuntimeTaskBusyError(sendError)
+        if (blockedByBusy) {
+          queuedMessageBusyBlocksRef.current.set(queuedMessage.id, lifecycleStore.getTask(address))
+          console.info('[Wework] Temporary chat message remains queued while executor is busy', {
+            id: queuedMessage.id,
+            deviceId: address.deviceId,
+            taskId: address.taskId,
+          })
+        } else {
+          queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+        }
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id !== queuedMessage.id
+              ? message
+              : blockedByBusy
+                ? { ...message, status: 'queued', error: undefined }
+                : { ...message, status: 'failed', error: sendError || '发送失败' }
+          )
+        )
+      } catch (caughtError) {
+        queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
+        const errorMessage = caughtError instanceof Error ? caughtError.message : '发送失败'
+        console.error('[Wework] Temporary chat queued message send failed', {
+          id: queuedMessage.id,
+          error: caughtError,
+        })
+        setQueuedMessages(messages =>
+          messages.map(message =>
+            message.id === queuedMessage.id
+              ? { ...message, status: 'failed', error: errorMessage }
+              : message
+          )
+        )
       } finally {
         queuedMessageSendInFlightIdsRef.current.delete(queuedMessage.id)
       }
     },
-    [address, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
+    [address, lifecycleStore, runtimeContext, sendEphemeral, sendRuntimePaneMessage]
   )
 
   useEffect(() => {
@@ -394,8 +443,17 @@ export function TemporaryChatPanel({
     if (queuedMessages.some(message => message.status === 'sending')) return
     const queuedMessage = queuedMessages.find(message => message.status === 'queued')
     if (!queuedMessage) return
+    if (
+      !consumeRuntimeTaskLifecycleBlock(
+        queuedMessageBusyBlocksRef.current,
+        queuedMessage.id,
+        lifecycleStore.getTask(address)
+      )
+    ) {
+      return
+    }
     void sendQueuedMessage(queuedMessage)
-  }, [address, busy, queuedMessages, sendQueuedMessage])
+  }, [address, busy, lifecycleStore, queuedMessages, sendQueuedMessage])
 
   const sendQueuedMessageAsGuidance = useCallback(
     async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false): Promise<boolean> => {
@@ -417,6 +475,7 @@ export function TemporaryChatPanel({
           : message
       )
       queuedMessagesRef.current = sendingMessages
+      queuedMessageBusyBlocksRef.current.delete(queuedMessage.id)
       setQueuedMessages(sendingMessages)
       const messageAttachments = queuedMessage.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
@@ -452,10 +511,21 @@ export function TemporaryChatPanel({
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
       const message = (valueOverride ?? input).trim()
       if (!message) return false
+      if (taskModelIdentityPending) {
+        setError('正在同步任务模型配置，请稍后重试')
+        return false
+      }
       setError(null)
       setInput('')
 
       const currentAttachments = sideChatProjectChat.attachments
+      const initialGoal = goalDraftActive
+        ? runtimeGoalCreateInput({
+            objective: message,
+            status: 'active',
+            tokenBudget: null,
+          })
+        : undefined
       const queuedMessage: RuntimePaneQueuedMessage = {
         id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
         content: message,
@@ -487,27 +557,22 @@ export function TemporaryChatPanel({
       let targetAddress: RuntimeTaskAddress | false | null = address
       let optimisticAddress: RuntimeTaskAddress | null = null
       if (!targetAddress) {
-        const optimisticUserMessage = createUserMessage(
-          message,
-          currentAttachments,
-          queuedMessage.id
-        )
+        const optimisticUserMessage = createRuntimeUserMessage(message, currentAttachments, {
+          id: queuedMessage.id,
+        })
         setMessages(current => [...current, optimisticUserMessage])
         const handleOptimisticOpen = (nextAddress: RuntimeTaskAddress) => {
           optimisticAddress = nextAddress
           createdAddressKeyRef.current = `${nextAddress.deviceId}:${nextAddress.taskId}`
-          setMessages(
-            applyRuntimeConversationAction(nextAddress, {
-              type: 'user_added',
-              message: optimisticUserMessage,
-            })
-          )
+          setMessages(getRuntimeConversationMessages(nextAddress))
           updateAddress(nextAddress)
         }
         targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
+              initialGoal,
               executionModel: selectedModelFields,
+              optimisticUserMessage,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
@@ -515,6 +580,7 @@ export function TemporaryChatPanel({
               project: currentProject,
               source,
               attachments: currentAttachments,
+              optimisticUserMessage,
               onError: handleError,
               onRuntimeTaskOptimisticOpen: handleOptimisticOpen,
             })
@@ -534,13 +600,9 @@ export function TemporaryChatPanel({
         return false
       }
       if (!address) {
-        setMessages(
-          applyRuntimeConversationAction(targetAddress, {
-            type: 'user_added',
-            message: createUserMessage(message, currentAttachments, queuedMessage.id),
-          })
-        )
+        setMessages(getRuntimeConversationMessages(targetAddress))
         updateAddress(targetAddress)
+        setGoalDraftActive(false)
         sideChatProjectChat.resetAttachments()
         return true
       }
@@ -548,7 +610,9 @@ export function TemporaryChatPanel({
       setMessages(
         applyRuntimeConversationAction(targetAddress, {
           type: 'user_added',
-          message: createUserMessage(message, currentAttachments, queuedMessage.id),
+          message: createRuntimeUserMessage(message, currentAttachments, {
+            id: queuedMessage.id,
+          }),
         })
       )
       let sendError: string | null = null
@@ -579,6 +643,10 @@ export function TemporaryChatPanel({
         })
       )
       if (isRuntimeTaskBusyError(sendError)) {
+        queuedMessageBusyBlocksRef.current.set(
+          queuedMessage.id,
+          lifecycleStore.getTask(targetAddress)
+        )
         const pendingMessages = [...queuedMessagesRef.current, queuedMessage]
         queuedMessagesRef.current = pendingMessages
         setQueuedMessages(pendingMessages)
@@ -596,11 +664,13 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      goalDraftActive,
       createTask,
       createTemporaryRuntimeTask,
       currentProject,
       input,
       busy,
+      lifecycleStore,
       queuedMessages.length,
       sideChatProjectChat,
       selectedModelFields,
@@ -609,6 +679,7 @@ export function TemporaryChatPanel({
       sendRuntimePaneMessage,
       source,
       sendEphemeral,
+      taskModelIdentityPending,
       updateAddress,
     ]
   )
@@ -617,11 +688,17 @@ export function TemporaryChatPanel({
     if (!autoSubmitInitialInput || !initialInput.trim() || autoSubmittedInitialInputRef.current) {
       return
     }
-    autoSubmittedInitialInputRef.current = true
-    void send(initialInput)
-  }, [autoSubmitInitialInput, initialInput, send])
+    if (taskModelIdentityPending) return
+    const timeoutId = window.setTimeout(() => {
+      if (autoSubmittedInitialInputRef.current) return
+      autoSubmittedInitialInputRef.current = true
+      void send(initialInput)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [autoSubmitInitialInput, initialInput, send, taskModelIdentityPending])
 
   const cancelQueuedMessage = useCallback((id: string) => {
+    queuedMessageBusyBlocksRef.current.delete(id)
     setQueuedMessages(messages =>
       messages.filter(message => message.id !== id || message.status === 'sending')
     )
@@ -631,6 +708,7 @@ export function TemporaryChatPanel({
     (id: string) => {
       const queuedMessage = queuedMessages.find(message => message.id === id)
       if (!queuedMessage || queuedMessage.status === 'sending') return
+      queuedMessageBusyBlocksRef.current.delete(id)
       setInput(queuedMessage.content)
       sideChatProjectChat.resetAttachments()
       queuedMessage.attachments?.forEach(sideChatProjectChat.addExistingAttachment)
@@ -709,7 +787,7 @@ export function TemporaryChatPanel({
             onChange={setInput}
             onDraftEdit={() => setError(null)}
             onSubmit={send}
-            disabled={false}
+            disabled={taskModelIdentityPending}
             pluginPickerIconOnly
             error={error}
             placeholder={placeholder}
@@ -725,6 +803,16 @@ export function TemporaryChatPanel({
             onEditQueuedMessage={editQueuedMessage}
             isStreaming={busy}
             onPause={pause}
+            goalDraftActive={goalDraftActive}
+            onSetGoal={
+              allowInitialGoal && createTask && !address
+                ? () => {
+                    setGoalDraftActive(true)
+                    setError(null)
+                  }
+                : undefined
+            }
+            onCancelGoalDraft={() => setGoalDraftActive(false)}
           />
         </div>
       </div>

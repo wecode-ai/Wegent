@@ -123,3 +123,104 @@
     }
   }
 }
+
+.collapseWhenIdle[data-short-collapse='true'] {
+  transition:
+    min-height 160ms cubic-bezier(0.2, 0, 0, 1),
+    padding 160ms cubic-bezier(0.2, 0, 0, 1),
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.collapseWhenIdle[data-short-collapse='true'] .toolbar {
+  transition: bottom 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.collapseWhenIdle[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
+.collapseWhenIdle[data-short-collapse='true']
+  .toolbar
+  [data-composer-toolbar-group='actions']
+  > :not(:last-child) {
+  transition:
+    opacity 120ms ease,
+    transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] {
+  min-height: 36px;
+  padding-top: 2px;
+  padding-right: 42px;
+  padding-bottom: 2px;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] .toolbar {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  left: 16px;
+  width: auto;
+  height: 24px;
+  min-height: 24px;
+  margin: 0;
+  padding-top: 0;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false'] .input {
+  min-height: 32px;
+  max-height: 32px !important;
+  padding-top: 6px;
+  line-height: 20px;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  [data-composer-primary-action='true'] {
+  width: 24px;
+  height: 24px;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  [data-composer-primary-action='true']
+  > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .toolbar
+  [data-composer-toolbar-group='features'] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .toolbar
+  [data-composer-toolbar-group='actions'] {
+  margin-left: auto;
+  gap: 0;
+}
+
+.collapseWhenIdle[data-short-collapse='true'][data-short-expanded='false']
+  .toolbar
+  [data-composer-toolbar-group='actions']
+  > :not(:last-child) {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(4px);
+  visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .collapseWhenIdle[data-short-collapse='true'],
+  .collapseWhenIdle[data-short-collapse='true'] .toolbar,
+  .collapseWhenIdle[data-short-collapse='true'] .toolbar [data-composer-toolbar-group='features'],
+  .collapseWhenIdle[data-short-collapse='true']
+    .toolbar
+    [data-composer-toolbar-group='actions']
+    > :not(:last-child) {
+    transition: none;
+  }
+}

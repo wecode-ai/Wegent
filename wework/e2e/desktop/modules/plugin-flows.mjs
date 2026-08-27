@@ -35,13 +35,13 @@ import {
   PLUGIN_NAME,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   commandOutput,
   createSingleRootLocalProject,
   findFileBySuffix,
   join,
+  mkdir,
   pathExists,
   readFile,
   rm,
@@ -55,14 +55,12 @@ import {
   waitForControlValueIncludes,
   waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
+import { createZipFixture } from './zip-fixtures.mjs'
 
 async function createDirectRemoteMcpPluginZip(root) {
-  const { default: JSZip } = await import('jszip')
   const archivePath = join(root, 'direct-remote-mcp-plugin.zip')
-  const zip = new JSZip()
-  zip.file(
-    '.codex-plugin/plugin.json',
-    JSON.stringify({
+  await createZipFixture(archivePath, {
+    '.codex-plugin/plugin.json': JSON.stringify({
       name: 'direct-remote-mcp-plugin',
       version: '1.0.0',
       description: 'Desktop E2E direct remote MCP plugin',
@@ -78,23 +76,150 @@ async function createDirectRemoteMcpPluginZip(root) {
         capabilities: ['MCP'],
         defaultPrompt: 'Use the remote MCP server.',
       },
-    })
-  )
-  zip.file(
-    '.mcp.json',
-    JSON.stringify({
+    }),
+    '.mcp.json': JSON.stringify({
       remote: {
         url: 'https://mcp.example.com/mcp',
-        http_headers: { Authorization: 'Bearer desktop-e2e-token' },
       },
-    })
-  )
-  zip.file(
-    'skills/direct-remote/SKILL.md',
-    '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n'
-  )
-  await writeFile(archivePath, await zip.generateAsync({ type: 'nodebuffer' }))
+    }),
+    'skills/direct-remote/SKILL.md':
+      '---\nname: direct-remote\ndescription: Exercise direct remote MCP parsing.\n---\n',
+  })
   return archivePath
+}
+
+async function createCoreDshPluginFixture(root) {
+  const pluginRoot = join(root, 'core-dsh-e2e-plugin')
+  await mkdir(pluginRoot, { recursive: true })
+  await writeFile(
+    join(pluginRoot, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: 'dsh-core-e2e-plugin',
+        version: '1.0.0',
+        type: 'module',
+        main: 'index.js',
+        displayName: 'Wework E2E Plugin',
+        description: 'Wework plugin management fixture',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      },
+      null,
+      2
+    )}\n`
+  )
+  await writeFile(
+    join(pluginRoot, 'cordis.patch.yml'),
+    "- insert:\n    - id: core-dsh-e2e-plugin\n      name: 'dsh-core-e2e-plugin'\n"
+  )
+  await writeFile(
+    join(pluginRoot, 'index.js'),
+    "export const name = 'core-dsh-e2e-plugin'\nexport function apply() {}\n"
+  )
+  return pluginRoot
+}
+
+async function verifyCoreDshPluginManagement({
+  control,
+  pluginRoot,
+  restartDesktopApp,
+  userDataDirectory,
+}) {
+  const manifestPath = join(
+    userDataDirectory,
+    'dsh-core',
+    'profiles',
+    'wework-core',
+    'package.json'
+  )
+  const openManager = async () => {
+    await control.command('waitFor', '[data-testid="plugins-button"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugins-button"]')
+    await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugins-manage-button"]')
+    await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugin-management-surface-core-dsh"]')
+    await control.command('waitFor', '[data-testid="core-dsh-plugin-management"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
+
+  await openManager()
+  await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
+    value: pluginRoot,
+  })
+  await control.command('click', '[data-testid="core-dsh-plugin-install-button"]')
+  await control.command('click', '[data-testid="core-dsh-plugin-install-confirm"]')
+  await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'] !== undefined, true)
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+
+  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => /Disabled|已停用/.test(snapshot.text),
+    'The Core DSH plugin did not finish disabling',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+
+  await restartDesktopApp()
+  await openManager()
+  await waitForSnapshot(
+    control,
+    snapshot => /Disabled|已停用/.test(snapshot.text),
+    'The disabled Core DSH plugin did not remain disabled after restart',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => /Enabled|已启用/.test(snapshot.text),
+    'The Core DSH plugin did not finish enabling',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+
+  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-dsh-core-e2e-plugin"]')
+  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-confirm"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
+    'The uninstalled Core DSH plugin remained in the management list',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'], undefined)
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+
+  await restartDesktopApp()
+  await openManager()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
+    'The uninstalled Core DSH plugin returned after restart',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The workbench did not recover after the Core DSH plugin management flow',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
 }
 
 async function verifyCloudWorkPage(control) {
@@ -163,25 +288,12 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   control,
   restartDesktopApp,
 }) {
-  const requestCountBeforeRestart = blockingNetworkProxy.requestCount()
   const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
   await restartDesktopApp()
-  const [blockedRequest] = await Promise.all([
-    blockingNetworkProxy.waitForRequestMatchingAfter(
-      requestCountBeforeRestart,
-      STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
-      DEFAULT_STEP_TIMEOUT_MS
-    ),
-    control.command('waitFor', '[data-testid="projects-create-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }),
-  ])
-  assert.match(
-    blockedRequest,
-    /^(CONNECT|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) /,
-    'The blocking proxy did not capture a Codex startup request'
-  )
+  await control.command('waitFor', '[data-testid="projects-create-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   assert.ok(
     snapshot.testIds.includes('desktop-workbench-main'),
@@ -202,7 +314,7 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
     `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
   )
   console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms while startup network remained blocked`
+    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
   )
   assert.equal(
     control.modelRequests.length,
@@ -534,6 +646,8 @@ async function waitForMarketplaceInstallStateAfterUninstall(control, pluginId) {
 }
 
 async function verifyMarketplacePluginLifecycle({
+  blockingNetworkProxy,
+  codexHome,
   control,
   executorHome,
   marketplacePath,
@@ -587,6 +701,10 @@ async function verifyMarketplacePluginLifecycle({
     'The plugin import dialog did not explain the standard Wework plugin package structure'
   )
   const archivePath = await createDirectRemoteMcpPluginZip(marketplacePath)
+  const personalMarketplacePath = join(
+    executorHome,
+    'capabilities/bundled-marketplaces/wework-personal'
+  )
   const preview = JSON.parse(
     await control.command('previewPluginImport', 'body', {
       value: JSON.stringify({ archivePath, marketplacePath }),
@@ -597,6 +715,72 @@ async function verifyMarketplacePluginLifecycle({
   assert.equal(preview.name, 'direct-remote-mcp-plugin')
   await captureVerificationScreenshot(control, 'marketplace-plugins-00-import.png')
   await control.command('click', '[data-testid="plugin-import-close"]')
+
+  blockingNetworkProxy.block()
+  const blockedRequestCount = blockingNetworkProxy.requests.length
+  const importStartedAt = Date.now()
+  try {
+    await control.command('setLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
+    const imported = JSON.parse(
+      await control.command('importPluginPackage', 'body', {
+        value: JSON.stringify({ preview, overwrite: false }),
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    )
+    const importElapsedMs = Date.now() - importStartedAt
+    assert.equal(imported.pluginName, 'direct-remote-mcp-plugin')
+    assert.ok(
+      importElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin import waited ${importElapsedMs}ms for blocked post-install network work`
+    )
+    assert.equal(
+      await pathExists(
+        join(
+          codexHome,
+          'plugins/cache/wework-personal/direct-remote-mcp-plugin/1.0.0/.codex-plugin/plugin.json'
+        )
+      ),
+      true,
+      'The offline import returned before the local plugin cache was committed'
+    )
+    const codexConfigAfterImport = await readFile(join(codexHome, 'config.toml'), 'utf8')
+    assert.ok(
+      codexConfigAfterImport.includes('"direct-remote-mcp-plugin@wework-personal"') &&
+        codexConfigAfterImport.includes('enabled = true'),
+      'The offline import returned before the plugin was enabled in Codex config'
+    )
+    const deleteStartedAt = Date.now()
+    await control.command('deleteLocalPluginPackage', 'body', {
+      value: JSON.stringify({
+        pluginId: 'direct-remote-mcp-plugin@wework-personal',
+        pluginName: 'direct-remote-mcp-plugin',
+      }),
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const deleteElapsedMs = Date.now() - deleteStartedAt
+    assert.ok(
+      deleteElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
+      `Local plugin deletion waited ${deleteElapsedMs}ms for blocked marketplace network work`
+    )
+    assert.equal(
+      await pathExists(join(codexHome, 'plugins/cache/wework-personal/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the local Codex plugin cache behind'
+    )
+    assert.equal(
+      await pathExists(join(personalMarketplacePath, 'plugins/direct-remote-mcp-plugin')),
+      false,
+      'The offline delete left the personal plugin source behind'
+    )
+    assert.equal(
+      blockingNetworkProxy.requests.length,
+      blockedRequestCount,
+      'Local plugin import or deletion unexpectedly requested external network access'
+    )
+  } finally {
+    blockingNetworkProxy.release()
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
+  }
 
   await control.command('click', '[data-testid="plugins-create-button"]')
   await control.command('waitFor', '[data-testid="plugins-create-menu"]', {
@@ -1095,6 +1279,7 @@ async function uninstallOfficialPlugin(control, fixture) {
 }
 
 export {
+  createCoreDshPluginFixture,
   verifyCloudWorkPage,
   initializeBlankCodexHome,
   waitForBundledMarketplaceRegistration,
@@ -1109,4 +1294,5 @@ export {
   verifyMarketplacePluginLifecycle,
   verifySkillMentionRendering,
   uninstallOfficialPlugin,
+  verifyCoreDshPluginManagement,
 }

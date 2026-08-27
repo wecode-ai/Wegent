@@ -27,6 +27,7 @@ import {
   captureVerificationScreenshot,
   normalizeComposerText,
   waitForAttribute,
+  waitForWorkbenchDebugState,
 } from './workspace-flows.mjs'
 
 async function waitForTelemetrySilence(control, options = {}) {
@@ -181,7 +182,9 @@ async function declineInitialTelemetryConsent(control) {
   await control.command('waitFor', overlaySelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="telemetry-consent-decline"]')
+  await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),
@@ -511,19 +514,27 @@ async function verifyAutomationLifecycle(control, executorHome, homePath) {
       'click',
       '[data-testid="automation-conversation-mode-option-continue_thread"]'
     )
+    await control.command('waitFor', '[data-testid="automation-target-task-select"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await control.command('click', '[data-testid="automation-target-task-select"]')
-    await waitForSnapshot(
+    const targetTaskSnapshot = await waitForSnapshot(
       control,
       snapshot =>
-        snapshot.testIds.includes(
-          `automation-target-task-select-option-local-device:${manualTaskId}`
-        ),
+        snapshot.testIds.filter(
+          testId =>
+            testId.startsWith('automation-target-task-select-option-') &&
+            testId.endsWith(`:${manualTaskId}`)
+        ).length === 1,
       'The existing-task selector did not list the pinned local task'
     )
-    await control.command(
-      'click',
-      `[data-testid="automation-target-task-select-option-local-device:${manualTaskId}"]`
+    const targetTaskOption = targetTaskSnapshot.testIds.find(
+      testId =>
+        testId.startsWith('automation-target-task-select-option-') &&
+        testId.endsWith(`:${manualTaskId}`)
     )
+    assert.ok(targetTaskOption, 'The existing-task selector did not expose a unique pinned task')
+    await control.command('click', `[data-testid="${targetTaskOption}"]`)
     await control.command('click', '[data-testid="automation-repeat-menu"]')
     await control.command('click', '[data-testid="automation-repeat-menu-option-one_time"]')
     const scheduledFor = new Date(Date.now() + 5_000)
@@ -660,18 +671,15 @@ async function verifyCloudAutomationLifecycle(control, cloudDeviceId) {
         testId.startsWith('runtime-local-task-row-') && !initialSnapshot.testIds.includes(testId)
     )
     assert.ok(taskRow, 'The cloud automation run did not expose its runtime task')
-    if (!taskSnapshot.text.includes(`${AUTOMATION_COMPLETION_TEXT}_1`)) {
-      await control.command('click', `[data-testid="${taskRow}"]`)
-      await control.command('waitFor', '[data-testid="message-assistant"]', {
-        text: `${AUTOMATION_COMPLETION_TEXT}_1`,
-        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-      })
-    }
-    const debugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    assert.equal(
-      debugSnapshot.workbench?.currentRuntimeTask?.deviceId,
-      cloudDeviceId,
-      'The cloud automation task ran on the local device'
+    await control.command('click', `[data-testid="${taskRow}"]`)
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: `${AUTOMATION_COMPLETION_TEXT}_1`,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await waitForWorkbenchDebugState(
+      control,
+      snapshot => snapshot.workbench?.currentRuntimeTask?.deviceId === cloudDeviceId,
+      'The cloud automation task did not become active on the selected cloud device'
     )
     await captureVerificationScreenshot(control, 'automations-03-cloud-complete.png')
   } finally {
@@ -812,10 +820,35 @@ function resolvedDraftInputLength(snapshot) {
 }
 
 async function captureApplicationChatIdentity(control) {
-  const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-  return {
-    currentProjectId: snapshot.workbench?.currentProject?.id ?? null,
+  const startedAt = Date.now()
+  let candidateProjectId = null
+  let candidateSince = null
+  let hasCandidate = false
+  let lastSnapshot = null
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastSnapshot = snapshot
+    const currentProjectId = snapshot.workbench?.currentProject?.id ?? null
+    if (snapshot.workbench?.isBootstrapping === false) {
+      if (!hasCandidate || currentProjectId !== candidateProjectId) {
+        candidateProjectId = currentProjectId
+        candidateSince = Date.now()
+        hasCandidate = true
+      } else if (
+        candidateSince !== null &&
+        Date.now() - candidateSince >= COMPOSER_READY_STABILITY_MS
+      ) {
+        return { currentProjectId }
+      }
+    } else {
+      candidateSince = null
+      hasCandidate = false
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
+  throw new Error(
+    `The application chat identity did not stabilize: ${JSON.stringify(lastSnapshot)}`
+  )
 }
 
 async function assertFreshApplicationDraft(control, { before, canonical, visible, message }) {
@@ -843,7 +876,7 @@ async function assertFreshApplicationDraft(control, { before, canonical, visible
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`${message}: ${JSON.stringify({ actual, snapshot: lastSnapshot })}`)
+  throw new Error(`${message}: ${JSON.stringify({ before, actual, snapshot: lastSnapshot })}`)
 }
 
 async function assertPluginComposerChip(control, pluginName) {
@@ -922,7 +955,7 @@ function sitesMarketplacePlugin(installed) {
   }
 }
 
-function installedSitesPlugin() {
+function installedSitesPlugin(deviceId = 'local-device') {
   const marketplacePlugin = sitesMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -959,7 +992,7 @@ function installedSitesPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }
@@ -1006,7 +1039,7 @@ function miniProgramMarketplacePlugin(installed) {
   }
 }
 
-function installedMiniProgramPlugin() {
+function installedMiniProgramPlugin(deviceId = 'local-device') {
   const marketplacePlugin = miniProgramMarketplacePlugin(true)
   return {
     apiVersion: 'agent.wecode.io/v1',
@@ -1043,7 +1076,7 @@ function installedMiniProgramPlugin() {
     },
     status: {
       state: 'Available',
-      devices: [{ deviceId: 'local-device', state: 'installed' }],
+      devices: [{ deviceId, state: 'installed' }],
     },
   }
 }

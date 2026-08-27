@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test } from 'vitest'
 import {
   buildRuntimeTaskTitle,
+  findRuntimeTaskForPinRequest,
   findProjectDeviceWorkspace,
+  getRuntimeTaskThreadId,
   getDefaultProjectDeviceWorkspaceId,
   hydrateRuntimeTaskAddress,
   MAX_RUNTIME_TASK_TITLE_LENGTH,
@@ -11,6 +13,7 @@ import {
   removeRuntimeTasks,
   resolveComposerProjectPluginNames,
   truncateRuntimeTaskTitle,
+  updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
@@ -316,6 +319,70 @@ describe('workbenchRuntimeHelpers', () => {
       threadId: 'ready-thread',
       turnId: 'turn-1',
     })
+  })
+
+  test('updates a project task pin through the project state device identity', () => {
+    const runtimeWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'local:/workspace/project',
+            name: 'Project',
+            stateDeviceId: 'state-device',
+          },
+          deviceWorkspaces: [
+            {
+              deviceId: 'runtime-device',
+              available: true,
+              workspacePath: '/workspace/project',
+              tasks: [
+                {
+                  taskId: 'task-1',
+                  threadId: 'thread-1',
+                  workspacePath: '/workspace/project',
+                  title: 'Pinned automation target',
+                  runtime: 'codex',
+                  pinned: false,
+                  pinnedOrder: 4,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const request = {
+      deviceId: 'state-device',
+      threadId: 'thread-1',
+      pinned: true,
+    }
+
+    expect(findRuntimeTaskForPinRequest(runtimeWork, request)?.taskId).toBe('task-1')
+    expect(
+      updateRuntimeWorkTaskPinned(runtimeWork, request)?.projects[0].deviceWorkspaces[0].tasks[0]
+        .pinned
+    ).toBe(true)
+    expect(runtimeWork.projects[0].deviceWorkspaces[0].tasks[0].pinned).toBe(false)
+  })
+
+  test('uses a persisted Codex task id as the pin thread fallback', () => {
+    expect(
+      getRuntimeTaskThreadId({
+        taskId: 'persisted-thread',
+        title: 'Legacy Codex task',
+        runtime: 'codex',
+      })
+    ).toBe('persisted-thread')
+    expect(
+      getRuntimeTaskThreadId({
+        taskId: 'optimistic-task',
+        title: 'Pending Codex task',
+        runtime: 'codex',
+        optimistic: true,
+      })
+    ).toBeNull()
   })
 
   test('removes an archived device task even when its workspace path was normalized', () => {

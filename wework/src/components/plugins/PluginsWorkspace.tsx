@@ -80,6 +80,7 @@ import {
   marketplaceItemNeedsPluginAutoUpdate,
   runPluginAutoUpdate,
 } from '@/features/plugins/pluginAutoUpdate'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import type {
   InstalledPlugin,
   PluginAccessUpdateRequest,
@@ -264,6 +265,14 @@ export function PluginsWorkspace({
   const [isUploadingPlugin, setIsUploadingPlugin] = useState(false)
   const [marketplaceLoadingMessage, setMarketplaceLoadingMessage] = useState('')
   const [marketplaceRefreshTick, setMarketplaceRefreshTick] = useState(0)
+
+  useEffect(() => {
+    const refreshAfterAutoUpdate = () => setMarketplaceRefreshTick(previous => previous + 1)
+    window.addEventListener(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT, refreshAfterAutoUpdate)
+    return () =>
+      window.removeEventListener(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT, refreshAfterAutoUpdate)
+  }, [])
+
   const [showAddMarketDialog, setShowAddMarketDialog] = useState(false)
   const [showPluginImportDialog, setShowPluginImportDialog] = useState(false)
   const [addMarketForm, setAddMarketForm] = useState<AddMarketFormData>({
@@ -382,6 +391,7 @@ export function PluginsWorkspace({
   currentDeviceIdRef.current = currentDeviceId
   const deferredCodexCatalogRequestRef = useRef('')
   const reconcileGithubCatalogRef = useRef(false)
+  const skipGithubCatalogReconcileRef = useRef(false)
   useEffect(() => {
     setDeviceAutoSyncSettled(hasSettledPluginDeviceAutoSync(currentDeviceId))
   }, [currentDeviceId])
@@ -1146,7 +1156,11 @@ export function PluginsWorkspace({
         })
       }
       setLocalConnectorAuthBySlug({})
-      notifyLocalPluginSkillsChanged()
+      notifyLocalPluginSkillsChanged([
+        String(id),
+        pluginName,
+        plugin?.raw.spec.source.pluginKey ?? '',
+      ])
       setMarketplaceRefreshTick(previous => previous + 1)
       track('plugin_uninstalled', { source: 'local' })
     }
@@ -1281,7 +1295,15 @@ export function PluginsWorkspace({
 
   const refreshMarketplace = () => {
     setBrowsingCategoryKey(null)
+    skipGithubCatalogReconcileRef.current = false
     reconcileGithubCatalogRef.current = true
+    setMarketplaceRefreshTick(previous => previous + 1)
+  }
+
+  const refreshLocalMarketplace = () => {
+    setBrowsingCategoryKey(null)
+    skipGithubCatalogReconcileRef.current = true
+    reconcileGithubCatalogRef.current = false
     setMarketplaceRefreshTick(previous => previous + 1)
   }
 
@@ -1962,7 +1984,7 @@ export function PluginsWorkspace({
       setSelectedMarketplacePluginId(null)
       setPendingPersonalPluginDelete(null)
       notifyLocalPluginSkillsChanged()
-      setMarketplaceRefreshTick(previous => previous + 1)
+      refreshLocalMarketplace()
       setPluginOperationNotice({
         id: `deleted-${pending.pluginName}`,
         kind: 'success',
@@ -3327,12 +3349,15 @@ export function PluginsWorkspace({
     if (pendingDevicePackageSync) return
 
     const shouldReconcileGithubCatalog = reconcileGithubCatalogRef.current
+    const skipGithubCatalogReconcile = skipGithubCatalogReconcileRef.current
+    skipGithubCatalogReconcileRef.current = false
     // Warm OpenAI rows already come from peek/cache. Auto plugin/list reconciles
     // github.com/openai/plugins and holds the shared Codex lock, which stalls chat
     // send. Only refresh after the user explicitly asks.
     if (
-      !shouldReconcileGithubCatalog &&
-      hasOpenAiOfficialCatalog(pluginMarketplaceStateRef.current.items)
+      skipGithubCatalogReconcile ||
+      (!shouldReconcileGithubCatalog &&
+        hasOpenAiOfficialCatalog(pluginMarketplaceStateRef.current.items))
     ) {
       setIsOpenAiOfficialCatalogLoading(false)
       return
@@ -3603,7 +3628,7 @@ export function PluginsWorkspace({
   }, [selectedMarketplacePluginId])
 
   useEffect(() => {
-    if (pluginOperationNotice?.kind !== 'success') return
+    if (pluginOperationNotice?.kind !== 'success' || pluginOperationNotice.actionLabel) return
     const noticeId = pluginOperationNotice.id
     const timeoutId = window.setTimeout(() => {
       setPluginOperationNotice(current => (current?.id === noticeId ? null : current))
@@ -3729,15 +3754,27 @@ export function PluginsWorkspace({
         <PluginImportDialog
           pluginApi={localPluginApi}
           onCancel={() => setShowPluginImportDialog(false)}
-          onImported={() => {
+          onImported={imported => {
             setShowPluginImportDialog(false)
             notifyLocalPluginSkillsChanged()
             setPluginOperationNotice({
               id: 'plugin-import-complete',
               kind: 'success',
-              message: t('workbench.plugins_import_success', '插件已导入并安装。'),
+              message: t(
+                'workbench.plugins_import_success_auth_deferred',
+                '插件已导入并安装。如需连接器授权，可稍后在插件详情中登录。'
+              ),
+              actionLabel: t('workbench.plugins_import_view_plugin', '查看插件'),
+              onAction: () => {
+                const personalKey = localMarketplaceKey(WEWORK_PERSONAL_MARKETPLACE_ID)
+                rememberMarketplaceKey(personalKey)
+                setSelectedMarketplaceKey(personalKey)
+                setMarketplaceSourceFilterKey(personalKey)
+                setPluginOperationNotice(null)
+                setQuery(imported.pluginName)
+              },
             })
-            refreshMarketplace()
+            refreshLocalMarketplace()
           }}
         />
       ) : null}

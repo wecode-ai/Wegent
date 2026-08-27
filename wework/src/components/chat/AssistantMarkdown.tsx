@@ -7,6 +7,7 @@ import { ComposerLinkChip } from './ComposerLinkChip'
 import 'streamdown/styles.css'
 import {
   classifyMarkdownLink,
+  decodeMarkdownFilePath,
   getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
@@ -22,7 +23,7 @@ import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
@@ -43,6 +44,12 @@ const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HO
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
 const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
+const STREAMING_DIAGRAM_LANGUAGES = new Map([
+  ['weworkstreamingmermaid', 'mermaid'],
+  ['weworkstreamingmmd', 'mmd'],
+  ['weworkstreamingplantuml', 'plantuml'],
+  ['weworkstreamingpuml', 'puml'],
+])
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -103,7 +110,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
   )
-  const windowMarkdown = isTauriRuntime() && variant === 'default'
+  const windowMarkdown = isElectronRuntime() && variant === 'default'
   const contentParts = useMemo(() => {
     const parts = splitCodexInlineVisualizations(displayContent)
     return parts.flatMap<AssistantMarkdownPart>(part => {
@@ -256,7 +263,10 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(part.content)}
+              {prepareAssistantMarkdownContent(
+                part.content,
+                isStreaming && index === contentParts.length - 1
+              )}
             </Streamdown>
           </WindowedMarkdownChunk>
         ) : (
@@ -270,7 +280,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             urlTransform={url => url}
             components={components}
           >
-            {prepareAssistantMarkdownContent(part.content)}
+            {prepareAssistantMarkdownContent(part.content, isStreaming)}
           </Streamdown>
         )
       )}
@@ -357,6 +367,14 @@ function MarkdownCode({
     text.includes('\n')
   if (isBlock) {
     const lang = match ? match[1] || '' : ''
+    const streamingDiagramLanguage = STREAMING_DIAGRAM_LANGUAGES.get(lang.toLowerCase())
+    if (streamingDiagramLanguage) {
+      return (
+        <MarkdownCodeBlock lang={streamingDiagramLanguage} compact={compact} isStreaming>
+          {text || children}
+        </MarkdownCodeBlock>
+      )
+    }
     if (DIAGRAM_LANGUAGES.has(lang.toLowerCase())) {
       return <MarkdownDiagramPreview code={text.trimEnd()} language={lang} />
     }
@@ -397,8 +415,59 @@ function areAssistantMarkdownPropsEqual(
   )
 }
 
-function prepareAssistantMarkdownContent(content: string): string {
-  return encodeLocalMarkdownLinks(content.replace(CODEX_PLAN_TAG_PATTERN, ''))
+function prepareAssistantMarkdownContent(content: string, isStreaming = false): string {
+  const normalizedContent = content.replace(CODEX_PLAN_TAG_PATTERN, '')
+  return encodeLocalMarkdownLinks(
+    isStreaming ? markUnclosedDiagramFence(normalizedContent) : normalizedContent
+  )
+}
+
+function markUnclosedDiagramFence(content: string): string {
+  const lines = content.split('\n')
+  let openingFence: {
+    character: '`' | '~'
+    length: number
+    language: string
+    lineIndex: number
+    match: RegExpExecArray
+  } | null = null
+
+  for (const [lineIndex, line] of lines.entries()) {
+    if (!openingFence) {
+      const match =
+        /^(?<indent> {0,3})(?<fence>`{3,}|~{3,})(?<spacing>[ \t]*)(?<language>[\w+-]*)(?<remainder>[^\n]*)$/.exec(
+          line
+        )
+      if (!match?.groups) continue
+
+      const fence = match.groups.fence
+      const language = match.groups.language.toLowerCase()
+      openingFence = {
+        character: fence[0] as '`' | '~',
+        length: fence.length,
+        language,
+        lineIndex,
+        match,
+      }
+      continue
+    }
+
+    const closingFence = new RegExp(
+      `^ {0,3}${openingFence.character}{${openingFence.length},}[ \\t]*$`
+    )
+    if (closingFence.test(line)) {
+      openingFence = null
+    }
+  }
+
+  if (!openingFence || !DIAGRAM_LANGUAGES.has(openingFence.language)) return content
+
+  const { groups } = openingFence.match
+  if (!groups) return content
+  lines[openingFence.lineIndex] =
+    `${groups.indent}${groups.fence}${groups.spacing}` +
+    `weworkstreaming${openingFence.language}${groups.remainder}`
+  return lines.join('\n')
 }
 
 function stripUnsupportedContentReferenceCitations(content: string): string {
@@ -413,7 +482,9 @@ function encodeLocalMarkdownLinks(content: string): string {
     const href = String(rawHref).trim()
     const target = classifyMarkdownLink(href)
     if (target.kind !== 'file') return match
-    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(href)})`
+    return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
+      decodeMarkdownFilePath(href)
+    )})`
   })
 }
 

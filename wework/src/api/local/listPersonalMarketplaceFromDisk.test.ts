@@ -2,30 +2,27 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { listPersonalMarketplacePluginsFromDisk } from './codexPlugins'
 
 const mocks = vi.hoisted(() => ({
-  invoke: vi.fn(),
+  requestLocalExecutor: vi.fn(),
   ensureLocalExecutorStarted: vi.fn(),
   getInitializedBundledPluginMarketplace: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...args: unknown[]) => mocks.invoke(...args),
-}))
-
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: () => true,
+  isDesktopRuntime: () => true,
+  isElectronRuntime: () => true,
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: () => mocks.ensureLocalExecutorStarted(),
   ensureBundledPluginMarketplaceRegistered: vi.fn(),
   getInitializedBundledPluginMarketplace: () => mocks.getInitializedBundledPluginMarketplace(),
-  requestLocalExecutor: vi.fn(),
+  requestLocalExecutor: (...args: unknown[]) => mocks.requestLocalExecutor(...args),
   resetLocalExecutorStateForTests: vi.fn(),
 }))
 
 describe('listPersonalMarketplacePluginsFromDisk', () => {
   beforeEach(() => {
-    mocks.invoke.mockReset()
+    mocks.requestLocalExecutor.mockReset()
     mocks.ensureLocalExecutorStarted.mockReset()
     mocks.getInitializedBundledPluginMarketplace.mockReset()
     mocks.ensureLocalExecutorStarted.mockResolvedValue({ deviceId: 'local-device' })
@@ -37,7 +34,7 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
   })
 
   test('maps disk personal plugins as available without inferring installation', async () => {
-    mocks.invoke.mockResolvedValue({
+    mocks.requestLocalExecutor.mockResolvedValue({
       marketplaceId: 'wework-personal',
       marketplacePath: '/tmp/wework-personal',
       plugins: [
@@ -72,21 +69,19 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
       }),
     })
     expect(mocks.ensureLocalExecutorStarted).not.toHaveBeenCalled()
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_list_personal_marketplace_plugins', {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.list', {
       marketplacePath: '/tmp/wework-personal',
     })
     expect(
-      mocks.invoke.mock.calls.some(
-        ([command, args]) =>
-          command === 'local_executor_request' &&
-          (args as { method?: string })?.method === 'codex.app_server_request'
+      mocks.requestLocalExecutor.mock.calls.some(
+        ([method]) => method === 'codex.app_server_request'
       )
     ).toBe(false)
   })
 
   test('invokes disk list with empty marketplacePath when bundled path is unavailable', async () => {
     mocks.getInitializedBundledPluginMarketplace.mockReturnValue(null)
-    mocks.invoke.mockResolvedValue({
+    mocks.requestLocalExecutor.mockResolvedValue({
       marketplaceId: 'wework-personal',
       marketplacePath: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
       plugins: [
@@ -109,7 +104,7 @@ describe('listPersonalMarketplacePluginsFromDisk', () => {
       installedLocally: false,
       installedPluginId: null,
     })
-    expect(mocks.invoke).toHaveBeenCalledWith('local_executor_list_personal_marketplace_plugins', {
+    expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.personal.list', {
       marketplacePath: '',
     })
   })

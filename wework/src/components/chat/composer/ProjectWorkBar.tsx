@@ -99,6 +99,8 @@ interface ProjectWorkBarProps {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   className?: string
@@ -140,6 +142,8 @@ export function ProjectWorkBar({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onGenerateBranchName,
+  branchNameSource,
   worktreeBranch,
   onWorktreeBranchChange,
   className,
@@ -853,7 +857,8 @@ export function ProjectWorkBar({
                                   >
                                     {localWorkspace
                                       ? workspaceFolderName(workspace.workspacePath)
-                                      : workspace.deviceName || workspace.deviceId}
+                                      : workspace.deviceName?.trim() ||
+                                        t('workbench.environment_device_unknown', '未知设备')}
                                   </span>
                                   {!localWorkspace && (
                                     <span className="min-w-0 max-w-[7rem] truncate text-xs text-text-muted">
@@ -1136,6 +1141,8 @@ export function ProjectWorkBar({
             onListBranches={onListBranches}
             onCheckoutBranch={onCheckoutBranch}
             onCreateBranch={onCreateBranch}
+            onGenerateBranchName={onGenerateBranchName}
+            branchNameSource={branchNameSource}
           />
         )}
       {currentProject &&

@@ -1,8 +1,10 @@
 import { ArrowUpCircle, Folder, FolderPlus, Loader2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
@@ -87,7 +89,7 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
     const rightCloud = isCloudDevice(right) ? 0 : 1
     if (leftCloud !== rightCloud) return leftCloud - rightCloud
 
-    return (left.name || left.device_id).localeCompare(right.name || right.device_id)
+    return (left.name ?? '').localeCompare(right.name ?? '')
   })
 }
 
@@ -128,7 +130,7 @@ function getFolderProjectName(path: string): string {
 }
 
 function getDeviceLabel(device: DeviceInfo): string {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 function getInitialActiveDeviceId(
@@ -277,6 +279,32 @@ function ProjectCreateDialogContent({
     setProjectName(name => name || getFolderProjectName(result.path))
     setProjectCreateError(null)
     setFolderPickerState(null)
+  }
+
+  const openFolderPicker = async (device: DeviceInfo, pickerMode: DeviceFolderPickerMode) => {
+    if (isCloudDevice(device) || !shouldUseNativeProjectDirectoryPicker()) {
+      setFolderPickerState({ deviceId: device.device_id, mode: pickerMode })
+      return
+    }
+
+    try {
+      setProjectCreateError(null)
+      const initialDirectory =
+        getDeviceFolder(device.device_id) || (await onGetDeviceHomeDirectory(device.device_id))
+      const selectedPath = await openNativeProjectDirectoryPicker(initialDirectory)
+      if (!selectedPath) return
+      setFolderDraft({
+        deviceId: device.device_id,
+        path: selectedPath,
+        action: pickerMode,
+      })
+    } catch (error) {
+      setProjectCreateError(
+        error instanceof Error
+          ? error.message
+          : t('workbench.project_directory_select_failed', '项目打开失败')
+      )
+    }
   }
 
   const unlinkActiveDevice = () => {
@@ -478,9 +506,7 @@ function ProjectCreateDialogContent({
             type="button"
             data-testid="project-folder-select-button"
             disabled={submitting || !canUseDevice}
-            onClick={() =>
-              setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'select' })
-            }
+            onClick={() => void openFolderPicker(activeDevice, 'select')}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
           >
             <Folder className="h-4 w-4" />
@@ -490,9 +516,7 @@ function ProjectCreateDialogContent({
             type="button"
             data-testid="project-folder-create-button"
             disabled={submitting || !canUseDevice}
-            onClick={() =>
-              setFolderPickerState({ deviceId: activeDevice.device_id, mode: 'create' })
-            }
+            onClick={() => void openFolderPicker(activeDevice, 'create')}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:opacity-50"
           >
             <FolderPlus className="h-4 w-4" />

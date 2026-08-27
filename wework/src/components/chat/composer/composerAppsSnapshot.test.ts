@@ -7,6 +7,7 @@ import {
   getComposerApps,
   publishComposerApps,
   readComposerAppsSnapshot,
+  removeComposerAppsByPluginIdentity,
   replaceComposerApps,
   requestComposerAppsSync,
   resetComposerAppsMemory,
@@ -79,6 +80,26 @@ describe('composerAppsSnapshot', () => {
 
     expect(shouldSuppressComposerAppsSync()).toBe(false)
     expect(getComposerApps()).toEqual(sampleApps)
+  })
+
+  test('removes an uninstalled plugin by id, key, or display name', () => {
+    publishComposerApps([
+      {
+        id: 'plugin:desktop-e2e-plugin',
+        name: 'Desktop E2E Plugin',
+        pluginKey: 'desktop-e2e-plugin',
+        pluginDisplayNames: ['Desktop E2E Plugin'],
+      },
+      {
+        id: 'plugin:documents',
+        name: 'Documents',
+        pluginKey: 'documents',
+      },
+    ])
+
+    removeComposerAppsByPluginIdentity(['desktop-e2e-plugin'])
+
+    expect(getComposerApps().map(app => app.id)).toEqual(['plugin:documents'])
   })
 
   test('stores composer apps on window so HMR cannot split slash and picker', () => {

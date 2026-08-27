@@ -78,6 +78,50 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
+  test('ignores an older model reload that settles after the latest request', async () => {
+    const initialModel: UnifiedModel = { name: 'initial-model', type: 'runtime' }
+    const recoveredModel: UnifiedModel = { name: 'recovered-model', type: 'runtime' }
+    let rejectStaleReload: ((reason: Error) => void) | undefined
+    let resolveRecoveredReload: ((value: { data: UnifiedModel[] }) => void) | undefined
+    const staleReload = new Promise<{ data: UnifiedModel[] }>((_resolve, reject) => {
+      rejectStaleReload = reject
+    })
+    const recoveredReload = new Promise<{ data: UnifiedModel[] }>(resolve => {
+      resolveRecoveredReload = resolve
+    })
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [initialModel] })
+        .mockReturnValueOnce(staleReload)
+        .mockReturnValueOnce(recoveredReload),
+    }
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([initialModel]))
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(3))
+
+    await act(async () => {
+      rejectStaleReload?.(new Error('stale reload failed'))
+      await staleReload.catch(() => undefined)
+    })
+    expect(result.current.models).toEqual([initialModel])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      resolveRecoveredReload?.({ data: [recoveredModel] })
+      await recoveredReload
+    })
+    await waitFor(() => expect(result.current.models).toEqual([recoveredModel]))
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
+
   test('refreshes the selected model metadata while preserving supported options', async () => {
     const originalModel: UnifiedModel = {
       name: 'local-model:api-sol',
@@ -133,6 +177,65 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
     expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
     expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
+  test('preserves a task composer override when the model catalog refreshes', async () => {
+    const projectModel: UnifiedModel = {
+      name: 'project-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const overrideModel: UnifiedModel = {
+      name: 'override-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const refreshedProjectModel = { ...projectModel, displayName: 'Project Model Updated' }
+    const refreshedOverrideModel = { ...overrideModel, displayName: 'Override Model Updated' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [projectModel, overrideModel] })
+        .mockResolvedValueOnce({ data: [refreshedProjectModel, refreshedOverrideModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: 'new-task:project:7',
+        persistSelection: false,
+        selectionConfig: {
+          modelName: projectModel.name,
+          modelType: projectModel.type,
+          options: { reasoning: 'medium' },
+        },
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(projectModel))
+    act(() => {
+      result.current.setSelectedModel(overrideModel)
+      result.current.setSelectedModelOption('reasoning', 'high')
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedOverrideModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
   })
 
   test('falls back to the refreshed model default when the selected option is removed', async () => {
@@ -649,7 +752,7 @@ describe('workbench project chat hooks', () => {
     }
 
     const { result, rerender } = renderHook(
-      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, teamId: 2, locked }),
+      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, locked }),
       { initialProps: { locked: false } }
     )
 

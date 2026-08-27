@@ -21,11 +21,11 @@ from app.models.share_link import ResourceType
 from app.models.user import User
 from app.schemas.base_role import BaseRole
 from app.schemas.cloud_project import (
+    CloudProjectBoardConfig,
     CloudProjectCreate,
     CloudProjectMemberCreate,
     CloudProjectMemberUpdate,
     CloudProjectUpdate,
-    default_board_statuses,
     normalize_provider_config,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
@@ -119,12 +119,7 @@ class CloudProjectService:
                 "provider_config": provider_config,
                 "visibility": values.visibility,
                 "tags": [],
-                "board_config": {
-                    "group_by": "status",
-                    "statuses": [
-                        item.model_dump() for item in default_board_statuses()
-                    ],
-                },
+                "board_config": CloudProjectBoardConfig().model_dump(),
             },
         )
         db.add(project)
@@ -197,6 +192,7 @@ class CloudProjectService:
             or "card_display" in values.model_fields_set
             or "board_config" in values.model_fields_set
             or "ai_automation" in values.model_fields_set
+            or "pull_request_automation" in values.model_fields_set
             or "workflow_definition" in values.model_fields_set
             or "visibility" in values.model_fields_set
         ):
@@ -262,6 +258,14 @@ class CloudProjectService:
             ):
                 metadata["ai_automation"] = values.ai_automation.model_dump()
                 updates.pop("ai_automation", None)
+            if (
+                "pull_request_automation" in values.model_fields_set
+                and values.pull_request_automation is not None
+            ):
+                metadata["pull_request_automation"] = (
+                    values.pull_request_automation.model_dump()
+                )
+                updates.pop("pull_request_automation", None)
             if (
                 "workflow_definition" in values.model_fields_set
                 and values.workflow_definition is not None

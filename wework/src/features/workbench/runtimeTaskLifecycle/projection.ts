@@ -1,6 +1,35 @@
-import type { RuntimeTaskSummary } from '@/types/api'
+import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
+import type { RuntimePaneTranscript } from '@/types/workbench'
+import {
+  runtimeMessagesToWorkbenchMessages,
+  runtimeTranscriptTurnsToConversationTurns,
+} from '../runtimePaneMessages'
 
 export type RuntimeTaskBoardState = 'attention' | 'queued' | 'active' | 'completed'
+
+export function projectRuntimePaneTranscript(
+  transcript: RuntimeTranscriptResponse
+): RuntimePaneTranscript {
+  return {
+    running: transcript.running,
+    messages: runtimeMessagesToWorkbenchMessages(transcript.messages ?? []),
+    turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns ?? []),
+    contextUsage: transcript.contextUsage ?? null,
+    turnNavigation: transcript.turnNavigation ?? [],
+    fullContent: transcript.fullContent === true,
+    rangeStart: transcript.rangeStart ?? null,
+    rangeEnd: transcript.rangeEnd ?? null,
+    hasMoreBefore: Boolean(transcript.hasMoreBefore),
+    beforeCursor: transcript.beforeCursor ?? null,
+    hasMoreAfter: Boolean(transcript.hasMoreAfter),
+    afterCursor: transcript.afterCursor ?? null,
+  }
+}
+
+export function isRuntimePaneTranscriptConfirmedIdle(transcript: RuntimePaneTranscript): boolean {
+  if (transcript.running !== false) return false
+  return !transcript.turns.some(turn => isRuntimeTurnRunningStatus(turn.status))
+}
 
 export function runtimeTaskBoardState(task: RuntimeTaskSummary): RuntimeTaskBoardState {
   const normalizedTask = normalizeRuntimeTaskSummary(task)
@@ -80,6 +109,9 @@ export function shouldReplaceRuntimeTaskProjection(
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
+  if (current.cachedProjection !== candidate.cachedProjection) {
+    return current.cachedProjection === true
+  }
   const currentCompleted = isRuntimeTaskAuthoritativeCompletion(current)
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 
@@ -143,6 +175,16 @@ function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
 function isRuntimeTaskRunningStatus(status: string | null | undefined): boolean {
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
+}
+
+function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return (
+    normalized === 'active' ||
+    normalized === 'inprogress' ||
+    normalized === 'pending' ||
+    normalized === 'streaming'
+  )
 }
 
 function runtimeTaskProjectionTime(task: RuntimeTaskSummary): number {

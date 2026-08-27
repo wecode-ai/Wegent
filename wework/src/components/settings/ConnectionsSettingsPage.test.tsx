@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
@@ -13,7 +13,8 @@ import type { CloudConnectionContextValue } from '@/features/cloud-connection/Cl
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -61,7 +62,7 @@ vi.mock('@/config/runtime', () => ({
 
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn((options: unknown) => ({ options })),
-  shouldUseTauriFetch: vi.fn(() => false),
+  shouldUseNativeFetch: vi.fn(() => false),
 }))
 
 vi.mock('@/api/models', () => ({
@@ -105,7 +106,7 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn().mockResolvedValue({
     running: true,
     ready: true,
@@ -184,6 +185,8 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
+    getGitAccountSyncSummary: vi.fn(),
+    syncGitAccounts: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
     createCloudDevice: vi.fn(),
@@ -205,11 +208,12 @@ describe('ConnectionsSettingsPage', () => {
     importRuntimeAuthJson: vi.fn(),
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -261,6 +265,31 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     createDeviceApiMock.mockReturnValue(api)
+    api.getGitAccountSyncSummary.mockResolvedValue({
+      accounts: [
+        {
+          id: 'git-1',
+          domain: 'git.example.com',
+          provider: 'gitlab',
+          login: 'alice',
+          email: 'alice@example.com',
+          effective: true,
+          duplicate_of: null,
+        },
+      ],
+      effective_count: 1,
+      duplicate_count: 0,
+    })
+    api.syncGitAccounts.mockResolvedValue({
+      device_id: 'remote-device',
+      status: 'synced',
+      synced_domains: ['git.example.com'],
+      removed_domains: [],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [],
+      warning_codes: [],
+    })
     userApi.getRuntimeConfig.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
@@ -407,11 +436,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(settingsPage).not.toHaveClass('h-screen')
   })
 
-  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('does not duplicate titlebar clearance beneath the Electron app chrome', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     api.getAllDevices.mockResolvedValue([])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -1185,12 +1211,15 @@ describe('ConnectionsSettingsPage', () => {
         'anthropic-messages'
       )
       expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
-      await userEvent.type(
-        screen.getByTestId('local-model-url-input'),
-        'https://api.kimi.com/coding/'
-      )
-      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
-      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      fireEvent.change(screen.getByTestId('local-model-url-input'), {
+        target: { value: 'https://api.kimi.com/coding/' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-id-input'), {
+        target: { value: 'kimi-for-coding' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-api-key-input'), {
+        target: { value: 'local-secret' },
+      })
       await userEvent.click(screen.getByTestId('local-model-test-button'))
 
       expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
@@ -1617,6 +1646,23 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+  })
+
+  test('shows device Git configuration after the cloud and remote device list', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const deviceList = await screen.findByText('Cloud Claude Device')
+    const gitSyncSection = await screen.findByTestId('git-device-sync-section')
+    expect(
+      deviceList.compareDocumentPosition(gitSyncSection) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(gitSyncSection).toHaveTextContent('gitlab · git.example.com')
+    expect(screen.getByRole('option', { name: 'Remote Alias · remote' })).toBeInTheDocument()
   })
 
   test('does not show the current app backend registration in cloud connections', async () => {

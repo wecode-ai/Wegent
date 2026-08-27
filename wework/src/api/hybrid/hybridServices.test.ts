@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { createHybridWorkbenchServices } from './hybridServices'
 
 const mocks = vi.hoisted(() => {
@@ -11,15 +12,12 @@ const mocks = vi.hoisted(() => {
   const cloudListRuntimeWork = vi.fn()
   const localListModels = vi.fn()
   const cloudListModels = vi.fn()
-  const localListTeams = vi.fn()
-  const localGetDefaultWorkbenchTeam = vi.fn()
   const localListProjects = vi.fn()
   const localUpdateCurrentUser = vi.fn()
   const cloudUpdateCurrentUser = vi.fn()
   const localListSkills = vi.fn()
   const localGetTeamSkills = vi.fn()
   const cloudListTeams = vi.fn()
-  const cloudGetDefaultWorkbenchTeam = vi.fn()
   const localSearchRuntimeWork = vi.fn()
   const localGetWorktreeCapabilities = vi.fn()
   const localPreflightWorktree = vi.fn()
@@ -28,9 +26,12 @@ const mocks = vi.hoisted(() => {
   const cloudCreateDockerRemoteDeviceCommand = vi.fn()
   const cloudRuntimeIpcRequest = vi.fn()
   const cloudRuntimeIpcSubscribe = vi.fn(async () => vi.fn())
+  const cloudRuntimeIpcReconnect = vi.fn().mockResolvedValue(undefined)
   const localChatStreamSubscribe = vi.fn(() => vi.fn())
   const cloudRuntimeChatStreamSubscribe = vi.fn(() => vi.fn())
-  const invoke = vi.fn()
+  const localRecoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
+  const cloudRecoverRuntimeConnections = vi.fn().mockResolvedValue(undefined)
+  const readElectronLocalFile = vi.fn()
   const localUploadAttachment = vi.fn()
   const localDeleteAttachment = vi.fn()
   const cloudUploadAttachment = vi.fn()
@@ -62,8 +63,7 @@ const mocks = vi.hoisted(() => {
 
   const localServices = {
     teamApi: {
-      listTeams: localListTeams,
-      getDefaultWorkbenchTeam: localGetDefaultWorkbenchTeam,
+      listTeams: vi.fn().mockResolvedValue([]),
     },
     modelApi: { listModels: localListModels },
     skillApi: {
@@ -104,12 +104,12 @@ const mocks = vi.hoisted(() => {
       deleteAttachment: localDeleteAttachment,
     },
     chatStream: { subscribe: localChatStreamSubscribe },
+    recoverRuntimeConnections: localRecoverRuntimeConnections,
   }
 
   const cloudServices = {
     teamApi: {
       listTeams: cloudListTeams,
-      getDefaultWorkbenchTeam: cloudGetDefaultWorkbenchTeam,
     },
     modelApi: { listModels: cloudListModels },
     skillApi: {},
@@ -147,6 +147,7 @@ const mocks = vi.hoisted(() => {
     userApi: { updateCurrentUser: cloudUpdateCurrentUser },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
+    recoverRuntimeConnections: cloudRecoverRuntimeConnections,
     workspaceSessionApi: cloudWorkspaceSessionApi,
   }
 
@@ -159,15 +160,12 @@ const mocks = vi.hoisted(() => {
     cloudListRuntimeWork,
     localListModels,
     cloudListModels,
-    localListTeams,
-    localGetDefaultWorkbenchTeam,
     localListProjects,
     localUpdateCurrentUser,
     cloudUpdateCurrentUser,
     localListSkills,
     localGetTeamSkills,
     cloudListTeams,
-    cloudGetDefaultWorkbenchTeam,
     localSearchRuntimeWork,
     localGetWorktreeCapabilities,
     localPreflightWorktree,
@@ -176,9 +174,12 @@ const mocks = vi.hoisted(() => {
     cloudCreateDockerRemoteDeviceCommand,
     cloudRuntimeIpcRequest,
     cloudRuntimeIpcSubscribe,
+    cloudRuntimeIpcReconnect,
     localChatStreamSubscribe,
     cloudRuntimeChatStreamSubscribe,
-    invoke,
+    localRecoverRuntimeConnections,
+    cloudRecoverRuntimeConnections,
+    readElectronLocalFile,
     localUploadAttachment,
     localDeleteAttachment,
     cloudUploadAttachment,
@@ -299,8 +300,8 @@ vi.mock('@/api/local/localServices', () => ({
   },
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: mocks.invoke,
+vi.mock('@/lib/electron-local-file', () => ({
+  readElectronLocalFile: mocks.readElectronLocalFile,
 }))
 
 vi.mock('@/api/backend/backendServices', () => ({
@@ -311,6 +312,7 @@ vi.mock('@/api/backend/runtimeIpc', () => ({
   createCloudRuntimeIpcClient: () => ({
     request: mocks.cloudRuntimeIpcRequest,
     subscribe: mocks.cloudRuntimeIpcSubscribe,
+    reconnect: mocks.cloudRuntimeIpcReconnect,
     dispose: vi.fn(),
   }),
 }))
@@ -393,15 +395,6 @@ describe('createHybridWorkbenchServices', () => {
         bind_shell: 'claudecode',
       },
     ])
-    mocks.localListTeams.mockResolvedValue([
-      { id: 0, name: 'local-wework', is_active: true, default_for_modes: ['wework'] },
-    ])
-    mocks.localGetDefaultWorkbenchTeam.mockResolvedValue({
-      id: 0,
-      name: 'local-wework',
-      is_active: true,
-      default_for_modes: ['wework'],
-    })
     mocks.localListProjects.mockResolvedValue({ items: [] })
     mocks.localUpdateCurrentUser.mockImplementation(async data => data)
     mocks.localListSkills.mockResolvedValue([])
@@ -409,12 +402,6 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudListTeams.mockResolvedValue([
       { id: 1, name: 'cloud-wework', is_active: true, default_for_modes: ['wework'] },
     ])
-    mocks.cloudGetDefaultWorkbenchTeam.mockResolvedValue({
-      id: 1,
-      name: 'cloud-wework',
-      is_active: true,
-      default_for_modes: ['wework'],
-    })
     mocks.cloudListDevices.mockResolvedValue([
       {
         id: 1,
@@ -524,7 +511,8 @@ describe('createHybridWorkbenchServices', () => {
         { kind: 'process', label: 'Process', command: 'wegent-executor' },
       ],
     })
-    mocks.invoke.mockResolvedValue([])
+    mocks.readElectronLocalFile.mockReset()
+    mocks.readElectronLocalFile.mockResolvedValue(Uint8Array.from([1, 2, 3, 4]))
     mocks.cloudUploadAttachment.mockResolvedValue({
       id: 42,
       filename: 'screenshot.png',
@@ -536,13 +524,17 @@ describe('createHybridWorkbenchServices', () => {
     })
   })
 
-  it('uploads a local attachment to the connected cloud backend on demand', async () => {
-    mocks.invoke.mockResolvedValue([
-      {
-        name: 'screenshot.png',
-        bytes: [1, 2, 3, 4],
-      },
-    ])
+  it('recovers local and cloud runtime transports together', async () => {
+    const services = createServices()
+
+    await services.recoverRuntimeConnections?.()
+
+    expect(mocks.localRecoverRuntimeConnections).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRecoverRuntimeConnections).toHaveBeenCalledTimes(1)
+    expect(mocks.cloudRuntimeIpcReconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a local attachment through the Electron host before uploading it to cloud', async () => {
     const services = createServices()
 
     const uploaded = await services.attachmentApi?.uploadLocalAttachmentToCloud?.({
@@ -556,13 +548,10 @@ describe('createHybridWorkbenchServices', () => {
       local_path: '/Users/me/.wework/workspace/attachments/draft/screenshot.png',
     })
 
-    expect(mocks.invoke).toHaveBeenCalledWith('read_dropped_files', {
-      paths: ['/Users/me/.wework/workspace/attachments/draft/screenshot.png'],
-    })
-    expect(mocks.cloudUploadAttachment).toHaveBeenCalledWith(expect.any(File))
+    expect(mocks.readElectronLocalFile).toHaveBeenCalledWith(
+      '/Users/me/.wework/workspace/attachments/draft/screenshot.png'
+    )
     const file = mocks.cloudUploadAttachment.mock.calls[0][0] as File
-    expect(file.name).toBe('screenshot.png')
-    expect(file.type).toBe('image/png')
     expect(Array.from(new Uint8Array(await file.arrayBuffer()))).toEqual([1, 2, 3, 4])
     expect(uploaded?.id).toBe(42)
   })
@@ -688,65 +677,61 @@ describe('createHybridWorkbenchServices', () => {
     expect(response.data[1]).toEqual(responsesModel)
   })
 
-  it('keeps only explicit cloud vision references that resolve to an available image model', async () => {
-    const visionModel = {
-      name: 'cloud-vision',
-      type: 'public',
-      displayName: 'Cloud Vision',
-      namespace: 'default',
-      resourceUserId: 0,
-      modelCapabilities: { supportsImage: true },
-      config: { protocol: 'openai-responses' },
-      runtime: { family: 'openai.openai-responses' },
-      isActive: true,
-    }
+  it('keeps well-formed cloud vision references without a client-side catalog lookup', async () => {
     const reference = {
-      modelName: visionModel.name,
-      modelType: visionModel.type,
-      namespace: visionModel.namespace,
-      resourceUserId: visionModel.resourceUserId,
-      apiFormat: 'openai-responses',
-    }
-    const configuredDeepSeek = {
-      name: 'deepseek-v4-pro-responses',
-      type: 'public',
-      displayName: 'DeepSeek V4 Pro',
-      modelId: 'deepseek-v4-pro',
+      modelName: 'kimi-k2.5-vision',
+      modelType: 'public',
       namespace: 'default',
       resourceUserId: 0,
-      modelCapabilities: { supportsImage: false },
-      config: { protocol: 'openai-responses', visionSidecarModel: reference },
-      runtime: { family: 'openai.openai-responses' },
+      apiFormat: 'anthropic-messages',
+    }
+    // The sidecar target declares no capabilities and is absent from the Wework
+    // catalog; the backend gateway resolves and authorizes it at send time.
+    const configuredPrimary = {
+      name: 'text-only-primary',
+      type: 'public',
+      displayName: 'Text Only Primary',
+      modelId: 'text-only-primary',
+      namespace: 'default',
+      resourceUserId: 0,
+      config: { visionSidecarModel: reference },
+      runtime: { family: 'claude' },
       isActive: true,
     }
-    const staleDeepSeek = {
-      ...configuredDeepSeek,
-      name: 'deepseek-v4-flash-responses',
-      modelId: 'deepseek-v4-flash',
-      config: {
-        protocol: 'openai-responses',
-        visionSidecarModel: { ...reference, modelName: 'deleted-vision-model' },
-      },
+    const malformedPrimary = {
+      ...configuredPrimary,
+      name: 'text-only-primary-malformed',
+      modelId: 'text-only-primary-malformed',
+      config: { visionSidecarModel: { ...reference, apiFormat: 'gemini-generate-content' } },
     }
     mocks.localListModels.mockResolvedValue({ data: [] })
     mocks.cloudListModels.mockResolvedValue({
-      data: [configuredDeepSeek, staleDeepSeek, visionModel],
+      data: [configuredPrimary, malformedPrimary],
     })
     const services = createServices()
 
     await services.modelApi.listModels()
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
-      expect(refreshed.data).toHaveLength(3)
+      expect(refreshed.data).toHaveLength(2)
     })
     const response = await services.modelApi.listModels()
 
     expect(
-      response.data.find(model => model.name === configuredDeepSeek.name)?.config
+      response.data.find(model => model.name === configuredPrimary.name)?.config
     ).toMatchObject({ visionSidecarModel: reference })
     expect(
-      response.data.find(model => model.name === staleDeepSeek.name)?.config
-    ).not.toHaveProperty('visionSidecarModel')
+      selectedModelExecutionFields(
+        response.data.find(model => model.name === configuredPrimary.name)!,
+        {}
+      ).modelOptions?.weworkCloudVisionSidecar
+    ).toBe(JSON.stringify(reference))
+    expect(
+      selectedModelExecutionFields(
+        response.data.find(model => model.name === malformedPrimary.name)!,
+        {}
+      ).modelOptions
+    ).not.toHaveProperty('weworkCloudVisionSidecar')
   })
 
   it('does not wait for an unresponsive cloud model request', async () => {
@@ -759,23 +744,17 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListModels).toHaveBeenCalledTimes(1)
   })
 
-  it('lists persisted Wegent teams while keeping the local workbench default', async () => {
+  it('lists persisted Wegent teams only for explicit Wegent execution', async () => {
     const services = createServices()
 
     await expect(services.teamApi.listTeams()).resolves.toEqual([
       expect.objectContaining({ id: 1, name: 'cloud-wework' }),
     ])
-    await expect(services.teamApi.getDefaultWorkbenchTeam()).resolves.toMatchObject({
-      id: 0,
-      name: 'local-wework',
-    })
     await expect(services.skillApi.getTeamSkills(0)).resolves.toEqual({
       skills: [],
       preload_skills: [],
     })
     expect(mocks.cloudListTeams).toHaveBeenCalledTimes(1)
-    expect(mocks.localListTeams).not.toHaveBeenCalled()
-    expect(mocks.cloudGetDefaultWorkbenchTeam).not.toHaveBeenCalled()
   })
 
   it('returns local devices from the primary device list', async () => {
@@ -1155,8 +1134,7 @@ describe('createHybridWorkbenchServices', () => {
     mocks.cloudListArchivedConversations.mockReturnValue(new Promise(() => undefined))
     const services = createServices()
 
-    const [team, models, devices, runtimeWork, search, archives, projects] = await Promise.all([
-      services.teamApi.getDefaultWorkbenchTeam(),
+    const [models, devices, runtimeWork, search, archives, projects] = await Promise.all([
       services.modelApi.listModels(),
       services.deviceApi.listDevices(),
       services.runtimeWorkApi?.listRuntimeWork(),
@@ -1165,7 +1143,6 @@ describe('createHybridWorkbenchServices', () => {
       services.projectApi.listProjects(),
     ])
 
-    expect(team.name).toBe('local-wework')
     expect(models.data.map(model => model.name)).toEqual(['gpt-5.5'])
     expect(devices.map(device => device.device_id)).toEqual(['local-device'])
     expect(runtimeWork).toEqual({ projects: [], chats: [], totalTasks: 0 })

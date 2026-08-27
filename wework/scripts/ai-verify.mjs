@@ -9,12 +9,16 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { execFile, spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildAiVerifyEnvironment } from './ai-verify-environment.mjs'
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
+const repositoryDir = resolve(weworkDir, '..')
+const electronDir = join(weworkDir, 'electron')
 const defaultTimeoutMs = 30_000
 const startupTimeoutMs = 120_000
 const commandResultGraceMs = 5_000
@@ -26,14 +30,96 @@ const corsHeaders = {
   'access-control-allow-origin': '*',
 }
 
+export const AI_VERIFY_ACTIONS = Object.freeze({
+  capture: 'capture',
+  'capture-browser': 'captureEmbeddedBrowser',
+  'capture-popout': 'capturePopoutWindow',
+  'capture-workspace': 'captureWorkspaceWindow',
+  snapshot: 'snapshot',
+  debug: 'getWorkbenchDebugSnapshot',
+  'active-element': 'getActiveElementTestId',
+  click: 'click',
+  'click-at': 'clickAt',
+  'click-then-macrotask': 'clickThenMacrotask',
+  'context-menu': 'contextMenu',
+  'seed-local-project': 'seedLocalProject',
+  'preview-plugin-import': 'previewPluginImport',
+  'import-plugin-package': 'importPluginPackage',
+  'set-local-proxy-url': 'setLocalProxyUrl',
+  'set-storage': 'setLocalStorageItem',
+  'get-storage': 'getLocalStorageItem',
+  'remove-storage': 'removeLocalStorageItem',
+  origin: 'getLocationOrigin',
+  'restart-core-dsh': 'restartCoreDsh',
+  'terminal-snapshot': 'readLocalTerminalSnapshot',
+  reload: 'reloadApp',
+  'close-to-tray': 'closeMainWindowToTray',
+  'request-close': 'requestMainWindowClose',
+  'dismiss-popout': 'dismissPopoutWindow',
+  drag: 'drag',
+  'drop-file': 'dropFile',
+  'drop-paths': 'dropPaths',
+  fill: 'fill',
+  'get-attribute': 'getAttribute',
+  hover: 'hover',
+  metrics: 'getElementMetrics',
+  navigate: 'navigate',
+  'paste-paths': 'pastePaths',
+  'pointer-move': 'pointerMove',
+  press: 'press',
+  submit: 'submit',
+  'scroll-into-view': 'scrollIntoView',
+  'select-text': 'selectText',
+  'show-popout': 'showPopoutWindow',
+  'system-drag-drop': 'completeSystemDragDrop',
+  'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
+  'wait-for': 'waitFor',
+  'window-focus-snapshot': 'getWindowFocusSnapshot',
+  text: 'getText',
+})
+
+const SELECTOR_OPTIONAL_COMMANDS = new Set([
+  'capture',
+  'capture-browser',
+  'capture-popout',
+  'capture-workspace',
+  'snapshot',
+  'debug',
+  'active-element',
+  'click-at',
+  'seed-local-project',
+  'preview-plugin-import',
+  'import-plugin-package',
+  'set-local-proxy-url',
+  'set-storage',
+  'get-storage',
+  'remove-storage',
+  'origin',
+  'restart-core-dsh',
+  'terminal-snapshot',
+  'reload',
+  'navigate',
+  'text',
+  'pointer-move',
+  'dismiss-popout',
+  'show-popout',
+  'system-drag-drop',
+  'window-focus-snapshot',
+  'close-to-tray',
+  'request-close',
+  'verify-browser-inspector',
+])
+
 function usage() {
   console.error(`Usage:
   pnpm --filter wework ai:verify start
-  pnpm --filter wework ai:verify <capture|capture-browser|capture-popout|capture-workspace|snapshot|debug|active-element|click|click-at|click-then-macrotask|context-menu|seed-local-project|preview-plugin-import|terminal-snapshot|reload|close-to-tray|request-close|dismiss-popout|drag|drop-file|drop-paths|fill|get-attribute|hover|metrics|navigate|paste-paths|pointer-move|press|scroll-into-view|select-text|show-popout|system-drag-drop|wait-for|window-focus-snapshot|text|status|stop> --session PATH [options]
+  pnpm --filter wework ai:verify start --packaged true
+  pnpm --filter wework ai:verify <${Object.keys(AI_VERIFY_ACTIONS).join('|')}|status|stop> --session PATH [options]
 
 Options:
   --codex-home-initialization true
                             Seed and verify isolated first-run Codex migration
+  --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
                             seed-local-project, paste-paths, or drop-paths
@@ -49,7 +135,7 @@ Options:
                             command timeout otherwise (default: ${defaultTimeoutMs})`)
 }
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const [command, ...rest] = argv
   const options = {}
   for (let index = 0; index < rest.length; index += 1) {
@@ -57,7 +143,9 @@ function parseArgs(argv) {
     if (!value.startsWith('--')) throw new Error(`Unexpected argument: ${value}`)
     const key = value.slice(2)
     const next = rest[index + 1]
-    if (!next || next.startsWith('--')) throw new Error(`Missing value for --${key}`)
+    if (next === undefined || next.startsWith('--')) {
+      throw new Error(`Missing value for --${key}`)
+    }
     options[key] = next
     index += 1
   }
@@ -77,6 +165,22 @@ export function resolveCommandTimeout(timeout) {
   return Number.isFinite(configuredTimeout) && configuredTimeout > 0
     ? configuredTimeout
     : defaultTimeoutMs
+}
+
+export function resolveOptionalBoolean(value, optionName) {
+  if (value === undefined) return undefined
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(`--${optionName} must be "true" or "false"`)
+}
+
+export function validateStartOptions(options) {
+  const allowedOptions = new Set(['codex-home-initialization', 'packaged', 'timeout'])
+  const unexpectedOption = Object.keys(options).find(option => !allowedOptions.has(option))
+  if (unexpectedOption) {
+    throw new Error(`Unexpected option for start: --${unexpectedOption}`)
+  }
+  resolveOptionalBoolean(options.packaged, 'packaged')
 }
 
 function json(response, status, value) {
@@ -119,14 +223,11 @@ function authorized(request, token) {
   return request.headers.authorization === `Bearer ${token}`
 }
 
-export function takeWritableCommandPoll(commandPolls) {
-  let poll = commandPolls.shift()
-  while (poll) {
-    clearTimeout(poll.timer)
-    if (!poll.closed && !poll.response.destroyed && !poll.response.writableEnded) return poll
-    poll = commandPolls.shift()
+export function acknowledgeStartedCommand(pending, started) {
+  if (!pending.has(started.id)) {
+    return { status: 404, value: { error: `Unknown command ${started.id}` } }
   }
-  return undefined
+  return { status: 200, value: { ok: true } }
 }
 
 async function stopOwnedSessionProcesses(session) {
@@ -195,9 +296,115 @@ export function startupFailureMessage(status, timeoutMs) {
     })} before its WebView connected to AI verification`
   }
   const phase = status?.pid
-    ? 'the Tauri launcher was still waiting for its WebView'
-    : 'the Tauri launcher had not started'
+    ? 'the desktop launcher was still waiting for its renderer'
+    : 'the desktop launcher had not started'
   return `Timed out after ${timeoutMs}ms while ${phase}`
+}
+
+export function resolveElectronAppBinary(platform = process.platform, arch = process.arch) {
+  const configured = process.env.WEWORK_ELECTRON_APP_BIN?.trim()
+  if (configured) return resolve(configured)
+  const platformName = platform === 'darwin' ? 'darwin' : platform === 'win32' ? 'win32' : 'linux'
+  const executable = platform === 'win32' ? 'WeWork.exe' : 'WeWork'
+  const appRoot = join(weworkDir, 'electron', 'release', `WeWork-${platformName}-${arch}`)
+  return platform === 'darwin'
+    ? join(appRoot, 'WeWork.app', 'Contents', 'MacOS', executable)
+    : join(appRoot, executable)
+}
+
+export function resolveElectronLaunch({
+  packaged,
+  sourceBinary,
+  platform = process.platform,
+  arch = process.arch,
+}) {
+  if (packaged) {
+    return {
+      command: resolveElectronAppBinary(platform, arch),
+      args: [],
+      cwd: weworkDir,
+    }
+  }
+  return {
+    command: sourceBinary,
+    args: ['.'],
+    cwd: electronDir,
+  }
+}
+
+export function resolveHostTarget(platform = process.platform, arch = process.arch) {
+  const target = {
+    'darwin:arm64': 'aarch64-apple-darwin',
+    'darwin:x64': 'x86_64-apple-darwin',
+    'linux:arm64': 'aarch64-unknown-linux-gnu',
+    'linux:x64': 'x86_64-unknown-linux-gnu',
+    'win32:x64': 'x86_64-pc-windows-msvc',
+  }[`${platform}:${arch}`]
+  if (!target) throw new Error(`Unsupported Electron source platform: ${platform}/${arch}`)
+  return target
+}
+
+export async function buildSourceRuntimeEnvironment(
+  platform = process.platform,
+  arch = process.arch
+) {
+  const target = resolveHostTarget(platform, arch)
+  const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
+  const codex = lock.targets[target]
+  if (!codex?.binaryPath) throw new Error(`Codex binary is not configured for ${target}`)
+  const executorTargetDir =
+    process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+  return {
+    CODEX_BINARY_PATH: join(weworkDir, 'resources', 'binaries', 'codex', target, codex.binaryPath),
+    DWS_BINARY_PATH: join(
+      weworkDir,
+      'resources',
+      'binaries',
+      `dws-${target}${platform === 'win32' ? '.exe' : ''}`
+    ),
+    WEWORK_EXECUTOR_PATH: join(
+      executorTargetDir,
+      'debug',
+      platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+    ),
+    WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
+  }
+}
+
+async function resolveSourceElectronBinary() {
+  const require = createRequire(join(electronDir, 'package.json'))
+  return require('electron')
+}
+
+export function prepareElectronApp({
+  packaged,
+  environment = process.env,
+  platform = process.platform,
+  spawnProcess = spawn,
+}) {
+  if (packaged && environment.WEWORK_ELECTRON_APP_BIN?.trim()) return Promise.resolve()
+  const script = packaged ? 'ai:verify:electron:build' : 'ai:verify:electron:prepare'
+  const description = packaged ? 'Electron package build' : 'Electron source preparation'
+  const preparationEnvironment = {
+    ...environment,
+    CI: environment.CI || '1',
+  }
+  return new Promise((resolvePromise, reject) => {
+    const pnpmCommand = platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+    const command = wrapWindowsScriptCommand(pnpmCommand, ['run', script], { platform })
+    const child = spawnProcess(command.command, command.args, {
+      cwd: weworkDir,
+      env: preparationEnvironment,
+      stdio: 'inherit',
+    })
+    child.once('error', error => {
+      reject(new Error(`${description} failed to start: ${error.message}`))
+    })
+    child.once('exit', code => {
+      if (code === 0) resolvePromise()
+      else reject(new Error(`${description} exited with code ${code ?? 'unknown'}`))
+    })
+  })
 }
 
 export function monitorAppProcess(app, pending, onExit) {
@@ -220,7 +427,6 @@ export function monitorAppProcess(app, pending, onExit) {
 async function runServer(sessionPath, token) {
   const session = JSON.parse(await readFile(sessionPath, 'utf8'))
   const queue = []
-  const commandPolls = []
   const pending = new Map()
   let ready = null
   let app = null
@@ -243,27 +449,19 @@ async function runServer(sessionPath, token) {
       if (request.method === 'GET' && url.pathname === '/commands') {
         const command = queue.shift()
         if (command) return json(response, 200, command)
-
-        const poll = { response, timer: undefined, closed: false }
-        poll.timer = setTimeout(() => {
-          const index = commandPolls.indexOf(poll)
-          if (index >= 0) commandPolls.splice(index, 1)
-          response.writeHead(204, corsHeaders)
-          response.end()
-        }, defaultTimeoutMs)
-        commandPolls.push(poll)
-        response.once('close', () => {
-          poll.closed = true
-          const index = commandPolls.indexOf(poll)
-          if (index < 0) return
-          commandPolls.splice(index, 1)
-          clearTimeout(poll.timer)
-        })
-        return
-      }
-      if (request.method === 'GET' && url.pathname === '/control-tick') {
         response.writeHead(204, corsHeaders)
         return response.end()
+      }
+      if (request.method === 'GET' && url.pathname === '/control-tick') {
+        return setTimeout(() => {
+          response.writeHead(204, corsHeaders)
+          response.end()
+        }, 50)
+      }
+      if (request.method === 'POST' && url.pathname === '/started') {
+        const started = await readBody(request)
+        const acknowledgement = acknowledgeStartedCommand(pending, started)
+        return json(response, acknowledgement.status, acknowledgement.value)
       }
       if (request.method === 'POST' && url.pathname === '/results') {
         const result = await readBody(request)
@@ -285,7 +483,6 @@ async function runServer(sessionPath, token) {
           appExitSignal: appExit?.signal ?? null,
           appExitError: appExit?.error ?? null,
           queuedCommands: queue.length,
-          commandPolls: commandPolls.length,
           pendingCommands: pending.size,
         })
       }
@@ -299,12 +496,7 @@ async function runServer(sessionPath, token) {
           pending.set(id, { resolve: resolvePromise, reject })
         )
         const nextCommand = { id, ...command }
-        const poll = takeWritableCommandPoll(commandPolls)
-        if (poll) {
-          json(poll.response, 200, nextCommand)
-        } else {
-          queue.push(nextCommand)
-        }
+        queue.push(nextCommand)
         try {
           return json(response, 200, {
             ok: true,
@@ -316,6 +508,8 @@ async function runServer(sessionPath, token) {
           })
         } catch (error) {
           pending.delete(id)
+          const queuedIndex = queue.findIndex(item => item.id === id)
+          if (queuedIndex >= 0) queue.splice(queuedIndex, 1)
           return json(response, 500, { ok: false, error: String(error.message ?? error) })
         }
       }
@@ -364,20 +558,33 @@ async function runServer(sessionPath, token) {
     await writeFile(join(nativeCodexHome, 'auth.json'), '{"test":"isolated-auth"}\n')
     await writeFile(join(nativeCodexHome, 'config.toml'), 'model = "gpt-5"\n')
   }
-  app = spawn('bash', ['scripts/dev-mac-app.sh'], {
-    cwd: weworkDir,
+  const environment = buildAiVerifyEnvironment(process.env, {
+    controlUrl,
+    token,
+    codexHome,
+    nativeCodexHome,
+    verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
+    deviceId: session.deviceId,
+    appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
+    executorHome,
+    sessionDirectory: session.directory,
+  })
+  const sourceEnvironment =
+    session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
+  const launch = resolveElectronLaunch({
+    packaged: session.launchMode === 'packaged',
+    sourceBinary: session.launchMode === 'source' ? await resolveSourceElectronBinary() : undefined,
+  })
+  app = spawn(launch.command, launch.args, {
+    cwd: launch.cwd,
     detached: true,
-    env: buildAiVerifyEnvironment(process.env, {
-      controlUrl,
-      token,
-      codexHome,
-      nativeCodexHome,
-      verifyCodexHomeInitialization: session.verifyCodexHomeInitialization,
-      deviceId: session.deviceId,
-      appIdentifier: `io.wecode.wework.ai-verify.${session.deviceId.replaceAll('-', '')}`,
-      executorHome,
-      sessionDirectory: session.directory,
-    }),
+    env: {
+      ...environment,
+      ...sourceEnvironment,
+      WEWORK_DESKTOP_RUNTIME: 'electron',
+      WEWORK_E2E_CONTROL_TOKEN: token,
+      WEWORK_USER_DATA_DIR: join(session.directory, 'user-data'),
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   monitorAppProcess(app, pending, exit => {
@@ -421,6 +628,13 @@ async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
+    validateStartOptions(options)
+    const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
+    await prepareElectronApp({ packaged })
+    const launch = resolveElectronLaunch({
+      packaged,
+      sourceBinary: packaged ? undefined : await resolveSourceElectronBinary(),
+    })
     const directory = join(
       weworkDir,
       'test-results',
@@ -429,6 +643,7 @@ async function main() {
     )
     await mkdir(directory, { recursive: true })
     const token = randomBytes(32).toString('hex')
+    await readFile(launch.command)
     const sessionPath = join(directory, 'session.json')
     await writeFile(
       sessionPath,
@@ -439,6 +654,7 @@ async function main() {
           directory,
           token,
           status: 'starting',
+          launchMode: packaged ? 'packaged' : 'source',
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
         },
         null,
@@ -522,74 +738,13 @@ async function main() {
     console.log(JSON.stringify(await request(session, session.token, '/status'), null, 2))
     return
   }
-  const action = {
-    capture: 'capture',
-    'capture-browser': 'captureEmbeddedBrowser',
-    'capture-popout': 'capturePopoutWindow',
-    'capture-workspace': 'captureWorkspaceWindow',
-    snapshot: 'snapshot',
-    debug: 'getWorkbenchDebugSnapshot',
-    'active-element': 'getActiveElementTestId',
-    click: 'click',
-    'click-at': 'clickAt',
-    'click-then-macrotask': 'clickThenMacrotask',
-    'context-menu': 'contextMenu',
-    'seed-local-project': 'seedLocalProject',
-    'preview-plugin-import': 'previewPluginImport',
-    'terminal-snapshot': 'readLocalTerminalSnapshot',
-    reload: 'reloadApp',
-    'close-to-tray': 'closeMainWindowToTray',
-    'request-close': 'requestMainWindowClose',
-    'dismiss-popout': 'dismissPopoutWindow',
-    drag: 'drag',
-    'drop-file': 'dropFile',
-    'drop-paths': 'dropPaths',
-    fill: 'fill',
-    'get-attribute': 'getAttribute',
-    hover: 'hover',
-    metrics: 'getElementMetrics',
-    navigate: 'navigate',
-    'paste-paths': 'pastePaths',
-    'pointer-move': 'pointerMove',
-    press: 'press',
-    'scroll-into-view': 'scrollIntoView',
-    'select-text': 'selectText',
-    'show-popout': 'showPopoutWindow',
-    'system-drag-drop': 'completeSystemDragDrop',
-    'wait-for': 'waitFor',
-    'window-focus-snapshot': 'getWindowFocusSnapshot',
-    text: 'getText',
-  }[command]
+  const action = AI_VERIFY_ACTIONS[command]
   if (!action) {
     usage()
     process.exitCode = 2
     return
   }
-  const selector =
-    options.selector ??
-    (command === 'capture' ||
-    command === 'capture-browser' ||
-    command === 'capture-popout' ||
-    command === 'capture-workspace' ||
-    command === 'snapshot' ||
-    command === 'debug' ||
-    command === 'active-element' ||
-    command === 'click-at' ||
-    command === 'seed-local-project' ||
-    command === 'preview-plugin-import' ||
-    command === 'terminal-snapshot' ||
-    command === 'reload' ||
-    command === 'navigate' ||
-    command === 'text' ||
-    command === 'pointer-move' ||
-    command === 'dismiss-popout' ||
-    command === 'show-popout' ||
-    command === 'system-drag-drop' ||
-    command === 'window-focus-snapshot' ||
-    command === 'close-to-tray' ||
-    command === 'request-close'
-      ? 'body'
-      : null)
+  const selector = options.selector ?? (SELECTOR_OPTIONAL_COMMANDS.has(command) ? 'body' : null)
   if (!selector) throw new Error('--selector is required')
   const dropFilePath = command === 'drop-file' ? options.file : undefined
   if (command === 'drop-file' && !dropFilePath) throw new Error('--file is required')
@@ -614,7 +769,7 @@ async function main() {
     mimeType: dropFilePath ? dropFileMimeType : undefined,
     key: options.key,
     text: options.text,
-    visible: options.visible === 'true',
+    visible: resolveOptionalBoolean(options.visible, 'visible'),
     stableMs: options.stable ? Number(options.stable) : undefined,
     timeoutMs: effectiveTimeoutMs,
   })

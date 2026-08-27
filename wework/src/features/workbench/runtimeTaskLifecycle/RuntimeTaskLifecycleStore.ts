@@ -6,7 +6,11 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
-import { normalizeRuntimeTaskSummary, shouldReplaceRuntimeTaskProjection } from './projection'
+import {
+  isRuntimeTaskAuthoritativeCompletion,
+  normalizeRuntimeTaskSummary,
+  shouldReplaceRuntimeTaskProjection,
+} from './projection'
 import { RuntimeTaskMachine, getRuntimeTaskLifecycleKey } from './RuntimeTaskMachine'
 import type {
   RuntimeTaskLifecycleEvent,
@@ -31,6 +35,7 @@ const EMPTY_STORE_SNAPSHOT: RuntimeTaskLifecycleStoreSnapshot = {
 const RUNTIME_TASK_LIFECYCLE_READ_METHODS = new Set<PropertyKey>([
   'subscribe',
   'getSnapshot',
+  'getCurrentTask',
   'getTask',
   'selectTask',
 ])
@@ -62,6 +67,11 @@ export class RuntimeTaskLifecycleStore {
   }
 
   getSnapshot = (): RuntimeTaskLifecycleStoreSnapshot => this.snapshot
+
+  getCurrentTask(): RuntimeTaskLifecycleSnapshot | null {
+    if (!this.currentTaskKey) return null
+    return this.snapshot.tasks.get(this.currentTaskKey) ?? null
+  }
 
   getTask(address: RuntimeTaskAddress | null | undefined): RuntimeTaskLifecycleSnapshot | null {
     if (!address) return null
@@ -103,7 +113,7 @@ export class RuntimeTaskLifecycleStore {
     const currentSnapshot = this.getTask(address)
     if (
       expectedSnapshot !== undefined &&
-      lifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
+      runtimeTaskLifecycleTransitionChanged(expectedSnapshot, currentSnapshot)
     ) {
       return false
     }
@@ -133,7 +143,7 @@ export class RuntimeTaskLifecycleStore {
   ): void {
     if (transcript.running === true) {
       const current = this.getTask(address)
-      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
+      if (shouldIgnoreStaleRunningTranscript(current)) return
       this.executorStarted(address)
       return
     }
@@ -154,6 +164,7 @@ export class RuntimeTaskLifecycleStore {
     ) {
       const currentTurnId = this.getTask(address)?.turn.id
       if (currentTurnId && terminalTurn?.id === currentTurnId) {
+        this.executorSettled(address)
         this.turnSettled(address, currentTurnId, terminalTurnOutcome(terminalTurn.status))
       }
       return
@@ -249,12 +260,15 @@ export class RuntimeTaskLifecycleStore {
       turn => turn.status === 'pending' || turn.status === 'streaming'
     )
     const hasStreamingTurn = Boolean(streamingTurn)
+    const current = this.getTask(address)
+    const ignoreStaleRunningTranscript = shouldIgnoreStaleRunningTranscript(current)
     const ignoreStaleIdleTranscript =
       transcript.running === false &&
       options.preserveActiveTurn === true &&
-      (this.getTask(address)?.derived.isRunning ?? false)
+      (current?.derived.isRunning ?? false)
 
     if (hasStreamingTurn) {
+      if (ignoreStaleRunningTranscript) return
       this.executorStarted(address)
       this.dispatch(address, {
         type: 'turn_recovered',
@@ -262,8 +276,7 @@ export class RuntimeTaskLifecycleStore {
         turnId: streamingTurn?.id,
       })
     } else if (transcript.running === true) {
-      const current = this.getTask(address)
-      if (current && current.turn.outcome !== null && !current.derived.isRunning) return
+      if (ignoreStaleRunningTranscript) return
       this.executorStarted(address)
     } else if (transcript.running === false && !ignoreStaleIdleTranscript) {
       this.executorSettled(address)
@@ -322,6 +335,22 @@ export class RuntimeTaskLifecycleStore {
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged
     const next = machine.getSnapshot()
+    if (
+      canonicalEvent.type === 'turn_settled' &&
+      previous.task?.running === true &&
+      import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1'
+    ) {
+      console.info('[Wework] Runtime turn settled before executor became idle', {
+        deviceId: canonicalAddress.deviceId,
+        taskId: canonicalAddress.taskId,
+        turnId: canonicalEvent.turnId ?? previous.turn.id,
+        previousExecutionPhase: previous.execution.phase,
+        nextExecutionPhase: next.execution.phase,
+        previousTurnPhase: previous.turn.phase,
+        nextTurnPhase: next.turn.phase,
+        executorSnapshotRunning: previous.task.running,
+      })
+    }
     if (
       wasRunning &&
       !next.derived.isRunning &&
@@ -530,7 +559,7 @@ export function createRuntimeTaskLifecycleOwnershipView(
   })
 }
 
-function lifecycleTransitionChanged(
+export function runtimeTaskLifecycleTransitionChanged(
   expected: RuntimeTaskLifecycleSnapshot | null,
   current: RuntimeTaskLifecycleSnapshot | null
 ): boolean {
@@ -540,8 +569,32 @@ function lifecycleTransitionChanged(
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
     expected.turn.outcome !== current.turn.outcome ||
-    expected.goalStatus !== current.goalStatus
+    expected.goalStatus !== current.goalStatus ||
+    expected.continuable !== current.continuable
   )
+}
+
+function shouldIgnoreStaleRunningTranscript(current: RuntimeTaskLifecycleSnapshot | null): boolean {
+  return Boolean(
+    current &&
+    !current.derived.isRunning &&
+    (current.turn.outcome !== null ||
+      (current.goalStatus !== 'active' &&
+        current.task !== null &&
+        isRuntimeTaskAuthoritativeCompletion(current.task)))
+  )
+}
+
+export function consumeRuntimeTaskLifecycleBlock(
+  blockedSnapshots: Map<string, RuntimeTaskLifecycleSnapshot | null>,
+  key: string,
+  current: RuntimeTaskLifecycleSnapshot | null
+): boolean {
+  if (!blockedSnapshots.has(key)) return true
+  const blocked = blockedSnapshots.get(key) ?? null
+  if (!runtimeTaskLifecycleTransitionChanged(blocked, current)) return false
+  blockedSnapshots.delete(key)
+  return true
 }
 
 function isTerminalTurnStatus(status: string | null | undefined): boolean {

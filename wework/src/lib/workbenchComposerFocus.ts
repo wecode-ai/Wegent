@@ -5,7 +5,15 @@ export interface WorkbenchComposerFocusDetail {
   scopeKey: string
 }
 
-let pendingWorkbenchComposerFocusScopeKey: string | null = null
+interface PendingWorkbenchComposerFocus {
+  scopeKey: string
+  consumers: Set<symbol>
+  expiresAt: number
+}
+
+const WORKBENCH_COMPOSER_FOCUS_TTL_MS = 2_000
+const WORKBENCH_COMPOSER_FOCUS_CONSUMES = 2
+let pendingWorkbenchComposerFocus: PendingWorkbenchComposerFocus | null = null
 
 export function focusComposerAtEnd(element: HTMLElement | null | undefined) {
   if (!element) return
@@ -31,7 +39,11 @@ export function requestNewChatComposerFocus() {
 }
 
 export function requestWorkbenchComposerFocus(scopeKey: string) {
-  pendingWorkbenchComposerFocusScopeKey = scopeKey
+  pendingWorkbenchComposerFocus = {
+    scopeKey,
+    consumers: new Set(),
+    expiresAt: Date.now() + WORKBENCH_COMPOSER_FOCUS_TTL_MS,
+  }
   window.requestAnimationFrame(() => {
     window.dispatchEvent(
       new CustomEvent<WorkbenchComposerFocusDetail>(WORKBENCH_COMPOSER_FOCUS_EVENT, {
@@ -41,8 +53,17 @@ export function requestWorkbenchComposerFocus(scopeKey: string) {
   })
 }
 
-export function consumeWorkbenchComposerFocusRequest(scopeKey: string) {
-  if (pendingWorkbenchComposerFocusScopeKey !== scopeKey) return false
-  pendingWorkbenchComposerFocusScopeKey = null
+export function consumeWorkbenchComposerFocusRequest(scopeKey: string, consumerId: symbol) {
+  const pending = pendingWorkbenchComposerFocus
+  if (!pending || pending.scopeKey !== scopeKey) return false
+  if (pending.expiresAt < Date.now()) {
+    pendingWorkbenchComposerFocus = null
+    return false
+  }
+  if (pending.consumers.has(consumerId)) return false
+  pending.consumers.add(consumerId)
+  if (pending.consumers.size === WORKBENCH_COMPOSER_FOCUS_CONSUMES) {
+    pendingWorkbenchComposerFocus = null
+  }
   return true
 }

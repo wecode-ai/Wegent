@@ -64,6 +64,7 @@ import {
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
   BACKGROUND_FOLLOW_UP_RESTORE_TEXT,
   BLOCKED_CLOUD_MODEL_PATH,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
@@ -97,6 +98,7 @@ import {
   EMBEDDED_BROWSER_SETUP_PROMPT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_RESPONSE,
+  FILE_PANEL_LINK_NAME,
   FOLLOW_UP_COMPLETION_TEXT,
   FOLLOW_UP_PROMPT,
   FORK_ENCRYPTED_CONTENT,
@@ -230,6 +232,83 @@ import {
   withTimeout,
 } from './shared.mjs'
 
+const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
+const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
+const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
+const ELECTRON_OBSERVATION_ACTIONS = new Set([
+  'activeElement',
+  'getAttribute',
+  'getElementCount',
+  'getText',
+  'metrics',
+  'snapshot',
+  'text',
+  'waitFor',
+])
+
+function findNestedString(value, predicate) {
+  if (typeof value === 'string') return predicate(value) ? value : null
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findNestedString(item, predicate)
+      if (match) return match
+    }
+    return null
+  }
+  if (!value || typeof value !== 'object') return null
+  for (const item of Object.values(value)) {
+    const match = findNestedString(item, predicate)
+    if (match) return match
+  }
+  return null
+}
+
+function pluginWorkspacePublishCommand(body) {
+  const context = findNestedString(body, value =>
+    value.includes(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX)
+  )
+  if (!context) return null
+  const commandLine = context
+    .split(/\r?\n/u)
+    .find(line => line.startsWith(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX))
+  return commandLine?.slice(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX.length) ?? null
+}
+
+function publishedPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value =>
+      value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"published"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) &&
+        candidate.includes('"status":"published"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
+
+function readyPluginWorkspaceResult(body) {
+  const output = findNestedString(
+    body,
+    value => value.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && value.includes('"status":"ready"')
+  )
+  if (!output) return null
+  const line = output
+    .split(/\r?\n/u)
+    .find(
+      candidate =>
+        candidate.includes(PLUGIN_WORKSPACE_RESULT_MARKER) && candidate.includes('"status":"ready"')
+    )
+  if (!line) return null
+  return line.slice(line.indexOf(PLUGIN_WORKSPACE_RESULT_MARKER))
+}
+
 class DesktopE2EServer {
   constructor(
     workspacePath,
@@ -261,10 +340,12 @@ class DesktopE2EServer {
     this.activeControlClientId = null
     this.controlClientsByWindow = new Map()
     this.controlWindowsByClient = new Map()
+    this.controlCommandAvailableAt = new Map()
     this.readyWaiters = []
     this.commandQueue = []
     this.commandResults = new Map()
     this.commandHistory = []
+    this.controlLongPolls = new Map()
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
@@ -278,7 +359,9 @@ class DesktopE2EServer {
     this.failedCloudModelRequests = 0
     this.failedCloudModelWaiter = null
     this.sitesPluginInstalled = false
+    this.sitesPluginDeviceId = null
     this.miniProgramPluginInstalled = false
+    this.miniProgramPluginDeviceId = null
     this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
@@ -451,6 +534,11 @@ class DesktopE2EServer {
   async close() {
     for (const response of this.blockedCloudResponses) response.destroy()
     this.blockedCloudResponses.clear()
+    for (const { response, timeout } of this.controlLongPolls.values()) {
+      clearTimeout(timeout)
+      response.destroy()
+    }
+    this.controlLongPolls.clear()
     this.desktopScenario?.close?.()
     this.server.closeAllConnections?.()
     this.controlServer.closeAllConnections?.()
@@ -851,6 +939,14 @@ class DesktopE2EServer {
   }
 
   async commandForClient(clientId, action, selector, options = {}) {
+    const observesElectronState = ELECTRON_OBSERVATION_ACTIONS.has(action)
+    const availableAt = observesElectronState
+      ? 0
+      : (this.controlCommandAvailableAt.get(clientId) ?? 0)
+    const delayMs = Math.max(0, availableAt - Date.now())
+    if (delayMs > 0) {
+      await new Promise(resolvePromise => setTimeout(resolvePromise, delayMs))
+    }
     assert.ok(
       this.controlWindowsByClient.has(clientId),
       `Desktop control client ${clientId} is not registered`
@@ -864,9 +960,16 @@ class DesktopE2EServer {
       rejectDelivery = reject
     })
     const result = new Promise((resolvePromise, reject) => {
-      this.commandResults.set(id, { clientId, resolve: resolvePromise, reject })
+      this.commandResults.set(id, {
+        clientId,
+        resolve: resolvePromise,
+        reject,
+        resolveDelivery,
+        started: false,
+      })
     })
-    this.commandQueue.push({ clientId, command, rejectDelivery, resolveDelivery })
+    this.commandQueue.push({ clientId, command, rejectDelivery })
+    this.deliverPendingControlCommand(clientId)
     try {
       await withTimeout(
         this.guard(Promise.race([delivery, result])),
@@ -883,6 +986,49 @@ class DesktopE2EServer {
       this.commandResults.delete(id)
       throw error
     }
+  }
+
+  deliverQueuedControlCommand(clientId, response) {
+    const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
+    if (commandIndex < 0) return false
+
+    const { command } = this.commandQueue[commandIndex]
+    this.commandHistory.push({
+      ...command,
+      clientId,
+      deliveredAt: new Date().toISOString(),
+    })
+    json(response, 200, command)
+    return true
+  }
+
+  deliverPendingControlCommand(clientId) {
+    const pending = this.controlLongPolls.get(clientId)
+    if (!pending) return false
+    clearTimeout(pending.timeout)
+    this.controlLongPolls.delete(clientId)
+    return this.deliverQueuedControlCommand(clientId, pending.response)
+  }
+
+  waitForQueuedControlCommand(clientId, response) {
+    const previous = this.controlLongPolls.get(clientId)
+    if (previous) {
+      clearTimeout(previous.timeout)
+      previous.response.writeHead(204)
+      previous.response.end()
+    }
+    const timeout = setTimeout(() => {
+      if (this.controlLongPolls.get(clientId)?.response !== response) return
+      this.controlLongPolls.delete(clientId)
+      response.writeHead(204)
+      response.end()
+    }, 25_000)
+    this.controlLongPolls.set(clientId, { response, timeout })
+    response.once('close', () => {
+      if (this.controlLongPolls.get(clientId)?.response !== response) return
+      clearTimeout(timeout)
+      this.controlLongPolls.delete(clientId)
+    })
   }
 
   async handleControl(request, response) {
@@ -933,14 +1079,6 @@ class DesktopE2EServer {
         user_name: 'wework-desktop-e2e-cloud-user',
         email: 'desktop-e2e@wework.local',
       })
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-    ) {
-      json(response, 200, null)
       return
     }
 
@@ -1126,8 +1264,12 @@ class DesktopE2EServer {
     if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
       json(response, 200, {
         items: [
-          ...(this.sitesPluginInstalled ? [installedSitesPlugin()] : []),
-          ...(this.miniProgramPluginInstalled ? [installedMiniProgramPlugin()] : []),
+          ...(this.sitesPluginInstalled
+            ? [installedSitesPlugin(this.sitesPluginDeviceId ?? 'local-device')]
+            : []),
+          ...(this.miniProgramPluginInstalled
+            ? [installedMiniProgramPlugin(this.miniProgramPluginDeviceId ?? 'local-device')]
+            : []),
         ],
       })
       return
@@ -1140,14 +1282,20 @@ class DesktopE2EServer {
       const body = await readRequestBody(request)
       const pluginName = builtinPluginMatch[1]
       const isSitesPlugin = pluginName === 'wegent-sites'
-      const installedPlugin = isSitesPlugin ? installedSitesPlugin() : installedMiniProgramPlugin()
+      const targetDeviceId =
+        typeof body.device_id === 'string' && body.device_id.trim() ? body.device_id.trim() : null
+      const installedPlugin = isSitesPlugin
+        ? installedSitesPlugin(targetDeviceId ?? 'local-device')
+        : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
       const installedPluginId = isSitesPlugin ? 601 : 602
       if (isSitesPlugin) {
         this.sitesPluginInstalled = true
+        this.sitesPluginDeviceId = targetDeviceId
       } else {
         this.miniProgramPluginInstalled = true
+        this.miniProgramPluginDeviceId = targetDeviceId
       }
-      if (!body.device_id) {
+      if (!targetDeviceId) {
         if (isSitesPlugin) {
           this.sitesConnectionBootstrapRequests += 1
         }
@@ -1157,17 +1305,11 @@ class DesktopE2EServer {
         })
         return
       }
-      if (body.device_id !== 'local-device') {
-        json(response, 422, {
-          detail: 'A matching target device is required for application plugin synchronization',
-        })
-        return
-      }
       json(response, 200, {
         plugin: installedPlugin,
         sync: {
           success: true,
-          device_id: 'local-device',
+          device_id: targetDeviceId,
           mode: 'merge',
           skills: [],
           plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
@@ -1178,7 +1320,7 @@ class DesktopE2EServer {
           skipped: 0,
           results: [
             {
-              device_id: 'local-device',
+              device_id: targetDeviceId,
               success: true,
               error: null,
               skills: [],
@@ -1409,7 +1551,14 @@ class DesktopE2EServer {
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
       if (previousClientId && previousClientId !== ready.clientId) {
+        const previousLongPoll = this.controlLongPolls.get(previousClientId)
+        if (previousLongPoll) {
+          clearTimeout(previousLongPoll.timeout)
+          previousLongPoll.response.destroy()
+          this.controlLongPolls.delete(previousClientId)
+        }
         this.controlWindowsByClient.delete(previousClientId)
+        this.controlCommandAvailableAt.delete(previousClientId)
         const replacementError = new Error(
           `Desktop control client ${previousClientId} for ${ready.windowLabel} was replaced by ${ready.clientId}`
         )
@@ -1448,16 +1597,9 @@ class DesktopE2EServer {
         response.end()
         return true
       }
-      const commandIndex = this.commandQueue.findIndex(item => item.clientId === clientId)
-      if (commandIndex >= 0) {
-        const [{ command, resolveDelivery }] = this.commandQueue.splice(commandIndex, 1)
-        this.commandHistory.push({
-          ...command,
-          clientId,
-          deliveredAt: new Date().toISOString(),
-        })
-        resolveDelivery()
-        json(response, 200, command)
+      if (this.deliverQueuedControlCommand(clientId, response)) return true
+      if (url.searchParams.get('wait') === '1') {
+        this.waitForQueuedControlCommand(clientId, response)
         return true
       }
       response.writeHead(204)
@@ -1470,6 +1612,28 @@ class DesktopE2EServer {
         response.writeHead(204)
         response.end()
       }, 50)
+      return true
+    }
+
+    if (request.method === 'POST' && url.pathname === '/started') {
+      const started = await readRequestBody(request)
+      const pending = this.commandResults.get(started.id)
+      if (!pending) {
+        json(response, 404, { error: `Unknown command ${started.id}` })
+        return true
+      }
+      if (started.clientId !== pending.clientId) {
+        json(response, 409, {
+          error: `Command ${started.id} belongs to a different desktop control client`,
+        })
+        return true
+      }
+      if (!pending.started) {
+        pending.started = true
+        this.commandQueue = this.commandQueue.filter(item => item.command.id !== started.id)
+        pending.resolveDelivery()
+      }
+      json(response, 200, { ok: true })
       return true
     }
 
@@ -1492,6 +1656,10 @@ class DesktopE2EServer {
         return true
       }
       this.commandResults.delete(result.id)
+      this.controlCommandAvailableAt.set(
+        result.clientId,
+        Date.now() + DESKTOP_CONTROL_COMMAND_INTERVAL_MS
+      )
       if (result.ok) {
         pending.resolve(result.value ?? '')
       } else {
@@ -1643,6 +1811,40 @@ class DesktopE2EServer {
 
     if (requestKind === 'prewarm') {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    const publishCommand = pluginWorkspacePublishCommand(body)
+    if (requestContainsToolOutput(body, PLUGIN_WORKSPACE_PUBLISH_CALL_ID)) {
+      const publishedResult = publishedPluginWorkspaceResult(body)
+      assert.ok(
+        publishedResult,
+        'The Plugin Creator publish command did not return a result marker'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(publishedResult),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (publishCommand) {
+      const tool = selectShellToolCommand(body, publishCommand, this.cloudWorkspacePath)
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...functionCall(PLUGIN_WORKSPACE_PUBLISH_CALL_ID, tool.name, tool.arguments),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    const readyResult = readyPluginWorkspaceResult(body)
+    if (readyResult) {
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(readyResult),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -1961,7 +2163,42 @@ class DesktopE2EServer {
       // immediate mock response can otherwise race the live image-view rendering.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       if (this.initialCompletionHeld) {
+        const text = `${BACKGROUND_GUIDANCE_CONTINUATION}\n\n${COMPLETION_TEXT}`
+        const stream = streamingTextEvents(responseId, text)
+        response.writeHead(200, {
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.write(
+          createSse([
+            ...stream.start,
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: BACKGROUND_GUIDANCE_CONTINUATION,
+              offset: 0,
+            },
+          ])
+        )
         await this.initialCompletionRelease
+        response.end(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta: `\n\n${COMPLETION_TEXT}`,
+              offset: BACKGROUND_GUIDANCE_CONTINUATION.length,
+            },
+            ...stream.finish,
+          ])
+        )
+        return
       }
       const responseEvents = [
         responseCreated(responseId),
@@ -2924,7 +3161,10 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(
-          FILE_PANEL_ANCHOR_RESPONSE.replace('README.md:1', `${this.workspacePath}/README.md:1`)
+          FILE_PANEL_ANCHOR_RESPONSE.replace(
+            `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
+            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+          )
         ),
         responseCompleted(responseId),
       ])

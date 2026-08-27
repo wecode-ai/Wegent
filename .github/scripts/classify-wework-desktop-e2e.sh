@@ -3,30 +3,51 @@
 set -euo pipefail
 
 core_segments=(
+  remote-device-onboarding
   workspace-tabs
+  cloud-space-mention
   priority-filter
   automation-lifecycle
   project-automation
+  project-assignment-notification
+  offline-local-project-space
+  core-dsh-plugin-management
   project-ai-settings
   model-routing
   permission-modes
   core-task-flow
+  task-attachments
   window-lifecycle
   goal-lifecycle
   supervisor-lifecycle
   resilience
   runtime-task-queue
+  runtime-terminal-convergence
+  running-conversation-history
   codex-notification-isolation
+  executor-stream-recovery
+  context-compaction
+  split-workbench
+  release-package-startup
+  component-update
+  native-window-startup
+  native-window-chrome
+  renderer-storage
+  tray-lifecycle
   conversation-state
   temporary-chat
   workspace-attachments
   rendering-extensions
+  change-request-status
   claude-runtime
   local-file-preview
   local-harness
+  harness-apps
   embedded-browser
+  browser-toolbar-actions
 )
 plugin_segments=(
+  core-dsh-ui-plugin-composition
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -59,27 +80,51 @@ cloud_segments=(
   automation-lifecycle
   project-automation
   plugin-auto-update
+  plugin-workspace-publication
 )
-# Group checkpoints by observed Cloud CI duration and order each shard from
-# longest to shortest so the five serial runners finish at similar times.
+# Group checkpoints by observed Cloud CI duration so every serial shard stays
+# below the desktop suite's critical-path budget. Keep 15 Cloud shards so the
+# 17 Core shards and Plugins job fit the observed 33-runner Linux capacity.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 cloud_shards=(
-  goal-lifecycle,window-lifecycle,cloud-worktree-tools,telemetry-consent
-  model-routing,project-automation,workspace-attachments,plugin-auto-update
-  embedded-browser,cloud-worktree-create,workspace-tabs,cloud-worktree-archive-restore,cloud-worktree-device-restart
-  resilience,rendering-extensions,cloud-worktree-queued-cancel,priority-filter,cloud-worktree-capability
-  core-task-flow,conversation-state,supervisor-lifecycle,automation-lifecycle,browser-multi-tabs,cloud-project-creation
+  core-task-flow
+  embedded-browser,cloud-worktree-device-restart,cloud-project-creation
+  goal-lifecycle,cloud-worktree-archive-restore
+  rendering-extensions
+  project-automation
+  window-lifecycle
+  priority-filter,cloud-worktree-tools
+  resilience,telemetry-consent
+  cloud-worktree-create,automation-lifecycle,browser-multi-tabs
+  workspace-tabs,cloud-worktree-capability
+  supervisor-lifecycle,conversation-state
+  model-routing
+  plugin-auto-update,plugin-workspace-publication
+  cloud-worktree-queued-cancel
+  workspace-attachments
 )
-# Keep the number of core desktop runners fixed as checkpoints grow. Group
-# checkpoints by observed Core CI duration and order each shard so the serial
-# runners stay balanced while reusing the same prebuilt application.
+# Group checkpoints by observed Core CI duration so every serial shard stays
+# below the desktop suite's critical-path budget while reusing the same
+# prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  rendering-extensions,resilience,runtime-task-queue
-  project-ai-settings,model-routing,window-lifecycle
-  core-task-flow,embedded-browser,automation-lifecycle,priority-filter,temporary-chat
-  claude-runtime,workspace-attachments,local-harness,supervisor-lifecycle,codex-notification-isolation,local-file-preview
-  conversation-state,goal-lifecycle,workspace-tabs,project-automation,permission-modes
+  harness-apps
+  supervisor-lifecycle,remote-device-onboarding
+  temporary-chat,local-file-preview
+  goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
+  claude-runtime,workspace-tabs,task-attachments
+  core-task-flow,change-request-status,context-compaction
+  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
+  project-automation
+  resilience
+  workspace-attachments,automation-lifecycle
+  project-assignment-notification,split-workbench,priority-filter
+  rendering-extensions
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
+  local-harness,running-conversation-history,native-window-chrome
+  codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
+  model-routing
 )
 
 validate_core_shards() {
@@ -160,8 +205,36 @@ validate_cloud_shards() {
 
 validate_cloud_shards
 
+validate_registered_checkpoint_coverage() {
+  declare -A covered=()
+  local segment
+  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+    covered["$segment"]=true
+  done
+
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local repository_root
+  repository_root="$(cd "$script_dir/../.." && pwd)"
+  local registered
+  while IFS= read -r registered; do
+    [[ "$registered" == "cloud-git-worktree" ]] && continue
+    if [[ -z "${covered[$registered]+set}" ]]; then
+      printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
+      return 1
+    fi
+  done < <(
+    cd "$repository_root"
+    node --input-type=module -e \
+      "import { DESKTOP_CHECKPOINTS } from './wework/e2e/desktop/checkpoints.mjs'; console.log(DESKTOP_CHECKPOINTS.join('\\n'))"
+  )
+}
+
+validate_registered_checkpoint_coverage
+
 declare -A selected=()
 desktop_runner_changed=false
+macos_inspector_e2e=false
 
 select_target() {
   selected["$1"]=true
@@ -178,12 +251,25 @@ select_all_desktop_suites() {
   select_target "core:all"
   select_target "plugins:all"
   select_target "cloud:all"
+  macos_inspector_e2e=true
 }
 
 classify_wework_path() {
   local path="$1"
 
   case "$path" in
+    # Documentation does not change the packaged desktop application.
+    wework/*.md)
+      return
+      ;;
+
+    # The native startup checkpoint owns splash-window creation and teardown.
+    wework/electron/src/host/startup-splash* | \
+      wework/electron/src/shell/startup-splash/*)
+      select_target "core:native-window-startup"
+      return
+      ;;
+
     # Browser-runner changes do not require a real desktop application.
     wework/e2e/tests/* | \
       wework/e2e/fixtures/* | \
@@ -196,6 +282,29 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # DSH UI composition verifies that Wework starts empty and gains each
+    # application, route, settings page, and navigation item from plugins.
+    wework/dsh/app-wework/* | \
+      wework/dsh/ui-*/* | \
+      wework/src/features/dsh-runtime/*)
+      select_target "plugins:core-dsh-ui-plugin-composition"
+      return
+      ;;
+
+    # Core DSH plugin management owns an Electron-backed desktop checkpoint.
+    wework/src/components/plugins/CoreDshPluginManagementSection* | \
+      wework/src/features/dsh-plugins/* | \
+      wework/electron/src/runtime/core-dsh-plugin-manager*)
+      select_target "core:core-dsh-plugin-management"
+      return
+      ;;
+    wework/src/components/plugins/PluginManagementWorkspace*)
+      select_target "core:core-dsh-plugin-management"
+      select_target "core:project-ai-settings"
+      select_target "plugins:plugin-lifecycle"
       return
       ;;
 
@@ -230,11 +339,13 @@ classify_wework_path() {
       ;;
 
     # Window and native lifecycle behavior.
-    wework/src/tauri/tray* | \
-      wework/src/tauri/runtimeTaskCloseGuard* | \
+    wework/src/desktop/tray* | \
+      wework/src/desktop/runtimeTaskCloseGuard* | \
       wework/src/components/layout/WindowFrameControls* | \
       wework/src/components/layout/DesktopWindowsTitlebar.tsx)
       select_target "core:window-lifecycle"
+      select_target "core:tray-lifecycle"
+      select_target "core:native-window-chrome"
       return
       ;;
 
@@ -255,6 +366,10 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
+      select_target "core:cloud-space-mention"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
@@ -369,15 +484,18 @@ classify_wework_path() {
       ;;
 
     # The embedded browser has a dedicated agent scenario checkpoint.
-    wework/src-tauri/src/embedded_browser* | \
+    wework/electron/src/host/browser-runtime/* | \
       wework/src/lib/embedded-browser* | \
       wework/src/lib/browser-url* | \
       wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
       wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
-      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs)
+      wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
+      wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
+      select_target "core:browser-toolbar-actions"
+      macos_inspector_e2e=true
       return
       ;;
 
@@ -390,8 +508,8 @@ classify_wework_path() {
       return
       ;;
 
-    # Local PTY-backed coding harnesses have dedicated real-Tauri scenarios.
-    wework/src-tauri/src/local_terminal* | \
+    # Local PTY-backed coding harnesses have dedicated desktop scenarios.
+    wework/electron/src/host/local-terminal* | \
       wework/src/lib/local-harness* | \
       wework/src/lib/local-terminal* | \
       wework/src/components/layout/CentralHarnessTerminal* | \
@@ -405,10 +523,10 @@ classify_wework_path() {
       return
       ;;
 
-    # Local file browsing, preview, editing, and review share one real-Tauri
+    # Local file browsing, preview, editing, and review share one desktop
     # checkpoint so theme and loading regressions are covered together.
-    wework/src-tauri/src/local_workspace_files* | \
-      wework/src/tauri/localWorkspaceFiles* | \
+    wework/electron/src/host/local-workspace-files* | \
+      wework/src/desktop/localWorkspaceFiles* | \
       wework/src/components/layout/workspace-panels/FileWorkspacePanel* | \
       wework/src/components/layout/workspace-panels/WorkspaceFilePreview* | \
       wework/src/components/layout/workspace-panels/WorkspaceFileTree* | \
@@ -426,6 +544,20 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs)
       select_target "core:codex-notification-isolation"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/executor-stream-recovery.scenario.mjs)
+      select_target "core:executor-stream-recovery"
+      return
+      ;;
+
+    # Git hosting preferences and explicit device synchronization share one
+    # independently bootstrapped real-Tauri checkpoint.
+    wework/src/api/devices* | \
+      wework/src/components/settings/GitHostingSettingsPage* | \
+      wework/src/types/gitCredentials.ts | \
+      wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
+      select_target "core:change-request-status"
       return
       ;;
 
@@ -636,4 +768,5 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_cloud_e2e_matrix=%s\n' "$cloud_matrix_json"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
+  printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
 } >> "$output_file"

@@ -16,7 +16,7 @@ import {
 
 const changeRequestStatusPreference = vi.hoisted(() => ({ enabled: true }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   getAppPreferences: vi.fn(async () => ({
     changeRequestStatusEnabled: changeRequestStatusPreference.enabled,
   })),
@@ -101,6 +101,28 @@ describe('buildPullRequestUrl', () => {
   test('builds GitLab merge request URL from ssh remote', () => {
     expect(buildPullRequestUrl('git@gitlab.com:wecode-ai/Wegent.git', 'feature/context-info')).toBe(
       'https://gitlab.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
+    )
+  })
+
+  test('does not use the SSH transport port as the GitLab web port', () => {
+    expect(
+      buildPullRequestUrl(
+        'ssh://git@gitlab.example.com:2222/wecode-ai/Wegent.git',
+        'feature/context-info'
+      )
+    ).toBe(
+      'https://gitlab.example.com/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
+    )
+  })
+
+  test('preserves an explicit HTTPS web port', () => {
+    expect(
+      buildPullRequestUrl(
+        'https://gitlab.example.com:8443/wecode-ai/Wegent.git',
+        'feature/context-info'
+      )
+    ).toBe(
+      'https://gitlab.example.com:8443/wecode-ai/Wegent/-/merge_requests/new?merge_request%5Bsource_branch%5D=feature%2Fcontext-info'
     )
   })
 })

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { ElectronEmbeddedBrowserView } from '@/components/layout/workspace-panels/ElectronEmbeddedBrowserView'
 import {
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
@@ -8,7 +9,7 @@ import {
   setEmbeddedBrowserBounds,
   type EmbeddedBrowserBounds,
 } from '@/lib/embedded-browser'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
 
 interface AppIframeProps {
   active?: boolean
@@ -94,7 +95,8 @@ export function AppIframe({
   waitForContent = false,
   workspaceTabId,
 }: AppIframeProps) {
-  const native = isTauriRuntime()
+  const native = isDesktopRuntime()
+  const electron = isElectronRuntime()
   const hostRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onReady)
   const openedRef = useRef(false)
@@ -121,6 +123,7 @@ export function AppIframe({
       window.requestAnimationFrame(() => {
         const bounds = hostRef.current ? elementBounds(hostRef.current) : null
         if (!bounds || !activeRef.current) return
+        if (revealGenerationRef.current !== generation) return
         if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
           void setEmbeddedBrowserBounds(bounds, true, label).catch(error => {
             console.error('Failed to reveal app webview:', error)
@@ -289,6 +292,7 @@ export function AppIframe({
     lifecycleGenerationRef.current = generation
 
     return () => {
+      revealGenerationRef.current += 1
       window.setTimeout(() => {
         if (lifecycleGenerationRef.current !== generation) return
 
@@ -321,6 +325,14 @@ export function AppIframe({
       data-workspace-tab-id={workspaceTabId}
       data-src={src}
     >
+      {electron && (
+        <ElectronEmbeddedBrowserView
+          active={active}
+          interactionBlocked={false}
+          label={label}
+          visualRect={null}
+        />
+      )}
       {loading && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />

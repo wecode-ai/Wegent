@@ -291,14 +291,17 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                let goal = result
+                    .get("goal")
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
                 self.hydrate_runtime_task_goal_status(
                     &link.local_task_id,
-                    result
-                        .get("goal")
-                        .and_then(|goal| string_field(goal, "status")),
+                    string_field(&goal, "status"),
                 );
                 let mut response = task_action_success(&link);
-                response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
+                response["goal"] = goal;
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),
@@ -338,14 +341,17 @@ impl RuntimeWorkRpcHandler {
             .await
         {
             Ok(result) => {
+                let goal = result
+                    .get("goal")
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
                 self.sync_runtime_task_goal_status(
                     &link.local_task_id,
-                    result
-                        .get("goal")
-                        .and_then(|goal| string_field(goal, "status")),
+                    string_field(&goal, "status"),
                 );
                 let mut response = task_action_success(&link);
-                response["goal"] = result.get("goal").cloned().unwrap_or(Value::Null);
+                response["goal"] = goal;
                 Ok(response)
             }
             Err(error) => Ok(task_action_failure(&link, error)),
@@ -464,10 +470,14 @@ impl RuntimeWorkRpcHandler {
         }
 
         self.store.delete_task(&link.local_task_id);
+        let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
+            normalize_workspace_path(&task.workspace_path)
+                == normalize_workspace_path(&link.workspace_path)
+        });
         let cleanup_link = link.clone();
         let worktrees = self.worktrees.clone();
         let cleanup = tokio::task::spawn_blocking(move || {
-            cleanup_task_files_response(&worktrees, &cleanup_link, true, false)
+            cleanup_task_files_response(&worktrees, &cleanup_link, true, false, !has_other_link)
         })
         .await
         .unwrap_or_else(|error| {
@@ -497,10 +507,6 @@ impl RuntimeWorkRpcHandler {
                 ),
             ],
         );
-        let has_other_link = self.store.list_task_summaries(true).iter().any(|task| {
-            normalize_workspace_path(&task.workspace_path)
-                == normalize_workspace_path(&link.workspace_path)
-        });
         if !has_other_link {
             let worktrees = self.worktrees.clone();
             let workspace_path = PathBuf::from(&link.workspace_path);
@@ -581,7 +587,7 @@ impl RuntimeWorkRpcHandler {
                 async move {
                     let fallback = link.clone();
                     tokio::task::spawn_blocking(move || {
-                        cleanup_task_files_response(&worktrees, &link, true, false)
+                        cleanup_task_files_response(&worktrees, &link, true, false, true)
                     })
                     .await
                     .unwrap_or_else(|error| cleanup_join_error_response(&fallback, error))

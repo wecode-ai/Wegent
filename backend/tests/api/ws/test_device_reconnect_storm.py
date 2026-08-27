@@ -32,8 +32,10 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
         await sync_release.wait()
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace, "save_session", AsyncMock())
-    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    save_session = AsyncMock()
+    enter_room = AsyncMock()
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
     monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
     monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
     monkeypatch.setattr(
@@ -86,9 +88,11 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         upsert_calls += 1
         return True, "MacBook", None
 
+    save_session = AsyncMock()
+    enter_room = AsyncMock()
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace, "save_session", AsyncMock())
-    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
     monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
     monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
     monkeypatch.setattr(
@@ -291,6 +295,8 @@ async def test_device_register_uses_tcp_client_ip_not_reported_payload(monkeypat
 async def test_device_register_passes_app_device_type_and_app_device_id(monkeypatch):
     namespace = DeviceNamespace()
     upsert_calls = []
+    save_session = AsyncMock()
+    enter_room = AsyncMock()
 
     async def fake_get_session(sid):
         return {
@@ -303,8 +309,8 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
         return True, "MacBook", None
 
     monkeypatch.setattr(namespace, "get_session", fake_get_session)
-    monkeypatch.setattr(namespace, "save_session", AsyncMock())
-    monkeypatch.setattr(namespace, "enter_room", AsyncMock())
+    monkeypatch.setattr(namespace, "save_session", save_session)
+    monkeypatch.setattr(namespace, "enter_room", enter_room)
     monkeypatch.setattr(namespace, "_match_cloud_device", AsyncMock(return_value=None))
     monkeypatch.setattr(namespace, "_broadcast_device_online", AsyncMock())
     monkeypatch.setattr(
@@ -340,6 +346,13 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     assert upsert_calls[0][1][4] == DeviceType.APP.value
     assert upsert_calls[0][1][7] == "runtime-stable"
     assert upsert_calls[0][1][8] == "local-app-device"
+    saved_session = save_session.await_args.args[1]
+    assert saved_session["execution_target_id"] == "local-app-device"
+    assert saved_session["execution_environment"] == "local"
+    assert enter_room.await_args_list[-1].args == (
+        "sid-app",
+        "execution-target:7:local-app-device",
+    )
 
 
 @pytest.mark.asyncio

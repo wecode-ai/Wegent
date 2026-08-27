@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillRef, UnifiedSkill } from '@/types/api'
-import type { TeamSkillsResponse } from '@/api/skills'
 
 interface WorkbenchSkillApi {
   listSkills: () => Promise<UnifiedSkill[]>
-  getTeamSkills: (teamId: number) => Promise<TeamSkillsResponse>
 }
 
 interface UseWorkbenchSkillsOptions {
   api: WorkbenchSkillApi
-  teamId?: number | null
   locked: boolean
+  enabled?: boolean
   scopeKey?: string
 }
 
@@ -26,16 +24,13 @@ function isSameSkill(left: SkillRef, right: SkillRef): boolean {
 
 export function useWorkbenchSkills({
   api,
-  teamId,
   locked,
+  enabled = true,
   scopeKey = DEFAULT_SKILL_SCOPE_KEY,
 }: UseWorkbenchSkillsOptions) {
   const [skills, setSkills] = useState<UnifiedSkill[]>([])
-  const [teamSkillNames, setTeamSkillNames] = useState<string[]>([])
-  const [preloadedSkillNames, setPreloadedSkillNames] = useState<string[]>([])
   const [selectedSkillsByScope, setSelectedSkillsByScope] = useState<Record<string, SkillRef[]>>({})
   const [isLoading, setIsLoading] = useState(false)
-  const [isTeamSkillsLoading, setIsTeamSkillsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const selectedSkills = useMemo(
     () => selectedSkillsByScope[scopeKey] ?? [],
@@ -43,6 +38,8 @@ export function useWorkbenchSkills({
   )
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadSkills() {
@@ -68,43 +65,7 @@ export function useWorkbenchSkills({
     return () => {
       cancelled = true
     }
-  }, [api])
-
-  useEffect(() => {
-    let cancelled = false
-
-    async function loadTeamSkills() {
-      if (!teamId) {
-        setTeamSkillNames([])
-        setPreloadedSkillNames([])
-        setIsTeamSkillsLoading(false)
-        return
-      }
-
-      setIsTeamSkillsLoading(true)
-      try {
-        const response = await api.getTeamSkills(teamId)
-        if (!cancelled) {
-          setTeamSkillNames(response.skills)
-          setPreloadedSkillNames(response.preload_skills)
-        }
-      } catch {
-        if (!cancelled) {
-          setTeamSkillNames([])
-          setPreloadedSkillNames([])
-        }
-      } finally {
-        if (!cancelled) {
-          setIsTeamSkillsLoading(false)
-        }
-      }
-    }
-
-    loadTeamSkills()
-    return () => {
-      cancelled = true
-    }
-  }, [api, teamId])
+  }, [api, enabled])
 
   const selectedSkillNames = useMemo(
     () => selectedSkills.map(skill => skill.name),
@@ -153,15 +114,13 @@ export function useWorkbenchSkills({
   )
 
   return {
-    skills,
-    teamSkillNames,
-    preloadedSkillNames,
+    skills: enabled ? skills : [],
     selectedSkills,
     selectedSkillNames,
     setSelectedSkills,
     setSelectedSkillsForScope,
     toggleSkill,
-    isLoading: isLoading || isTeamSkillsLoading,
-    error,
+    isLoading: enabled && isLoading,
+    error: enabled ? error : null,
   }
 }

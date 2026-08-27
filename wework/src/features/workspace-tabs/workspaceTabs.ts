@@ -5,6 +5,7 @@ export interface WorkspaceTab {
   kind: WorkspaceTabKind
   title: string
   contentRoute: string
+  fixed: boolean
 }
 
 export interface WorkspaceTabLabels {
@@ -12,17 +13,26 @@ export interface WorkspaceTabLabels {
   board: string
   agent: string
   auxiliary: string
-  auxiliaryRoutes: {
-    plugins: string
-    sites: string
-    automations: string
-    cloud: string
-  }
+  auxiliaryRoutes: Readonly<Record<string, string>>
 }
 
 const WORKSPACE_TAB_PARAM = 'workspaceTab'
 const WORKSPACE_TAB_TITLE_PARAM = 'workspaceTabTitle'
 const WORKSPACE_TABS_STORAGE_PREFIX = 'wework.workspaceTabs.v3:'
+export const WORKSPACE_TABS_CLOSED_EVENT = 'wework:workspace-tabs-closed'
+
+export interface WorkspaceTabsClosedEventDetail {
+  tabIds: string[]
+}
+
+export function dispatchWorkspaceTabsClosed(tabIds: string[]): void {
+  if (tabIds.length === 0) return
+  window.dispatchEvent(
+    new CustomEvent<WorkspaceTabsClosedEventDetail>(WORKSPACE_TABS_CLOSED_EVENT, {
+      detail: { tabIds },
+    })
+  )
+}
 
 function newTabId(kind: WorkspaceTabKind): string {
   return `${kind}-${crypto.randomUUID()}`
@@ -63,11 +73,7 @@ export function workspaceTabTitle(
   const searchIndex = contentRoute.indexOf('?')
   const pathname = searchIndex >= 0 ? contentRoute.slice(0, searchIndex) : contentRoute
   if (kind !== 'auxiliary') return labels[kind]
-  if (pathname === '/plugins') return labels.auxiliaryRoutes.plugins
-  if (pathname === '/sites') return labels.auxiliaryRoutes.sites
-  if (pathname === '/automations') return labels.auxiliaryRoutes.automations
-  if (pathname === '/cloud-work') return labels.auxiliaryRoutes.cloud
-  return labels.auxiliary
+  return labels.auxiliaryRoutes[pathname] ?? labels.auxiliary
 }
 
 export function createWorkspaceTab(
@@ -81,6 +87,7 @@ export function createWorkspaceTab(
     kind,
     title: overrides.title ?? workspaceTabTitle(kind, contentRoute, labels),
     contentRoute,
+    fixed: overrides.fixed ?? false,
   }
 }
 
@@ -132,6 +139,7 @@ export function moveWorkspaceTab(
   const sourceIndex = tabs.findIndex(tab => tab.id === sourceId)
   const targetIndex = tabs.findIndex(tab => tab.id === targetId)
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return tabs
+  if (tabs[sourceIndex].fixed !== tabs[targetIndex].fixed) return tabs
   const next = [...tabs]
   const [source] = next.splice(sourceIndex, 1)
   next.splice(targetIndex, 0, source)

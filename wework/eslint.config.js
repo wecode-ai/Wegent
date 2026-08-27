@@ -9,9 +9,13 @@ export default defineConfig([
   globalIgnores([
     'coverage',
     'dist',
+    'dsh/app-wework/web',
     'dummy-non-existing-folder',
-    'public/vendor',
-    'src-tauri/target',
+    'electron/dummy-non-existing-folder',
+    'electron/release',
+    'electron/release-installer',
+    'electron/resources',
+    '**/public/vendor',
     'test-results',
   ]),
   {

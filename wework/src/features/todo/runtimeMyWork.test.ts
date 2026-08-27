@@ -47,7 +47,7 @@ describe('runtimeMyWorkItems', () => {
       id: 'task-1',
       cloud_project_id: 'runtime:project-1',
       project_name: 'Local project',
-      status: 'pending',
+      status: 'in_review',
       runtime_address: {
         deviceId: 'device-1',
         taskId: 'task-1',
@@ -87,7 +87,7 @@ describe('runtimeMyWorkItems', () => {
     expect(items.map(item => [item.id, item.status, item.has_active_task])).toEqual([
       ['queued', 'pending', false],
       ['running', 'in_progress', true],
-      ['failed', 'pending', false],
+      ['failed', 'in_review', false],
       ['done', 'completed', false],
     ])
   })
@@ -112,5 +112,19 @@ describe('runtimeMyWorkItems', () => {
       has_active_task: true,
       execution_state: 'running',
     })
+  })
+
+  it('moves stopped tasks into confirmation instead of back to the queue', () => {
+    const [item] = runtimeMyWorkItems(
+      runtimeWork([
+        task({
+          running: false,
+          status: 'cancelled',
+          turnStatus: 'interrupted',
+        }),
+      ])
+    )
+
+    expect(item.status).toBe('in_review')
   })
 })

@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { Check, Copy, Info, Minimize2 } from 'lucide-react'
+import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
@@ -22,10 +22,10 @@ import {
   type WorkbenchServices,
 } from '@/features/workbench/workbenchServices'
 import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
+import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
 import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
-import { WorkbenchPage } from '@/pages/WorkbenchPage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
@@ -33,6 +33,7 @@ import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
 import { AppIframe } from '@/components/topnav/AppIframe'
 import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
 import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
+import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
 import {
   clearHarnessAppLaunch,
   harnessAppInstallationIdFromPath,
@@ -40,13 +41,18 @@ import {
   useHarnessAppLaunchState,
 } from '@/features/harness-apps/harnessAppLaunchState'
 import { useChromeTabs } from '@/components/topnav/useChromeTabs'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
 import { cn } from '@/lib/utils'
 import { createLocalAppServices } from '@/api/local/localServices'
@@ -86,50 +92,42 @@ import {
   getWeworkDocumentTitle,
 } from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
-import { ResidentSmartAppsManager } from '@/features/harness-apps/ResidentSmartAppsManager'
-import { findResidentSmartAppsHostTabId } from '@/features/harness-apps/residentSmartAppsHost'
+import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
 import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
 import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTranslation } from '@/hooks/useTranslation'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
+import {
+  createWorkspaceTab,
+  inferWorkspaceTabKind,
+  type WorkspaceTab,
+} from '@/features/workspace-tabs/workspaceTabs'
+import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
 import type { User } from '@/types/api'
 import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
 import { track, useTelemetryEnabled } from '@/telemetry/client'
 import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
 import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
-import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
-import { DynamicWorkbenchPluginHost } from '@/plugin-runtime/DynamicWorkbenchPluginHost'
-import { useActiveWorkbenchApps } from '@/plugin-runtime/apps'
-import { useWorkbenchRouteRegistry } from '@/plugin-runtime/routes'
+import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
+import { DshRouteSurface } from '@/features/dsh-runtime/DshRouteSurface'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
+import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
+import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
-  if (!isTauriRuntime()) return false
-  try {
-    return getCurrentWindow().label === POPOUT_WINDOW_LABEL
-  } catch {
-    return false
-  }
-}
-
-function hasTauriIpc() {
-  const internals = (
-    window as typeof window & {
-      __TAURI_INTERNALS__?: { invoke?: unknown; transformCallback?: unknown }
-    }
-  ).__TAURI_INTERNALS__
-  return (
-    typeof internals?.invoke === 'function' && typeof internals.transformCallback === 'function'
-  )
+  return isElectronRuntime() && getDesktopWindowLabel() === POPOUT_WINDOW_LABEL
 }
 
 function buildCloudAppUrl(url: string, token: string | null): string {
@@ -169,7 +167,7 @@ function useCurrentLocation() {
 
 function telemetryFeatureForPath(path: string) {
   if (path === '/login' || path === '/login/oidc') return 'login' as const
-  const pluginRoute = getWorkbenchPluginRuntime().routes.resolve(path)
+  const pluginRoute = resolveDshRoute(path)
   if (pluginRoute) return pluginRoute.telemetryFeature
   if (path.startsWith('/app/')) return 'apps' as const
   if (path.startsWith('/settings')) return 'settings' as const
@@ -179,7 +177,6 @@ function telemetryFeatureForPath(path: string) {
 }
 
 interface AppRoutesProps {
-  enableResidentSmartApps?: boolean
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
   onOpenWeworkForAppshot?: () => void
 }
@@ -194,21 +191,70 @@ function workspaceTabIframe(
 ): { appKey: string; src: string; title: string } | null {
   const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
   if (!match) return null
-  const app = getWorkbenchPluginRuntime().apps.resolve(match[1])
-  if (!app || app.mode !== 'iframe') return null
-  const src = app.key === 'wegent' ? wegentUrl : app.url
-  return src ? { appKey: app.key, src, title: app.label } : null
+  const app = resolveDshApp(match[1])
+  if (app?.mode === 'iframe') {
+    const src = app.urlSource === 'cloud-web' ? wegentUrl : app.url
+    return src ? { appKey: app.id, src, title: app.label } : null
+  }
+  const harnessApp = resolveRunningHarnessApp(match[1])
+  return harnessApp
+    ? { appKey: harnessApp.key, src: harnessApp.url, title: harnessApp.title }
+    : null
 }
 
-function workspaceTabAuxiliaryPage(path: string, search: string) {
-  return getWorkbenchPluginRuntime().routes.resolve(path)?.render({ search }) ?? null
+function workspaceTabDshApp(
+  path: string,
+  workspaceKind: ReturnType<typeof inferWorkspaceTabKind>
+): WeworkDshApp | null {
+  const match = path.match(/^\/app\/([^/]+)$/)
+  if (match) {
+    const app = resolveDshApp(match[1])
+    return app?.mode === 'surface' ? app : null
+  }
+  return (
+    getDshApps().find(
+      app =>
+        app.module &&
+        (workspaceKind === 'task' || workspaceKind === 'board') &&
+        app.workspaceKinds?.includes(workspaceKind)
+    ) ?? null
+  )
+}
+
+function UnavailableWorkspaceRoute({ path }: { path: string }) {
+  const { t } = useTranslation('common')
+  return (
+    <div
+      className="flex h-full min-h-0 items-center justify-center p-5"
+      data-testid="workspace-route-unavailable"
+    >
+      <div className="flex max-w-md flex-col items-center text-center">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted text-text-secondary">
+          <PlugZap aria-hidden="true" className="h-5 w-5" />
+        </div>
+        <h1 className="heading-small mt-4 text-text-primary">
+          {t('workbench.workspace_route_unavailable_title', '此工作区不可用')}
+        </h1>
+        <p className="mt-2 text-sm leading-5 text-text-secondary">
+          {t(
+            'workbench.workspace_route_unavailable_description',
+            '提供此页面的插件可能已停用或卸载。你可以关闭此标签页，或重新启用对应插件。'
+          )}
+        </p>
+        <code className="mt-3 rounded-md bg-muted px-2 py-1 text-code text-text-secondary">
+          {path}
+        </code>
+      </div>
+    </div>
+  )
 }
 
 interface WorkspaceTabSurfaceProps {
   active: boolean
   cloudWebUrl: string | null | undefined
   lifecycleStore: RuntimeTaskLifecycleStore
-  manageResidentSmartApps?: boolean
+  nativeWorkbenchKind?: 'task' | 'board'
+  prewarmComposerApps?: boolean
   smartAppsEnabled?: boolean
   onOpenWeworkForAppshot?: () => void
   onWorkbenchStartupReadyChange?: (ready: boolean) => void
@@ -221,7 +267,8 @@ export function WorkspaceTabSurface({
   active,
   cloudWebUrl,
   lifecycleStore,
-  manageResidentSmartApps = false,
+  nativeWorkbenchKind,
+  prewarmComposerApps = false,
   smartAppsEnabled = false,
   onOpenWeworkForAppshot,
   onWorkbenchStartupReadyChange,
@@ -229,17 +276,42 @@ export function WorkspaceTabSurface({
   tab,
   user,
 }: WorkspaceTabSurfaceProps) {
-  useActiveWorkbenchApps()
-  useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
+  useDshSlotEntries(WEWORK_DSH_SLOTS.app)
+  useDshSlotEntries(WEWORK_DSH_SLOTS.route)
   const tabPath = workspaceTabPath(tab)
   const tabSearch = new URL(tab.contentRoute, window.location.origin).search
-  const iframe = workspaceTabIframe(tab, cloudWebUrl)
-  const auxiliaryPage = workspaceTabAuxiliaryPage(tabPath, tabSearch)
-  const auxiliaryActive = Boolean(auxiliaryPage)
+  const dshWorkspaceTabId = dshWorkspaceTabIdFromPath(tabPath)
+  const dshWorkspaceTabActive = Boolean(dshWorkspaceTabId)
   const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
+  const electronHarnessAppActive = Boolean(isElectronRuntime() && harnessAppInstallationId)
+  const iframe =
+    isElectronRuntime() && harnessAppInstallationId ? null : workspaceTabIframe(tab, cloudWebUrl)
+  const auxiliaryRoute = resolveDshRoute(tabPath)
+  const inferredNativeKind = inferWorkspaceTabKind(tabPath)
+  const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
+  const routedDshApp = workspaceTabDshApp(tabPath, inferredNativeKind)
+  const retainedNativeApp = workspaceTabDshApp('', retainedNativeKind)
+  const nativeDshApp = routedDshApp?.mode === 'native' ? routedDshApp : retainedNativeApp
+  const surfaceDshApp = routedDshApp?.mode === 'surface' ? routedDshApp : null
+  const nativeWorkbenchRoute = Boolean(
+    (inferredNativeKind === 'task' || inferredNativeKind === 'board') &&
+    nativeDshApp?.workspaceKinds?.includes(inferredNativeKind)
+  )
+  const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
-  const nativeWorkbenchActive = !iframe && !auxiliaryActive && !harnessAppLaunchActive
+  const nativeWorkbenchActive =
+    nativeWorkbenchRoute &&
+    !electronHarnessAppActive &&
+    !iframe &&
+    !auxiliaryActive &&
+    !harnessAppLaunchActive
+  const unavailableRouteActive =
+    !nativeWorkbenchActive &&
+    !electronHarnessAppActive &&
+    !iframe &&
+    !auxiliaryActive &&
+    !harnessAppLaunchActive
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -267,13 +339,19 @@ export function WorkspaceTabSurface({
   const renderedIframe = iframe ?? surfaceHistory.iframe
   const renderProvider = surfaceHistory.hasMountedProvider || !iframe
   const renderWorkbench = surfaceHistory.hasMountedWorkbench || nativeWorkbenchActive
-  // Task-scoped browser routing is owned by workbench effects and must remain
-  // available while another workspace tab is active.
-  const keepTaskRuntimeActive = tab.kind === 'task' && renderWorkbench
+  // Fixed native tabs behave like desktop tabs: mount once, preserve their
+  // effects and in-memory UI state, and remove them from layout and paint while inactive.
+  const keepNativeWorkbenchActive =
+    Boolean(nativeWorkbenchKind || tab.kind === 'task' || tab.kind === 'board') && renderWorkbench
   // App WebViews own in-memory page state that is lost when React Activity
   // disconnects their effects. Keep the current iframe route connected while
   // inactive; AppIframe hides the native WebView through its active prop.
   const keepIframeActive = Boolean(iframe)
+  // Starting an Electron Smart app is an application lifecycle operation, not
+  // a visible-tab effect. Keep its launcher connected until startup settles.
+  const keepHarnessAppLaunchActive = electronHarnessAppActive && harnessAppLaunchActive
+  const keepSurfaceActive =
+    keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
   useLayoutEffect(() => {
     if (!active) return
@@ -283,16 +361,53 @@ export function WorkspaceTabSurface({
     setActiveWorkspaceTabPortalOwner(tab.id)
   }, [active, tab.id])
 
+  const workbenchContent = (
+    <>
+      {harnessAppInstallationId && smartAppsEnabled ? (
+        <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
+      ) : null}
+      {electronHarnessAppActive && !harnessAppLaunchActive ? (
+        <div
+          className="absolute inset-0"
+          data-testid={`app-iframe-harness-${harnessAppInstallationId}`}
+          data-embedded-browser-label={`smart-app:${harnessAppInstallationId}`}
+          data-workspace-tab-id={tab.id}
+        />
+      ) : null}
+      {onOpenWeworkForAppshot && active && !iframe ? (
+        <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
+      ) : null}
+      {renderWorkbench ? (
+        <div
+          data-testid="desktop-workbench-surface"
+          className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
+          aria-hidden={!nativeWorkbenchActive}
+        >
+          {nativeDshApp ? (
+            <DshAppSurface active={active && nativeWorkbenchActive} app={nativeDshApp} tab={tab} />
+          ) : null}
+        </div>
+      ) : null}
+      {auxiliaryRoute ? (
+        <div data-testid="desktop-auxiliary-surface" className="h-full">
+          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
+        </div>
+      ) : null}
+      {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
+      {dshWorkspaceTabActive ? (
+        <DshWorkspaceTabSurface active={active} path={tabPath} tab={tab} />
+      ) : null}
+      {unavailableRouteActive ? <UnavailableWorkspaceRoute path={tabPath} /> : null}
+    </>
+  )
   return (
     <WorkspaceTabPortalOwner ownerId={tab.id}>
-      <Activity mode={active || keepTaskRuntimeActive || keepIframeActive ? 'visible' : 'hidden'}>
+      <Activity mode={active || keepSurfaceActive ? 'visible' : 'hidden'}>
         <div
           className={cn(
             'min-h-0 min-w-0 overflow-hidden',
             active ? 'relative h-full' : 'absolute inset-0',
-            !active &&
-              (keepTaskRuntimeActive || keepIframeActive) &&
-              'pointer-events-none invisible'
+            !active && keepSurfaceActive && 'hidden'
           )}
           data-testid={`workspace-tab-content-${tab.id}`}
           data-workspace-tab-content={tab.id}
@@ -305,30 +420,21 @@ export function WorkspaceTabSurface({
               user={user}
               onStartupReadyChange={active && !iframe ? onWorkbenchStartupReadyChange : undefined}
               workspaceTabId={tab.id}
+              debugSnapshotEnabled={active && nativeWorkbenchActive}
               consumePluginTrials={active && !iframe}
+              loadTaskComposerCatalogs
+              prewarmComposerApps={prewarmComposerApps}
+              publishDebugSnapshots={active && !iframe}
+              syncCoreDshModels={
+                tab.fixed &&
+                tab.kind === 'task' &&
+                isElectronRuntime() &&
+                getDesktopWindowLabel() === 'main'
+              }
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
-              {manageResidentSmartApps ? (
-                <ResidentSmartAppsManager enabled={smartAppsEnabled} />
-              ) : null}
-              {onOpenWeworkForAppshot && active && !iframe ? (
-                <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />
-              ) : null}
-              {renderWorkbench ? (
-                <div
-                  data-testid="desktop-workbench-surface"
-                  className={cn('h-full', !nativeWorkbenchActive && 'hidden')}
-                  aria-hidden={!nativeWorkbenchActive}
-                >
-                  <WorkbenchPage routeActive={active && nativeWorkbenchActive} />
-                </div>
-              ) : null}
-              {auxiliaryPage ? (
-                <div data-testid="desktop-auxiliary-surface" className="h-full">
-                  {auxiliaryPage}
-                </div>
-              ) : null}
+              {workbenchContent}
             </WorkbenchProvider>
           ) : null}
           {harnessAppLaunch ? <HarnessAppLaunchSurface launch={harnessAppLaunch} /> : null}
@@ -363,13 +469,9 @@ export function WorkspaceTabSurface({
   )
 }
 
-function AppRoutes({
-  enableResidentSmartApps = false,
-  onWorkbenchStartupReadyChange,
-  onOpenWeworkForAppshot,
-}: AppRoutesProps = {}) {
+function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: AppRoutesProps = {}) {
   const path = useCurrentPath()
-  useWorkbenchRouteRegistry(getWorkbenchPluginRuntime().routes)
+  useDshSlotEntries(WEWORK_DSH_SLOTS.route)
   const isPopoutWindow = isPopoutWindowRuntime()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
@@ -378,6 +480,11 @@ function AppRoutes({
   const [mountedTabs, setMountedTabs] = useState(() => ({
     activeTabId: workspaceTabs?.activeTabId ?? null,
     ids: new Set(workspaceTabs ? [workspaceTabs.activeTabId] : []),
+    nativeWorkbenchKinds: new Map(
+      workspaceTabs?.tabs.flatMap(tab =>
+        tab.kind === 'task' || tab.kind === 'board' ? [[tab.id, tab.kind] as const] : []
+      ) ?? []
+    ),
   }))
   const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
@@ -420,7 +527,7 @@ function AppRoutes({
   )
 
   useEffect(() => {
-    if (!isTauriRuntime()) return
+    if (!isElectronRuntime()) return
     let disposed = false
     let unlisten: (() => void) | null = null
     void listenHarnessAppLaunchProgress(progress => {
@@ -444,10 +551,29 @@ function AppRoutes({
       feature: isPopoutWindow ? 'popout' : telemetryFeatureForPath(path),
     })
   }, [isPopoutWindow, path, telemetryEnabled])
-  if (workspaceTabs && mountedTabs.activeTabId !== workspaceTabs.activeTabId) {
+  const nextNativeWorkbenchKinds = new Map(
+    [...mountedTabs.nativeWorkbenchKinds].filter(([id]) =>
+      workspaceTabs?.tabs.some(tab => tab.id === id)
+    )
+  )
+  for (const tab of workspaceTabs?.tabs ?? []) {
+    if (tab.kind === 'task' || tab.kind === 'board') {
+      nextNativeWorkbenchKinds.set(tab.id, tab.kind)
+    }
+  }
+  const nativeWorkbenchKindsChanged =
+    nextNativeWorkbenchKinds.size !== mountedTabs.nativeWorkbenchKinds.size ||
+    [...nextNativeWorkbenchKinds].some(
+      ([id, kind]) => mountedTabs.nativeWorkbenchKinds.get(id) !== kind
+    )
+  if (
+    workspaceTabs &&
+    (mountedTabs.activeTabId !== workspaceTabs.activeTabId || nativeWorkbenchKindsChanged)
+  ) {
     setMountedTabs({
       activeTabId: workspaceTabs.activeTabId,
       ids: new Set([...mountedTabs.ids, workspaceTabs.activeTabId]),
+      nativeWorkbenchKinds: nextNativeWorkbenchKinds,
     })
   }
 
@@ -482,13 +608,14 @@ function AppRoutes({
     return (
       <>
         <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
+        <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
         <WorkbenchProvider
           lifecycleStore={lifecycleStore}
           services={services}
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
         >
-          {hasTauriIpc() && <SystemDragBridge />}
+          {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
         </WorkbenchProvider>
       </>
@@ -496,43 +623,53 @@ function AppRoutes({
   }
 
   if (!workspaceTabs) return null
-  const residentManagerTabId = enableResidentSmartApps
-    ? findResidentSmartAppsHostTabId(workspaceTabs.tabs, workspaceTabs.activeTabId)
-    : undefined
-
+  const mountedWorkspaceTabs = workspaceTabs.tabs.filter(
+    tab => tab.id === workspaceTabs.activeTabId || mountedTabs.ids.has(tab.id)
+  )
+  const composerPrewarmTabId = workspaceTabs.tabs.find(
+    tab => nextNativeWorkbenchKinds.get(tab.id) === 'task'
+  )?.id
+  const cloudWebUrl = cloudConnection.webUrl
+    ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
+    : cloudConnection.webUrl
   return (
     <>
       <RuntimeTaskLifecycleStreamCoordinator services={services} store={lifecycleStore} />
-      {workspaceTabs.tabs.map(tab => {
-        if (tab.id !== workspaceTabs.activeTabId && !mountedTabs.ids.has(tab.id)) return null
-        return (
-          <WorkspaceTabSurface
-            key={tab.id}
-            active={tab.id === workspaceTabs.activeTabId}
-            lifecycleStore={lifecycleStore}
-            manageResidentSmartApps={tab.id === residentManagerTabId}
-            smartAppsEnabled={experimentalFeatures.enabled}
-            services={services}
-            cloudWebUrl={
-              cloudConnection.webUrl
-                ? buildCloudAppUrl(cloudConnection.webUrl, cloudConnection.token)
-                : cloudConnection.webUrl
-            }
-            onOpenWeworkForAppshot={onOpenWeworkForAppshot}
-            onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
-            tab={tab}
-            user={user}
-          />
-        )
-      })}
+      <RuntimeTaskSystemSleepBridge store={lifecycleStore} />
+      {mountedWorkspaceTabs.map(tab => (
+        <WorkspaceTabSurface
+          key={tab.id}
+          active={tab.id === workspaceTabs.activeTabId}
+          lifecycleStore={lifecycleStore}
+          nativeWorkbenchKind={nextNativeWorkbenchKinds.get(tab.id)}
+          prewarmComposerApps={tab.id === composerPrewarmTabId}
+          smartAppsEnabled={experimentalFeatures.enabled}
+          services={services}
+          cloudWebUrl={cloudWebUrl}
+          onOpenWeworkForAppshot={onOpenWeworkForAppshot}
+          onWorkbenchStartupReadyChange={onWorkbenchStartupReadyChange}
+          tab={tab}
+          user={user}
+        />
+      ))}
     </>
   )
 }
 
 export default function App() {
   const path = useCurrentPath()
-  const content = isTauriRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
-  return getWorkbenchPluginRuntime().slots.renderRoot(content)
+  const content = isDesktopRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
+  return (
+    <>
+      <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
+      {content}
+      <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
+      <DshSlotSurface
+        className="pointer-events-none fixed inset-0 z-system-popover"
+        slot={WEWORK_DSH_SLOTS.shellOverlay}
+      />
+    </>
+  )
 }
 
 function MainApp() {
@@ -548,7 +685,6 @@ function MainApp() {
           <CloudConnectionProvider>
             <AuthProvider>
               <TelemetryBridge />
-              <DynamicWorkbenchPluginHost />
               <AppShell />
             </AuthProvider>
           </CloudConnectionProvider>
@@ -580,6 +716,7 @@ function browserWorkspaceTabStorageScope(): string {
 
 function AppShell() {
   const { t } = useTranslation('common')
+  const registeredRoutes = useDshSlotEntries<WeworkDshRoute>(WEWORK_DSH_SLOTS.route)
   const appPreferences = useAppPreferencesState()
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
@@ -592,18 +729,19 @@ function AppShell() {
     token: cloudConnection.token,
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
-  const isTauri = isTauriRuntime()
+  const isElectron = isElectronRuntime()
+  const isDesktop = isDesktopRuntime()
   const isPopoutWindow = isPopoutWindowRuntime()
-  const currentWindowLabel = isTauri ? getCurrentWindow().label : null
+  const currentWindowLabel = isElectron ? getDesktopWindowLabel() : null
   const isMainWindow = currentWindowLabel === 'main'
   const isWorkspaceWindow = currentWindowLabel?.startsWith('workspace-') === true
   const cloudApiBaseUrl = cloudConnection.apiBaseUrl
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
-  const showChromeTitlebar = isTauri && !isPopoutWindow
+  const showChromeTitlebar = (isDesktop || isElectron) && !isPopoutWindow
   const workspaceTabStorageScope = useMemo(
-    () => (isTauri ? getCurrentWindow().label : browserWorkspaceTabStorageScope()),
-    [isTauri]
+    () => (isElectron ? (currentWindowLabel ?? 'main') : browserWorkspaceTabStorageScope()),
+    [currentWindowLabel, isElectron]
   )
   const workspaceTabLabels = useMemo(
     () => ({
@@ -611,15 +749,52 @@ function AppShell() {
       board: t('workbench.workspace_tab_board', '工作空间'),
       agent: t('workbench.workspace_tab_agent', '智能体'),
       auxiliary: t('workbench.workspace_tab_auxiliary', '工作区'),
-      auxiliaryRoutes: {
-        plugins: t('workbench.workspace_tab_plugins', '插件'),
-        sites: t('workbench.workspace_tab_sites', '应用'),
-        automations: t('workbench.automation', '已安排'),
-        cloud: t('workbench.workspace_tab_cloud', '云端工作'),
-      },
+      auxiliaryRoutes: Object.fromEntries(
+        registeredRoutes.map(route => [
+          route.path,
+          t(route.titleKey ?? route.id, route.title ?? route.label ?? route.id),
+        ])
+      ),
     }),
-    [t]
+    [registeredRoutes, t]
   )
+  const fixedWorkspaceTabs = useMemo(
+    () =>
+      isMainWindow && appPreferences?.loaded
+        ? appPreferences.preferences.fixedWorkspaceTabs.flatMap(preference => {
+            if (preference.kind === 'smart_app') {
+              if (
+                !appPreferences.preferences.experimentalFeaturesEnabled ||
+                !preference.installationId
+              ) {
+                return []
+              }
+              return [
+                createWorkspaceTab('auxiliary', workspaceTabLabels, {
+                  id: preference.id,
+                  title: preference.title ?? t('workbench.smart_apps_title', '智能工作台'),
+                  contentRoute: harnessAppRoute(preference.installationId),
+                  fixed: true,
+                }),
+              ]
+            }
+            return [
+              createWorkspaceTab(preference.kind, workspaceTabLabels, {
+                id: preference.id,
+                fixed: true,
+              }),
+            ]
+          })
+        : [],
+    [appPreferences, isMainWindow, t, workspaceTabLabels]
+  )
+  const startupWorkspaceTabId = useMemo(() => {
+    if (!isMainWindow || !appPreferences?.loaded) return undefined
+    const preferredId = appPreferences.preferences.startupWorkspaceTabId
+    return fixedWorkspaceTabs.some(tab => tab.id === preferredId)
+      ? preferredId
+      : fixedWorkspaceTabs[0]?.id
+  }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
   const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
   const updateImNotificationPresence = useMemo(() => {
@@ -633,7 +808,7 @@ function AppShell() {
     ).updateImNotificationPresence
   }, [cloudApiBaseUrl, cloudToken])
   useAwayImNotificationPresence({
-    enabled: isMainWindow && hasTauriIpc() && cloudConnection.isConnected,
+    enabled: isMainWindow && isElectron && cloudConnection.isConnected,
     updatePresence: updateImNotificationPresence,
   })
   const openWeworkForAppshot = useCallback(() => {
@@ -641,7 +816,7 @@ function AppShell() {
   }, [navigateToApp])
 
   useEffect(() => {
-    if (!isTauri || isPopoutWindow) return undefined
+    if (!isDesktop || isPopoutWindow) return undefined
 
     let activeBindings = mergeKeybindings([])
     let disposed = false
@@ -765,7 +940,7 @@ function AppShell() {
       window.removeEventListener('mouseup', handleMouseUp)
       window.removeEventListener(KEYBINDINGS_CHANGED_EVENT, loadKeybindings)
     }
-  }, [isPopoutWindow, isTauri])
+  }, [isDesktop, isPopoutWindow])
 
   useEffect(() => {
     return installMacOSInputArrowKeyGuard()
@@ -797,7 +972,7 @@ function AppShell() {
     return <AppRoutes />
   }
 
-  if (isLoading) {
+  if (isLoading || (isMainWindow && !appPreferences?.loaded)) {
     if (isPopoutWindow) {
       return <div className="h-dvh bg-transparent" />
     }
@@ -823,16 +998,15 @@ function AppShell() {
       search={search}
       storageScope={workspaceTabStorageScope}
       labels={workspaceTabLabels}
-      startupTabKind={
-        isMainWindow && appPreferences?.loaded
-          ? appPreferences.preferences.defaultWorkspaceTab
-          : undefined
-      }
+      fixedTabs={fixedWorkspaceTabs}
+      startupTabId={startupWorkspaceTabId}
+      restoreSessionTabs={!isMainWindow}
     >
+      <ElectronWorkbenchTabBridge />
       <div
         data-testid="app-shell"
         className={cn(
-          isTauri ? 'fixed inset-0' : 'h-dvh',
+          isDesktop ? 'fixed inset-0' : 'h-dvh',
           isPopoutWindow
             ? 'overflow-visible bg-transparent'
             : isWorkspaceWindow
@@ -847,7 +1021,7 @@ function AppShell() {
             showFeedback={activeAppKey !== 'wework'}
           />
         )}
-        {isTauri && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
+        {isDesktop && !isPopoutWindow && !isWorkspaceWindow ? <RuntimeTaskCloseGuard /> : null}
         {!isPopoutWindow && !isWorkspaceWindow ? (
           <LocalExecutorCloudBridge
             apiBaseUrl={cloudConnection.apiBaseUrl}
@@ -857,6 +1031,7 @@ function AppShell() {
             token={cloudConnection.token}
           />
         ) : null}
+        {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />
         <div
           data-testid="app-route-host"
@@ -867,9 +1042,8 @@ function AppShell() {
           )}
         >
           <AppRoutes
-            enableResidentSmartApps={isMainWindow && hasTauriIpc()}
             onWorkbenchStartupReadyChange={setWorkbenchStartupReady}
-            onOpenWeworkForAppshot={isTauri ? openWeworkForAppshot : undefined}
+            onOpenWeworkForAppshot={isDesktop ? openWeworkForAppshot : undefined}
           />
         </div>
         {!isPopoutWindow && <WeworkDevInstanceBadge />}

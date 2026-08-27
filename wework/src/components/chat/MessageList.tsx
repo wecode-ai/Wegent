@@ -49,7 +49,8 @@ import {
 } from '@/lib/attachments'
 import { openLocalFile } from '@/lib/local-terminal'
 import { getRecognizedLink } from '@/lib/link-preview'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { splitRuntimeUserMessage, visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { ComposerLinkChip } from './ComposerLinkChip'
 import { ComposerTextarea } from './composer/ComposerTextarea'
@@ -57,12 +58,14 @@ import { parseChatError } from '@/lib/chat-error'
 import { isIMSource } from '@/lib/im-source'
 import { ImSourceBadge } from '@/components/common/ImSourceBadge'
 import { pluginNameInitial } from '@/components/plugins/plugin-assets'
+import { stripPluginWorkspaceResultMarkers } from '@/components/plugins/pluginWorkspaceResult'
 import { cn } from '@/lib/utils'
 import { AssistantMarkdown } from './AssistantMarkdown'
 import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
 import { AttachmentImagePreview } from './AttachmentImagePreview'
 import { CodeCommentPreview } from './CodeCommentPreview'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
+import { getFileEditDurationsBySourceBlock } from './blocks/fileEditDurations'
 import { getDurationText } from './blocks/processingDuration'
 import { usePersistentProcessingExpansion } from './blocks/processingExpansionState'
 import { isContextCompactionToolName, isGuidanceToolName } from './blocks/toolBlockKinds'
@@ -239,7 +242,7 @@ export const MessageList = memo(function MessageList({
   const [layoutWidth, setLayoutWidth] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
-  const isTauri = isTauriRuntime()
+  const isDesktop = isElectronRuntime()
   const visibleMessages = useMemo(() => messages.filter(shouldRenderMessage), [messages])
   const editableLastUserMessageId = useMemo(
     () =>
@@ -267,7 +270,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isTauri && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -451,7 +454,7 @@ export const MessageList = memo(function MessageList({
   }, [virtualMessages])
 
   useEffect(() => {
-    if (isTauri && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
+    if (isDesktop && (!onAddSelectionToConversation || !onAskSelectionInSidebar)) return
 
     const updateSelectionState = (preserveCapturedSelection = false) => {
       const selection = document.getSelection?.()
@@ -467,7 +470,7 @@ export const MessageList = memo(function MessageList({
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
         isNodeInsideElement(selection.focusNode, root)
-      setIsTextSelectionActive(!isTauri && selectionTouchesList)
+      setIsTextSelectionActive(!isDesktop && selectionTouchesList)
       if (!onAddSelectionToConversation || !onAskSelectionInSidebar) return
 
       const range = selection.getRangeAt(0)
@@ -530,7 +533,7 @@ export const MessageList = memo(function MessageList({
       window.removeEventListener('scroll', handleScroll, true)
       window.removeEventListener('blur', handleBlur)
     }
-  }, [conversationKey, isTauri, onAddSelectionToConversation, onAskSelectionInSidebar])
+  }, [conversationKey, isDesktop, onAddSelectionToConversation, onAskSelectionInSidebar])
 
   const applySelectionAction = (action: (text: string) => void) => {
     if (!textSelection) return
@@ -611,7 +614,7 @@ export const MessageList = memo(function MessageList({
           <article
             className={cn(
               'min-w-0',
-              !isTauri &&
+              !isDesktop &&
                 !disableContentVisibility &&
                 !isTextSelectionActive &&
                 '[content-visibility:auto]',
@@ -820,7 +823,9 @@ function shouldRenderMessage(message: WorkbenchMessage): boolean {
     return true
   }
 
-  const visibleContent = shouldHideFailedAssistantContent(message) ? '' : message.content
+  const visibleContent = shouldHideFailedAssistantContent(message)
+    ? ''
+    : stripPluginWorkspaceResultMarkers(message.content)
   if (visibleContent.trim()) return true
 
   return getDisplayProcessingBlocks(message.blocks).length > 0
@@ -964,22 +969,6 @@ function formatMessageTime(createdAt: string) {
   }
 
   return `${date.getFullYear()}年${dateLabel} ${time}`
-}
-
-async function copyText(text: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text)
-    return
-  }
-
-  const textarea = document.createElement('textarea')
-  textarea.value = text
-  textarea.style.position = 'fixed'
-  textarea.style.opacity = '0'
-  document.body.appendChild(textarea)
-  textarea.select()
-  document.execCommand('copy')
-  document.body.removeChild(textarea)
 }
 
 function UserMessage({
@@ -1583,7 +1572,7 @@ function MessageHoverActions({
     if (event.detail > 0) {
       event.currentTarget.blur()
     }
-    void copyText(copyContent).then(() => {
+    void copyTextToClipboard(copyContent).then(() => {
       setCopied(true)
       resetCopiedAfterHideRef.current = false
     })
@@ -1955,7 +1944,7 @@ function getWebSearchToolBlocks(blocks: ProcessingBlock[]) {
   )
 }
 
-function AssistantMessage({
+export function AssistantMessage({
   message,
   conversationKey,
   devices,
@@ -2014,12 +2003,16 @@ function AssistantMessage({
   const shouldHideContent =
     shouldHideFailedAssistantContent(message) ||
     (isCancelled && isCancelledPlaceholderContent(message.content))
-  const visibleContent = shouldHideContent ? '' : message.content
+  const visibleContent = shouldHideContent ? '' : stripPluginWorkspaceResultMarkers(message.content)
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = useMemo(
     () => getDisplayProcessingBlocks(message.blocks, isCancelled),
     [isCancelled, message.blocks]
+  )
+  const fileEditDurationsBySourceBlock = useMemo(
+    () => getFileEditDurationsBySourceBlock(displayBlocks),
+    [displayBlocks]
   )
   const processingSegments = splitProcessingBlocks(displayBlocks)
   const hasBlocks = displayBlocks.length > 0
@@ -2091,7 +2084,7 @@ function AssistantMessage({
         <ToolBlocksDisplay
           key={`${segment.kind}:${index}`}
           blocks={segment.blocks}
-          fileEditDurationBlocks={displayBlocks}
+          fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
           isStreaming={isStreaming}
           startedAt={getProcessingSummaryStartMs(message, segment.blocks, isStreaming)}
           forceExpanded={segment.kind === 'narrative'}
@@ -2148,7 +2141,7 @@ function AssistantMessage({
               <ToolBlocksDisplay
                 key={`${processingSegment.kind}:${processingIndex}`}
                 blocks={processingSegment.blocks}
-                fileEditDurationBlocks={displayBlocks}
+                fileEditDurationsBySourceBlock={fileEditDurationsBySourceBlock}
                 isStreaming={isStreaming}
                 startedAt={getProcessingSummaryStartMs(
                   message,

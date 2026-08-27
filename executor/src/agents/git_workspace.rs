@@ -13,7 +13,8 @@ use tokio::process::Command;
 
 use crate::{
     agents::git_auth::{
-        git_credentials, request_git_domain, user_git_email, user_git_login, GitCredentials,
+        configure_repo_proxy, request_git_domain, task_git_auth_environment, user_git_email,
+        user_git_login,
     },
     logging::{log_executor_event, task_fields},
     protocol::ExecutionRequest,
@@ -168,6 +169,9 @@ async fn clone_repo(
     git_url: &str,
     project_path: &Path,
 ) -> Result<(), String> {
+    if git_url_contains_credentials(git_url) {
+        return Err("Git repository URL must not contain credentials or a query".to_owned());
+    }
     if let Some(parent) = project_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             format!(
@@ -177,8 +181,12 @@ async fn clone_repo(
         })?;
     }
 
-    let credentials = git_credentials(request);
-    if credentials.is_none() && requires_credentials_for_clone(git_url) {
+    if let Some(git_domain) = request_git_domain(request) {
+        configure_repo_proxy(&git_domain).await;
+    }
+
+    let auth_environment = task_git_auth_environment(request)?;
+    if !auth_environment.contains_key("GIT_ASKPASS") && requires_credentials_for_clone(git_url) {
         let mut failed_fields = task_fields(&request.task_id, &request.subtask_id);
         failed_fields.push(("path", project_path.display().to_string()));
         failed_fields.push(("git_url", mask_url_credentials(git_url)));
@@ -192,7 +200,6 @@ async fn clone_repo(
         ));
     }
 
-    let clone_url = authenticated_clone_url(git_url, credentials.as_ref());
     let mut command = Command::new("git");
     crate::process::hide_windows_console(&mut command);
     command.arg("clone");
@@ -200,7 +207,8 @@ async fn clone_repo(
     if let Some(branch) = branch.as_deref() {
         command.arg("--branch").arg(branch).arg("--single-branch");
     }
-    command.arg(clone_url).arg(project_path);
+    command.arg(git_url).arg(project_path);
+    command.envs(auth_environment);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut fields = task_fields(&request.task_id, &request.subtask_id);
@@ -238,29 +246,19 @@ async fn clone_repo(
     ))
 }
 
-fn authenticated_clone_url(git_url: &str, credentials: Option<&GitCredentials>) -> String {
-    let Some(credentials) = credentials else {
-        return git_url.to_owned();
-    };
-    let Some((protocol, rest)) = git_url.split_once("://") else {
-        return git_url.to_owned();
-    };
-    if protocol != "https" && protocol != "http" {
-        return git_url.to_owned();
-    }
-    let (username, token) = if git_url.to_ascii_lowercase().contains("gerrit") {
-        (
-            percent_encode(&credentials.username),
-            percent_encode(&credentials.token),
-        )
-    } else {
-        (credentials.username.clone(), credentials.token.clone())
-    };
-    format!("{protocol}://{username}:{token}@{rest}")
-}
-
 fn requires_credentials_for_clone(git_url: &str) -> bool {
     requires_credentials_for_clone_with_domains(git_url, &protected_git_credential_domains())
+}
+
+fn git_url_contains_credentials(git_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(git_url) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "http" | "https")
+        && (!parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.query().is_some()
+            || parsed.fragment().is_some())
 }
 
 fn requires_credentials_for_clone_with_domains(git_url: &str, domains: &[String]) -> bool {
@@ -346,18 +344,6 @@ fn value_string(value: Option<&Value>) -> Option<String> {
 fn non_empty(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
-}
-
-fn percent_encode(value: &str) -> String {
-    value
-        .bytes()
-        .flat_map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                vec![byte as char]
-            }
-            _ => format!("%{byte:02X}").chars().collect(),
-        })
-        .collect()
 }
 
 fn mask_url_credentials(url: &str) -> String {
@@ -454,19 +440,6 @@ mod tests {
     }
 
     #[test]
-    fn authenticated_url_preserves_non_http_urls() {
-        let credentials = crate::agents::git_auth::GitCredentials {
-            username: "token".to_owned(),
-            token: "secret".to_owned(),
-        };
-
-        assert_eq!(
-            authenticated_clone_url("git@gitlab.com:group/project.git", Some(&credentials)),
-            "git@gitlab.com:group/project.git"
-        );
-    }
-
-    #[test]
     fn configured_https_repositories_require_credentials() {
         let protected_domains = vec!["github.com".to_owned()];
 
@@ -482,6 +455,20 @@ mod tests {
             "git@github.com:wecode-ai/wegent.git",
             &protected_domains
         ));
+    }
+
+    #[test]
+    fn http_git_urls_reject_embedded_credentials_and_queries() {
+        assert!(git_url_contains_credentials(
+            "https://octocat:token@github.com/org/repo.git"
+        ));
+        assert!(git_url_contains_credentials(
+            "https://github.com/org/repo.git?token=secret"
+        ));
+        assert!(!git_url_contains_credentials(
+            "https://github.com/org/repo.git"
+        ));
+        assert!(!git_url_contains_credentials("git@github.com:org/repo.git"));
     }
 
     #[test]

@@ -952,12 +952,35 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
-      - name: Download all blob reports
+      - name: Download shard 1 blob report
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          pattern: blob-report-*
+          name: blob-report-1
           path: all-blob-reports
-          merge-multiple: true
+
+      - name: Download shard 2 blob report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: blob-report-2
+          path: all-blob-reports
+
+      - name: Download shard 3 blob report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: blob-report-3
+          path: all-blob-reports
+
+      - name: Download shard 4 blob report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: blob-report-4
+          path: all-blob-reports
+
+      - name: Download executor blob report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: blob-report-executor
+          path: all-blob-reports
 
       - name: Merge reports
         working-directory: ./frontend

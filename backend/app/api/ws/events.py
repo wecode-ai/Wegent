@@ -102,6 +102,9 @@ class ServerEvents:
     QUEUE_MESSAGE_PROCESSED = "queue:message_processed"  # Message processed
     QUEUE_REPLY_RECEIVED = "queue:reply_received"  # Received reply from processing
 
+    # Plugin lifecycle events (to Wework user room)
+    PLUGIN_RELEASE_AVAILABLE = "plugin:release_available"
+
 
 # ============================================================
 # Client -> Server Payloads
@@ -127,17 +130,24 @@ class SkillRef(BaseModel):
 
 
 class GenerateParams(BaseModel):
-    """Generation parameters for video/image tasks (user-selected at generation time)."""
+    """Generation parameters selected for video, image, or media-aware chat tasks."""
 
     resolution: Optional[str] = Field(
         None, description="Video resolution (e.g., '720p')"
     )
     ratio: Optional[str] = Field(None, description="Aspect ratio (e.g., '16:9')")
     duration: Optional[int] = Field(None, description="Duration in seconds")
+    model: Optional[str] = Field(None, description="Selected generation model name")
+    model_display_name: Optional[str] = Field(
+        None, description="Selected generation model display name"
+    )
     generation_mode_id: Optional[str] = Field(
         None, description="Selected video generation mode"
     )
     size: Optional[str] = Field(None, description="Image dimensions (e.g., '1512x648')")
+    model: Optional[str] = Field(
+        None, description="Selected generation model resource name"
+    )
 
 
 class ChatExecutionWorkspacePayload(BaseModel):

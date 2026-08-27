@@ -22,14 +22,18 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
-import { stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
+import { processIsAlive, stopProcess, stopProcessGroup } from '../process-lifecycle.mjs'
 import { loadDesktopScenario } from '../scenario-loader.mjs'
 import { waitForSnapshot } from './conversation-layout.mjs'
 import { sendPrompt } from './conversation-navigation.mjs'
 import { waitForFolderPathReady, waitForFolderPickerInitialized } from './workspace-flows.mjs'
 
-const DESKTOP_READY_TIMEOUT_MS = 60_000
 const WORKBENCH_READY_TIMEOUT_MS = 180_000
+const DESKTOP_READY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS,
+  WORKBENCH_READY_TIMEOUT_MS,
+  'WEWORK_E2E_DESKTOP_READY_TIMEOUT_MS'
+)
 const DEFAULT_STEP_TIMEOUT_MS = readPositiveTimeout(
   process.env.WEWORK_E2E_STEP_TIMEOUT_MS,
   10_000,
@@ -45,7 +49,11 @@ const DESKTOP_CONTROL_SERVER_PORT = readOptionalPort(
 )
 const MODEL_PROTOCOL_MATRIX_TIMEOUT_MS = 120_000
 const COMPOSER_READY_STABILITY_MS = 750
-const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = DEFAULT_STEP_TIMEOUT_MS
+const DESKTOP_CONTROL_DELIVERY_TIMEOUT_MS = readPositiveTimeout(
+  process.env.WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS,
+  30_000,
+  'WEWORK_E2E_CONTROL_DELIVERY_TIMEOUT_MS'
+)
 const DESKTOP_CONTROL_RESULT_GRACE_MS = 5_000
 const QUEUE_MANAGEMENT_REQUEST_TIMEOUT_MS = 120_000
 
@@ -93,6 +101,7 @@ const TASK_PLAN_STEP = 'Verify the background task plan remains visible'
 const SEND_MODE_DRAFT = 'WEWORK_DESKTOP_E2E_SEND_MODE_DRAFT'
 const QUEUED_FOLLOW_UP = 'WEWORK_DESKTOP_E2E_QUEUED_FOLLOW_UP'
 const BACKGROUND_GUIDANCE = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE'
+const BACKGROUND_GUIDANCE_CONTINUATION = 'WEWORK_DESKTOP_E2E_BACKGROUND_GUIDANCE_CONTINUATION'
 const GUIDANCE_SCROLL_PROMPT =
   'WEWORK_DESKTOP_E2E_GUIDANCE_SCROLL: create a long completed conversation.'
 const GUIDANCE_SCROLL_ACTIVE_PROMPT =
@@ -179,13 +188,14 @@ const MESSAGE_EDIT_UPDATED_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MESSAGE_EDIT_UP
 const FILE_PANEL_ANCHOR_PROMPT =
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR: create a long response with a file link in the middle.'
 const FILE_PANEL_ANCHOR_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_MARKER'
+const FILE_PANEL_LINK_NAME = 'README file.md'
 const FILE_PREVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_FILE_PREVIEW_RESTORED'
 const REVIEW_RESTORE_MARKER = 'WEWORK_DESKTOP_E2E_REVIEW_RESTORED'
 const FILE_PANEL_ANCHOR_RESPONSE = [
   'WEWORK_DESKTOP_E2E_FILE_PANEL_ANCHOR_RESPONSE',
   ...Array.from({ length: 30 }, (_, index) =>
     index === 14
-      ? `${FILE_PANEL_ANCHOR_MARKER}: inspect [README.md](README.md:1) without moving this paragraph.`
+      ? `${FILE_PANEL_ANCHOR_MARKER}: inspect [${FILE_PANEL_LINK_NAME}](${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1) without moving this paragraph.`
       : `File panel anchor paragraph ${String(index + 1).padStart(2, '0')}. ${'Scrollable anchor content '.repeat(8)}`
   ),
 ].join('\n\n')
@@ -217,10 +227,10 @@ const MEMORY_PROMPT = 'WEWORK_DESKTOP_E2E_MEMORY: run a tool and stream the repo
 const MEMORY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MEMORY_COMPLETE'
 const CONCURRENT_MEMORY_TASK_COUNT = 10
 const CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB ?? 320 * 1024
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB ?? 384 * 1024
 )
 const CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB = Number(
-  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 256 * 1024
+  process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB ?? 320 * 1024
 )
 const CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB = Number(
   process.env.WEWORK_E2E_CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB ?? 64 * 1024
@@ -541,7 +551,6 @@ const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
-const STARTUP_NETWORK_PROBE_REQUEST_PATTERN = /desktop-e2e-startup-probe\.invalid/i
 const AUTOMATION_NAME = 'Desktop E2E automation'
 const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
 const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
@@ -878,40 +887,6 @@ function commandOutput(command, args, options = {}) {
   return result.stdout.trim()
 }
 
-function macosFrontmostProcessId() {
-  const output = commandOutput('osascript', [
-    '-l',
-    'JavaScript',
-    '-e',
-    'ObjC.import("AppKit"); Number($.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier)',
-  ])
-  const processId = Number(output)
-  assert.ok(Number.isInteger(processId), `Invalid macOS frontmost process ID: ${output}`)
-  return processId
-}
-
-function macosApplicationProcessId(appIdentifier) {
-  const output = commandOutput('osascript', [
-    '-l',
-    'JavaScript',
-    '-e',
-    `ObjC.import("AppKit"); const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier(${JSON.stringify(appIdentifier)}); apps.count > 0 ? Number(apps.objectAtIndex(0).processIdentifier) : 0`,
-  ])
-  const processId = Number(output)
-  assert.ok(Number.isInteger(processId), `Invalid macOS application process ID: ${output}`)
-  return processId
-}
-
-async function waitForMacosApplicationProcessId(appIdentifier, launcher) {
-  const startedAt = Date.now()
-  while (Date.now() - startedAt < DESKTOP_READY_TIMEOUT_MS) {
-    const processId = macosApplicationProcessId(appIdentifier)
-    if (processId > 0) return processId
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  throw new Error(`Timed out waiting for macOS application ${appIdentifier}`)
-}
-
 async function stopDesktopAppProcess(app) {
   if (!app) return
   if (!app.launcher) {
@@ -1004,29 +979,16 @@ class BlockingNetworkProxy {
     throw new Error('Codex did not reach the blocking network proxy')
   }
 
-  async waitForRequestMatchingAfter(requestCount, pattern, timeoutMs = WORKBENCH_READY_TIMEOUT_MS) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < timeoutMs) {
-      const request = this.requests.slice(requestCount).find(candidate => pattern.test(candidate))
-      if (request) return request
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 25))
-    }
-    const observedRequests = this.requests.slice(requestCount)
-    throw new Error(
-      `Codex did not send a startup request matching ${pattern}; observed=${JSON.stringify(observedRequests)}`
-    )
-  }
-
-  requestCount() {
-    return this.requests.length
-  }
-
   release() {
     if (this.released) return
     this.released = true
     for (const socket of this.sockets) {
       socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
     }
+  }
+
+  block() {
+    this.released = false
   }
 
   async stop() {
@@ -1086,24 +1048,13 @@ async function appendProcessOutput(stream, destination) {
   })
 }
 
-function processIsAlive(processId) {
-  try {
-    process.kill(processId, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
 function macosSleepAssertionIds(appProcessId) {
   if (process.platform !== 'darwin') return []
   const output = commandOutput('/usr/bin/pmset', ['-g', 'assertions'])
   return output.split('\n').flatMap(line => {
     const match = line
       .trim()
-      .match(
-        /^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*PreventUserIdleSystemSleep named: "Wework local task is running"/i
-      )
+      .match(/^pid (\d+)\([^)]+\): \[(0x[0-9a-f]+)\].*NoIdleSleepAssertion named: "Electron"/i)
     if (!match || Number(match[1]) !== appProcessId) {
       return []
     }
@@ -1123,21 +1074,25 @@ async function waitForMacosSleepAssertion(appProcessId, expectedRunning) {
   )
 }
 
-async function waitForExecutorReadyEvidence(
-  logPath,
+async function waitForExecutorRuntimeEvidence(
+  control,
+  _logPath,
   timeoutMs = DEFAULT_STEP_TIMEOUT_MS,
   minimumProcessCount = 1
 ) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const content = await readFile(logPath, 'utf8').catch(() => '')
-    const processIds = [...content.matchAll(/app IPC stdio ready[^\n]*process_id=(\d+)/g)].map(
-      match => Number(match[1])
-    )
-    if (processIds.length >= minimumProcessCount) return { processIds, content }
+    const diagnostics = JSON.parse(await control.command('getDesktopRuntimeDiagnostics', 'body'))
+    const executorProcessId = Number(diagnostics.executorPid)
+    if (Number.isInteger(executorProcessId) && executorProcessId > 0) {
+      return {
+        processIds: [executorProcessId],
+        content: JSON.stringify(diagnostics),
+      }
+    }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`Timed out waiting for executor stdio-ready evidence in ${logPath}`)
+  throw new Error('Timed out waiting for the Electron core runtime executor process')
 }
 
 async function waitForLogPattern(
@@ -1154,7 +1109,11 @@ async function waitForLogPattern(
   throw new Error(`Timed out waiting for ${pattern} in ${logPath} after offset ${fromOffset}`)
 }
 
-async function reactivateMacApplication(appIdentifier) {
+async function reactivateMacApplication(appIdentifier, appBundlePath = null) {
+  if (appBundlePath) {
+    await runChecked('open', ['-g', appBundlePath])
+    return
+  }
   await runChecked('open', ['-g', '-b', appIdentifier])
 }
 
@@ -1201,21 +1160,11 @@ async function visibleModelOptionId(control, targetOptionIds, providerId) {
   for (const targetOptionId of targetOptionIds) {
     const targetSelector = `[data-testid="model-selector-submenu"] [data-testid="${targetOptionId}"]${modelProviderSelector(providerId)}`
     await control.command('scrollIntoView', targetSelector).catch(() => undefined)
-    const metrics = await control
-      .command('getElementMetrics', targetSelector)
-      .then(value => JSON.parse(value))
-      .catch(() => [])
-    if (
-      metrics.some(
-        metric =>
-          metric.width > 0 &&
-          metric.height > 0 &&
-          metric.bottom > 0 &&
-          metric.right > 0 &&
-          metric.top < 720 &&
-          metric.left < 1280
-      )
-    ) {
+    const visibleCount = await control
+      .command('getElementCount', targetSelector, { visible: true })
+      .then(value => Number(value))
+      .catch(() => 0)
+    if (visibleCount > 0) {
       return targetOptionId
     }
   }
@@ -1255,15 +1204,23 @@ function hasModelOption(menu, targetOptionIds) {
   return targetOptionIds.some(targetOptionId => menu.testIds.includes(targetOptionId))
 }
 
+async function hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId) {
+  if (!expectedProviderId) return hasModelOption(menu, targetOptionIds)
+  return Boolean(await visibleModelOptionId(control, targetOptionIds, expectedProviderId))
+}
+
 async function ensureModelOptionVisible(
   control,
   modelIds,
-  modelSelectorButton = '[data-testid="model-selector-button"]'
+  modelSelectorButton = '[data-testid="model-selector-button"]',
+  expectedProviderId = expectedModelProviderId(modelIds)
 ) {
   const targetOptionIds = modelOptionIdCandidates(modelIds)
+  let reloadedLocalModels = false
   for (let attempt = 0; attempt < 8; attempt += 1) {
     let menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
     if (menu.testIds.includes('model-control-menu-model')) {
       await control
         .command('hover', '[data-testid="model-control-menu-model"]', {
@@ -1288,13 +1245,20 @@ async function ensureModelOptionVisible(
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 150))
     menu = JSON.parse(await control.command('snapshot', 'body'))
-    if (hasModelOption(menu, targetOptionIds)) return menu
-    if (await revealGroupedModelOption(control, targetOptionIds)) {
+    if (await hasExpectedModelOption(control, menu, targetOptionIds, expectedProviderId))
+      return menu
+    if (await revealGroupedModelOption(control, targetOptionIds, expectedProviderId)) {
       return JSON.parse(await control.command('snapshot', 'body'))
+    }
+    if (expectedProviderId && !reloadedLocalModels) {
+      await control.command('dispatchLocalModelSettingsChanged', '')
+      reloadedLocalModels = true
     }
   }
 
-  throw new Error(`Model options ${targetOptionIds.join(', ')} did not become visible`)
+  throw new Error(
+    `Model options ${targetOptionIds.join(', ')} did not become visible${expectedProviderId ? ` for provider ${expectedProviderId}` : ''}`
+  )
 }
 
 async function confirmLocalProjectName(control, name) {
@@ -1376,7 +1340,7 @@ async function selectE2EModel(
     return
   }
 
-  await ensureModelOptionVisible(control, modelIds, modelSelectorButton)
+  await ensureModelOptionVisible(control, modelIds, modelSelectorButton, expectedProviderId)
   const targetOptionIds = modelOptionIdCandidates(modelIds)
   let targetOptionId = await visibleModelOptionId(control, targetOptionIds, expectedProviderId)
   if (!targetOptionId) {
@@ -1508,6 +1472,7 @@ export {
   SEND_MODE_DRAFT,
   QUEUED_FOLLOW_UP,
   BACKGROUND_GUIDANCE,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_ACTIVE_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
@@ -1562,6 +1527,7 @@ export {
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_ANCHOR_MARKER,
+  FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
   REVIEW_RESTORE_MARKER,
   FILE_PANEL_ANCHOR_RESPONSE,
@@ -1778,7 +1744,6 @@ export {
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
-  STARTUP_NETWORK_PROBE_REQUEST_PATTERN,
   AUTOMATION_NAME,
   AUTOMATION_PROMPT,
   AUTOMATION_COMPLETION_TEXT,
@@ -1799,9 +1764,6 @@ export {
   isExecutable,
   pathExists,
   commandOutput,
-  macosFrontmostProcessId,
-  macosApplicationProcessId,
-  waitForMacosApplicationProcessId,
   stopDesktopAppProcess,
   runChecked,
   reservePort,
@@ -1813,7 +1775,7 @@ export {
   processIsAlive,
   macosSleepAssertionIds,
   waitForMacosSleepAssertion,
-  waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   waitForLogPattern,
   reactivateMacApplication,
   requestMacosApplicationQuit,

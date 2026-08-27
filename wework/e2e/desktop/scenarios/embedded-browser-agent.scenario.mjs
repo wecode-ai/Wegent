@@ -64,6 +64,7 @@ const ANNOTATION_COMMENT = 'Make this target more prominent'
 const ANNOTATION_NAVIGATION_COMMENT = 'This comment must not survive navigation'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
+let desktopScenarioExecutorBinary = null
 
 async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
   const selector = `${scopeSelector} ${WORKBENCH_BROWSER_LABEL_SELECTOR}`
@@ -295,9 +296,6 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     appShellHeight: await control.command('getInlineStyle', '[data-testid="app-shell"]', {
       value: 'height',
     }),
-    tauriViewportHeight: await control.command('getAttribute', '[data-testid="app-shell"]', {
-      value: 'data-tauri-viewport-height',
-    }),
     routeHost: JSON.parse(
       await control.command('getElementMetrics', '[data-testid="app-route-host"]')
     ),
@@ -356,6 +354,7 @@ async function waitForRuntimeTaskId(control, timeoutMs) {
 
 async function withBrowserMcp(identity, label, callback) {
   const executorPath =
+    desktopScenarioExecutorBinary ||
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
       repoDir,
@@ -472,6 +471,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
   let cacheResourceRequests = 0
 
   return {
+    setExecutorBinary(path) {
+      desktopScenarioExecutorBinary = path
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
@@ -662,7 +664,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.match(
         inactiveTaskClassName,
-        /(?:^|\s)invisible(?:\s|$)/,
+        /(?:^|\s)hidden(?:\s|$)/,
         'Inactive task browser calls made the task surface visible'
       )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
@@ -966,7 +968,28 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 35_000,
       })
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
+      await waitForElementCount(
+        control,
+        BROWSER_NATIVE_VIEW_SELECTOR,
+        0,
+        uiTimeoutMs,
+        'The browser host remained mounted after the bridge close completed'
+      )
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        '',
+        uiTimeoutMs,
+        'The browser address bar did not settle after the bridge close'
+      )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        cacheFixtureUrl,
+        uiTimeoutMs,
+        'The browser address bar lost the cache fixture URL before submission'
+      )
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await bridgeCall({
@@ -1510,6 +1533,20 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+      const approvalResolutionStartedAt = Date.now()
+      let approvalButtonCount = 1
+      while (Date.now() - approvalResolutionStartedAt < uiTimeoutMs) {
+        approvalButtonCount = Number(
+          await control.command('getElementCount', BROWSER_AGENT_APPROVE_SELECTOR)
+        )
+        if (approvalButtonCount === 0) break
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.equal(
+        approvalButtonCount,
+        0,
+        'Browser approval remained pending after the user approved it'
+      )
 
       const approvedDeleteResult = await bridgeCall({
         action: 'click',
@@ -1714,15 +1751,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       zipBytes.set([0x50, 0x4b, 0x03, 0x04])
       await writeFile(localZipPath, zipBytes)
       const localZipUrl = pathToFileURL(localZipPath).href
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        localZipUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive local zip URL before submit'
-      )
-      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,

@@ -20,6 +20,7 @@ pub mod image_preprocessor;
 pub mod local;
 pub mod logging;
 pub mod mcp_utils;
+pub mod plugin_workspace_cli;
 pub mod process;
 pub mod process_environment;
 pub mod prompt_enrichment;
@@ -48,6 +49,7 @@ pub(crate) mod test_env {
     // must survive.
     const HOST_STATE_VARS: &[&str] = &[
         "WEGENT_BUNDLED_HOOKS_DIR",
+        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
         "WEGENT_MANAGED_HOOKS_DIR",
         "WEGENT_EXECUTOR_HOME",
     ];

@@ -18,6 +18,9 @@ WEWORK_DIR="$PROJECT_DIR/wework"
 ENV_FILE="$PROJECT_DIR/.env"
 BACKEND_ENV_FILE="$PROJECT_DIR/backend/.env"
 
+# shellcheck source=../../scripts/lib/cargo-cache.sh
+source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
+
 COMMAND="${1:-start}"
 DEVICE_ID="${DEVICE_ID:-cloud-device-dev}"
 DEVICE_TYPE="${DEVICE_TYPE:-cloud}"
@@ -42,7 +45,11 @@ Environment overrides:
   WEGENT_BACKEND_URL      Dev backend URL (default: http://localhost:8000)
   CLOUD_DEVICE_HOME       Data/log dir (default: $HOME/.wegent-executor-cloud-device)
   CLOUD_DEVICE_EXECUTOR_BIN
-                          Executor binary override (default: cargo build output)
+                          Executor launcher override (default: dev-reload binary)
+  CARGO_TARGET_DIR        Explicit Cargo target directory
+  WEGENT_DISABLE_SHARED_CARGO_TARGET
+                          Set to 1 to use executor/target
+  WEGENT_DISABLE_SCCACHE  Set to 1 to disable automatic sccache detection
 EOF
 }
 
@@ -78,30 +85,33 @@ is_running() {
   [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-resolve_executor_binary() {
+resolve_executor_launcher() {
   if [ -n "${CLOUD_DEVICE_EXECUTOR_BIN:-}" ]; then
     printf '%s\n' "$CLOUD_DEVICE_EXECUTOR_BIN"
     return 0
   fi
-  local target_dir="${CARGO_TARGET_DIR:-}"
-  if [ -z "$target_dir" ]; then
-    target_dir="$EXECUTOR_DIR/target"
-  fi
-  local bin="$target_dir/debug/wegent-executor"
-  if [ ! -x "$bin" ] || [ -n "${CLOUD_DEVICE_REBUILD:-}" ]; then
-    echo "Building executor (first run may take a while)..." >&2
-    (
-      cd "$EXECUTOR_DIR"
-      cargo build --bin wegent-executor
-    )
-  fi
+
+  local bin
+  bin="$(
+    cd "$EXECUTOR_DIR"
+    cargo_target_binary_path "$EXECUTOR_DIR" debug wegent-executor-dev
+  )"
+  echo "Building executor dev-reload binaries (first run may take a while)..." >&2
+  (
+    cd "$EXECUTOR_DIR"
+    cargo build \
+      --manifest-path "$EXECUTOR_DIR/Cargo.toml" \
+      --features dev-reload \
+      --bin wegent-executor-dev \
+      --bin wegent-executor
+  )
   printf '%s\n' "$bin"
 }
 
 resolve_codex_binary() {
   local host
   host="$(rustc -vV | awk '$1 == "host:" { print $2 }')"
-  local bin="$WEWORK_DIR/src-tauri/binaries/codex/$host/vendor/$host/bin/codex"
+  local bin="$WEWORK_DIR/resources/binaries/codex/$host/vendor/$host/bin/codex"
   if [ ! -x "$bin" ]; then
     echo "Error: prepared Codex binary missing at $bin" >&2
     echo "Run: pnpm --filter wework prepare:codex" >&2
@@ -159,8 +169,12 @@ start() {
     exit 1
   fi
 
-  local bin
-  bin="$(resolve_executor_binary)"
+  if [ -z "${CLOUD_DEVICE_EXECUTOR_BIN:-}" ]; then
+    configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
+  fi
+
+  local launcher
+  launcher="$(resolve_executor_launcher)"
   local codex_bin
   codex_bin="$(resolve_codex_binary)"
   local token
@@ -181,8 +195,9 @@ start() {
       CODEX_HOME="$HOME_DIR/codex" \
       CODEX_BINARY_PATH="$codex_bin" \
       WEGENT_EXECUTOR_LOG_DIR="$HOME_DIR" \
-      WEGENT_EXECUTOR_DEV_RELOAD=0 \
-      python3 -c 'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' "$bin" \
+      WEGENT_EXECUTOR_SOURCE_DIR="$EXECUTOR_DIR" \
+      WEGENT_EXECUTOR_PREBUILT=1 \
+      python3 -c 'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' "$launcher" \
         >>"$LOG_FILE" 2>&1 &
     echo $! >"$PID_FILE"
   )

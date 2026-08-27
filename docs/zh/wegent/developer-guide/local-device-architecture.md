@@ -36,30 +36,47 @@ flowchart LR
 
 ### Wework 打包 App 本地优先通道
 
-打包后的 Wework Tauri App 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Tauri WebView 内，Tauri Rust 侧只作为 app 内部命令层存在。
+打包后的 Wework Electron app 默认走本地优先模式。该模式不启动前端 Node dev server，也不在本机额外启动一个 HTTP Backend 服务；React 界面运行在 Electron renderer 内，Electron 主进程提供 app 内部命令层。
 
-本地优先模式只需要两个本机进程：
+本地优先模式包含 Electron 主进程、executor sidecar 和 core DSH 三个本机运行时角色：
 
 ```mermaid
 flowchart LR
     subgraph "用户电脑"
-        APP["Wework Tauri App"]
+        APP["Wework Electron app"]
         UI["React UI"]
-        TAURI["Tauri Commands"]
+        ELECTRON["Electron IPC"]
         EX["Executor Sidecar"]
+        DSH["Core DSH"]
         FS["本地文件"]
     end
 
-    UI --> TAURI
-    TAURI <-->|"stdio JSONL"| EX
+    UI --> ELECTRON
+    ELECTRON <-->|"带 owner 身份的本地端点"| EX
+    ELECTRON <-->|"继承的 host pipes"| DSH
+    DSH <-->|"普通客户端身份"| EX
     EX --> FS
 ```
 
-Tauri 无参数启动 executor sidecar，并通过子进程 stdin/stdout 交换换行分隔 JSON。stdout 只承载协议响应和事件，诊断信息写入 stderr 和 `~/.wegent-executor/logs/executor.log`。App 自己启动的 sidecar 归 Tauri 进程管理：macOS/Linux 下会放入独立进程组，关闭或重启 App 时先发送 `SIGTERM`，短暂等待后再用 `SIGKILL` 清理剩余子进程；开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。Wework renderer 通过 Tauri command 向 sidecar 发送 `runtime.*` 和 `device.execute_command` 请求，并订阅 sidecar 发回的 Responses stream 事件。
+Electron 无参数启动 executor sidecar，并通过每次 App 启动独有的 Unix socket 或 Windows named pipe 交换换行分隔 JSON。普通客户端使用 app IPC token；Electron 另用独立 owner token 建立一个贯穿该代 executor 生命周期的长连接。普通客户端（包括 core DSH）断开只结束自己的连接，owner 连接 EOF 则关闭本地端点并退出 executor。因此即使 Electron 被 `SIGKILL`、崩溃或 Force Quit，无法执行 JavaScript 清理，executor 仍会从 owner socket 断开检测到所有者死亡。
 
-stdio 生命周期由父子进程关系直接确定：写入失败、stdout EOF 或子进程退出才表示本地 IPC 失效。普通请求超时只结束对应请求，不销毁通道，因此系统休眠或调度延迟不会触发端口重连或误切换到其他 executor。
+Core DSH 通过 Electron 创建的继承 pipe 调用受限 host command。pipe 的 `end` 或 `close` 表示 Electron host 已不存在，DSH 必须调用 launcher 提供的 `appExit` 服务退出；正常释放客户端时会先移除这些断开监听，避免把有序停机误判为所有者死亡。
 
-Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过 stdio 服务 Wework App，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
+App 自己启动的 executor 和 DSH 归 Electron 主进程管理：macOS/Linux 下各自位于独立进程组。正常关闭或重启时先发送 `SIGTERM`；即使进程组 leader 已退出，也要继续等待整个进程组，超时后对仍存活的成员发送 `SIGKILL`。开发模式中的 reload supervisor 和它拉起的 executor 也在同一清理范围内。owner socket 和 host pipe 是强退路径的进程内自终止机制，进程组清理是正常停机路径的兜底，两者不能相互替代。
+
+本地端点的写入失败、EOF 或子进程退出表示对应 IPC 连接失效。普通请求超时只结束该请求，不销毁通道，因此系统休眠或调度延迟不会触发端点重连或误切换到其他 executor。executor 意外退出并由 supervisor 拉起后，Electron 必须在新进程进入 ready 前重新完成 owner 握手。
+
+Executor 启动的设备命令必须关闭 stdin，不能继承承载 App JSONL 协议的进程 stdin，否则子命令读取标准输入时会窃取请求字节并破坏后续协议帧。Executor 按字节读取并以换行符划分 App IPC 帧，再单独验证每一帧的 UTF-8；非法帧只记录长度和错误偏移后丢弃，不能终止整个 executor 或中断其他正在运行的任务。检测到 executor runtime instance 变化后，Wework 会重新获取受影响任务的列表和 transcript；已被 transcript 确认接收的排队消息会从队列移除，断线时尚未确认的发送会恢复为可重试的排队状态。
+
+本地 runtime 事件通道和 App IPC 写入队列使用有界缓冲，容量均为 8192。IPC 写入将 Responses 文本、终态、错误和 RPC 响应放入高优先级队列，将工具块、诊断、计划和文件变化事件放入低优先级队列。高优先级队列满时发送方显式等待并记录背压；低优先级队列满时丢弃当前可恢复事件、记录背压并发送 `executor.event_lagged`，避免直到 broadcast 覆盖旧事件后才发现消息缺失。
+
+工具输出事件最多携带 64 KiB，文件变化事件中的 diff 预览最多携带 128 KiB；完整 patch 仍保存在可读取的 artifact 中。Wework 收到 `executor.event_lagged` 后会重新拉取当前任务和全部运行中任务的 transcript，并使用稳定的客户端消息 ID 将 transcript 与尚未落盘的乐观用户消息合并。因此任务切换或事件积压后，运行状态、用户输入和 AI 输出会从同一份恢复结果重新收敛。
+
+Wework 的 DSH 通道通过独立的本地 endpoint 连接订阅 executor 事件。事件序号、断线重放和历史丢失检测全部由 executor 负责：executor 为事件分配单调递增的 `sequence`，并维护同时受 4096 条事件和 8 MiB 限制的内存日志；客户端重连时携带最后已消费的序号，executor 原子地返回其后的日志快照并继续发送实时事件，避免快照与订阅之间的竞态。请求序号已经落后于日志窗口或超出当前最新序号时，executor 发送带 `event_history_lost` 原因的 `executor.event_lagged`，由 Wework 通过 transcript 重新收敛。
+
+Electron 层不保存事件日志、不生成序号，也不实现重放或合并策略。它只把 executor 的专用事件 socket 桥接为 renderer 使用的 SSE；如果 `res.write()` 表示浏览器端产生 HTTP 背压，Electron 会关闭上游 socket 和当前 SSE，让 renderer 使用最后已消费的 executor 序号重新连接。这样锁屏、系统休眠或 renderer reload 不会让未消费事件在 Electron 中无界增长，也不会把流正确性绑定到 Electron 的调度状态。
+
+Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
 ### Executor 启动环境与 Codex Home 初始化
 
@@ -67,13 +84,15 @@ Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过�
 
 Wework 使用独立 Codex Home 隔离本地运行时配置。首次初始化时，用户可以把原生 Codex Home 中的配置、插件、技能和插件市场复制到该目录。初始化完成后，Wework 默认在 `[features]` 中写入 `apps = true`，使迁移后的插件 Apps 能力立即可用；用户之后在设置中明确关闭 Apps 时，后续普通启动不会覆盖该选择。
 
-Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。Tauri 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
+Wework 的本地可用状态以真实 Codex app-server 完成 `initialize` 为边界，而不是以 executor stdio 通道建立为边界。 Electron 启动 executor 后，先把当前本地代理配置写入运行时，再通过 `runtime.codex.ensure_started` 启动并初始化共享 Codex app-server；只有该调用成功后，renderer 才继续进入可交互工作台。Codex 初始化路径不得同步等待插件市场刷新、Git 拉取、更新检查或其他外部网络请求；这些后台请求即使因断网或代理无响应而挂起，也不能延迟 `initialize` 响应。启动 E2E 必须使用真实 Codex 和阻塞网络代理验证这一约束，同时确认初始化期间不会发送 Agent 模型请求。
 
 ### 运行时任务与目标状态
 
 运行时任务的 `running` 字段只表示当前是否存在正在执行的模型回合。回合完成、失败或取消后，executor 必须把该字段收敛为 `false`，供 Wework 决定是否显示停止按钮、运行中图标，以及新消息能否直接发送。
 
 `running` 由两类实时信号共同确定：executor 当前进程维护的活跃任务集合，以及 Codex thread 中明确标记为 `inProgress` 的 turn。后者覆盖 Goal 自动续轮等场景：本地执行包装可能已经返回，但 provider 仍在运行后续 turn。Codex thread 自身的 `active` 状态、已持久化的任务摘要和 Wework 本地提醒都不能单独推断任务仍在运行。任务列表、transcript、详情面板、系统托盘和阻止休眠逻辑必须消费同一份 executor `running` 值；executor 或 Wework 重启后，如果 `thread/read` 或 `thread/list` 仍返回活跃 turn，界面必须恢复运行态，只有不存在活跃 turn 时才收敛为空闲。
+
+在单个 executor 进程内，发送、引导和取消操作只使用一份本地执行记录作为生命周期权威来源。Codex 的 `threadId` 和 `turnId` 是该执行记录的附属上下文，只在 execution ID 仍匹配时有效，不能存放在独立注册表中继续维持任务运行。执行结束时，executor 会原子删除本地执行及其 Codex turn 上下文，再发送终态响应；与完成事件并发但稍后返回的 `turn/steer` 等 provider 回调必须被忽略，不能把已经结束的任务重新标记为运行中。`thread/read` 或 `thread/list` 返回的活跃 turn 仍可用于任务列表投影和重启恢复，但不能创建第二套进程内执行生命周期。
 
 任务摘要同时透传 Codex 的 `threadStatus`（`notLoaded`、`idle`、`systemError`、`active`）和 `turnStatus`（`inProgress`、`completed`、`interrupted`、`failed`）。`continuable` 单独表示会话未归档、仍可继续发送消息；它不能用于推断当前回合正在运行。Wework 只使用明确的 `running` 和真实回合状态显示运行反馈，不把线程或消息的 `active` 状态转换为 streaming。
 
@@ -104,6 +123,10 @@ OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效
 Wework 在发送用户消息前生成稳定的 `clientUserMessageId`，并在本地先渲染乐观消息。该 ID 通过 runtime create/send 请求原样传入 Codex app-server 的 `turn/start.clientUserMessageId`。Codex transcript 返回用户消息时，executor 保留同一个 `clientUserMessageId`；Wework 使用它与本地乐观消息对账。Codex 内部 item ID 仍用于 provider 事件身份，但不能替代客户端 ID，否则 transcript 分页或刷新可能把同一次发送识别成两条消息。
 
 实时发送响应中的回合 ID 可能是 executor 在 provider 回合出现前分配的临时 ID，而随后 transcript 会返回 Codex 的规范回合 ID。Wework 合并实时会话和 transcript 时必须先按规范回合 ID 对账；两者不同时，再按稳定的 `clientUserMessageId` 合并为同一个回合，并采用 transcript 的规范回合 ID。不能因为本地回合已经有非空 ID 就跳过客户端消息 ID 对账，否则 Goal 自动续轮等竞态会把同一轮用户消息和后续输出重复渲染。
+
+终态事件与 transcript 刷新并发时，同一个 provider assistant item 也可能短暂出现在临时回合和规范回合中。provider item ID 在该场景中是跨回合别名的稳定身份：当一个 assistant item ID 在快照中只属于一个规范回合时，Wework 必须把携带该 item 的本地别名回合并入规范回合，同时保留别名回合中尚未进入快照的工具块等实时内容。不能仅按回合 ID 保留两份表示，也不能按文本内容跨回合去重；后者会误删模型使用不同 item ID 真实输出的重复文本。
+
+Codex Goal 协议返回的 `createdAt` 和 `updatedAt` 使用 Unix 秒，而 Wework 的 `RuntimeGoal` 契约使用 Unix 毫秒。executor 必须在 `thread/goal/get`、`thread/goal/set` 和 `thread/goal/updated` 的 provider 边界统一转换为毫秒，再交给前端按 `updatedAt` 对账；否则乐观 Goal 的毫秒时间戳会始终大于规范完成态的秒时间戳，导致已完成 Goal 继续显示为活动状态。
 
 Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 transcript 时，executor 先用 `thread/read(includeTurns=false)` 读取线程元数据，再用 `thread/turns/list` 按时间倒序读取回合，并对每个回合调用 `thread/items/list` 按正序加载完整 item。分页游标是 Codex 生成的不透明值，前后端不得解析或改写为本地 offset；普通页面只读取一页，搜索、Supervisor 和其他完整历史消费者会沿 `nextCursor` 读取到末尾。executor 会拒绝重复游标、缺失回合 ID、跨回合 item 等无效响应，避免静默产生缺失或错序的历史。
 

@@ -47,14 +47,21 @@ describe('automationModelFields', () => {
 })
 
 describe('automationWorkspaceTarget', () => {
-  test('uses a selected project workspace', () => {
-    expect(automationWorkspaceTarget(' /repo/wework ')).toEqual({
-      workspacePath: '/repo/wework',
+  test('uses a stable selected project binding', () => {
+    const target = {
+      deviceId: 'local-device',
+      runtimeProjectKey: 'local:wework',
+      runtimeProjectName: 'wework',
+      runtimeWorkspaceRoots: ['/repo/wework'],
+    }
+
+    expect(automationWorkspaceTarget(target)).toEqual({
+      ...target,
     })
   })
 
   test('creates an independent chat workspace when no project is selected', () => {
-    expect(automationWorkspaceTarget('')).toEqual({
+    expect(automationWorkspaceTarget(null)).toEqual({
       standaloneChatWorkspace: true,
     })
   })
@@ -92,6 +99,12 @@ describe('buildAutomationProjectOptions', () => {
         workspacePath: '/repo/wework',
         workspaceKind: undefined,
         workspaceLabel: null,
+        target: {
+          deviceId: 'local-device',
+          runtimeProjectKey: 'local:wework',
+          runtimeProjectName: 'wework',
+          runtimeWorkspaceRoots: ['/repo/wework', '/repo/docs'],
+        },
       },
     ])
   })
@@ -112,6 +125,12 @@ describe('buildAutomationProjectOptions', () => {
         workspacePath: '/cloud/wework',
         workspaceKind: undefined,
         workspaceLabel: null,
+        target: {
+          deviceId: 'cloud-device',
+          runtimeProjectKey: 'local:wework',
+          runtimeProjectName: 'wework',
+          runtimeWorkspaceRoots: ['/repo/wework'],
+        },
       },
     ])
   })
@@ -119,6 +138,7 @@ describe('buildAutomationProjectOptions', () => {
   test('keeps managed worktrees selectable alongside the primary project workspace', () => {
     const runtimeProject = project('wework', ['/repo/wework'], ['/repo/wework'])
     runtimeProject.deviceWorkspaces.push({
+      id: 42,
       deviceId: 'local-device',
       available: true,
       workspacePath: '/worktrees/task-42/wework',
@@ -135,6 +155,12 @@ describe('buildAutomationProjectOptions', () => {
         workspacePath: '/repo/wework',
         workspaceKind: undefined,
         workspaceLabel: null,
+        target: {
+          deviceId: 'local-device',
+          runtimeProjectKey: 'local:wework',
+          runtimeProjectName: 'wework',
+          runtimeWorkspaceRoots: ['/repo/wework'],
+        },
       },
       {
         key: 'local-device\u0000local:wework\u0000/worktrees/task-42/wework',
@@ -142,6 +168,13 @@ describe('buildAutomationProjectOptions', () => {
         workspacePath: '/worktrees/task-42/wework',
         workspaceKind: 'worktree',
         workspaceLabel: 'feature/automation',
+        target: {
+          deviceId: 'local-device',
+          deviceWorkspaceId: 42,
+          runtimeProjectKey: 'local:wework',
+          runtimeProjectName: 'wework',
+          runtimeWorkspaceRoots: ['/repo/wework'],
+        },
       },
     ])
   })

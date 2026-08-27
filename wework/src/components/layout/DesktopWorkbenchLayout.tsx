@@ -13,7 +13,7 @@ import type {
   RuntimeIMNotificationSettingsResponse,
 } from '@/types/api'
 import { stripAppBasePath } from '@/config/runtime'
-import { buildRuntimeTaskRoute, isSettingsRoute, navigateTo } from '@/lib/navigation'
+import { isSettingsRoute, navigateTo } from '@/lib/navigation'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { cn } from '@/lib/utils'
 import { DesktopSidebar } from './DesktopSidebar'
@@ -63,6 +63,7 @@ import {
   getWorkbenchPaneKey,
   type WorkbenchPaneIdentity,
 } from './workbenchPaneIdentity'
+import { openProjectSpaceRuntimeTaskInTab } from './projectSpaceRuntimeTaskNavigation'
 import { useWorkbenchSplitGroups, workbenchSplitStorageKeys } from './useWorkbenchSplitGroups'
 
 type ImNotificationDialogMode = { type: 'global' } | { type: 'task'; address: RuntimeTaskAddress }
@@ -106,9 +107,13 @@ function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | nu
 
 interface DesktopWorkbenchLayoutProps {
   routeActive?: boolean
+  surfaceKind?: 'task' | 'board'
 }
 
-export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchLayoutProps) {
+export function DesktopWorkbenchLayout({
+  routeActive = true,
+  surfaceKind,
+}: DesktopWorkbenchLayoutProps) {
   const { t } = useTranslation('common')
   const { logout: onLogout } = useAuth()
   const runtimeTaskLifecycle = useRuntimeTaskLifecycleStoreSnapshot()
@@ -133,6 +138,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     getRemoteDeviceStartupCommand: onGetRemoteDeviceStartupCommand,
     upgradeDevice: onUpgradeDevice = async () => {},
     createProject: onCreateProject,
+    createLocalRuntimeProject: onCreateLocalRuntimeProject,
     createGitWorkspaceProject: onCreateGitWorkspaceProject,
     prepareDeviceWorkspace: onPrepareDeviceWorkspace,
     deleteDeviceWorkspace: onDeleteDeviceWorkspace,
@@ -177,6 +183,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
   )
   const activePaneKey = getWorkbenchPaneKey(activePane)
+  const blankPaneKey = getWorkbenchPaneKey({
+    currentRuntimeTask: null,
+    currentProject: null,
+    standaloneChatKey: state.standaloneChatKey,
+  })
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
@@ -190,6 +201,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   const { activatePane: activateSplitPane } = splitGroups
   const initialPath = stripAppBasePath(window.location.pathname)
   const [currentPath, setCurrentPath] = useState(initialPath)
+  const routeWorkItemsOpen =
+    surfaceKind === 'board' || (surfaceKind === undefined && currentPath === '/todo')
+  const todoOpen = routeWorkItemsOpen
   const [localHarnessSessions, setLocalHarnessSessions] = useState<LocalHarnessWorkbenchSession[]>(
     []
   )
@@ -319,7 +333,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   }, [])
 
   useEffect(() => {
-    if (!isLocalHarnessAvailable()) return
+    if (todoOpen || !isLocalHarnessAvailable()) return
 
     let cancelled = false
     void loadLocalHarnessSessions()
@@ -351,36 +365,39 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       cancelled = true
       window.removeEventListener(WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT, handleSessionsChanged)
     }
-  }, [loadLocalHarnessSessions])
-  const routeWorkItemsOpen = currentPath === '/todo'
-  const todoOpen = routeWorkItemsOpen
+  }, [loadLocalHarnessSessions, todoOpen])
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
     onNewChat()
-  }, [onNewChat])
+  }, [activateSplitPane, blankPaneKey, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
     onStartStandaloneChat()
-  }, [onStartStandaloneChat])
+  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(blankPaneKey)
       onSelectProject(projectId)
     },
-    [onSelectProject]
+    [activateSplitPane, blankPaneKey, onSelectProject]
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(blankPaneKey)
       onStartNewProjectChat(projectId)
     },
-    [onStartNewProjectChat]
+    [activateSplitPane, blankPaneKey, onStartNewProjectChat]
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
       activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
@@ -390,7 +407,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
         await onOpenRuntimeTask(address)
       }
-      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -527,15 +543,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   )
   const openProjectSpaceRuntimeTask = useCallback(
     async (address: RuntimeTaskAddress) => {
-      await openRuntimeTaskOutsideHarness(address)
-      if (!workspaceTabs) return
-      const contentRoute = buildRuntimeTaskRoute(address)
-      const taskTab = workspaceTabs.tabs.find(tab => tab.kind === 'task')
-      if (taskTab) {
-        workspaceTabs.selectTab(taskTab.id, { contentRoute })
-        return
-      }
-      workspaceTabs.openTab('task', { contentRoute })
+      await openProjectSpaceRuntimeTaskInTab(address, workspaceTabs, openRuntimeTaskOutsideHarness)
     },
     [openRuntimeTaskOutsideHarness, workspaceTabs]
   )
@@ -755,8 +763,9 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
   }, [onGetImNotificationSettings])
 
   useEffect(() => {
+    if (todoOpen) return
     void refreshImNotificationSettings().catch(() => undefined)
-  }, [refreshImNotificationSettings])
+  }, [refreshImNotificationSettings, todoOpen])
 
   const openImNotificationTargetDialog = useCallback(
     (mode: ImNotificationDialogMode) => {
@@ -971,12 +980,6 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-      onOpenPlugins={() => {
-        navigateTo('/plugins')
-      }}
-      onOpenAutomation={() => {
-        navigateTo('/automations')
-      }}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)
@@ -1007,10 +1010,11 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
     <div className="relative flex h-full overflow-hidden bg-transparent text-text-primary">
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         {!routeWorkItemsOpen && <WorkbenchBackground />}
-        {!settingsOpen &&
+        {routeActive &&
+          !settingsOpen &&
           !routeWorkItemsOpen &&
           renderDesktopSidebar({ collapsed: effectiveSidebarCollapsed })}
-        {!settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
+        {routeActive && !settingsOpen && !routeWorkItemsOpen && effectiveSidebarCollapsed && (
           <>
             <div
               data-testid="desktop-sidebar-hover-edge"
@@ -1066,7 +1070,13 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
+                onCreateLocalCodeProject={onCreateLocalRuntimeProject}
+                onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                onListDeviceDirectories={onListDeviceDirectories}
+                onCreateDeviceDirectory={onCreateDeviceDirectory}
+                onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
+                onArchiveRuntimeTask={onArchiveRuntimeTask}
                 onOpenSettings={options => openSettings(options, '/todo')}
                 onLogout={onLogout}
                 activeProjectRef={
@@ -1117,7 +1127,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
                 {t('workbench.cloud_board_loading', '正在加载云端看板…')}
               </div>
             ))}
-          <div style={{ display: todoOpen ? 'none' : 'contents' }} aria-hidden={todoOpen}>
+          {!todoOpen ? (
             <DesktopWorkbenchMain
               visible={routeActive && !settingsOpen && !todoOpen}
               sidebarCollapsed={effectiveSidebarCollapsed}
@@ -1132,7 +1142,7 @@ export function DesktopWorkbenchLayout({ routeActive = true }: DesktopWorkbenchL
               onLocalHarnessSessionClose={closeLocalHarnessSession}
               onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />
-          </div>
+          ) : null}
         </div>
       </div>
       <StandaloneBlankProjectDialog

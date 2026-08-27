@@ -1,4 +1,4 @@
-import { convertFileSrc } from '@tauri-apps/api/core'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
@@ -14,7 +14,22 @@ export type MarkdownLinkTarget =
     }
 
 const HTML_FILE_PATTERN = /\.(?:html?|xhtml)$/i
-const LOCAL_TAURI_PATH_PREFIXES = ['/Users/', '/Volumes/', '/private/', '/tmp/', '/var/']
+// Protected Markdown links may be encoded again by intermediate URL normalizers.
+const MAX_MARKDOWN_FILE_PATH_DECODE_PASSES = 16
+
+export function decodeMarkdownFilePath(path: string): string {
+  let decodedPath = path
+  for (let pass = 0; pass < MAX_MARKDOWN_FILE_PATH_DECODE_PASSES; pass += 1) {
+    try {
+      const nextPath = decodeURIComponent(decodedPath)
+      if (nextPath === decodedPath) return decodedPath
+      decodedPath = nextPath
+    } catch {
+      return decodedPath
+    }
+  }
+  return decodedPath
+}
 
 // Assistant responses frequently reference repository files with relative or
 // absolute filesystem paths. Rendering those as plain anchors makes the browser
@@ -33,22 +48,21 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
     try {
       return {
         kind: 'file',
-        path: decodeURIComponent(value.slice('folder://'.length)),
+        path: decodeMarkdownFilePath(value.slice('folder://'.length)),
         isDirectory: true,
       }
     } catch {
       return { kind: 'none' }
     }
   }
-  const localTauriPath = localPathFromTauriUrl(value)
-  if (localTauriPath) {
-    return { kind: 'file', ...splitMarkdownFileLineSuffix(localTauriPath) }
-  }
   if (value.startsWith('file://')) {
     return { kind: 'file', ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)) }
   }
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return { kind: 'external' }
-  return { kind: 'file', ...splitMarkdownFileLineSuffix(value) }
+  return {
+    kind: 'file',
+    ...splitMarkdownFileLineSuffix(decodeMarkdownFilePath(value)),
+  }
 }
 
 export function isHtmlFilePath(path: string): boolean {
@@ -56,13 +70,17 @@ export function isHtmlFilePath(path: string): boolean {
 }
 
 export function localHtmlBrowserUrl(path: string): string | null {
-  if (!isHtmlFilePath(path) || typeof convertFileSrc !== 'function') return null
+  if (!isHtmlFilePath(path)) return null
+  return isElectronRuntime() ? desktopFileUrl(path) : null
+}
 
-  try {
-    return convertFileSrc(path)
-  } catch {
-    return null
-  }
+export function desktopFileUrl(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  const encoded = normalized
+    .split('/')
+    .map(segment => encodeURIComponent(segment).replace(/%3A/gi, ':'))
+    .join('/')
+  return `file://${encoded.startsWith('/') ? '' : '/'}${encoded}`
 }
 
 export function splitMarkdownFileLineSuffix(path: string): {
@@ -89,13 +107,7 @@ export function resolveDirectMarkdownImageSrc(src: string): string | null {
   if (!isLocalImagePath(src)) return src
 
   const localPath = localPathFromMarkdownImageSrc(src)
-  if (typeof convertFileSrc !== 'function') return null
-
-  try {
-    return convertFileSrc(localPath)
-  } catch {
-    return null
-  }
+  return isElectronRuntime() ? desktopFileUrl(localPath) : null
 }
 
 export function localPathFromMarkdownImageSrc(src: string): string {
@@ -106,21 +118,6 @@ export function localPathFromMarkdownImageSrc(src: string): string {
     return pathname.match(/^\/[a-zA-Z]:\//) ? pathname.slice(1) : pathname
   } catch {
     return src
-  }
-}
-
-function localPathFromTauriUrl(value: string): string | null {
-  try {
-    const url = new URL(value)
-    if (url.protocol !== 'tauri:' || url.hostname !== 'localhost') return null
-
-    const pathname = decodeURIComponent(url.pathname)
-    if (LOCAL_TAURI_PATH_PREFIXES.some(prefix => pathname.startsWith(prefix))) {
-      return pathname
-    }
-    return /^\/[a-zA-Z]:\//.test(pathname) ? pathname.slice(1) : null
-  } catch {
-    return null
   }
 }
 

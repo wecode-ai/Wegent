@@ -121,6 +121,15 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
     }
 }
 
+#[test]
+fn shared_notification_lag_is_recoverable() {
+    let notification =
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+            .expect("lagged notifications should keep the turn alive");
+
+    assert!(matches!(notification, SharedNotification::Lagged(37)));
+}
+
 #[tokio::test]
 async fn interaction_answer_router_matches_reverse_order_answers() {
     let (sender, receiver) = mpsc::channel(2);
@@ -387,6 +396,136 @@ fn mcp_form_elicitation_returns_accepted_form_content() {
             "_meta": Value::Null
         })
     );
+}
+
+#[test]
+fn mcp_tool_call_elicitation_can_be_auto_approved() {
+    let message = json!({
+        "id": 74,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "GitHub",
+            "mode": "form",
+            "message": "Allow GitHub to enable pull request auto-merge?",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {}
+            },
+            "_meta": {
+                "codex_approval_kind": "mcp_tool_call",
+                "persist": ["session"]
+            }
+        }
+    });
+
+    assert!(is_mcp_tool_call_approval(message_params(&message)));
+    assert_eq!(
+        mcp_server_tool_call_approval_response(&message)
+            .expect("MCP tool call approval should be accepted"),
+        json!({
+            "action": "accept",
+            "content": Value::Null,
+            "_meta": Value::Null
+        })
+    );
+}
+
+#[test]
+fn mcp_tool_call_request_user_input_can_be_auto_approved() {
+    let message = json!({
+        "id": 75,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-input",
+            "turnId": "turn-input",
+            "itemId": "call-1",
+            "questions": [{
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the wework_space MCP server to run tool \"get_board_item\"?",
+                "options": [
+                    {"label": "Allow", "description": "Run the tool and continue."},
+                    {
+                        "label": "Allow for this session",
+                        "description": "Run the tool and remember this choice for this session."
+                    },
+                    {"label": "Cancel", "description": "Cancel this tool call."}
+                ]
+            }],
+            "autoResolutionMs": Value::Null
+        }
+    });
+
+    assert!(is_mcp_tool_call_approval_request(&message));
+    assert_eq!(
+        mcp_tool_call_request_user_input_response(message_params(&message)),
+        Some(json!({
+            "answers": {
+                "mcp_tool_call_approval_call-1": {
+                    "answers": ["Allow"]
+                }
+            }
+        }))
+    );
+}
+
+#[test]
+fn ordinary_request_user_input_is_not_treated_as_mcp_tool_approval() {
+    for questions in [
+        json!([{
+            "id": "goal",
+            "header": "工作目标",
+            "question": "你希望我接下来问你哪些问题？"
+        }]),
+        json!([{
+            "id": "mcp_tool_call_approval_",
+            "header": "Approve app tool call?",
+            "question": "Missing call id"
+        }]),
+        json!([
+            {
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the tool?"
+            },
+            {
+                "id": "follow-up",
+                "header": "Follow up",
+                "question": "Choose a scope"
+            }
+        ]),
+    ] {
+        let message = json!({
+            "id": 76,
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "questions": questions
+            }
+        });
+        assert!(!is_mcp_tool_call_approval_request(&message));
+        assert!(mcp_tool_call_request_user_input_response(message_params(&message)).is_none());
+    }
+}
+
+#[test]
+fn mcp_business_form_is_not_treated_as_tool_call_approval() {
+    let params = json!({
+        "serverName": "wegent-sites",
+        "mode": "form",
+        "message": "请选择内网访问范围。",
+        "requestedSchema": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string",
+                    "enum": ["all", "owner"]
+                }
+            }
+        }
+    });
+
+    assert!(!is_mcp_tool_call_approval(&params));
+    assert!(mcp_server_elicitation_request_user_input_params(&params).is_some());
 }
 
 #[test]
@@ -707,6 +846,19 @@ fn non_project_launch_keeps_global_plugin_configuration() {
     let request = ExecutionRequest::default();
 
     assert!(project_plugin_config_overrides(&request).is_empty());
+}
+
+#[test]
+fn standalone_robot_launch_enables_configured_plugins() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("project_plugin_ids".to_owned(), json!(["robot-tool@team"]));
+
+    assert_eq!(
+        project_plugin_config_overrides(&request),
+        vec!["plugins.\"robot-tool@team\".enabled=true"]
+    );
 }
 
 #[test]
@@ -1457,6 +1609,27 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
+    );
+}
+
+#[test]
+fn codex_worktree_launch_config_sets_pnpm_environment() {
+    let request = ExecutionRequest {
+        workspace_source: Some("git_worktree".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS"],
+        "true"
+    );
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
+        "true"
     );
 }
 
@@ -2495,6 +2668,24 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
 }
 
 #[test]
+fn codex_only_auto_approves_mcp_tool_calls_with_full_access() {
+    let full_access = ExecutionRequest::default();
+    assert!(codex_auto_approve_mcp_tool_calls(&full_access));
+
+    for profile in [
+        CODEX_WORKSPACE_PERMISSION_PROFILE,
+        CODEX_READ_ONLY_PERMISSION_PROFILE,
+    ] {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "runtime_permission_profile".to_owned(),
+            Value::String(profile.to_owned()),
+        );
+        assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    }
+}
+
+#[test]
 fn codex_workspace_permission_profile_is_applied_when_requested() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -3304,6 +3495,34 @@ fn thread_goal_set_params_rejects_empty_objective() {
         .expect_err("empty objective should be rejected");
 
     assert_eq!(error, "initial goal objective is required");
+}
+
+#[test]
+fn authoritative_goal_response_replaces_stale_notification_status() {
+    let mut state = CodexRunState::default();
+    state.set_goal_status("active");
+
+    sync_goal_status_from_response(
+        &mut state,
+        &json!({
+            "goal": {
+                "status": "complete"
+            }
+        }),
+    );
+
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("complete".to_owned()))
+    );
+}
+
+#[test]
+fn completed_goal_does_not_require_authoritative_reconciliation() {
+    let mut state = CodexRunState::default();
+    state.set_goal_status("complete");
+
+    assert!(!state.goal_is_active());
 }
 
 #[test]

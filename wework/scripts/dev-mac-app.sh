@@ -6,476 +6,269 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 ENV_FILE="$PROJECT_DIR/.env"
-INITIAL_WEWORK_PORT="${WEWORK_PORT:-}"
+EXECUTOR_ISOLATION="false"
+ELECTRON_ARGS=()
+ISOLATED_EXECUTOR_HOME=""
+MANAGED_SOURCE_EXECUTOR="false"
+WEWORK_APP_WATCH_PID=""
+WEWORK_APP_WATCH_READY_FILE=""
 
 # shellcheck source=../../scripts/lib/cargo-cache.sh
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 # shellcheck source=lib/wework-mac-env.sh
 source "$SCRIPT_DIR/lib/wework-mac-env.sh"
 
-MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-}"
-WEWORK_RELEASE_UI="false"
-EXECUTOR_ISOLATION_OVERRIDE="${WEWORK_EXECUTOR_ISOLATION_OVERRIDE:-}"
-
 usage() {
   cat <<'EOF'
-Usage: bash wework/scripts/dev-mac-app.sh [options]
+Usage: bash wework/scripts/dev-mac-app.sh [options] [-- electron-options]
 
 Options:
-  -p, --port PORT       Vite/Tauri dev server port. Overrides WEWORK_PORT.
-  --target TARGET       macOS Rust/Tauri target, e.g. aarch64-apple-darwin.
-  --release-ui          Run a production frontend bundle through tauri dev.
-  --shared-executor-home
-                        Alias for --no-executor-isolation.
-  --executor-isolation  Use an instance-specific Executor Home instead of the
-                        release app's persisted projects and tasks.
-  --no-executor-isolation
-                        Use the release app's persisted projects and tasks
-                        (the default).
-  -h, --help            Show this help message.
+  --executor-isolation      Use a temporary Executor Home for this launch.
+  --shared-executor-home    Use the release app's Executor Home (default).
+  --no-executor-isolation   Alias for --shared-executor-home.
+  -h, --help                Show this help message.
 
 Environment:
-  WEWORK_PORT           Default dev server port when --port is not provided.
-  WEWORK_HOST           Host IP used to build backend proxy targets.
-  BACKEND_PORT          Backend port used when proxy targets are not set.
-  CARGO_TARGET_DIR      Explicit Cargo target directory. Overrides auto cache.
-  WEGENT_CARGO_TARGET_ROOT
-                        Root containing shared Cargo targets.
-  WEGENT_DISABLE_SHARED_CARGO_TARGET
-                        Set to 1 to keep Cargo's default per-worktree target.
-  WEGENT_DISABLE_SCCACHE
-                        Set to 1 to disable automatic sccache detection.
-  WEWORK_EXECUTOR_SIDECAR
-                        Executor sidecar path. Defaults to source reload sidecar.
-  WEWORK_DEV_CODEX_BINARY
-                        Explicit development Codex binary. When unset, dev:mac
-                        prepares and uses the repository-locked Codex package.
-  WEGENT_EXECUTOR_DEV_RELOAD
-                        Set to 0 to run executor source once without reload.
-  WEWORK_SHARED_EXECUTOR_HOME
-                        Set to 1 to use the normal executor home in debug builds.
-  WEWORK_MALLOC_STACK_LOGGING
-                        Set to 1 to enable macOS malloc stack logging for WebKit diagnostics.
-  WEWORK_DISABLE_BACKGROUND_THROTTLING
-                        Set to 1 to keep the macOS WebView active while hidden.
-  MACOS_BUILD_TARGET    Default macOS Rust/Tauri target when --target is not provided.
-
-Examples:
-  bash wework/scripts/dev-mac-app.sh --port 9130
-  bash wework/scripts/dev-mac-app.sh --shared-executor-home
-  bash wework/scripts/dev-mac-app.sh --no-executor-isolation
-  bash wework/scripts/dev-mac-app.sh --release-ui --target aarch64-apple-darwin
-  WEWORK_PORT=9130 bash wework/scripts/dev-mac-app.sh
+  VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
+  WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
+  WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
+  WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
+  WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
+  WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
+  WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
 EOF
 }
 
-if [ -f "$ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
-
-if [ -n "$INITIAL_WEWORK_PORT" ]; then
-  WEWORK_PORT="$INITIAL_WEWORK_PORT"
-fi
-
-REQUESTED_WEWORK_PORT=""
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --)
-      shift
-      ;;
-    -p|--port)
-      if [ "$#" -lt 2 ]; then
-        echo "Error: $1 requires a port value." >&2
-        usage
-        exit 1
-      fi
-      REQUESTED_WEWORK_PORT="$2"
-      shift 2
-      ;;
-    --port=*)
-      REQUESTED_WEWORK_PORT="${1#*=}"
-      shift
-      ;;
-    --target)
-      if [ "$#" -lt 2 ]; then
-        echo "Error: $1 requires a target value." >&2
-        usage
-        exit 1
-      fi
-      MACOS_BUILD_TARGET="$2"
-      shift 2
-      ;;
-    --target=*)
-      MACOS_BUILD_TARGET="${1#*=}"
-      shift
-      ;;
-    --release-ui)
-      WEWORK_RELEASE_UI="true"
-      shift
-      ;;
     --executor-isolation)
-      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "false" ]; then
-        echo "Error: --executor-isolation and shared executor options are mutually exclusive." >&2
-        exit 1
-      fi
-      EXECUTOR_ISOLATION_OVERRIDE="true"
+      EXECUTOR_ISOLATION="true"
       shift
       ;;
     --shared-executor-home|--no-executor-isolation)
-      if [ "$EXECUTOR_ISOLATION_OVERRIDE" = "true" ]; then
-        echo "Error: --executor-isolation and shared executor options are mutually exclusive." >&2
-        exit 1
-      fi
-      EXECUTOR_ISOLATION_OVERRIDE="false"
-      if [ "$1" = "--shared-executor-home" ]; then
-        export WEWORK_SHARED_EXECUTOR_HOME=1
-      fi
+      EXECUTOR_ISOLATION="false"
       shift
       ;;
     -h|--help)
       usage
       exit 0
       ;;
+    --)
+      shift
+      ELECTRON_ARGS=("$@")
+      break
+      ;;
     *)
       echo "Error: unknown option: $1" >&2
-      usage
+      usage >&2
       exit 1
       ;;
   esac
 done
 
-# Interactive development should use the same persisted projects and tasks as
-# the release app. Verification and E2E launchers provide their own isolated
-# executor homes and do not use this default.
-if [ -z "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
-  EXECUTOR_ISOLATION_OVERRIDE="false"
-fi
-
-if [ -n "$EXECUTOR_ISOLATION_OVERRIDE" ]; then
-  export WEWORK_EXECUTOR_ISOLATION_OVERRIDE="$EXECUTOR_ISOLATION_OVERRIDE"
-else
-  unset WEWORK_EXECUTOR_ISOLATION_OVERRIDE
-fi
-
-BACKEND_BASE_URL="$(wework_resolve_backend_base_url)"
-BACKEND_PORT="${BACKEND_PORT:-9100}"
-WEWORK_PORT="${REQUESTED_WEWORK_PORT:-${WEWORK_PORT:-1420}}"
-WEWORK_PORT_LOCK_ROOT="${WEWORK_PORT_LOCK_ROOT:-${TMPDIR:-/tmp}/wework-dev-port-locks}"
-WEWORK_PORT_LOCK_DIR=""
-
-if ! [[ "$WEWORK_PORT" =~ ^[0-9]+$ ]] || [ "$WEWORK_PORT" -lt 1 ] || [ "$WEWORK_PORT" -gt 65535 ]; then
-  echo "Error: WEWORK_PORT must be a number between 1 and 65535. Got: $WEWORK_PORT" >&2
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "Error: dev-mac-app.sh only supports macOS." >&2
   exit 1
 fi
 
-is_port_available() {
-  node -e '
-    const net = require("node:net")
-    const port = Number(process.argv[1])
-    const canListen = host =>
-      new Promise(resolve => {
-        const server = net.createServer()
-        server.once("error", () => resolve(false))
-        server.listen(port, host, () => server.close(() => resolve(true)))
-      })
-    ;(async () => {
-      for (const host of ["127.0.0.1", "0.0.0.0"]) {
-        if (!(await canListen(host))) process.exit(1)
-      }
-    })()
-  ' "$1"
-}
+REQUESTED_EXECUTOR_ISOLATION="$EXECUTOR_ISOLATION"
+if [ -f "$ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+EXECUTOR_ISOLATION="$REQUESTED_EXECUTOR_ISOLATION"
 
-release_wework_port_lock() {
-  if [ -z "$WEWORK_PORT_LOCK_DIR" ]; then
-    return
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Error: required command is unavailable: $1" >&2
+    exit 1
   fi
-  rm -f "$WEWORK_PORT_LOCK_DIR/pid"
-  rmdir "$WEWORK_PORT_LOCK_DIR" 2>/dev/null || true
-  WEWORK_PORT_LOCK_DIR=""
-}
-
-try_acquire_wework_port_lock() {
-  local port="$1"
-  local lock_dir="$WEWORK_PORT_LOCK_ROOT/$port"
-  local owner_pid=""
-
-  mkdir -p "$WEWORK_PORT_LOCK_ROOT"
-  if ! mkdir "$lock_dir" 2>/dev/null; then
-    owner_pid="$(cat "$lock_dir/pid" 2>/dev/null || true)"
-    if ! [[ "$owner_pid" =~ ^[0-9]+$ ]] || kill -0 "$owner_pid" 2>/dev/null; then
-      return 1
-    fi
-    rm -f "$lock_dir/pid"
-    rmdir "$lock_dir" 2>/dev/null || return 1
-    mkdir "$lock_dir" 2>/dev/null || return 1
-  fi
-
-  echo "$$" >"$lock_dir/pid"
-  WEWORK_PORT_LOCK_DIR="$lock_dir"
-}
-
-find_available_wework_port() {
-  local port="$1"
-
-  while [ "$port" -le 65535 ]; do
-    if try_acquire_wework_port_lock "$port"; then
-      if ! is_port_available "$port"; then
-        release_wework_port_lock
-        port="$((port + 1))"
-        continue
-      fi
-      AVAILABLE_WEWORK_PORT="$port"
-      return 0
-    fi
-    port="$((port + 1))"
-  done
-
-  echo "Error: no available WEWORK_PORT found from $1 to 65535." >&2
-  return 1
 }
 
 git_branch_name() {
   git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true
 }
 
-basename_or_path() {
-  local path="$1"
-
-  basename "$path" 2>/dev/null || echo "$path"
+build_dev_title() {
+  if [ -n "${WEWORK_PARENT_TITLE:-}" ]; then
+    echo "$WEWORK_PARENT_TITLE"
+    return
+  fi
+  if [ -n "$WEWORK_DEV_BRANCH" ]; then
+    echo "$WEWORK_DEV_BRANCH"
+    return
+  fi
+  basename "$PROJECT_DIR"
 }
 
-build_wework_dev_title() {
-  local parent_title="${WEWORK_PARENT_TITLE:-}"
-  local branch
-  local worktree_name
-
-  if [ -n "$parent_title" ]; then
-    echo "$parent_title"
-    return 0
-  fi
-
-  branch="$(git_branch_name)"
-  worktree_name="$(basename_or_path "$PROJECT_DIR")"
-  if [ -n "$branch" ]; then
-    echo "$branch"
-    return 0
-  fi
-
-  echo "$worktree_name"
+build_dev_instance_id() {
+  node -e "
+    const { createHash } = require('node:crypto')
+    process.stdout.write(
+      createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 12)
+    )
+  " "$PROJECT_DIR"
 }
 
-AVAILABLE_WEWORK_PORT=""
-find_available_wework_port "$WEWORK_PORT"
-trap release_wework_port_lock EXIT
-if [ "$AVAILABLE_WEWORK_PORT" != "$WEWORK_PORT" ]; then
-  echo "WEWORK_PORT $WEWORK_PORT is already in use; using $AVAILABLE_WEWORK_PORT instead."
-fi
-WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
+resolve_macos_target() {
+  case "$(uname -m)" in
+    arm64)
+      echo "aarch64-apple-darwin"
+      ;;
+    x86_64)
+      echo "x86_64-apple-darwin"
+      ;;
+    *)
+      echo "Error: unsupported macOS architecture: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+}
 
+cleanup() {
+  if [ -n "$WEWORK_APP_WATCH_PID" ] && kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
+    kill "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+    wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+  fi
+  if [ -n "$ISOLATED_EXECUTOR_HOME" ]; then
+    rm -rf "$ISOLATED_EXECUTOR_HOME"
+  fi
+  if [ -n "$WEWORK_APP_WATCH_READY_FILE" ]; then
+    rm -f "$WEWORK_APP_WATCH_READY_FILE"
+  fi
+}
+
+trap cleanup EXIT
+
+require_command git
+require_command node
+require_command pnpm
+require_command cargo
+
+MACOS_TARGET="$(resolve_macos_target)"
 export WEWORK_DEV_WORKTREE="$PROJECT_DIR"
 export WEWORK_DEV_BRANCH="$(git_branch_name)"
-export WEWORK_DEV_PORT="$WEWORK_PORT"
-export WEWORK_DEV_TITLE="$(build_wework_dev_title)"
+export WEWORK_DEV_TITLE="$(build_dev_title)"
+export WEWORK_USER_DATA_DIR="$(
+  node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_USER_DATA_DIR:-}"
+)"
 export VITE_WEWORK_DEV_TITLE="$WEWORK_DEV_TITLE"
-export VITE_WEWORK_DEV_PORT="$WEWORK_DEV_PORT"
 export VITE_WEWORK_DEV_WORKTREE="$WEWORK_DEV_WORKTREE"
 export VITE_WEWORK_DEV_BRANCH="$WEWORK_DEV_BRANCH"
 export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
 export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
-
-export SKIP_FONT_DOWNLOAD="${SKIP_FONT_DOWNLOAD:-1}"
-export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$BACKEND_BASE_URL}"
-if [ -z "${WEWORK_EXECUTOR_SIDECAR:-}" ]; then
-  WEWORK_EXECUTOR_SIDECAR="$WEWORK_DIR/scripts/dev-executor-sidecar.sh"
+WEWORK_DEV_INSTANCE_ID="$(build_dev_instance_id)"
+export WEWORK_USER_DATA_DIR="${WEWORK_USER_DATA_DIR:-$HOME/Library/Application Support/io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID}"
+export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_backend_base_url)}"
+export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
+export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
+export ELECTRON_GET_USE_PROXY="${ELECTRON_GET_USE_PROXY:-true}"
+unset WEGENT_EXECUTOR_BINARY
+if [ -n "${WEWORK_DEV_EXECUTOR_PATH:-}" ]; then
+  export WEWORK_EXECUTOR_PATH="$WEWORK_DEV_EXECUTOR_PATH"
+else
+  export WEWORK_EXECUTOR_PATH="$SCRIPT_DIR/dev-executor-sidecar.sh"
+  MANAGED_SOURCE_EXECUTOR="true"
+  configure_wegent_cargo_target_dir "$PROJECT_DIR" "executor-dev"
+  export WEGENT_EXECUTOR_BINARY="$(
+    cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
+  )"
 fi
-export WEWORK_EXECUTOR_SIDECAR
+export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_DEV_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
+export WEWORK_APP_HOT_RELOAD="1"
+export WEWORK_APP_WEB_ROOT="$WEWORK_DIR/dsh/app-wework/web"
 
-configure_before_dev_command() {
-  if [ "$WEWORK_RELEASE_UI" = "true" ]; then
-    BEFORE_DEV_COMMAND="pnpm run build && pnpm exec vite preview --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-  else
-    BEFORE_DEV_COMMAND="pnpm exec vite --host 0.0.0.0 --port $WEWORK_PORT --strictPort"
-  fi
-}
-
-configure_before_dev_command
-install_wegent_sccache_with_homebrew
-configure_wegent_cargo_target_dir "$PROJECT_DIR" "wework-src-tauri"
-
-resolve_dev_codex_target() {
-  case "$MACOS_BUILD_TARGET" in
-    aarch64-apple-darwin|x86_64-apple-darwin)
-      echo "$MACOS_BUILD_TARGET"
-      return
-      ;;
-  esac
-
-  local rust_host
-  rust_host="$(rustc -vV | awk '$1 == "host:" { print $2 }')"
-  case "$rust_host" in
-    aarch64-apple-darwin)
-      echo "aarch64-apple-darwin"
-      ;;
-    x86_64-apple-darwin)
-      echo "x86_64-apple-darwin"
-      ;;
-    *)
-      echo "Error: unsupported macOS Rust host: ${rust_host:-unknown}" >&2
-      return 1
-      ;;
-  esac
-}
-
-MANAGED_DEV_CODEX="false"
-unset CODEX_BIN
 if [ -n "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   export CODEX_BINARY_PATH="$WEWORK_DEV_CODEX_BINARY"
 else
-  DEV_CODEX_TARGET="$(resolve_dev_codex_target)"
-  DEV_CODEX_PACKAGE_ROOT="$WEWORK_DIR/src-tauri/binaries/codex/$DEV_CODEX_TARGET"
-  DEV_CODEX_BINARY="$DEV_CODEX_PACKAGE_ROOT/vendor/$DEV_CODEX_TARGET/bin/codex"
-  export CODEX_BINARY_PATH="$DEV_CODEX_BINARY"
-  export CODEX_MANAGED_PACKAGE_ROOT="$DEV_CODEX_PACKAGE_ROOT"
-  MANAGED_DEV_CODEX="true"
+  export CODEX_BINARY_PATH="$WEWORK_DIR/resources/binaries/codex/$MACOS_TARGET/vendor/$MACOS_TARGET/bin/codex"
+fi
+export DWS_BINARY_PATH="${WEWORK_DEV_DWS_BINARY:-$WEWORK_DIR/resources/binaries/dws-$MACOS_TARGET}"
+
+if [ "$EXECUTOR_ISOLATION" = "true" ]; then
+  ISOLATED_EXECUTOR_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wework-dev-executor.XXXXXX")"
+  export WEGENT_EXECUTOR_HOME="$ISOLATED_EXECUTOR_HOME"
 fi
 
-TAURI_DEV_CONFIG="$(mktemp -t wework-tauri-dev.XXXXXX.json)"
-trap 'rm -f "$TAURI_DEV_CONFIG"; release_wework_port_lock' EXIT
-
-write_tauri_dev_config() {
-  WEWORK_PORT_VALUE="$WEWORK_PORT" \
-  BEFORE_DEV_COMMAND_VALUE="$BEFORE_DEV_COMMAND" \
-  WEWORK_RELEASE_UI_VALUE="$WEWORK_RELEASE_UI" \
-  WEWORK_APP_IDENTIFIER_VALUE="${WEWORK_APP_IDENTIFIER:-}" \
-  WEWORK_DISABLE_BACKGROUND_THROTTLING_VALUE="${WEWORK_DISABLE_BACKGROUND_THROTTLING:-0}" \
-  WEWORK_DIR_VALUE="$WEWORK_DIR" \
-  TAURI_DEV_CONFIG_VALUE="$TAURI_DEV_CONFIG" \
-  python3 "$SCRIPT_DIR/create-tauri-dev-config.py"
-}
-
-print_startup_configuration() {
-  echo "Starting WeWork mac app"
-  echo "  RELEASE_UI=$WEWORK_RELEASE_UI"
-  echo "  WEWORK_PORT=$WEWORK_PORT"
+print_configuration() {
+  echo "Starting Wework macOS app"
   echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
   echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
   echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
-  echo "  WEWORK_APP_IDENTIFIER=${WEWORK_APP_IDENTIFIER:-io.wecode.wework}"
-  echo "  MACOS_BUILD_TARGET=${MACOS_BUILD_TARGET:-<native>}"
+  echo "  WEWORK_USER_DATA_DIR=$WEWORK_USER_DATA_DIR"
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
-  echo "  VITE_WEGENT_SOCKET_URL=${VITE_WEGENT_SOCKET_URL:-<backend URL>}"
-  echo "  WEWORK_EXECUTOR_SIDECAR=${WEWORK_EXECUTOR_SIDECAR:-<bundled sidecar>}"
-  echo "  WEWORK_SHARED_EXECUTOR_HOME=${WEWORK_SHARED_EXECUTOR_HOME:-0}"
-  echo "  EXECUTOR_ISOLATION=${EXECUTOR_ISOLATION_OVERRIDE:-auto}"
-  echo "  CODEX_BINARY_PATH=${CODEX_BINARY_PATH:-${CODEX_BIN:-codex}}"
-  echo "  CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-<cargo default>}"
+  echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"
+  echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
+  echo "  WEGENT_EXECUTOR_HOME=${WEGENT_EXECUTOR_HOME:-<release app default>}"
+  echo "  WEWORK_HARNESS_RUNTIME_ROOT=$WEWORK_HARNESS_RUNTIME_ROOT"
+  echo "  CODEX_BINARY_PATH=$CODEX_BINARY_PATH"
+  echo "  DWS_BINARY_PATH=$DWS_BINARY_PATH"
 }
 
-if [ "${WEWORK_MALLOC_STACK_LOGGING:-}" = "1" ]; then
-  export MallocStackLogging=1
-  export MallocStackLoggingNoCompact=1
-  echo "  MallocStackLogging=1"
-  echo "  MallocStackLoggingNoCompact=1"
-fi
-
-write_tauri_dev_config
-if [ "${WEWORK_DRY_RUN:-}" = "1" ]; then
-  print_startup_configuration
-  echo "  TAURI_DEV_CONFIG=$TAURI_DEV_CONFIG"
-  cat "$TAURI_DEV_CONFIG"
+print_configuration
+if [ "${WEWORK_DRY_RUN:-0}" = "1" ]; then
   exit 0
 fi
 
 cd "$WEWORK_DIR"
-if [ "$MANAGED_DEV_CODEX" = "true" ]; then
-  WEWORK_CODEX_TARGET="$DEV_CODEX_TARGET" pnpm run prepare:codex
-  if [ ! -x "$DEV_CODEX_BINARY" ]; then
-    echo "Error: prepared Codex binary is not executable: $DEV_CODEX_BINARY" >&2
+pnpm run prepare:electron
+node electron/node_modules/electron/install.js
+if [ ! -f resources/icons/32x32.png ]; then
+  echo "Error: Electron development icons are unavailable." >&2
+  exit 1
+fi
+if [ ! -f resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json ]; then
+  echo "Error: Electron bundled plugins are unavailable." >&2
+  exit 1
+fi
+if [ -z "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
+  WEWORK_CODEX_TARGET="$MACOS_TARGET" pnpm run prepare:codex
+fi
+WEWORK_DWS_TARGET="$MACOS_TARGET" pnpm run prepare:dws
+pnpm run prepare:harness-runtime -- --materialize
+
+if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
+  cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
+fi
+if [ ! -x "$WEWORK_EXECUTOR_PATH" ]; then
+  echo "Error: Executor command is not executable: $WEWORK_EXECUTOR_PATH" >&2
+  exit 1
+fi
+if [ ! -x "$CODEX_BINARY_PATH" ]; then
+  echo "Error: Codex binary is not executable: $CODEX_BINARY_PATH" >&2
+  exit 1
+fi
+if [ ! -x "$DWS_BINARY_PATH" ]; then
+  echo "Error: DWS binary is not executable: $DWS_BINARY_PATH" >&2
+  exit 1
+fi
+WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
+rm -f "$WEWORK_APP_WATCH_READY_FILE"
+export WEWORK_APP_WATCH_READY_FILE
+node "$SCRIPT_DIR/dev-wework-app-watch.mjs" &
+WEWORK_APP_WATCH_PID="$!"
+
+for _ in $(seq 1 240); do
+  if [ -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
+    break
+  fi
+  if ! kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
+    wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+    echo "Error: Original Wework application build watcher exited before becoming ready." >&2
     exit 1
   fi
-  echo "Using repository Codex: $("$DEV_CODEX_BINARY" --version)"
+  sleep 0.25
+done
+if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
+  echo "Error: Original Wework application build watcher did not become ready." >&2
+  exit 1
 fi
-WEWORK_DWS_TARGET="$(resolve_dev_codex_target)" pnpm run prepare:dws
-if [ -z "${WEWORK_HARNESS_RUNTIME_ROOT:-}" ] && [ -z "${WEWORK_DEEPSEEK_HARNESS_ROOT:-}" ]; then
-  pnpm run prepare:harness-runtime -- --materialize
-  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/harness-runtime-dev"
+
+if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
+  pnpm --dir electron dev -- "${ELECTRON_ARGS[@]}"
 else
-  pnpm run prepare:harness-runtime
+  pnpm --dir electron dev
 fi
-echo "Using Harness runtime root: ${WEWORK_HARNESS_RUNTIME_ROOT:-${WEWORK_DEEPSEEK_HARNESS_ROOT}}"
-
-if [ -z "${WEWORK_NODE_RUNTIME_ROOT:-}" ]; then
-  pnpm run prepare:execution-runtime -- --materialize
-  export WEWORK_NODE_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev"
-fi
-echo "Using Node runtime root: $WEWORK_NODE_RUNTIME_ROOT"
-
-if ! is_port_available "$WEWORK_PORT"; then
-  occupied_port="$WEWORK_PORT"
-  release_wework_port_lock
-  AVAILABLE_WEWORK_PORT=""
-  find_available_wework_port "$((occupied_port + 1))"
-  WEWORK_PORT="$AVAILABLE_WEWORK_PORT"
-  export WEWORK_DEV_PORT="$WEWORK_PORT"
-  export VITE_WEWORK_DEV_PORT="$WEWORK_PORT"
-  configure_before_dev_command
-  write_tauri_dev_config
-  echo "WEWORK_PORT $occupied_port became unavailable during preparation; using $WEWORK_PORT instead."
-fi
-
-print_startup_configuration
-TAURI_ARGS=(dev --config "$TAURI_DEV_CONFIG")
-if [ "$WEWORK_RELEASE_UI" = "true" ]; then
-  TAURI_ARGS+=(--release)
-fi
-if [ -n "$MACOS_BUILD_TARGET" ]; then
-  TAURI_ARGS+=(--target "$MACOS_BUILD_TARGET")
-fi
-
-TAURI_PROCESS_GROUP=""
-
-cleanup_dev_processes() {
-  if [ -z "$TAURI_PROCESS_GROUP" ]; then
-    return
-  fi
-
-  kill -TERM -- "-$TAURI_PROCESS_GROUP" 2>/dev/null || true
-  for _ in {1..20}; do
-    if ! kill -0 -- "-$TAURI_PROCESS_GROUP" 2>/dev/null; then
-      TAURI_PROCESS_GROUP=""
-      return
-    fi
-    sleep 0.1
-  done
-  kill -KILL -- "-$TAURI_PROCESS_GROUP" 2>/dev/null || true
-  TAURI_PROCESS_GROUP=""
-}
-
-cleanup_dev_resources() {
-  cleanup_dev_processes
-  rm -f "$TAURI_DEV_CONFIG"
-  release_wework_port_lock
-}
-
-trap cleanup_dev_resources EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-# Job control gives the Tauri command and all of its children an isolated
-# process group, allowing Ctrl+C to also terminate the app and its sidecars.
-set -m
-pnpm exec tauri "${TAURI_ARGS[@]}" &
-TAURI_PROCESS_GROUP="$!"
-set +m
-
-set +e
-wait "$TAURI_PROCESS_GROUP"
-TAURI_EXIT_CODE="$?"
-set -e
-exit "$TAURI_EXIT_CODE"

@@ -1,10 +1,25 @@
 import '@/i18n'
 
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlockItem } from './ToolBlockItem'
 import type { ProcessingBlock } from '@/types/workbench'
+
+const runtimeMock = vi.hoisted(() => ({
+  electron: false,
+}))
+const desktopHostMock = vi.hoisted(() => ({
+  invokeDesktopHost: vi.fn(),
+}))
+
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isElectronRuntime: () => runtimeMock.electron,
+}))
+vi.mock('@/api/dsh/desktopHost', () => desktopHostMock)
+
+const originalCreateObjectUrl = URL.createObjectURL
 
 const streamingTextBlock: ProcessingBlock = {
   id: 'text-1',
@@ -16,6 +31,13 @@ const streamingTextBlock: ProcessingBlock = {
 }
 
 describe('ToolBlockItem', () => {
+  afterEach(() => {
+    runtimeMock.electron = false
+    desktopHostMock.invokeDesktopHost.mockReset()
+    URL.createObjectURL = originalCreateObjectUrl
+    vi.restoreAllMocks()
+  })
+
   test('renders a completed tool duration with 0.1 second precision', () => {
     render(
       <ToolBlockItem
@@ -293,6 +315,48 @@ describe('ToolBlockItem', () => {
 
     expect(screen.getByTestId('image-view-preview')).toHaveAttribute('src', imageUrl)
     expect(screen.getByTestId('image-view-preview')).toHaveAttribute('alt', '工具查看的图片')
+  })
+
+  test('expands an Electron local view_image result through the declared file capability', async () => {
+    runtimeMock.electron = true
+    URL.createObjectURL = vi.fn(
+      () => 'blob:electron-view-image'
+    ) as unknown as typeof URL.createObjectURL
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    desktopHostMock.invokeDesktopHost.mockResolvedValueOnce({
+      chunkBase64: Buffer.from('image').toString('base64'),
+      bytesRead: 5,
+      eof: true,
+      size: 5,
+    })
+    const user = userEvent.setup()
+
+    render(
+      <ToolBlockItem
+        block={{
+          id: 'view-image-electron',
+          subtaskId: 1,
+          type: 'tool',
+          toolName: 'view_image',
+          toolInput: { path: '/tmp/electron-screenshot.png' },
+          status: 'done',
+          createdAt: 1770000000002,
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /展开工具详情/ }))
+    await waitFor(() => {
+      expect(screen.getByTestId('image-view-preview')).toHaveAttribute(
+        'src',
+        'blob:electron-view-image'
+      )
+    })
+    expect(desktopHostMock.invokeDesktopHost).toHaveBeenCalledWith('filesystem.readFileChunk', {
+      path: '/tmp/electron-screenshot.png',
+      offset: 0,
+      length: 512 * 1024,
+    })
   })
 
   test('keeps view_image details expanded after remounting', async () => {

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { subscribeToAppshots } from '@/tauri/appshots'
-import { disposeTauriListener } from '@/tauri/disposeTauriListener'
+import { subscribeToAppshots } from '@/desktop/appshots'
+import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import { track } from '@/telemetry/client'
 
 function attachmentCountBucket(count: number): '1' | '2-5' | '6+' {
@@ -35,7 +35,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
         if (active) {
           unlisten = dispose
         } else {
-          disposeTauriListener(dispose, 'Appshot')
+          disposeDesktopListener(dispose, 'Appshot')
         }
       })
       .catch(error => {
@@ -44,7 +44,7 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
 
     return () => {
       active = false
-      if (unlisten) disposeTauriListener(unlisten, 'Appshot')
+      if (unlisten) disposeDesktopListener(unlisten, 'Appshot')
     }
   }, [addExistingAttachment, onOpenWework])
 

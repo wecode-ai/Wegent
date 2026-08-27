@@ -1,4 +1,5 @@
-import { isTauriRuntime } from './runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from './runtime-environment'
 import { getPlatform } from './platform'
 
 export type WeworkUpdateChannel = 'stable' | 'beta'
@@ -41,83 +42,42 @@ export function getWeworkUpdateTarget(channel: WeworkUpdateChannel): string {
 export async function checkForWeworkUpdate(
   channel: WeworkUpdateChannel
 ): Promise<WeworkUpdateInfo | null> {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     throw new Error('Wework updater is only available in the desktop app.')
   }
+  getWeworkUpdateTarget(channel)
 
   try {
-    const { check } = await import('@tauri-apps/plugin-updater')
-    const update = await check({ target: getWeworkUpdateTarget(channel) })
+    const update = await invokeDesktopHost<WeworkUpdateInfo | null>('appUpdate.check', { channel })
     if (!update) {
       pendingUpdate = null
       return null
     }
-
-    let downloaded = false
-    let downloadPromise: Promise<void> | null = null
-    let progress: WeworkUpdateDownloadProgress = {
-      downloadedBytes: 0,
-      totalBytes: null,
-    }
-    const progressListeners = new Set<(value: WeworkUpdateDownloadProgress) => void>()
-
-    const notifyProgress = () => {
-      for (const listener of progressListeners) {
-        listener(progress)
-      }
-    }
-
     pendingUpdate = {
-      version: update.version,
-      currentVersion: update.currentVersion,
-      body: update.body,
+      ...update,
       download: async onProgress => {
-        if (onProgress) {
-          progressListeners.add(onProgress)
-          onProgress(progress)
-        }
-
+        const timer = onProgress
+          ? window.setInterval(() => {
+              void invokeDesktopHost<WeworkUpdateDownloadProgress>('appUpdate.downloadProgress')
+                .then(onProgress)
+                .catch(() => undefined)
+            }, 250)
+          : null
         try {
-          if (downloaded) return
-          if (!downloadPromise) {
-            downloadPromise = update
-              .download(event => {
-                if (event.event === 'Started') {
-                  progress = {
-                    downloadedBytes: 0,
-                    totalBytes: event.data.contentLength ?? null,
-                  }
-                } else if (event.event === 'Progress') {
-                  progress = {
-                    ...progress,
-                    downloadedBytes: progress.downloadedBytes + event.data.chunkLength,
-                  }
-                } else {
-                  downloaded = true
-                }
-                notifyProgress()
-              })
-              .catch(error => {
-                downloadPromise = null
-                throw error
-              })
-          }
-          await downloadPromise
-          downloaded = true
+          await invokeDesktopHost<void>('appUpdate.download')
         } finally {
+          if (timer !== null) window.clearInterval(timer)
           if (onProgress) {
-            progressListeners.delete(onProgress)
+            const progress = await invokeDesktopHost<WeworkUpdateDownloadProgress>(
+              'appUpdate.downloadProgress'
+            ).catch(() => null)
+            if (progress) onProgress(progress)
           }
         }
       },
-      install: () => update.install(),
+      install: () => invokeDesktopHost<void>('appUpdate.install'),
     }
-
-    return {
-      version: update.version,
-      currentVersion: update.currentVersion,
-      body: update.body,
-    }
+    return update
   } catch (error) {
     pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })
@@ -148,8 +108,6 @@ export async function installPendingWeworkUpdate(
   try {
     await pendingUpdate.download(onProgress)
     await pendingUpdate.install()
-    const { relaunch } = await import('@tauri-apps/plugin-process')
-    await relaunch()
   } catch (error) {
     pendingUpdate = null
     throw new Error(errorMessage(error), { cause: error })

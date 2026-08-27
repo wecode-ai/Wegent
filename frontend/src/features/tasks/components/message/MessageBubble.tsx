@@ -33,7 +33,6 @@ import EnhancedMarkdown from '@/components/common/EnhancedMarkdown'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
-import ClarificationForm from '../clarification/ClarificationForm'
 import FinalPromptMessage from './FinalPromptMessage'
 import { parseMarkdownFinalPrompt } from './finalPromptParser'
 import ClarificationAnswerSummary from '../clarification/ClarificationAnswerSummary'
@@ -47,7 +46,7 @@ import CollapsibleMessage from './CollapsibleMessage'
 import { processCitePatterns } from '../../utils/processCitePatterns'
 import RegenerateModelPopover from './RegenerateModelPopover'
 import { getMessageBubbleClassNames } from './messageBubbleStyles'
-import type { ClarificationData, ClarificationAnswer } from '@/types/api'
+import type { ClarificationAnswer } from '@/types/api'
 import type { SourceReference, GeminiAnnotation, RetrievalSummaryPayload } from '@/types/socket'
 import type { Model } from '../../hooks/useModelSelection'
 import type { UnifiedModel } from '@/apis/models'
@@ -92,6 +91,7 @@ export interface Message {
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
+      model_display_name?: string
       resolution?: string
       ratio?: string
       duration?: number
@@ -154,7 +154,7 @@ export interface MessageBubbleProps {
   isWaiting?: boolean
   /** Optional override for the in-message waiting indicator text */
   waitingMessage?: string
-  /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
+  /** Generic callback when a component inside the message bubble wants to send a message. */
   onSendMessage?: (
     content: string,
     options?: { interactiveFormAnswer?: InteractiveFormAnswerPayload }
@@ -519,36 +519,6 @@ const MessageBubble = memo(
       isWaiting ||
       msg.isWaiting
 
-    // Check if message contains special format (clarification or final prompt)
-    // This is used to determine whether to use MixedContentView or renderMessageBody
-    // We check this early to avoid duplicate parsing in the render logic
-    const hasSpecialFormat = React.useMemo(() => {
-      if (!msg.content || msg.type === 'user') return false
-
-      // If there are tool blocks, always use MixedContentView to render them
-      if (
-        msg.result?.blocks &&
-        msg.result.blocks.some((b: { type: string }) => b.type === 'tool')
-      ) {
-        return false
-      }
-
-      // Quick check: if content doesn't contain any header markers, skip parsing
-      const content = msg.content
-      const hasClarificationMarker =
-        content.includes('智能追问') ||
-        content.toLowerCase().includes('smart follow') ||
-        content.includes('澄清问题') ||
-        content.toLowerCase().includes('clarification')
-      const hasFinalPromptMarker =
-        content.includes('最终') ||
-        content.toLowerCase().includes('final') ||
-        content.includes('提示词') ||
-        content.toLowerCase().includes('prompt')
-
-      return hasClarificationMarker || hasFinalPromptMarker
-    }, [msg.content, msg.type, msg.result?.blocks])
-
     const inlineThinkingBlocks = React.useMemo(
       () =>
         msg.result?.blocks?.filter(
@@ -564,6 +534,14 @@ const MessageBubble = memo(
       () => msg.result?.blocks?.filter(block => block.type !== 'thinking') ?? [],
       [msg.result?.blocks]
     )
+    const finalPromptData = React.useMemo(() => {
+      if (isUserTypeMessage) return null
+
+      const blockContent = getCopyableContentFromBlocks(msg.result?.blocks ?? [])
+      const content = blockContent || msg.recoveredContent || msg.content || ''
+      const contentToParse = content.includes('${$$}$') ? content.split('${$$}$')[1] || '' : content
+      return parseMarkdownFinalPrompt(contentToParse)
+    }, [isUserTypeMessage, msg.content, msg.recoveredContent, msg.result?.blocks])
     const blockSaveableMarkdown = React.useMemo(
       () =>
         getSaveableMarkdown(
@@ -1047,330 +1025,28 @@ const MessageBubble = memo(
 
       return contentElements
     }
-    // Helper function to parse Markdown clarification questions
-    // Supports flexible formats: with/without code blocks, emoji variations, different header levels
-    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
-    // Returns: { data: ClarificationData, prefixText: string, suffixText: string } | null
-    const parseMarkdownClarification = (
-      content: string
-    ): { data: ClarificationData; prefixText: string; suffixText: string } | null => {
-      // Flexible header detection for clarification questions
-      // Two regex patterns to support both old and new formats:
-      // Old format: ## 💬 智能追问 (Smart Follow-up Questions)
-      // New format: ## 🤔 需求澄清问题 (Clarification Questions)
-      const smartFollowUpRegex =
-        /#{1,6}\s*(?:💬\s*)?(?:智能追问|smart\s*follow[- ]?up(?:\s*questions?)?)/im
-      const clarificationQuestionsRegex =
-        /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im
-
-      // Try both patterns
-      const smartFollowUpMatch = content.match(smartFollowUpRegex)
-      const clarificationMatch = content.match(clarificationQuestionsRegex)
-
-      // Use the first match found (prefer the one that appears earlier in content)
-      let headerMatch: RegExpMatchArray | null = null
-      if (smartFollowUpMatch && clarificationMatch) {
-        // Both matched, use the one that appears first
-        headerMatch =
-          smartFollowUpMatch.index! <= clarificationMatch.index!
-            ? smartFollowUpMatch
-            : clarificationMatch
-      } else {
-        headerMatch = smartFollowUpMatch || clarificationMatch
-      }
-
-      if (!headerMatch) {
-        return null
-      }
-
-      // Find the position of the header and extract everything from the header onwards
-      const headerIndex = headerMatch.index!
-      let prefixText = content.substring(0, headerIndex).trim()
-      let actualContent = content.substring(headerIndex)
-      let suffixText = ''
-
-      // Clean up prefixText: remove trailing code block markers (```markdown, ```, etc.)
-      // This handles cases where the clarification is wrapped in a code block
-      prefixText = prefixText.replace(/```\s*(?:markdown|md)?\s*$/i, '').trim()
-
-      // Find the last ``` in the content
-      const lastCodeBlockMarkerIndex = actualContent.lastIndexOf('\n```')
-
-      if (lastCodeBlockMarkerIndex !== -1) {
-        // Check if the last ``` is within 2 lines of the actual end
-        const contentAfterMarker = actualContent.substring(lastCodeBlockMarkerIndex + 4) // +4 for '\n```'
-        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '')
-
-        if (linesAfterMarker.length <= 2) {
-          // Valid closing ```, extract content before it and save content after as potential suffix
-          const potentialSuffix = contentAfterMarker.trim()
-          actualContent = actualContent.substring(0, lastCodeBlockMarkerIndex).trim()
-          // If there's content after the closing ```, save it as suffix
-          if (potentialSuffix) {
-            suffixText = potentialSuffix
-          }
-        }
-        // If the ``` is too far from the end, keep the full content
-      }
-
-      const questions: ClarificationData['questions'] = []
-
-      // Flexible question header detection
-      // Matches: ### Q1:, ### Q1：, **Q1:**, Q1:, Q1., 1., 1:, etc.
-      const questionRegex =
-        /(?:^|\n)(?:#{1,6}\s*)?(?:\*\*)?Q?(\d+)(?:\*\*)?[:.：]\s*(.*?)(?=\n(?:#{1,6}\s*)?(?:\*\*)?(?:Q?\d+|Type|类型)|\n\*\*(?:Type|类型)\*\*|$)/gi
-      const matches = Array.from(actualContent.matchAll(questionRegex))
-
-      // Track the end position of the last successfully parsed question
-      let lastParsedEndIndex = 0
-
-      for (const match of matches) {
-        try {
-          const questionNumber = parseInt(match[1])
-          const questionText = match[2].trim()
-
-          if (!questionText) continue
-
-          // Find the question block (from current match to next question or end)
-          const startIndex = match.index!
-          const nextQuestionMatch = actualContent
-            .substring(startIndex + match[0].length)
-            .match(/\n(?:#{1,6}\s*)?(?:\*\*)?Q?\d+[:.：]/i)
-          const endIndex = nextQuestionMatch
-            ? startIndex + match[0].length + nextQuestionMatch.index!
-            : actualContent.length
-          const questionBlock = actualContent.substring(startIndex, endIndex)
-
-          // Flexible type detection
-          // Matches: **Type**: value, Type: value, **类型**: value, 类型: value
-          const typeMatch = questionBlock.match(/(?:\*\*)?(?:Type|类型)(?:\*\*)?[:\s：]+\s*(\w+)/i)
-          if (!typeMatch) continue
-
-          const typeValue = typeMatch[1].toLowerCase()
-          let questionType: 'single_choice' | 'multiple_choice' | 'text_input'
-
-          if (typeValue.includes('single') || typeValue === 'single_choice') {
-            questionType = 'single_choice'
-          } else if (typeValue.includes('multi') || typeValue === 'multiple_choice') {
-            questionType = 'multiple_choice'
-          } else if (typeValue.includes('text') || typeValue === 'text_input') {
-            questionType = 'text_input'
-          } else {
-            questionType = 'single_choice' // default fallback
-          }
-
-          const questionId = `q${questionNumber}`
-
-          if (questionType === 'text_input') {
-            questions.push({
-              question_id: questionId,
-              question_text: questionText,
-              question_type: 'text_input',
-            })
-            lastParsedEndIndex = endIndex
-          } else {
-            const options: ClarificationData['questions'][0]['options'] = []
-            // Track the end position of the last option within this question block
-            let lastOptionEndInBlock = 0
-
-            // Flexible option detection
-            // Matches: - [✓] `value` - Label, - [x] value - Label, - [ ] `value` - Label, - `value` - Label
-            // The lookahead matches: next option line, bold text, header, empty line, or end of string
-            const optionRegex =
-              /- \[([✓xX* ]?)\]\s*`?([^`\n-]+)`?\s*-\s*([^\n]*)(?=\n-|\n\*\*|\n#{1,6}|\n\n|\n?$)/g
-            let optionMatch
-
-            while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
-              const checkMark = optionMatch[1].trim()
-              const isRecommended =
-                checkMark === '✓' || checkMark.toLowerCase() === 'x' || checkMark === '*'
-              const value = optionMatch[2].trim()
-              const label = optionMatch[3]
-                .trim()
-                .replace(/\s*\((?:recommended|推荐)\)\s*$/i, '')
-                .trim()
-
-              if (value) {
-                options.push({
-                  value,
-                  label: label || value,
-                  recommended: isRecommended,
-                })
-                // Update the end position of the last option
-                lastOptionEndInBlock = optionMatch.index + optionMatch[0].length
-              }
-            }
-
-            // Fallback: try simpler option format without checkbox
-            // Matches: - `value` - Label, - value - Label
-            if (options.length === 0) {
-              const simpleOptionRegex =
-                /-\s*`?([^`\n-]+)`?\s*-\s*([^\n]*)(?=\n-|\n\*\*|\n#{1,6}|\n\n|\n?$)/g
-              let simpleMatch
-
-              while ((simpleMatch = simpleOptionRegex.exec(questionBlock)) !== null) {
-                const value = simpleMatch[1].trim()
-                const label = simpleMatch[2]
-                  .trim()
-                  .replace(/\s*\((?:recommended|推荐)\)\s*$/i, '')
-                  .trim()
-                const isRecommended =
-                  simpleMatch[2].toLowerCase().includes('recommended') ||
-                  simpleMatch[2].includes('推荐')
-
-                if (value && !value.startsWith('[')) {
-                  options.push({
-                    value,
-                    label: label || value,
-                    recommended: isRecommended,
-                  })
-                  // Update the end position of the last option
-                  lastOptionEndInBlock = simpleMatch.index + simpleMatch[0].length
-                }
-              }
-            }
-
-            if (options.length > 0) {
-              questions.push({
-                question_id: questionId,
-                question_text: questionText,
-                question_type: questionType,
-                options,
-              })
-              // Use the actual end position of the last option, not the entire question block
-              // This allows us to capture any text after the last option as suffix
-              lastParsedEndIndex = startIndex + lastOptionEndInBlock
-            }
-          }
-        } catch {
-          // Continue parsing other questions even if one fails
-          continue
-        }
-      }
-
-      if (questions.length === 0) return null
-
-      // Extract suffix text: content after the last successfully parsed question
-      // Only extract from actualContent if we haven't already extracted suffix from after the code block
-      if (!suffixText && lastParsedEndIndex > 0 && lastParsedEndIndex < actualContent.length) {
-        const extractedSuffix = actualContent.substring(lastParsedEndIndex).trim()
-        // Clean up suffix text: remove leading closing code block markers if present
-        const cleanedSuffix = extractedSuffix.replace(/^```\s*\n?/, '').trim()
-        if (cleanedSuffix) {
-          suffixText = cleanedSuffix
-        }
-      }
-
-      return {
-        data: {
-          type: 'clarification',
-          questions,
-        },
-        prefixText,
-        suffixText,
-      }
-    }
-
-    const renderAiMessage = (message: Message, messageIndex: number) => {
+    const renderAiMessage = (message: Message) => {
       const content = message.content ?? ''
 
       // Video rendering is now handled by MixedContentView via video blocks
       // The old result.video and result.progress logic has been removed
       // in favor of the unified block-based rendering system
 
-      try {
-        let contentToParse = content
-
-        if (content.includes('${$$}$')) {
-          const [, result] = content.split('${$$}$')
-          if (result) {
-            contentToParse = result
-          }
-        }
-        const markdownClarification = parseMarkdownClarification(contentToParse)
-        if (markdownClarification) {
-          const { data, prefixText, suffixText } = markdownClarification
-          return (
-            <div className="space-y-4">
-              {/* Render prefix text (content before the clarification form) */}
-              {prefixText && (
-                <EnhancedMarkdown
-                  source={prefixText}
-                  theme={theme}
-                  components={{
-                    a: ({ href, children }) => {
-                      if (!href) {
-                        return <span>{children}</span>
-                      }
-                      return (
-                        <SmartLink href={href} disabled={isStreaming}>
-                          {children}
-                        </SmartLink>
-                      )
-                    },
-                    img: ({ src, alt }) => {
-                      if (!src || typeof src !== 'string') return null
-                      return <SmartImage src={src} alt={alt} />
-                    },
-                  }}
-                />
-              )}
-              {/* Render the clarification form */}
-              <ClarificationForm
-                data={data}
-                taskId={selectedTaskDetail?.id || 0}
-                currentMessageIndex={messageIndex}
-                rawContent={contentToParse}
-                onSubmit={onSendMessage}
-              />
-              {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
-              {suffixText && (
-                <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
-                  <EnhancedMarkdown
-                    source={suffixText}
-                    theme={theme}
-                    components={{
-                      a: ({ href, children }) => {
-                        if (!href) {
-                          return <span>{children}</span>
-                        }
-                        return (
-                          <SmartLink href={href} disabled={isStreaming}>
-                            {children}
-                          </SmartLink>
-                        )
-                      },
-                      img: ({ src, alt }) => {
-                        if (!src || typeof src !== 'string') return null
-                        return <SmartImage src={src} alt={alt} />
-                      },
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )
-        }
-
-        const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToParse)
-        if (markdownFinalPrompt) {
-          return (
-            <FinalPromptMessage
-              data={markdownFinalPrompt}
-              selectedTeam={selectedTeam}
-              selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              taskId={selectedTaskDetail?.id}
-              subtaskId={msg.subtaskId}
-              isPendingConfirmation={isPendingConfirmation}
-              onStageConfirmed={onPipelineStageConfirmed}
-              onForwardClick={onForwardClick}
-              isMessageStreaming={isStreaming || message.status === 'streaming'}
-            />
-          )
-        }
-      } catch (error) {
-        console.error('Failed to parse message content:', error)
+      if (finalPromptData) {
+        return (
+          <FinalPromptMessage
+            data={finalPromptData}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+            taskId={selectedTaskDetail?.id}
+            subtaskId={msg.subtaskId}
+            isPendingConfirmation={isPendingConfirmation}
+            onStageConfirmed={onPipelineStageConfirmed}
+            onForwardClick={onForwardClick}
+            isMessageStreaming={isStreaming || message.status === 'streaming'}
+          />
+        )
       }
 
       if (!content.includes('${$$}$')) {
@@ -1389,8 +1065,8 @@ const MessageBubble = memo(
       )
     }
 
-    const renderMessageBody = (message: Message, messageIndex: number) =>
-      message.type === 'ai' ? renderAiMessage(message, messageIndex) : renderPlainMessage(message)
+    const renderMessageBody = (message: Message) =>
+      message.type === 'ai' ? renderAiMessage(message) : renderPlainMessage(message)
 
     // Render recovered content notice
     const renderRecoveryNotice = () => {
@@ -1541,16 +1217,10 @@ const MessageBubble = memo(
                 />
               ) : (
                 <>
-                  {/* Unified rendering: Use MixedContentView for AI messages with blocks, otherwise renderMessageBody */}
-                  {/* MixedContentView handles both streaming and completed states, including tool blocks */}
-                  {!isUserTypeMessage &&
-                  msg.result?.blocks &&
-                  mixedContentBlocks.length > 0 &&
-                  // IMPORTANT: If content contains clarification or final prompt format,
-                  // use renderMessageBody instead to properly render the interactive form.
-                  // hasSpecialFormat is a quick check using keyword detection.
-                  !hasSpecialFormat ? (
-                    /* For AI messages with blocks data (without clarification), use mixed content view to interleave text and tools */
+                  {/* A strict final-prompt heading takes precedence over generic text blocks. */}
+                  {!isUserTypeMessage && finalPromptData ? (
+                    <>{renderMessageBody(msg)}</>
+                  ) : !isUserTypeMessage && msg.result?.blocks && mixedContentBlocks.length > 0 ? (
                     <>
                       <MixedContentView
                         thinking={msg.thinking ?? null}
@@ -1565,6 +1235,7 @@ const MessageBubble = memo(
                         subtaskId={msg.subtaskId}
                         currentMessageIndex={index}
                         onAskUserSubmit={onAskUserSubmit}
+                        onCardChatButtonClick={onSendMessage}
                       />
                       <SourceReferences
                         sources={msg.sources || msg.result?.sources || []}
@@ -1654,7 +1325,7 @@ const MessageBubble = memo(
                       )}
                     </>
                   ) : (
-                    <>{renderMessageBody(msg, index)}</>
+                    <>{renderMessageBody(msg)}</>
                   )}
                 </>
               )}
@@ -1750,6 +1421,7 @@ const MessageBubble = memo(
       prevProps.waitingMessage === nextProps.waitingMessage &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
+      prevProps.onAskUserSubmit === nextProps.onAskUserSubmit &&
       prevProps.paragraphAction === nextProps.paragraphAction &&
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&

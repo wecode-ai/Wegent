@@ -3,6 +3,7 @@ import i18n from '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { ToolBlocksDisplay } from './ToolBlocksDisplay'
+import { getFileEditDurationsBySourceBlock } from './fileEditDurations'
 import type { ProcessingBlock } from '@/types/workbench'
 
 const completedCommandBlock: ProcessingBlock = {
@@ -1031,7 +1032,11 @@ describe('ToolBlocksDisplay', () => {
     render(
       <ToolBlocksDisplay
         blocks={[streamingFileChanges]}
-        fileEditDurationBlocks={[completedEdit, interleavedText, streamingFileChanges]}
+        fileEditDurationsBySourceBlock={getFileEditDurationsBySourceBlock([
+          completedEdit,
+          interleavedText,
+          streamingFileChanges,
+        ])}
         isStreaming={true}
         forceExpanded
       />
@@ -1041,6 +1046,24 @@ describe('ToolBlocksDisplay', () => {
     act(() => vi.advanceTimersByTime(3000))
     expect(screen.getByText('2.5s')).toBeInTheDocument()
     expect(screen.queryByText('7.0s')).not.toBeInTheDocument()
+  })
+
+  test('does not classify edit tools when a message has no file changes', () => {
+    const toolBlock: ProcessingBlock = {
+      id: 'edit-without-file-changes',
+      subtaskId: 1,
+      type: 'tool',
+      toolName: 'apply_patch',
+      toolInput: { patch: '*** Update File: scripts/env' },
+      status: 'done',
+    }
+    Object.defineProperty(toolBlock, 'toolName', {
+      get() {
+        throw new Error('tool name should not be classified')
+      },
+    })
+
+    expect(getFileEditDurationsBySourceBlock([toolBlock])).toEqual(new Map())
   })
 
   test('renders completed edit tools as flat concrete rows', () => {

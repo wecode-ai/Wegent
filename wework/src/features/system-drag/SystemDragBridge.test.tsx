@@ -3,9 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SystemDragBridge } from './SystemDragBridge'
 
 const mocks = vi.hoisted(() => ({
-  eventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   invoke: vi.fn(),
-  emitTo: vi.fn(),
+  pending: [] as Array<{ action: string; text: string | null; paths: string[] }>,
   setInput: vi.fn(),
   handleFileSelect: vi.fn(),
   startNewChat: vi.fn(),
@@ -17,13 +16,8 @@ const mocks = vi.hoisted(() => ({
   input: '',
 }))
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
-vi.mock('@tauri-apps/api/event', () => ({
-  emitTo: mocks.emitTo,
-  listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
-    mocks.eventHandlers.set(name, handler)
-    return Promise.resolve(() => undefined)
-  }),
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.invoke,
 }))
 vi.mock('@/features/workbench/useWorkbench', () => ({
   useWorkbench: () => ({
@@ -48,14 +42,14 @@ vi.mock('@/lib/workspace-path-transfer', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/workspace-path-transfer')>()),
   resolveStoredWorkspacePaths: mocks.resolveStoredPaths,
 }))
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   getAppPreferences: mocks.getAppPreferences,
   updateAppPreferences: mocks.updateAppPreferences,
 }))
 
 function emitDrop(payload: { action: string; text: string | null; paths: string[] }) {
   act(() => {
-    mocks.eventHandlers.get('wework-system-drag-drop')?.({ payload })
+    mocks.pending.push(payload)
   })
 }
 
@@ -65,9 +59,8 @@ describe('SystemDragBridge', () => {
   })
 
   beforeEach(() => {
-    mocks.eventHandlers.clear()
+    mocks.pending = []
     mocks.invoke.mockReset()
-    mocks.emitTo.mockReset()
     mocks.setInput.mockReset()
     mocks.handleFileSelect.mockReset()
     mocks.startNewChat.mockReset()
@@ -82,15 +75,14 @@ describe('SystemDragBridge', () => {
     mocks.workspaceSource = 'local'
     mocks.input = ''
     mocks.invoke.mockImplementation(command =>
-      Promise.resolve(command === 'take_pending_system_drag_drops' ? [] : undefined)
+      Promise.resolve(command === 'systemDrag.takePending' ? mocks.pending.splice(0) : undefined)
     )
-    mocks.emitTo.mockResolvedValue(undefined)
   })
 
   test('appends text to an existing new-chat draft', async () => {
     mocks.input = '已有草稿'
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({ action: 'new-chat', text: '拖入内容', paths: [] })
 
@@ -101,11 +93,11 @@ describe('SystemDragBridge', () => {
     mocks.currentTask = { title: '当前对话' }
     mocks.input = '旧对话未发送内容'
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({ action: 'new-chat', text: '新草稿内容', paths: [] })
 
-    expect(mocks.startNewChat).toHaveBeenCalled()
+    await waitFor(() => expect(mocks.startNewChat).toHaveBeenCalled())
     await waitFor(() => expect(mocks.setInput).toHaveBeenCalledWith('新草稿内容'))
   })
 
@@ -113,7 +105,7 @@ describe('SystemDragBridge', () => {
     mocks.currentTask = { title: '当前对话' }
     mocks.input = '已有追问'
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({ action: 'follow-up', text: '补充内容', paths: [] })
 
@@ -130,7 +122,7 @@ describe('SystemDragBridge', () => {
       ],
     })
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({
       action: 'new-chat',
@@ -157,7 +149,7 @@ describe('SystemDragBridge', () => {
       referenceEntries: [{ path: '/tmp/project', isDirectory: true }],
     })
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({
       action: 'new-chat',
@@ -180,7 +172,7 @@ describe('SystemDragBridge', () => {
     })
     mocks.updateAppPreferences.mockResolvedValue(undefined)
     render(<SystemDragBridge />)
-    await waitFor(() => expect(mocks.eventHandlers.has('wework-system-drag-drop')).toBe(true))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.takePending'))
 
     emitDrop({ action: 'stash', text: '暂存的文本', paths: ['/tmp/image.png'] })
 

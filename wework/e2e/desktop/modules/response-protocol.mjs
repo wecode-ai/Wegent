@@ -389,7 +389,7 @@ function json(response, statusCode, value) {
 function cors(response) {
   response.setHeader('Access-Control-Allow-Origin', '*')
   response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+  response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
 }
 
 function requestContainsToolOutput(request, callId) {
@@ -458,11 +458,14 @@ function selectOfficialPluginMcpTool(request, argumentsValue) {
 }
 
 function selectMcpTool(request, namespaceName, toolName, argumentsValue) {
-  const namespace = requestToolSearchResults(request).find(
+  const namespaces = requestToolSearchResults(request).filter(
     candidate => candidate?.type === 'namespace' && candidate.name === namespaceName
   )
-  assert.ok(namespace, `tool_search did not return MCP namespace ${namespaceName}`)
-  const tool = namespace.tools?.find(
+  assert.ok(namespaces.length > 0, `tool_search did not return MCP namespace ${namespaceName}`)
+  const namespace = namespaces.find(candidate =>
+    candidate.tools?.some(tool => tool?.type === 'function' && tool.name === toolName)
+  )
+  const tool = namespace?.tools?.find(
     candidate => candidate?.type === 'function' && candidate.name === toolName
   )
   assert.ok(tool, `Searched MCP namespace ${namespaceName} did not expose ${toolName}`)
@@ -477,6 +480,41 @@ function selectConvertedTool(request, toolName, argumentsValue) {
   )
   assert.ok(name, `Converted request did not expose ${toolName}: ${names.join(', ')}`)
   return { name, arguments: argumentsValue }
+}
+
+function selectMcpToolRequest(request, toolName, argumentsValue, directToolName) {
+  const tools = Array.isArray(request.tools) ? request.tools : []
+  const names = tools.map(tool => tool?.name ?? tool?.function?.name).filter(Boolean)
+  const advertisesToolSearch = tools.some(
+    tool =>
+      tool?.type === 'tool_search' ||
+      (tool?.type === 'function' &&
+        ['tool_search', 'search_deferred_tools'].includes(tool?.name ?? tool?.function?.name))
+  )
+  if (!advertisesToolSearch && directToolName && names.includes(directToolName)) {
+    return {
+      mode: 'direct',
+      ...selectTool(request, directToolName, argumentsValue),
+    }
+  }
+  return {
+    mode: 'search',
+    ...selectToolSearch(request, toolName),
+  }
+}
+
+function mcpToolRequestEvents(
+  request,
+  { toolName, argumentsValue, directToolName, searchCallId, toolCallId }
+) {
+  const selection = selectMcpToolRequest(request, toolName, argumentsValue, directToolName)
+  return {
+    mode: selection.mode,
+    events:
+      selection.mode === 'direct'
+        ? functionCall(toolCallId, selection.name, selection.arguments)
+        : toolSearchResponseEvents(searchCallId, selection),
+  }
 }
 
 function selectToolSearch(request, query) {
@@ -655,6 +693,8 @@ export {
   selectOfficialPluginMcpTool,
   selectMcpTool,
   selectConvertedTool,
+  selectMcpToolRequest,
+  mcpToolRequestEvents,
   selectToolSearch,
   toolSearchResponseEvents,
   requestToolSearchResults,

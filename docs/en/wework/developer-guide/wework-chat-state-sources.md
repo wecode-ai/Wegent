@@ -117,6 +117,16 @@ transport is rebuilt, recovery for a persisted Codex thread must call
 running state; code must not continue inferring them from pre-disconnect
 in-memory events.
 
+The provider transcript reader must not run concurrently with an active Codex
+turn. After a successful idle read of the latest transcript page, the executor
+persists that page's message snapshot scoped to the thread ID. A transcript
+response during execution merges that snapshot with pending user messages,
+settled messages, and active stream messages, deduplicating by message ID.
+This keeps historical assistant replies visible when a new turn starts after a
+WebView or executor rebuild. A thread ID change must clear both the completed
+message cache and transcript snapshot so messages cannot cross thread
+boundaries.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -276,7 +286,7 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 `BufferedChatInput` preserves a pane-level draft during editing and submission, while the external `value` remains the source of truth for the confirmed draft. After a non-empty draft is submitted, the local empty state must be associated with the expected empty external value instead of the text that was just submitted. Otherwise, returning the same text from a queue or guidance row for editing is mistaken for stale draft state and the composer remains empty. Changes to this path must cover the regression sequence “submit text → external value clears → edit the queued row to restore the same text.”
 
-When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. Confirmation must synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
+When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. The queue must remain paused until the lifecycle Store confirms that the new turn entered streaming or already produced a terminal outcome. The latter covers fast executions whose start and settlement are batched into one React commit: waiting only for an active snapshot can leave the queue paused forever, while resuming as soon as the send request returns can let a stale idle snapshot submit the preserved queue concurrently with the new turn. Confirmation must also synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
 
 ## Referenced Conversation Context
 
@@ -365,6 +375,7 @@ After inserting guidance, the message area must scroll to the bottom and briefly
 
 The right workspace **Temporary chat** feature starts a short side conversation next to the current local Codex thread. It is not a fork and it is not a normal runtime task shown in the left task list:
 
+- Creating a new runtime task from either the project-space board task modal or the project-space task tab must call `useProjectRuntimeTaskComposer` and then follow the same `createProjectRuntimeTask` path. `TemporaryChatPanel` constructs one optimistic user message with a stable id and passes that same message object into the creation path. `sendPreparedRuntimeMessage` owns forwarding the id to the executor and writing the message to `runtimeConversationCache`. Entry components must not append the first message independently, or the live UI can retain both the local message and the transcript message until refresh.
 - Each temporary chat tab has an independent `chat:<id>` instance id, so the right workspace can hold multiple temporary chats at the same time.
 - Before a runtime thread exists, `TemporaryChatPanel` uses the instance id as its `conversationKey`. After creation, pane workspace state retains the tab's runtime address and `runtimeConversationCache` restores its live message projection. Temporary threads do not support `thread/turns/list`, so a main-conversation switch that unmounts and remounts the panel cannot depend on transcript loading to recover content.
 - Attachment selection, upload progress, and errors are also isolated per temporary-chat instance and must not reuse the main composer attachment state. The first message passes that instance's attachments explicitly to `createTemporaryRuntimeTask`.
@@ -380,7 +391,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real-Tauri scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real Electron scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 
