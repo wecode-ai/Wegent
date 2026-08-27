@@ -58,6 +58,8 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 
+import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+
 import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
@@ -1178,17 +1180,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
-    const electronLaunchArguments =
-      process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
-        ? (() => {
-            assert.equal(
-              process.env.WEWORK_E2E_ISOLATED_XVFB,
-              'true',
-              'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
-            )
-            return ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
-          })()
-        : []
+    const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
