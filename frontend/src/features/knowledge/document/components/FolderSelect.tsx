@@ -35,7 +35,7 @@ export function FolderSelect({
   folderOptions,
   onFolderChange,
   className = 'space-y-1.5',
-  triggerTestId,
+  triggerTestId = 'folder-select-trigger',
   disabled = false,
 }: FolderSelectProps) {
   const { t } = useTranslation('knowledge')
@@ -63,9 +63,15 @@ export function FolderSelect({
           </span>
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
+          <SelectItem value="0" data-testid="folder-select-option-0">
+            {t('document.folder.rootLevel')}
+          </SelectItem>
           {folderOptions.map(folder => (
-            <SelectItem key={folder.id} value={String(folder.id)}>
+            <SelectItem
+              key={folder.id}
+              value={String(folder.id)}
+              data-testid={`folder-select-option-${folder.id}`}
+            >
               {'\u00A0'.repeat(folder.depth * 2)}
               {folder.name}
             </SelectItem>

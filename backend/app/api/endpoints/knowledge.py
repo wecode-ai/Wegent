@@ -37,7 +37,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
 from app.db.session import SessionLocal
-from app.models.knowledge import DocumentIndexStatus
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -795,7 +795,7 @@ async def import_external_document(
     data: ExternalDocumentImportRequest,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> KnowledgeDocument:
     """
     Import one external provider document into this knowledge base.
 
@@ -848,7 +848,7 @@ async def import_external_document_batch(
     data: ExternalDocumentBatchImportRequest,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
-):
+) -> ExternalDocumentBatchImportResponse:
     """
     Import several external provider documents into this knowledge base.
 
