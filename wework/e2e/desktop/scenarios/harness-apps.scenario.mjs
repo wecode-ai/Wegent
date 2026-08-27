@@ -564,9 +564,14 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       const developmentPreviewSelector =
         `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
         '[data-testid="smart-app-development-preview"]'
+      const developmentBrowserSelector =
+        `${developmentPreviewSelector} ` + '[data-embedded-browser-label]'
+      await control.command('waitFor', developmentBrowserSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
       const developmentBrowserLabel = await control.command(
         'getAttribute',
-        `${developmentPreviewSelector} [data-embedded-browser-label]`,
+        developmentBrowserSelector,
         { value: 'data-embedded-browser-label' }
       )
       assert.ok(
@@ -638,12 +643,24 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         uiTimeoutMs,
         'Returning to the Smart app development task did not restore its native browser'
       )
-      await control.command('waitFor', '[data-testid^="right-workspace-browser-tab-"]', {
+      const developmentBrowserTabSelector =
+        '[role="tab"][data-testid^="right-workspace-browser-tab-"]'
+      await control.command('waitFor', developmentBrowserTabSelector, {
+        text: '空白 E2E 工作台',
         timeoutMs: uiTimeoutMs,
       })
+      const developmentBrowserTabTestId = await control.command(
+        'getAttribute',
+        developmentBrowserTabSelector,
+        { value: 'data-testid' }
+      )
+      assert.ok(
+        developmentBrowserTabTestId,
+        'The restored Smart app preview did not expose its right-workspace tab identity'
+      )
       await control.command(
         'waitFor',
-        '[data-testid^="right-workspace-browser-tab-"][data-testid$="-close-button"]',
+        `[data-testid="${developmentBrowserTabTestId}-close-button"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
