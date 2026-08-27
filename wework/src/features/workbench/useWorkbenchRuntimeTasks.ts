@@ -473,8 +473,8 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
-        await refreshWorkLists()
         await openRuntimeTask(response.target)
+        await refreshWorkLists()
       } catch (error) {
         dispatch({
           type: 'error_set',

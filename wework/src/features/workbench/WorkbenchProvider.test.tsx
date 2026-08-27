@@ -881,6 +881,41 @@ function RuntimeTaskPinProbe() {
   )
 }
 
+function RuntimeTaskForkProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="fork-current-runtime-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
+      </span>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          })
+        }
+      >
+        open fork source
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void workbench.forkCurrentRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+          })
+        }
+      >
+        fork current runtime task
+      </button>
+    </div>
+  )
+}
+
 function RuntimeTaskPinDuringRefreshProbe() {
   const workbench = useWorkbench()
   const pinRequestedRef = useRef(false)
@@ -2418,6 +2453,73 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('opens a forked task before refreshing the runtime task list', async () => {
+    const refreshRequest = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork())
+        .mockReturnValueOnce(refreshRequest.promise),
+      forkRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        target: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-fork',
+        },
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskForkProbe />, services)
+
+    await userEvent.click(await screen.findByText('open fork source'))
+    await waitFor(() =>
+      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-a')
+    )
+
+    await userEvent.click(screen.getByText('fork current runtime task'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
+    )
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
+
+    refreshRequest.resolve(
+      createRuntimeWork({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-fork',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Runtime fork',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        totalTasks: 1,
+      })
+    )
   })
 
   test('keeps a project task globally pinned while executor refresh is stale', async () => {
