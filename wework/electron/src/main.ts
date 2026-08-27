@@ -76,6 +76,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import { ComponentUpdateManager } from './runtime/component-update-manager.js'
 import {
   prepareElectronNodeRuntime,
+  resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
 
@@ -1231,9 +1232,7 @@ function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
 }
 
 async function configuredNodePath(): Promise<string | null> {
-  const value = (await requiredPreferences().read()).nodeExecutablePath
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  return process.env.WEWORK_NODE_PATH?.trim() || null
+  return resolveConfiguredNodePath(await requiredPreferences().read(), process.env)
 }
 
 async function readNodeVersion(path: string): Promise<string> {

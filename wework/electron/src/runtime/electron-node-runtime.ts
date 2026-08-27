@@ -1,4 +1,4 @@
-import { copyFile, link, mkdir, rm, symlink } from 'node:fs/promises'
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 
 export interface ElectronNodeRuntimeOptions {
@@ -48,8 +48,9 @@ export async function prepareElectronNodeRuntime(
   }
 
   const runtimeBin = join(options.dataDirectory, 'runtime', 'bin')
-  const nodePath = join(runtimeBin, options.platform === 'win32' ? 'node.exe' : 'node')
-  await materializeNodeLauncher(nodePath, options.helperExecPath, options.platform)
+  const launcherPath = join(runtimeBin, options.platform === 'win32' ? 'node.cmd' : 'node')
+  await materializeNodeLauncher(launcherPath, options.helperExecPath, options.platform)
+  const nodePath = options.platform === 'win32' ? options.helperExecPath : launcherPath
 
   return {
     environment: {
@@ -68,6 +69,16 @@ export function runtimeNodeArgs(environment: NodeJS.ProcessEnv, args: string[]):
   return environment.WEWORK_NODE_RUNTIME_KIND === 'electron'
     ? ['--expose-internals', ...args]
     : args
+}
+
+export function resolveConfiguredNodePath(
+  preferences: Record<string, unknown>,
+  environment: NodeJS.ProcessEnv
+): string | null {
+  const value = preferences.nodeExecutablePath
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (Object.hasOwn(preferences, 'nodeExecutablePath')) return null
+  return environment.WEWORK_NODE_PATH?.trim() || null
 }
 
 function createStatus(
@@ -91,26 +102,35 @@ function createStatus(
 }
 
 async function materializeNodeLauncher(
-  nodePath: string,
+  launcherPath: string,
   helperExecPath: string,
   platform: NodeJS.Platform
 ): Promise<void> {
-  await mkdir(dirname(nodePath), { recursive: true, mode: 0o700 })
-  await rm(nodePath, { force: true })
-  if (platform !== 'win32') {
-    await symlink(helperExecPath, nodePath)
+  await mkdir(dirname(launcherPath), { recursive: true, mode: 0o700 })
+  if (platform === 'win32') {
+    const escaped = helperExecPath.replaceAll('%', '%%').replaceAll('"', '""')
+    await writeFile(
+      launcherPath,
+      `@echo off\r\nset ELECTRON_RUN_AS_NODE=1\r\n"${escaped}" %*\r\n`,
+      { mode: 0o600 }
+    )
     return
   }
 
-  try {
-    await link(helperExecPath, nodePath)
-  } catch {
-    await copyFile(helperExecPath, nodePath)
-  }
+  await writeFile(
+    launcherPath,
+    `#!/bin/sh\nexport ELECTRON_RUN_AS_NODE=1\nexec ${shellQuote(helperExecPath)} "$@"\n`,
+    { mode: 0o700 }
+  )
+  await chmod(launcherPath, 0o700)
 }
 
 function prependPath(directory: string, currentPath: string | undefined): string {
   if (!currentPath) return directory
   const entries = currentPath.split(delimiter).filter(Boolean)
   return [directory, ...entries.filter(entry => entry !== directory)].join(delimiter)
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
 }
