@@ -179,7 +179,7 @@ export class EmbeddedBrowserManager {
         this.emit('popup', {
           popupId: randomUUID(),
           parentLabel: entry.label,
-          parentNativeLabel: entry.label,
+          parentNativeLabel: entry.nativeLabel,
           url,
           origin: new URL(url).origin,
           kind: 'window-open',
