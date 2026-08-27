@@ -1091,6 +1091,7 @@ async function main() {
     const electronCoreRuntimeRoot =
       harnessRuntimes?.harnessRuntimeRoot ||
       (usesReleasePackageRuntimeAssets ? null : configuredElectronCoreRuntimeRoot)
+    const electronCorePluginsRoot = harnessRuntimes?.corePluginsRoot || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1113,7 +1114,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
-      WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -1264,6 +1265,7 @@ async function main() {
       await verifyCoreDshUiPluginComposition({
         control,
         initialRendererLocation: ready.location,
+        pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
         runtimeRoot: electronCoreRuntimeRoot,
       })
