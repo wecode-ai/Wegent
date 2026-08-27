@@ -16,6 +16,7 @@ module loader, or second Cordis `Context`.
 | ------------------------------ | --------------------------------- | --------------------------------- |
 | `wework.app`                   | Product switcher and app surfaces | `id`, `label`, `mode`             |
 | `wework.route`                 | Top-level auxiliary pages         | `id`, `path`, `telemetryFeature`  |
+| `wework.sidebar.navigation`    | Left sidebar navigation entries   | `id`, `path`, `label`             |
 | `wework.settings.page`         | Settings navigation and content   | `id`, `path`, `label`, `category` |
 | `wework.workspace.tab`         | Closable top workspace tabs       | `id`, `label`                     |
 | `wework.workspace.sidebar.tab` | Right workspace panel tabs        | `id`, `label`                     |
@@ -73,6 +74,13 @@ as `path`, `category`, and `mode` on the standard DSH component's static
 `wework` property, then calls `ctx.slots.register`. Discovery, dependency
 management, rendering, and disposal therefore remain owned by DSH, with no
 second Wework registry.
+
+The `icon` field on `wework.route` and `wework.sidebar.navigation` accepts any
+valid [Lucide icon name](https://lucide.dev/icons/) in kebab-case, such as
+`shield`, `rocket`, or `gamepad-2`. Wework loads the icon dynamically and
+falls back to the default grid icon when the name is missing or invalid. The
+legacy `applications` value remains an alias for the default application icon,
+so icon names do not need to be registered individually in Wework core.
 
 Do not register directly into a Wework slot that is not live, and do not put
 Wework descriptors directly in DSH options. DSH re-runs the `slots.inject`
