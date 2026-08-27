@@ -1149,6 +1149,24 @@ class ExecutionDispatcher:
                 return_exceptions=True,
             )
 
+    @staticmethod
+    async def _cancel_sse_stream_open(
+        stream_open_task: asyncio.Task[Any],
+    ) -> None:
+        """Cancel stream creation and close a stream returned during the race."""
+        stream_open_task.cancel()
+        opened = (await asyncio.gather(stream_open_task, return_exceptions=True))[0]
+        if isinstance(opened, BaseException):
+            return
+        try:
+            await opened.close()
+        except Exception as exc:
+            logger.warning(
+                "[ExecutionDispatcher] Failed to close SSE stream opened "
+                "during cancellation: error=%s",
+                exc,
+            )
+
     async def dispatch_with_composite(
         self,
         request: ExecutionRequest,
@@ -1323,8 +1341,7 @@ class ExecutionDispatcher:
                     request.subtask_id,
                     cancel_source,
                 )
-                stream_open_task.cancel()
-                await asyncio.gather(stream_open_task, return_exceptions=True)
+                await self._cancel_sse_stream_open(stream_open_task)
                 await emitter.emit(
                     ExecutionEvent(
                         type=EventType.CANCELLED,

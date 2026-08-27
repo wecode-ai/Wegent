@@ -27,16 +27,30 @@ class _BlockingCreate:
             raise
 
 
+class _CancellationResistantCreate(_BlockingCreate):
+    async def wait(self) -> None:
+        self.started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+
+
 class _BlockingStream:
     def __init__(self) -> None:
         self.iteration_started = asyncio.Event()
         self.iteration_cancelled = asyncio.Event()
+        self.closed = asyncio.Event()
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
         return False
+
+    async def close(self) -> None:
+        self.closed.set()
 
     def __aiter__(self):
         return self
@@ -195,9 +209,56 @@ async def test_dispatch_sse_cancels_while_opening_stream() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_sse_closes_stream_opened_during_cancellation() -> None:
+    dispatcher = ExecutionDispatcher()
+    request = _make_sse_request(subtask_id=58)
+    emitter = AsyncMock()
+    stream = _BlockingStream()
+    create_blocker = _CancellationResistantCreate()
+    cancel_event = asyncio.Event()
+    session_manager = AsyncMock()
+    session_manager.register_stream.return_value = cancel_event
+    session_manager.is_cancelled.return_value = False
+
+    with (
+        patch.dict(
+            "sys.modules",
+            {
+                "openai": _build_fake_openai_module(
+                    stream,
+                    create_blocker=create_blocker,
+                )
+            },
+        ),
+        patch(
+            "app.services.execution.dispatcher.OpenAIRequestConverter.from_execution_request",
+            return_value={
+                "model": "test-model",
+                "input": "hello",
+                "metadata": {},
+                "model_config": {},
+            },
+        ),
+        patch("app.services.chat.storage.session.session_manager", session_manager),
+    ):
+        dispatch_task = asyncio.create_task(
+            dispatcher._dispatch_sse(request, _sse_target(), emitter)
+        )
+        await asyncio.wait_for(create_blocker.started.wait(), timeout=1)
+        cancel_event.set()
+        await asyncio.wait_for(dispatch_task, timeout=1)
+
+    assert create_blocker.cancelled.is_set()
+    assert stream.closed.is_set()
+    emitted_events = [call.args[0] for call in emitter.emit.call_args_list]
+    assert [event.type for event in emitted_events] == [EventType.CANCELLED.value]
+    session_manager.unregister_stream.assert_awaited_once_with(request.subtask_id)
+
+
+@pytest.mark.asyncio
 async def test_dispatch_sse_cancels_while_waiting_for_event() -> None:
     dispatcher = ExecutionDispatcher()
-    request = _make_sse_request(subtask_id=57)
+    request = _make_sse_request(subtask_id=59)
     emitter = AsyncMock()
     stream = _BlockingStream()
     redis_cancelled = asyncio.Event()
