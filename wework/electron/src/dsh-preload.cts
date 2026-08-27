@@ -12,6 +12,15 @@ contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
   },
 })
 
+contextBridge.exposeInMainWorld('weworkElectronCloudCredentials', {
+  getDevicePublicKey: () => ipcRenderer.invoke('cloud-credentials:get-device-public-key'),
+  claimAuthorization: (input: { apiBaseUrl: string; sessionId: string; pollToken: string }) =>
+    ipcRenderer.invoke('cloud-credentials:claim-authorization', input),
+  refreshAccessToken: (apiBaseUrl: string) =>
+    ipcRenderer.invoke('cloud-credentials:refresh-access-token', apiBaseUrl),
+  clear: () => ipcRenderer.invoke('cloud-credentials:clear'),
+})
+
 contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
   list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
   chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),

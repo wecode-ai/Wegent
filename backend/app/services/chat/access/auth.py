@@ -14,6 +14,7 @@ from jose import jwt
 from jose.exceptions import ExpiredSignatureError
 
 from app.core.config import settings
+from app.core.session_token import is_user_session_payload
 from app.db.session import SessionLocal
 from app.models.user import User
 
@@ -34,8 +35,8 @@ def verify_jwt_token(token: str) -> Optional[User]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        if payload.get("scope"):
-            logger.debug("Scoped JWT is not a chat session token")
+        if not is_user_session_payload(payload):
+            logger.debug("JWT is not a chat session token")
             return None
         user_name = payload.get("sub")
         if not user_name:

@@ -237,6 +237,12 @@ class WeworkAuthSessionCreateResponse(BaseModel):
     poll_interval_seconds: int
 
 
+class WeworkAuthSessionCreateRequest(BaseModel):
+    """Device public key bound to a Wework desktop authorization session."""
+
+    device_public_key: dict[str, str]
+
+
 class WeworkWebConfigResponse(BaseModel):
     """Web application metadata exposed to Wework desktop."""
 
@@ -249,6 +255,7 @@ class WeworkAuthSessionPollResponse(BaseModel):
 
     status: str
     access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     token_type: Optional[str] = None
     username: Optional[str] = None
     error: Optional[str] = None
@@ -258,3 +265,18 @@ class WeworkAuthSessionActionResponse(BaseModel):
     """Response model for Web authorization approve/decline actions."""
 
     status: str
+
+
+class WeworkTokenRefreshRequest(BaseModel):
+    """Refresh token plus a proof signed by its bound desktop device."""
+
+    refresh_token: str
+    proof: str
+
+
+class WeworkTokenRefreshResponse(BaseModel):
+    """A newly issued short-lived desktop access token."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
