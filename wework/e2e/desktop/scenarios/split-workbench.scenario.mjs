@@ -496,7 +496,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await captureScreenshot(control, '00a-completed-task-restored-from-blank-startup.png', 'body')
 
       await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', COMPOSER, { stableMs: 500 })
       const secondTaskRow = await createTask(control, SECOND_PROMPT, taskTimeoutMs)
       const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
 

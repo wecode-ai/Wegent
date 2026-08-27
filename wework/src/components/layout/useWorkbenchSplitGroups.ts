@@ -15,7 +15,7 @@ import {
   updateActiveWorkbenchSplitSizes,
   type WorkbenchSplitGroupsState,
 } from './workbenchSplitGroups'
-import type { WorkbenchSplitDirection } from './workbenchSplitLayout'
+import { collectWorkbenchPaneKeys, type WorkbenchSplitDirection } from './workbenchSplitLayout'
 
 interface UseWorkbenchSplitGroupsOptions {
   storageKey: string
@@ -51,7 +51,7 @@ export function useWorkbenchSplitGroups({
     )
   })
   const stateRef = useRef(state)
-  const previousActivePaneKeyRef = useRef(activePaneKey)
+  const previousActivePaneKeyRef = useRef<string | null>(null)
   useLayoutEffect(() => {
     stateRef.current = state
   }, [state])
@@ -76,7 +76,17 @@ export function useWorkbenchSplitGroups({
 
   useEffect(() => {
     if (activePaneKey === previousActivePaneKeyRef.current) return
+    const isInitialActivation = previousActivePaneKeyRef.current === null
     previousActivePaneKeyRef.current = activePaneKey
+    if (
+      isInitialActivation &&
+      activePaneKey.startsWith('blank:') &&
+      collectWorkbenchPaneKeys(getActiveWorkbenchLayout(stateRef.current).root).some(key =>
+        key.startsWith('runtime:')
+      )
+    ) {
+      return
+    }
     commit(current => activateWorkbenchPane(current, activePaneKey))
   }, [activePaneKey, commit])
 

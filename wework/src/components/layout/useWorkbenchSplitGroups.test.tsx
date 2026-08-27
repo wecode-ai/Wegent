@@ -55,6 +55,43 @@ describe('useWorkbenchSplitGroups', () => {
     )
   })
 
+  it('replaces a stale persisted blank pane with the current startup blank pane', async () => {
+    localStorage.setItem(
+      storageKey,
+      serializeWorkbenchSplitGroups(createWorkbenchSplitGroupsState('blank:1'))
+    )
+
+    const { result } = renderHook(() =>
+      useWorkbenchSplitGroups({
+        storageKey,
+        legacyStorageKey,
+        activePaneKey: 'blank:2',
+        validRuntimeKeys: [restoredRuntimePaneKey],
+        runtimeKeysReady: true,
+      })
+    )
+
+    await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:2']))
+  })
+
+  it('activates an initial runtime pane over a different persisted runtime pane', async () => {
+    const currentRuntimePaneKey = 'runtime:device:current-task'
+
+    const { result } = renderHook(() =>
+      useWorkbenchSplitGroups({
+        storageKey,
+        legacyStorageKey,
+        activePaneKey: currentRuntimePaneKey,
+        validRuntimeKeys: [restoredRuntimePaneKey, currentRuntimePaneKey],
+        runtimeKeysReady: true,
+      })
+    )
+
+    await waitFor(() =>
+      expect(activePaneKeys(result.current.state)).toEqual([currentRuntimePaneKey])
+    )
+  })
+
   it('opens the current blank pane after explicit navigation', async () => {
     const { result } = renderHook(() =>
       useWorkbenchSplitGroups({
