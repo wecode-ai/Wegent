@@ -30,7 +30,9 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('next/dynamic', () => () => {
-  const MockDynamicComponent = () => <div data-testid="dynamic-component" />
+  const MockDynamicComponent = ({ source }: { source?: string }) => (
+    <div data-testid="dynamic-component">{source}</div>
+  )
   MockDynamicComponent.displayName = 'MockDynamicComponent'
   return MockDynamicComponent
 })
@@ -294,6 +296,37 @@ describe('DocumentDetailDialog external source info', () => {
 })
 
 describe('DocumentDetailDialog processing errors', () => {
+  it('shows stored external content alongside an indexing failure', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...baseDocument,
+          attachment_id: 641,
+          source_type: 'external',
+          is_active: false,
+          index_status: 'failed',
+          processing_error: {
+            stage: 'indexing',
+            code: 'indexing_failed',
+            message: 'Indexing failed.',
+            retryable: true,
+            generation: 2,
+            occurred_at: '2026-08-27T04:00:47Z',
+          },
+        }}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByText('plain text content')).toBeInTheDocument()
+    expect(screen.getByTestId('document-processing-error-detail-11')).toBeInTheDocument()
+    expect(
+      screen.getByText('knowledge:document.document.processingError.codes.indexingFailed')
+    ).toBeInTheDocument()
+  })
+
   it('renders the localized message for a known public error code', () => {
     const failedDocument: KnowledgeDocument = {
       ...baseDocument,

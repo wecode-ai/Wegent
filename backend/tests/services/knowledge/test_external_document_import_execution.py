@@ -476,7 +476,7 @@ class TestExternalDocumentPreviewAndEnableGuards:
                 db=test_db, user=test_user, document_id=document.id
             )
 
-    def test_failed_import_cannot_be_previewed(
+    def test_missing_attachment_cannot_be_previewed(
         self, test_db: Session, test_user: User
     ) -> None:
         from app.services.knowledge.orchestrator import knowledge_orchestrator

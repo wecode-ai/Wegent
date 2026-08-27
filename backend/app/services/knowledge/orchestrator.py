@@ -879,22 +879,12 @@ class KnowledgeOrchestrator:
 
     @staticmethod
     def _assert_external_document_previewable(document: KnowledgeDocument) -> None:
-        """Reject preview of external documents whose content is not usable.
-
-        Placeholders (no attachment yet) and records whose import failed — and
-        which therefore never reached usable content — cannot be previewed. A
-        previously successful document whose later re-index failed keeps its
-        valid content and stays previewable.
-        """
-        from app.models.knowledge import DocumentIndexStatus, DocumentSourceType
+        """Reject placeholders; stored content does not depend on index health."""
+        from app.models.knowledge import DocumentSourceType
 
         if document.source_type != DocumentSourceType.EXTERNAL.value:
             return
-        import_never_succeeded = not document.attachment_id or (
-            document.index_status == DocumentIndexStatus.FAILED
-            and not document.is_active
-        )
-        if import_never_succeeded:
+        if not document.attachment_id:
             raise ValueError("Document content is not ready for preview")
 
     def read_document_content(
@@ -944,6 +934,11 @@ class KnowledgeOrchestrator:
         if result.get("error"):
             raise ValueError(result["error"])
         _validate_document_read_result_payload(result)
+
+        # An attachment ID alone does not prove that stored text is readable.
+        # Use total length, not page length: a valid EOF page can be empty.
+        if document.source_type == "external" and result["total_length"] == 0:
+            raise ValueError("Document content is not ready for preview")
 
         return DocumentContentReadResponse(
             document_id=result["id"],
