@@ -1089,6 +1089,7 @@ async function main() {
     const electronCoreRuntimeRoot =
       harnessRuntimes?.harnessRuntimeRoot ||
       (usesReleasePackageRuntimeAssets ? null : configuredElectronCoreRuntimeRoot)
+    const electronCorePluginsRoot = harnessRuntimes?.corePluginsRoot || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1262,6 +1263,7 @@ async function main() {
       await verifyCoreDshUiPluginComposition({
         control,
         initialRendererLocation: ready.location,
+        pluginsRoot: electronCorePluginsRoot,
         restartDesktopApp,
         runtimeRoot: electronCoreRuntimeRoot,
       })

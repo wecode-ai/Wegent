@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -35,6 +36,7 @@ const [executorPath] = await Promise.all([
     ? Promise.resolve(resolve(configuredExecutorPath))
     : buildExecutor(executorProfile),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
+  buildDshApp(),
 ])
 
 await rm(resourcesRoot, { recursive: true, force: true })
@@ -156,6 +158,17 @@ function pluginTarget(directory) {
     'ui-automations': 'wework-ui-automations',
     'ui-cloud-work': 'wework-ui-cloud-work',
   }[directory]
+}
+
+async function buildDshApp() {
+  await run(pnpmCommand, ['run', 'build:dsh-app'], weworkRoot)
+  const output = join(weworkRoot, 'dsh', 'app-wework', 'web')
+  const manifestPath = join(output, 'flyfish-viewer-assets.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, output), null, 2)}\n`
+  )
 }
 
 async function sha256(path) {

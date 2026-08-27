@@ -130,8 +130,12 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain('const packagedResources = join(')
-    expect(source).toContain("['resources', 'harness-runtime']")
+    expect(source).toContain('const packagedResourcesRoot = join(')
+    expect(source).toContain(
+      "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
+    )
+    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
 
