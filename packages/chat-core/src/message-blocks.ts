@@ -94,6 +94,24 @@ export interface ImageBlock extends BaseBlock {
   content?: string;
 }
 
+export type CardStatus =
+  | "pending"
+  | "partial_ready"
+  | "populated"
+  | "error"
+  | "expired";
+
+/** Generic asynchronous card block. Feature packages own card_data rendering. */
+export interface CardBlock extends BaseBlock {
+  type: "card";
+  card_id: string;
+  card_type: string;
+  card_status: CardStatus;
+  card_data: Record<string, unknown>;
+  card_preview_data?: Record<string, unknown>;
+  card_error?: string | null;
+}
+
 export interface PromptChangeItem {
   type: "ghost" | "member";
   id: number;
@@ -158,6 +176,7 @@ export type MessageBlock =
   | ErrorBlock
   | VideoBlock
   | ImageBlock
+  | CardBlock
   | PromptOptimizationBlock
   | SubscriptionPreviewBlockType;
 

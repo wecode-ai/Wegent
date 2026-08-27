@@ -2283,7 +2283,8 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('sends configured model settings to a cloud device executor', async () => {
+  test('sends configured model settings without leaking local proxy to a cloud device', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
     saveLocalModelConfig({
       id: 'cloud-ollama',
       displayName: 'Cloud Ollama',
@@ -2361,6 +2362,19 @@ describe('createLocalAppServices', () => {
     expect(createPayload.executionRequest.model_config).toEqual(expectedModelConfig)
     expect(sendPayload.executionRequest.model_config).toEqual(expectedModelConfig)
     expect(supervisorPayload.modelConfig).toEqual(expectedModelConfig)
+    for (const modelConfig of [
+      createPayload.executionRequest.model_config,
+      sendPayload.executionRequest.model_config,
+      supervisorPayload.modelConfig,
+    ]) {
+      expect(modelConfig).not.toHaveProperty('proxy')
+      expect(modelConfig.runtime_config?.codex).not.toEqual(
+        expect.objectContaining({
+          use_proxy: true,
+          proxy_configured: true,
+        })
+      )
+    }
     expect(requestModelCatalogSync).toHaveBeenCalledWith(
       expect.objectContaining({
         deviceId: 'cloud-device',
@@ -2398,7 +2412,8 @@ describe('createLocalAppServices', () => {
     })
   })
 
-  test('builds cloud automation payloads from a remotely synchronized model catalog', async () => {
+  test('builds cloud automation payloads without leaking the local proxy', async () => {
+    saveLocalProxyUrl('http://127.0.0.1:7890')
     saveLocalModelConfig({
       id: 'cloud-automation-task',
       displayName: 'Cloud Automation Task',
@@ -2489,6 +2504,8 @@ describe('createLocalAppServices', () => {
       model_id: 'qwen3-coder-continuation',
       api_key: 'cloud-device-key',
     })
+    expect(automation.taskPayload.executionRequest.model_config).not.toHaveProperty('proxy')
+    expect(automation.continuationPayload.executionRequest.model_config).not.toHaveProperty('proxy')
     expect(prepareRuntimeModel).toHaveBeenCalledWith({
       deviceId: 'cloud-device',
       modelId: 'local-model:cloud-automation-task',
@@ -3652,7 +3669,7 @@ describe('createLocalAppServices', () => {
     )
   })
 
-  test('adds configured local proxy to local runtime execution requests', async () => {
+  test('adds configured local proxy to local runtime model configurations', async () => {
     saveLocalProxyUrl('http://127.0.0.1:7890')
     const request = vi.fn().mockResolvedValue({ accepted: true })
     const services = createLocalAppServices({
@@ -3670,21 +3687,53 @@ describe('createLocalAppServices', () => {
       title: 'Hello',
       modelId: 'gpt-5.4',
     })
+    await services.runtimeWorkApi?.sendRuntimeMessage({
+      address: {
+        deviceId: 'device-uuid',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      message: 'continue',
+      modelId: 'gpt-5.4',
+    })
+    await services.runtimeWorkApi?.setRuntimeSupervisor({
+      address: {
+        deviceId: 'device-uuid',
+        workspacePath: '/Users/me/project',
+        taskId: 'task-1',
+      },
+      mode: 'auto',
+      modelSelection: {
+        modelName: 'gpt-5.4',
+        modelType: 'runtime',
+        options: {},
+      },
+      intervalSeconds: 30,
+    })
 
     const createPayload = request.mock.calls.find(
       ([method]) => method === 'runtime.tasks.create'
     )?.[1]
-    const modelConfig = createPayload.executionRequest.model_config
+    const sendPayload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+    const supervisorPayload = request.mock.calls.find(
+      ([method]) => method === 'runtime.tasks.supervisor.set'
+    )?.[1]
 
-    expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
-    expect(modelConfig.runtime_config.codex).toEqual(
-      expect.objectContaining({
-        use_user_config: true,
-        configured: true,
-        use_proxy: true,
-        proxy_configured: true,
-      })
-    )
+    for (const modelConfig of [
+      createPayload.executionRequest.model_config,
+      sendPayload.executionRequest.model_config,
+      supervisorPayload.modelConfig,
+    ]) {
+      expect(modelConfig.proxy).toEqual({ url: 'http://127.0.0.1:7890' })
+      expect(modelConfig.runtime_config.codex).toEqual(
+        expect.objectContaining({
+          use_user_config: true,
+          configured: true,
+          use_proxy: true,
+          proxy_configured: true,
+        })
+      )
+    }
   })
 
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {

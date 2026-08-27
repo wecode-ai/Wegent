@@ -9,8 +9,10 @@
  */
 
 import type { TaskDetail, TaskDetailSubtask, TaskStatus as ApiTaskStatus } from '../api-types'
+import type { MessageBlock } from '../message-blocks'
 import {
   reduceChatCancelledEvent,
+  reduceChatBlockUpdatedEvent,
   reduceChatChunkEvent,
   reduceChatDoneEvent,
   reduceChatErrorEvent,
@@ -276,7 +278,7 @@ export class TaskStateMachine {
       : this.getSyncAfterMessageIdBeforeSubtask(this.state.runtime.activeStreamSubtaskId)
     this.applyTaskLifecycleStatus(server.task_status, server.status_updated_at ?? undefined)
 
-    const shouldJoinOrResume = this.shouldJoinOrResume(server)
+    const shouldJoinOrResume = this.shouldJoinOrResume(server, reason)
     this.recordRuntimeVerification(server)
 
     if (shouldJoinOrResume) {
@@ -370,6 +372,13 @@ export class TaskStateMachine {
   }
 
   /**
+   * Update a data block without changing the message or runtime lifecycle.
+   */
+  handleChatBlockUpdated(subtaskId: number, block: Partial<MessageBlock> & { id: string }): void {
+    this.dispatch({ type: 'CHAT_BLOCK_UPDATED', subtaskId, block })
+  }
+
+  /**
    * Handle chat:error event
    */
   handleChatError(subtaskId: number, error: string, messageId?: number, errorType?: string): void {
@@ -459,7 +468,15 @@ export class TaskStateMachine {
     }
   }
 
-  private shouldJoinOrResume(server: TaskRuntimeVerifyResult): boolean {
+  private shouldJoinOrResume(
+    server: TaskRuntimeVerifyResult,
+    reason: TaskRecoveryReason
+  ): boolean {
+    // Socket.IO room membership is connection-scoped. A reconnect always needs
+    // a fresh task:join, including for terminal chat tasks whose async cards may
+    // still be progressing after the assistant response has completed.
+    if (reason === 'websocket-reconnect') return true
+
     const serverUpdatedAt = server.status_updated_at ?? undefined
     if (serverUpdatedAt && this.state.runtime.messagesSyncedUpdatedAt !== serverUpdatedAt) {
       return true
@@ -741,6 +758,14 @@ export class TaskStateMachine {
 
       case 'CHAT_DONE':
         this.state = reduceChatDoneEvent({
+          state: this.state,
+          event,
+          deriveRuntimeState: runtime => this.deriveRuntimeState(runtime),
+        })
+        break
+
+      case 'CHAT_BLOCK_UPDATED':
+        this.state = reduceChatBlockUpdatedEvent({
           state: this.state,
           event,
           deriveRuntimeState: runtime => this.deriveRuntimeState(runtime),

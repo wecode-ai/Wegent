@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { MoreHorizontal } from 'lucide-react'
-import type { RefObject } from 'react'
+import type { ReactNode, RefObject } from 'react'
 import { ActionButton } from '@/components/ui/action-button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -36,6 +36,7 @@ interface InputMoreActionsMenuProps {
   selectedSkillNames: string[]
   onToggleSkill?: (skillName: string) => void
   skillSelectorRef?: RefObject<SkillSelectorPopoverRef | null>
+  additionalItems?: ReactNode
 }
 
 export function InputMoreActionsMenu({
@@ -56,13 +57,14 @@ export function InputMoreActionsMenu({
   selectedSkillNames,
   onToggleSkill,
   skillSelectorRef,
+  additionalItems,
 }: InputMoreActionsMenuProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const showSkillSelector = availableSkills.length > 0 && Boolean(onToggleSkill)
   const selectedSkillCount = selectedSkillNames.length
 
-  if (!showClarification && !showCorrection && !showSkillSelector) {
+  if (!additionalItems && !showClarification && !showCorrection && !showSkillSelector) {
     return null
   }
 
@@ -98,6 +100,8 @@ export function InputMoreActionsMenu({
           className="w-56 p-1"
           data-testid="desktop-input-more-actions-menu"
         >
+          {additionalItems}
+
           {showSkillSelector && onToggleSkill && (
             <SkillSelectorPopover
               ref={skillSelectorRef}

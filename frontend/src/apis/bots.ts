@@ -31,6 +31,8 @@ export interface CreateBotRequest {
   preload_skill_refs?: Record<string, SkillRefMeta>
   target_group_names?: string[] // Transient context for validating team-scoped Skills
   namespace?: string // Group namespace, defaults to 'default' for personal bots
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string
 }
 
 export interface UpdateBotRequest {
@@ -47,6 +49,8 @@ export interface UpdateBotRequest {
   target_group_names?: string[] // Transient context for validating team-scoped Skills
   is_active?: boolean
   namespace?: string // Group namespace
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string
 }
 export interface BotListResponse {
   total: number

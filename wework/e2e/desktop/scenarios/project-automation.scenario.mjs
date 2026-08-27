@@ -984,6 +984,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('select', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
     await control.command('select', executionProject, { value: 'standalone' })
     const initialUpstreamRequestOffset = upstreamResponseRequests.length
+    await control.command('setLocalProxyUrl', 'body', {
+      value: 'http://127.0.0.1:1',
+    })
     await control.command('clickWhenEnabled', '[data-testid="issue-execution-config-confirm"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1066,6 +1069,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
       'The Issue produced a duplicate request through a model other than Moonshot'
     )
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
 
     const runtimeWork = await waitForValue(
       () => cloudRequest('/api/runtime-work'),
@@ -2838,6 +2842,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await waitForValue(
+        async () => JSON.parse(await control.command('snapshot', projectChatPanel)),
+        snapshot =>
+          !snapshot.testIds.includes('thinking-indicator') &&
+          !snapshot.testIds.includes('message-assistant-waiting') &&
+          !snapshot.testIds.includes('pause-response-button'),
+        'Project chat remained in the thinking state after the runtime task completed',
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'project-chat-model-routing.png')
       await control.command(
         'click',

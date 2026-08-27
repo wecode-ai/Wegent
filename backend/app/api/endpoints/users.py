@@ -126,7 +126,6 @@ class UserRuntimeConfigUpdateRequest(BaseModel):
     """Update request for runtime config preferences."""
 
     use_user_config: bool
-    use_proxy: Optional[bool] = None
 
 
 class UserRuntimeAuthJsonRequest(BaseModel):
@@ -364,7 +363,6 @@ async def update_user_runtime_config(
                 user=current_user,
                 runtime=runtime,
                 use_user_config=request.use_user_config,
-                use_proxy=request.use_proxy,
             )
         )
     except UserRuntimeConfigError as exc:

@@ -69,9 +69,7 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     def fake_get_execution_config(db, *, user_id, runtime, preferences=None):
         assert user_id == 7
         assert runtime == "codex"
-        assert preferences == {
-            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
-        }
+        assert preferences == {"runtime_configs": {"codex": {"use_user_config": True}}}
         return {
             "runtime": "codex",
             "display_name": "Codex",
@@ -95,11 +93,7 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
         request=request,
         user=SimpleNamespace(
             id=7,
-            preferences={
-                "runtime_configs": {
-                    "codex": {"use_user_config": True, "use_proxy": True}
-                }
-            },
+            preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
         ),
     )
 
