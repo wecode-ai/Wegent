@@ -614,6 +614,8 @@
         "lastSynced": "上次刷新",
         "unsupported": "暂不支持导入",
         "selectedCount": "已选 {{count}} 篇",
+        "folderDocumentCount": "{{count}} 篇",
+        "folderDocumentCountHint": "可导入文档数，包含所有下级",
         "limitError": "一次最多导入 50 篇文档，请减少选择后重试",
         "sharedHint": "导入的内容将对知识库成员可见",
         "noPermission": "你没有在当前知识库添加文档的权限",

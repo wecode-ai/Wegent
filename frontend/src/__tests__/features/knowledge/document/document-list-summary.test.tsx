@@ -375,7 +375,13 @@ describe('DocumentList summary header', () => {
     const selectCurrentPage = screen.getByTestId('document-select-current-page')
     const defaultScopeHint = screen.getByText('artifact.sourceDialog.defaultAllHint')
 
-    expect(addSource).toHaveClass('w-full')
+    expect(addSource).toHaveClass(
+      'w-full',
+      'h-11',
+      'bg-primary',
+      'text-white',
+      'hover:bg-primary/90'
+    )
     expect(search).toHaveClass('w-full')
     expect(search).toHaveAccessibleName()
     expect(screen.getByText('artifact.addMaterials')).toBeInTheDocument()

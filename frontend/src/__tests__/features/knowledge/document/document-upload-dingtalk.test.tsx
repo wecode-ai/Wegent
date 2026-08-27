@@ -63,6 +63,9 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.lastSynced': 'Last refreshed',
         'document.upload.dingtalk.unsupported': 'Cannot be imported',
         'document.upload.dingtalk.selectedCount': 'Selected: {{count}}',
+        'document.upload.dingtalk.folderDocumentCount': '{{count}} documents',
+        'document.upload.dingtalk.folderDocumentCountHint':
+          'Importable documents, including all descendants',
         'document.upload.dingtalk.limitError': 'At most 50 documents can be imported at once',
         'document.upload.dingtalk.sharedHint':
           'Imported content will be visible to knowledge base members',
@@ -611,6 +614,67 @@ describe('DocumentUpload dingtalk source', () => {
 
     expect(screen.getByTestId('dingtalk-node-select-folder-1')).toBeInTheDocument()
     expect(screen.queryByTestId('dingtalk-node-unsupported-folder-1')).not.toBeInTheDocument()
+  })
+
+  it('shows stable folder document totals across expansion, selection, and search', async () => {
+    await openDingtalkMode()
+    const total = screen.getByTestId('dingtalk-folder-document-count-folder-1')
+    expect(total).toHaveTextContent('2 documents')
+    expect(total).toHaveAttribute('title', 'Importable documents, including all descendants')
+
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(total).toHaveTextContent('2 documents')
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-1'))
+    expect(total).toHaveTextContent('2 documents')
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(total).toHaveTextContent('2 documents')
+
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), { target: { value: 'spec' } })
+    expect(screen.queryByTestId('dingtalk-document-option-doc-2')).not.toBeInTheDocument()
+    expect(total).toHaveTextContent('2 documents')
+  })
+
+  it('counts unique importable descendants regardless of import status and shows empty folders as zero', async () => {
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        folderNode('folder-1', 'Project', [
+          folderNode('nested', 'Nested', [docNode('doc-1', 'Spec Doc')]),
+          docNode('doc-2', 'Parent Doc', {
+            children: [docNode('doc-3', 'Child Doc'), docNode('doc-1', 'Spec Doc')],
+          }),
+          folderNode('empty', 'Empty'),
+          folderNode('unsupported', 'Files', [makeNode({ node_type: 'file' })]),
+        ]),
+      ],
+      total_count: 10,
+    })
+    mockGetExternalDocumentImportStatuses.mockResolvedValue({
+      'doc-1': 'success',
+      'doc-2': 'failed',
+      'doc-3': 'indexing',
+    })
+    await openDingtalkMode()
+    expect(screen.getByTestId('dingtalk-folder-document-count-folder-1')).toHaveTextContent(
+      '3 documents'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(await screen.findByTestId('dingtalk-import-status-doc-2')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-folder-document-count-nested')).toHaveTextContent(
+      '1 documents'
+    )
+    expect(screen.getByTestId('dingtalk-folder-document-count-empty')).toHaveTextContent(
+      '0 documents'
+    )
+    expect(screen.getByTestId('dingtalk-folder-document-count-unsupported')).toHaveTextContent(
+      '0 documents'
+    )
+    expect(screen.queryByTestId('dingtalk-folder-document-count-doc-2')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 3')
+    expect(screen.getByTestId('dingtalk-folder-document-count-folder-1')).toHaveTextContent(
+      '3 documents'
+    )
   })
 
   it('expands folders inline without selecting them or hiding sibling documents', async () => {

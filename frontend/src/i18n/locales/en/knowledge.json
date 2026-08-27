@@ -614,6 +614,8 @@
         "lastSynced": "Last refreshed",
         "unsupported": "Cannot be imported",
         "selectedCount": "{{count}} selected",
+        "folderDocumentCount": "{{count}} docs",
+        "folderDocumentCountHint": "Importable documents, including all descendants",
         "limitError": "At most 50 documents can be imported at once. Reduce the selection and retry",
         "sharedHint": "Imported content will be visible to knowledge base members",
         "noPermission": "You do not have permission to add documents to this knowledge base",

@@ -144,6 +144,15 @@ function ImportTreeNode({
         >
           <Icon className="h-4 w-4 shrink-0 text-text-muted" />
           <span className="truncate">{node.name}</span>
+          {folder && (
+            <span
+              className="shrink-0 text-xs text-text-muted"
+              title={t('document.upload.dingtalk.folderDocumentCountHint')}
+              data-testid={`dingtalk-folder-document-count-${node.dingtalk_node_id}`}
+            >
+              {t('document.upload.dingtalk.folderDocumentCount', { count: ids.length })}
+            </span>
+          )}
         </button>
         {importStatus && (
           <span
