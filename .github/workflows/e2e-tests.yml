@@ -351,6 +351,7 @@ jobs:
           INIT_DATA_ENABLED: "true"
           RAG_RUNTIME_MODE: remote
           KNOWLEDGE_RUNTIME_URL: http://localhost:8200
+          CHUNK_STORAGE_ENABLED: "true"
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
