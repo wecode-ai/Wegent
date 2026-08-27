@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
@@ -926,6 +926,7 @@ describe('ProjectAutomationView', () => {
   })
 
   test('refreshes run history when the visible desktop regains focus', async () => {
+    const visibilityState = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     const queuedRun: ProjectAutomationRun = {
       ...run,
       id: 'run-refresh',
@@ -942,6 +943,9 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     expect(await screen.findByTestId('current-run-run-refresh')).toHaveTextContent('排队中')
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     vi.mocked(projectAutomationApi.listRuns).mockResolvedValue([
       {
@@ -950,11 +954,17 @@ describe('ProjectAutomationView', () => {
         completedAt: '2026-08-25T02:38:18Z',
       },
     ])
-    document.dispatchEvent(new Event('visibilitychange'))
+    visibilityState.mockReturnValue('visible')
+    fireEvent(document, new Event('visibilitychange'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('current-run-run-refresh')).toHaveTextContent('成功')
-    )
+    try {
+      await waitFor(() => {
+        expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(2)
+        expect(screen.getByTestId('current-run-run-refresh')).toHaveTextContent('成功')
+      })
+    } finally {
+      visibilityState.mockRestore()
+    }
   })
 
   test('promotes a legacy Issue workflow as soon as automation rules load', async () => {

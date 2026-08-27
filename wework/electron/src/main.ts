@@ -21,6 +21,7 @@ import {
 import electronUpdater from 'electron-updater'
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -79,18 +80,30 @@ import {
   resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
+import {
+  applyBrandRuntimeEnvironment,
+  type BrandRuntimeMetadata,
+} from './runtime/brand-runtime-environment.js'
+import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const packageMetadata = createRequire(import.meta.url)('../package.json') as {
+  weworkAppId?: string
+  weworkUpdateBaseUrl?: string
+} & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
+const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
+  packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
 
 const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), 'io.wecode.wework')
+  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
 app.setPath('userData', resolve(userDataPath))
 
 let mainWindow: BrowserWindow | null = null
@@ -123,6 +136,7 @@ let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let mainWindowCloseRequestRevision = 0
 let dockVisible = true
+let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
@@ -146,9 +160,14 @@ const appUpdates = new AppUpdateService({
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
+if (keepE2EWindowInBackground) {
+  app.setActivationPolicy('prohibited')
+}
+
 if (!hasSingleInstanceLock) app.quit()
 
 app.on('second-instance', () => {
+  if (keepE2EWindowInBackground) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -664,7 +683,9 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
         if (event === 'closed') mainWindow?.once('closed', listener)
         else mainWindow?.once('ready-to-show', listener)
       },
-      show: () => mainWindow?.show(),
+      show: () => {
+        if (!keepE2EWindowInBackground) mainWindow?.show()
+      },
       webContents: {
         capturePage: async () => {
           if (!mainWindow) throw new Error('Main window is unavailable')
@@ -740,6 +761,10 @@ async function hideMainWindowToBackground(): Promise<void> {
   console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
   target.hide()
   if (process.platform === 'darwin') {
+    if (keepE2EWindowInBackground) {
+      e2eForegroundActivationAllowed = false
+      app.setActivationPolicy('prohibited')
+    }
     app.hide()
     await setDockVisible(false)
   }
@@ -759,6 +784,10 @@ async function cancelMainWindowClose(): Promise<void> {
 async function reactivateMainWindow(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
+  if (keepE2EWindowInBackground) {
+    e2eForegroundActivationAllowed = true
+    app.setActivationPolicy('regular')
+  }
   await setDockVisible(true)
   await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
@@ -918,7 +947,7 @@ async function configureDesktopRuntime(): Promise<void> {
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'))
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   await embeddedBrowserBridge.start()
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
@@ -1122,7 +1151,7 @@ function startDesktopRuntime(): Promise<void> {
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
       console.error('[runtime] startup failed', error)
-      mainWindow?.show()
+      if (!keepE2EWindowInBackground) mainWindow?.show()
       void startupSplash?.close().catch(splashError => {
         console.error('[startup-splash] failed to close after runtime failure', splashError)
       })
@@ -1136,6 +1165,11 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    if (keepE2EWindowInBackground) {
+      app.hide()
+      app.dock?.hide()
+      dockVisible = false
+    }
     await cleanupStaleTemporaryImages().catch(error => {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
@@ -1170,8 +1204,13 @@ if (hasSingleInstanceLock) {
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
+  const componentResourcesRoot =
+    !app.isPackaged && configuredComponentResourcesRoot
+      ? resolve(configuredComponentResourcesRoot)
+      : resourcesRoot
   componentUpdates ??= new ComponentUpdateManager({
-    resourcesRoot,
+    resourcesRoot: componentResourcesRoot,
     dataDirectory: app.getPath('userData'),
     updateBaseUrl,
     currentAppVersion: app.getVersion(),
@@ -1193,25 +1232,29 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ])
       : developmentRuntimeRoot
   const nodeRuntime = await electronNodeRuntime()
-  return {
-    ...nodeRuntime.environment,
-    WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-    WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
-    WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
-    WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-      resourcesRoot,
-      'bundled-plugins',
-      'wework-personal'
-    ),
-    ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
-      ? {}
-      : existsSync(components.executor)
-        ? { WEWORK_EXECUTOR_PATH: components.executor }
-        : {}),
-    ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
-      ? {}
-      : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-  }
+  return applyBrandRuntimeEnvironment(
+    {
+      ...nodeRuntime.environment,
+      WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+      WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+      WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
+        componentResourcesRoot,
+        'bundled-plugins',
+        'wework-personal'
+      ),
+      ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
+        ? {}
+        : existsSync(components.executor)
+          ? { WEWORK_EXECUTOR_PATH: components.executor }
+          : {}),
+      ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+        ? {}
+        : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
+    },
+    packageMetadata,
+    app.getPath('home')
+  )
 }
 
 function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
@@ -1264,12 +1307,17 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to reactivate main window', error)
   })
 })
 
 app.on('did-become-active', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) {
+    app.hide()
+    return
+  }
   if (mainWindow?.isVisible()) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to restore inactive main window', error)

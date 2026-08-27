@@ -162,6 +162,8 @@ export interface ChatInputControlsProps {
   selectedVideoGenerationMode?: string
   onVideoGenerationModeChange?: (modeId: string) => void
   materialAccept?: string
+  showVideoControlsInChat?: boolean
+  hideDurationSelector?: boolean
 
   // Image mode props (only used when taskType === 'image')
   selectedImageModel?: Model | null
@@ -274,6 +276,8 @@ export function ChatInputControls({
   selectedVideoGenerationMode,
   onVideoGenerationModeChange,
   materialAccept,
+  showVideoControlsInChat = false,
+  hideDurationSelector = false,
   // Image mode props
   selectedImageModel,
   onImageModelChange,
@@ -288,7 +292,7 @@ export function ChatInputControls({
   projectId,
 }: ChatInputControlsProps) {
   // Check if we're in video or image mode
-  const isVideoMode = taskType === 'video'
+  const isVideoMode = taskType === 'video' || showVideoControlsInChat
   const isImageMode = taskType === 'image'
   // Check if we're in generation mode (video or image)
   const isGenerationMode = isVideoMode || isImageMode
@@ -454,6 +458,19 @@ export function ChatInputControls({
         selectedVideoModel={selectedVideoModel}
         onVideoModelChange={onVideoModelChange}
         isVideoModelsLoading={isVideoModelsLoading}
+        showVideoControlsInChat={showVideoControlsInChat}
+        selectedResolution={selectedResolution}
+        onResolutionChange={onResolutionChange}
+        availableResolutions={availableResolutions}
+        resolutionOptions={resolutionOptions}
+        selectedRatio={selectedRatio}
+        onRatioChange={onRatioChange}
+        availableRatios={availableRatios}
+        ratioOptions={ratioOptions}
+        selectedDuration={selectedDuration}
+        onDurationChange={onDurationChange}
+        availableDurations={availableDurations}
+        hideDurationSelector={hideDurationSelector}
       />
     )
   }
@@ -461,14 +478,50 @@ export function ChatInputControls({
   const selectorsDisabled = isStreaming
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
+  const compactVideoControls = isVideoMode && shouldCollapseSelectors
+  const compactVideoMenuItems = compactVideoControls ? (
+    <>
+      {onVideoModelChange && (
+        <ModelSelector
+          selectedModel={selectedVideoModel ?? null}
+          setSelectedModel={model => model && onVideoModelChange(model)}
+          forceOverride={false}
+          setForceOverride={() => {}}
+          selectedTeam={selectedTeam}
+          disabled={isStreaming}
+          isLoading={isVideoModelsLoading}
+          modelCategoryType="video"
+          triggerVariant="menu-item"
+          popoverSide="right"
+        />
+      )}
+      {onVideoGenerationModeChange && videoGenerationModes.length > 1 && (
+        <VideoGenerationModeSelector
+          modes={videoGenerationModes}
+          value={selectedVideoGenerationMode}
+          onChange={onVideoGenerationModeChange}
+          disabled={isStreaming}
+          triggerVariant="menu-item"
+          popoverSide="right"
+        />
+      )}
+    </>
+  ) : null
+  const controlsSpacingClass = shouldHideChatInput
+    ? 'py-3'
+    : shouldCollapseSelectors
+      ? 'pb-2'
+      : 'pb-2 -mt-2.5'
 
   // Desktop layout
   return (
     <div
-      className={`flex items-center justify-between gap-2 px-2 ${shouldHideChatInput ? 'py-3' : 'pb-2 -mt-2.5'}`}
+      className={`flex items-center justify-between px-2 ${compactVideoControls ? 'gap-1' : 'gap-2'} ${controlsSpacingClass}`}
     >
       <div
-        className="flex-1 min-w-0 overflow-visible flex items-center gap-1 flex-wrap"
+        className={`flex min-w-0 flex-1 items-center gap-1 overflow-visible ${
+          compactVideoControls ? 'flex-nowrap' : 'flex-wrap'
+        }`}
         data-tour="input-controls"
         data-testid="input-controls"
       >
@@ -496,7 +549,7 @@ export function ChatInputControls({
         {/* Video Mode Controls - show when taskType is 'video' */}
         {isVideoMode && (
           <>
-            {onVideoGenerationModeChange && (
+            {!compactVideoControls && onVideoGenerationModeChange && (
               <VideoGenerationModeSelector
                 modes={videoGenerationModes}
                 value={selectedVideoGenerationMode}
@@ -505,13 +558,13 @@ export function ChatInputControls({
               />
             )}
             {/* Video Model Selector - using unified ModelSelector with video category */}
-            {onVideoModelChange && (
+            {!compactVideoControls && onVideoModelChange && (
               <ModelSelector
                 selectedModel={selectedVideoModel ?? null}
                 setSelectedModel={model => model && onVideoModelChange(model)}
                 forceOverride={false}
                 setForceOverride={() => {}}
-                selectedTeam={null}
+                selectedTeam={selectedTeam}
                 disabled={isStreaming}
                 isLoading={isVideoModelsLoading}
                 modelCategoryType="video"
@@ -533,6 +586,28 @@ export function ChatInputControls({
                 availableResolutions={availableResolutions ?? ['480p', '720p', '1080p']}
                 resolutionOptions={resolutionOptions}
                 disabled={isStreaming}
+                showDuration={!hideDurationSelector}
+                iconOnly={compactVideoControls}
+              />
+            )}
+            {compactVideoMenuItems && (
+              <InputMoreActionsMenu
+                showClarification={false}
+                enableClarification={enableClarification}
+                setEnableClarification={setEnableClarification}
+                showCorrection={false}
+                enableCorrectionMode={enableCorrectionMode}
+                onCorrectionModeToggle={onCorrectionModeToggle}
+                correctionModelName={correctionModelName}
+                taskId={selectedTaskDetail?.id ?? null}
+                disabled={selectorsDisabled}
+                selectedTeam={selectedTeam}
+                hasMessages={hasMessages}
+                availableSkills={[]}
+                teamSkillNames={[]}
+                preloadedSkillNames={[]}
+                selectedSkillNames={[]}
+                additionalItems={compactVideoMenuItems}
               />
             )}
           </>
@@ -548,7 +623,7 @@ export function ChatInputControls({
                 setSelectedModel={model => model && onImageModelChange(model)}
                 forceOverride={false}
                 setForceOverride={() => {}}
-                selectedTeam={null}
+                selectedTeam={selectedTeam}
                 disabled={isStreaming}
                 isLoading={isImageModelsLoading}
                 modelCategoryType="image"

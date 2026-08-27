@@ -148,6 +148,33 @@ def resolve_generation_model(
             f"Please configure a {model_type} model and retry."
         )
 
+    return resolve_named_generation_model(
+        db=db,
+        context=context,
+        prompt=prompt,
+        model_name=model_name,
+        model_type=model_type,
+    )
+
+
+def resolve_named_generation_model(
+    db: Session,
+    context: GenerationContext,
+    prompt: str,
+    model_name: str,
+    model_type: str,
+) -> dict[str, Any]:
+    """Resolve a user-selected generation model after availability validation."""
+    models = model_aggregation_service.list_available_models(
+        db=db,
+        current_user=context.user,
+        scope="all",
+        include_config=False,
+        model_category_type=model_type,
+    )
+    if not any(model.get("name") == model_name for model in models):
+        raise ValueError(f"Selected {model_type} model '{model_name}' is not available")
+
     request = _build_request(
         db=db,
         context=(context.user, context.task, context.subtask, context.team),
@@ -190,4 +217,5 @@ def _build_request(
         enable_deep_thinking=False,
         override_model_name=override_model_name,
         force_override=force_override,
+        use_secondary_model_for_generation_chat=False,
     )

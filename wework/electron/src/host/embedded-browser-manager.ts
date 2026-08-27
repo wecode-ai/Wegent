@@ -23,6 +23,7 @@ export interface BrowserPageState {
   title: string | null
   url: string | null
   isLoading: boolean
+  visible: boolean
   navigationError: {
     code: number
     message: string
@@ -178,7 +179,7 @@ export class EmbeddedBrowserManager {
         this.emit('popup', {
           popupId: randomUUID(),
           parentLabel: entry.label,
-          parentNativeLabel: entry.label,
+          parentNativeLabel: entry.nativeLabel,
           url,
           origin: new URL(url).origin,
           kind: 'window-open',
@@ -332,6 +333,7 @@ export class EmbeddedBrowserManager {
       title: contents.getTitle() || null,
       url: pendingUrl || visibleCurrentUrl || entry.requestedUrl,
       isLoading: contents.isLoading(),
+      visible: entry.visible,
       navigationError: entry.navigationError,
     }
   }

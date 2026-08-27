@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import JSZip from 'jszip'
 import {
+  Box,
   Boxes,
   CalendarDays,
   CheckCircle2,
@@ -47,6 +48,7 @@ import {
 import { ActionMenu, type ActionMenuItem } from '@/components/common/ActionMenu'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SmartAppsSectionNav } from '@/components/smart-apps/SmartAppsSectionNav'
+import { ApplicationContextToolbar } from '@/components/sites/ApplicationContextToolbar'
 import { Button } from '@/components/ui/button'
 import { HarnessAppInstallDialog } from '@/features/harness-apps/HarnessAppInstallDialog'
 import {
@@ -842,9 +844,8 @@ export function SmartAppsMarketplacePage({
       onDragOver={mode === 'owned' ? event => event.preventDefault() : undefined}
       onDrop={mode === 'owned' ? event => void dropCreatedPackage(event) : undefined}
     >
-      <SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />
       {mode === 'owned' ? (
-        <header className="mt-4 flex justify-end md:absolute md:right-8 md:top-4 md:mt-0">
+        <header className="mb-3 flex justify-end md:absolute md:right-8 md:top-4 md:mb-0">
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -886,85 +887,85 @@ export function SmartAppsMarketplacePage({
         </header>
       ) : null}
 
-      <div className="mt-5 flex flex-wrap gap-3">
-        <label className="relative min-w-[220px] flex-1">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-text-muted" />
-          <input
-            data-testid={
-              mode === 'owned' ? 'smart-apps-owned-search' : 'smart-apps-marketplace-search'
-            }
-            value={query}
-            placeholder={t('workbench.smart_apps_search', '搜索工作台')}
-            className="h-9 w-full rounded-lg border border-border/50 bg-background pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15"
-            onChange={event => setQuery(event.target.value)}
-          />
-        </label>
-        {mode === 'marketplace' ? (
-          <>
-            <select
-              data-testid="smart-apps-marketplace-source"
-              value={source}
-              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
-              onChange={event => setSource(event.target.value as typeof source)}
-            >
-              <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
-              <option value="official">
-                {t('workbench.smart_apps_source_official', '官方工作台')}
-              </option>
-              <option value="shared">{t('workbench.smart_apps_source_shared', '分享给我')}</option>
-            </select>
-            <select
-              data-testid="smart-apps-marketplace-tag"
-              value={tag}
-              className="h-9 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
-              onChange={event => setTag(event.target.value)}
-            >
-              <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
-              {tags.map(item => (
-                <option key={item.id} value={item.id}>
-                  {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
-                </option>
-              ))}
-            </select>
-          </>
-        ) : (
-          <div
-            className="flex h-9 items-center rounded-lg border border-border/50 bg-surface/30 p-0.5"
-            data-testid="smart-apps-owned-filters"
-          >
-            {(
-              [
-                ['all', t('workbench.smart_apps_filter_all', '全部'), ownedCards.length],
-                [
-                  'created',
-                  t('workbench.smart_apps_filter_created', '我创建/导入的'),
-                  ownedCards.filter(card => card.category === 'created').length,
-                ],
-                [
-                  'installed',
-                  t('workbench.smart_apps_filter_installed', '我安装的'),
-                  ownedCards.filter(card => card.category === 'installed').length,
-                ],
-              ] as Array<[OwnedFilter, string, number]>
-            ).map(([value, label, count]) => (
-              <button
-                key={value}
-                type="button"
-                data-testid={`smart-apps-owned-filter-${value}`}
-                aria-pressed={ownedFilter === value}
-                className={`h-8 rounded-md px-3 text-sm transition-colors ${
-                  ownedFilter === value
-                    ? 'bg-background font-medium text-text-primary shadow-sm'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-                onClick={() => setOwnedFilter(value)}
+      <ApplicationContextToolbar
+        leading={<SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />}
+        searchLabel={t('workbench.smart_apps_search', '搜索工作台')}
+        searchPlaceholder={t('workbench.smart_apps_search', '搜索工作台')}
+        searchTestId={
+          mode === 'owned' ? 'smart-apps-owned-search' : 'smart-apps-marketplace-search'
+        }
+        value={query}
+        onValueChange={setQuery}
+        trailing={
+          mode === 'marketplace' ? (
+            <>
+              <select
+                data-testid="smart-apps-marketplace-source"
+                value={source}
+                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                onChange={event => setSource(event.target.value as typeof source)}
               >
-                {label} <span className="ml-1 text-xs text-text-muted">{count}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+                <option value="all">{t('workbench.smart_apps_source_all', '全部来源')}</option>
+                <option value="official">
+                  {t('workbench.smart_apps_source_official', '官方工作台')}
+                </option>
+                <option value="shared">
+                  {t('workbench.smart_apps_source_shared', '分享给我')}
+                </option>
+              </select>
+              <select
+                data-testid="smart-apps-marketplace-tag"
+                value={tag}
+                className="h-full min-w-32 rounded-lg border border-border/50 bg-background px-3 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus/15"
+                onChange={event => setTag(event.target.value)}
+              >
+                <option value="">{t('workbench.smart_apps_tag_all', '全部标签')}</option>
+                {tags.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {i18n.language.startsWith('zh') ? item.name_zh : item.name_en}
+                  </option>
+                ))}
+              </select>
+            </>
+          ) : (
+            <div
+              className="flex h-full items-center rounded-lg border border-border/50 bg-surface/40 p-0.5"
+              data-testid="smart-apps-owned-filters"
+            >
+              {(
+                [
+                  ['all', t('workbench.smart_apps_filter_all', '全部'), ownedCards.length],
+                  [
+                    'created',
+                    t('workbench.smart_apps_filter_created', '我创建/导入的'),
+                    ownedCards.filter(card => card.category === 'created').length,
+                  ],
+                  [
+                    'installed',
+                    t('workbench.smart_apps_filter_installed', '我安装的'),
+                    ownedCards.filter(card => card.category === 'installed').length,
+                  ],
+                ] as Array<[OwnedFilter, string, number]>
+              ).map(([value, label, count]) => (
+                <button
+                  key={value}
+                  type="button"
+                  data-testid={`smart-apps-owned-filter-${value}`}
+                  aria-pressed={ownedFilter === value}
+                  className={`h-full rounded-md px-3 text-sm transition-colors ${
+                    ownedFilter === value
+                      ? 'bg-background font-medium text-text-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  onClick={() => setOwnedFilter(value)}
+                >
+                  {label} <span className="ml-1 text-xs text-text-muted">{count}</span>
+                </button>
+              ))}
+            </div>
+          )
+        }
+      />
 
       {!loading && hasItems ? (
         <div className="mt-4 flex min-h-8 items-center justify-between gap-4 text-xs text-text-muted">
@@ -1010,7 +1011,7 @@ export function SmartAppsMarketplacePage({
 
       {!api && mode === 'marketplace' ? (
         <EmptyState
-          icon={<Boxes className="h-6 w-6" />}
+          icon={<Box className="h-6 w-6" />}
           title={t('workbench.smart_apps_cloud_required', '连接云端后使用智能工作台市场')}
           description={t(
             'workbench.smart_apps_cloud_required_hint',
@@ -1034,7 +1035,7 @@ export function SmartAppsMarketplacePage({
         </div>
       ) : !hasItems ? (
         <EmptyState
-          icon={<Boxes className="h-6 w-6" />}
+          icon={<Box className="h-6 w-6" />}
           title={
             mode === 'owned'
               ? t('workbench.smart_apps_my_empty', '还没有符合条件的工作台')
@@ -1528,7 +1529,7 @@ function SmartAppCard({
         <img src={iconUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" />
       ) : (
         <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-border/40 bg-surface/30 text-text-secondary">
-          <Boxes className="h-6 w-6" />
+          <Box className="h-6 w-6" />
         </span>
       )}
       <span className="min-w-0 flex-1">
@@ -1601,7 +1602,7 @@ function SmartAppCard({
           <Puzzle className="h-3.5 w-3.5" aria-hidden="true" />v{version}
         </span>
       </div>
-      <div className="mt-3 flex min-h-9 flex-wrap items-end justify-between gap-3">
+      <div className="mt-4 flex min-h-9 flex-wrap items-end justify-between gap-3 border-t border-border/40 pt-4">
         <div className="min-w-0 flex-1">{supplementary}</div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
       </div>
@@ -1621,7 +1622,7 @@ function EmptyState({
   action?: React.ReactNode
 }) {
   return (
-    <div className="mt-5 flex min-h-[320px] flex-col items-center justify-center rounded-2xl border border-dashed border-border/45 bg-surface/25 px-8 text-center">
+    <div className="mt-5 flex min-h-[320px] flex-col items-center justify-center rounded-2xl border border-border/45 bg-background px-8 text-center">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border/30 bg-background text-text-secondary">
         {icon}
       </div>

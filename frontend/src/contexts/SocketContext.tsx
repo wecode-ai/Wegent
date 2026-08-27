@@ -266,6 +266,7 @@ export function SocketProvider({ children }: { children: ReactNode }) {
         path: SOCKETIO_PATH,
         authErrorEvent: ServerEvents.AUTH_ERROR,
         onAuthError: handleAuthError,
+        transports: ['websocket', 'polling'],
         logger: console,
       }),
     [handleAuthError]

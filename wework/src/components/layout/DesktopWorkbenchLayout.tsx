@@ -183,6 +183,11 @@ export function DesktopWorkbenchLayout({
     [state.currentProject, state.currentRuntimeTask, state.standaloneChatKey]
   )
   const activePaneKey = getWorkbenchPaneKey(activePane)
+  const blankPaneKey = getWorkbenchPaneKey({
+    currentRuntimeTask: null,
+    currentProject: null,
+    standaloneChatKey: state.standaloneChatKey,
+  })
   const runtimePaneKeys = useMemo(
     () => getRuntimeWorkbenchPaneKeys(state.runtimeWork),
     [state.runtimeWork]
@@ -365,25 +370,29 @@ export function DesktopWorkbenchLayout({
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const startNewChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
     onNewChat()
-  }, [onNewChat])
+  }, [activateSplitPane, blankPaneKey, onNewChat])
   const startStandaloneChatOutsideHarness = useCallback(() => {
     setActiveLocalHarnessSessionId(null)
+    activateSplitPane(blankPaneKey)
     onStartStandaloneChat()
-  }, [onStartStandaloneChat])
+  }, [activateSplitPane, blankPaneKey, onStartStandaloneChat])
   const selectProjectOutsideHarness = useCallback(
     (projectId: number) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(blankPaneKey)
       onSelectProject(projectId)
     },
-    [onSelectProject]
+    [activateSplitPane, blankPaneKey, onSelectProject]
   )
   const startNewProjectChatOutsideHarness = useCallback(
     (projectId: number) => {
       setActiveLocalHarnessSessionId(null)
+      activateSplitPane(blankPaneKey)
       onStartNewProjectChat(projectId)
     },
-    [onStartNewProjectChat]
+    [activateSplitPane, blankPaneKey, onStartNewProjectChat]
   )
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {

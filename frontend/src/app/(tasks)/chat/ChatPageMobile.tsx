@@ -28,6 +28,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
 import { resolveChatPageTaskType } from '@/utils/taskRouting'
@@ -163,6 +164,7 @@ export function ChatPageMobile() {
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+  const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
 
   // Toast for notifications
   const { toast } = useToast()
@@ -264,6 +266,10 @@ export function ChatPageMobile() {
     saveLastTab('chat')
   }, [])
 
+  useEffect(() => {
+    closeRightPanel()
+  }, [closeRightPanel, taskId])
+
   const handleRefreshTeams = async (): Promise<Team[]> => {
     return await refreshTeams()
   }
@@ -360,6 +366,15 @@ export function ChatPageMobile() {
           shortcutDisplayText={shortcutDisplayText}
           pageType="chat"
         />
+      )}
+      {rightPanelRequest && (
+        <div
+          className="fixed inset-0 z-[70] overflow-hidden bg-surface"
+          data-task-right-panel
+          data-testid="task-right-panel-container"
+        >
+          <TaskRightPanelRenderer request={rightPanelRequest} onClose={closeRightPanel} embedded />
+        </div>
       )}
     </div>
   )

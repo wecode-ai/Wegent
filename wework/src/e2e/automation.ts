@@ -1162,6 +1162,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invokeDesktopHost<string>('e2e.captureWorkspaceWindow')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
+    case 'getEmbeddedBrowserPageState':
+      return JSON.stringify(
+        await invokeDesktopHost('browser.pageState', {
+          label: command.value,
+        })
+      )
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
@@ -1947,7 +1953,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
     fetch(`${url}/commands?clientId=${encodeURIComponent(clientId)}&wait=1`, {
       headers: desktopControlHeaders(),
     })
-  await invokeDesktopHost('e2e.focusWindow', { windowLabel })
   let commandRequest = pollForCommand()
   await waitForDesktopControlTick()
   const readyResponse = await fetch(`${url}/ready`, {

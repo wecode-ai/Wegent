@@ -292,6 +292,10 @@ echo -e "${BLUE}[4/4] Starting Chat Shell server...${NC}"
 export CHAT_SHELL_MODE="http"
 export CHAT_SHELL_STORAGE_TYPE="remote"
 export CHAT_SHELL_REMOTE_STORAGE_URL="$BACKEND_URL/api/internal"
+PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export LOG_FILE_ENABLED="${LOG_FILE_ENABLED:-true}"
+export LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/logs/chat_shell}"
+mkdir -p "$LOG_DIR"
 if [ -n "$BACKEND_TOKEN" ]; then
     export CHAT_SHELL_REMOTE_STORAGE_TOKEN="$BACKEND_TOKEN"
 fi
@@ -308,6 +312,7 @@ echo -e "${GREEN}Environment:${NC}"
 echo -e "  CHAT_SHELL_MODE=$CHAT_SHELL_MODE"
 echo -e "  CHAT_SHELL_STORAGE_TYPE=$CHAT_SHELL_STORAGE_TYPE"
 echo -e "  CHAT_SHELL_REMOTE_STORAGE_URL=$CHAT_SHELL_REMOTE_STORAGE_URL"
+echo -e "  LOG_DIR=$LOG_DIR"
 if [ -n "$WEB_SEARCH_ENABLED" ]; then
     echo -e "  CHAT_SHELL_WEB_SEARCH_ENABLED=$CHAT_SHELL_WEB_SEARCH_ENABLED"
 fi

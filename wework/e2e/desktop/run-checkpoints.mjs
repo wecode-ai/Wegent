@@ -237,6 +237,9 @@ async function readBuildManifest(path) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'native-window-chrome') {
+    nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
+  }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
   if (module) {
     nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module
