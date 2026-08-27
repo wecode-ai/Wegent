@@ -926,6 +926,7 @@ describe('ProjectAutomationView', () => {
   })
 
   test('refreshes run history when the visible desktop regains focus', async () => {
+    const visibilityState = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     const queuedRun: ProjectAutomationRun = {
       ...run,
       id: 'run-refresh',
@@ -950,11 +951,16 @@ describe('ProjectAutomationView', () => {
         completedAt: '2026-08-25T02:38:18Z',
       },
     ])
+    visibilityState.mockReturnValue('visible')
     document.dispatchEvent(new Event('visibilitychange'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('current-run-run-refresh')).toHaveTextContent('成功')
-    )
+    try {
+      await waitFor(() =>
+        expect(screen.getByTestId('current-run-run-refresh')).toHaveTextContent('成功')
+      )
+    } finally {
+      visibilityState.mockRestore()
+    }
   })
 
   test('promotes a legacy Issue workflow as soon as automation rules load', async () => {

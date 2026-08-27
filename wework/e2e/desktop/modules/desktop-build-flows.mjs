@@ -414,6 +414,7 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
       `Set :CFBundleIdentifier ${appIdentifier}`,
       join(appBundlePath, 'Contents', 'Info.plist'),
     ])
+    await runChecked('codesign', ['--force', '--deep', '--sign', '-', appBundlePath])
   }
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
