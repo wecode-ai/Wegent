@@ -159,6 +159,16 @@ export function DingtalkDocumentImport({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [result, setResult] = useState<DingtalkBatchImportSummary | null>(null)
+  const resultItems = result
+    ? [
+        result.createdCount > 0 &&
+          t('document.upload.dingtalk.resultCreated', { count: result.createdCount }),
+        result.updatedCount > 0 &&
+          t('document.upload.dingtalk.resultUpdated', { count: result.updatedCount }),
+        result.processingCount > 0 &&
+          t('document.upload.dingtalk.resultProcessing', { count: result.processingCount }),
+      ].filter(Boolean)
+    : []
 
   const source = sources[activeSource]
 
@@ -410,19 +420,15 @@ export function DingtalkDocumentImport({
         )}
 
         {result !== null ? (
-          <div
-            className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm"
-            data-testid="dingtalk-import-result"
-          >
-            <Check className="w-4 h-4 text-primary flex-shrink-0" />
-            <span>
-              {t('document.upload.dingtalk.result', {
-                created: result.createdCount,
-                updated: result.updatedCount,
-                processing: result.processingCount,
-              })}
-            </span>
-          </div>
+          resultItems.length > 0 && (
+            <div
+              className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm"
+              data-testid="dingtalk-import-result"
+            >
+              <Check className="w-4 h-4 text-primary flex-shrink-0" />
+              <span>{resultItems.join(t('document.upload.dingtalk.resultSeparator'))}</span>
+            </div>
+          )
         ) : (
           <>
             <div className="flex items-center gap-2">

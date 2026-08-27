@@ -605,7 +605,10 @@
         "limitError": "一次最多导入 50 篇文档，请减少选择后重试",
         "sharedHint": "导入的内容将对知识库成员可见",
         "noPermission": "你没有在当前知识库添加文档的权限",
-        "result": "新建 {{created}} 篇，更新 {{updated}} 篇，处理中 {{processing}} 篇",
+        "resultCreated": "新建 {{count}} 篇",
+        "resultUpdated": "更新 {{count}} 篇",
+        "resultProcessing": "{{count}} 篇已在处理中，本次跳过",
+        "resultSeparator": "，",
         "done": "完成"
       },
       "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。"

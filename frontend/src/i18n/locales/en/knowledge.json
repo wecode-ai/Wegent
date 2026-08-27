@@ -605,7 +605,10 @@
         "limitError": "At most 50 documents can be imported at once. Reduce the selection and retry",
         "sharedHint": "Imported content will be visible to knowledge base members",
         "noPermission": "You do not have permission to add documents to this knowledge base",
-        "result": "Created {{created}}, updated {{updated}}, processing {{processing}}",
+        "resultCreated": "Created {{count}}",
+        "resultUpdated": "updated {{count}}",
+        "resultProcessing": "Already processing {{count}} (skipped)",
+        "resultSeparator": ", ",
         "done": "Done"
       },
       "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."

@@ -58,8 +58,10 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.sharedHint':
           'Imported content will be visible to knowledge base members',
         'document.upload.dingtalk.noPermission': 'You do not have permission to add documents',
-        'document.upload.dingtalk.result':
-          'Created {{created}}, updated {{updated}}, processing {{processing}}',
+        'document.upload.dingtalk.resultCreated': 'Created {{count}}',
+        'document.upload.dingtalk.resultUpdated': 'updated {{count}}',
+        'document.upload.dingtalk.resultProcessing': 'Already processing {{count}} (skipped)',
+        'document.upload.dingtalk.resultSeparator': ', ',
         'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
         'document.upload.dingtalk.submitButton': 'Import',
@@ -502,12 +504,36 @@ describe('DocumentUpload dingtalk source', () => {
     fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
 
     expect(await screen.findByTestId('dingtalk-import-result')).toHaveTextContent(
-      'Created 2, updated 1, processing 1'
+      'Created 2, updated 1, Already processing 1 (skipped)'
     )
     // The dialog stays open until the user acknowledges the result.
     expect(onOpenChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('dingtalk-import-done'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it.each([
+    [1, 0, 0, 'Created 1'],
+    [0, 1, 0, 'updated 1'],
+    [0, 0, 1, 'Already processing 1 (skipped)'],
+    [1, 0, 1, 'Created 1, Already processing 1 (skipped)'],
+    [0, 0, 0, null],
+  ])('omits zero result counts (%i, %i, %i)', async (created, updated, processing, expected) => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({
+      createdCount: created,
+      updatedCount: updated,
+      processingCount: processing,
+    })
+    await openDingtalkMode({ onDingtalkImport })
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await screen.findByTestId('dingtalk-import-done')
+
+    if (expected === null) {
+      expect(screen.queryByTestId('dingtalk-import-result')).not.toBeInTheDocument()
+    } else {
+      expect(screen.getByTestId('dingtalk-import-result').textContent).toBe(expected)
+    }
   })
 
   it('keeps the dialog open and shows the error when the import fails', async () => {
