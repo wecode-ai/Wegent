@@ -1,12 +1,18 @@
 import { expect, Page } from '@playwright/test'
 
+const MOBILE_VIEWPORT_MAX_WIDTH = 767
+
 export class ProviderNativeKnowledgePage {
   constructor(private readonly page: Page) {}
 
   async openPicker(): Promise<void> {
     const contextButton = this.page.getByTestId('knowledge-context-button')
-    if (!(await contextButton.isVisible())) {
-      await this.page.getByTestId('mobile-input-more-actions-button').click()
+    const viewportWidth =
+      this.page.viewportSize()?.width ?? (await this.page.evaluate(() => window.innerWidth))
+    if (viewportWidth <= MOBILE_VIEWPORT_MAX_WIDTH) {
+      const moreActionsButton = this.page.getByTestId('mobile-input-more-actions-button')
+      await expect(moreActionsButton).toBeVisible()
+      await moreActionsButton.click()
       await expect(this.page.getByTestId('mobile-input-more-actions-menu')).toBeVisible()
     }
     await expect(contextButton).toBeVisible()
@@ -138,7 +144,7 @@ export class ProviderNativeKnowledgePage {
     knowledgeBaseName: string
   ): Promise<void> {
     const knowledgeBase = this.page.getByTestId(`knowledge-picker-kb-${knowledgeBaseId}`)
-    if (await knowledgeBase.isVisible().catch(() => false)) return
+    if (await knowledgeBase.isVisible()) return
 
     const search = this.page.getByTestId('context-selector-knowledge-search-input')
     await search.fill(knowledgeBaseName)
