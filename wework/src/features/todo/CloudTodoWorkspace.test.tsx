@@ -2591,6 +2591,56 @@ describe('CloudTodoWorkspace', () => {
     expect(
       screen.getByTestId('cloud-todo-attachment-download-attachment-existing')
     ).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-attachment-download-attachment-existing'))
+
+    expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledWith(
+      'attachment-existing',
+      'feedback.png'
+    )
+  })
+
+  it('shows attachment download failures and allows another attempt', async () => {
+    const workbenchServices = services()
+    workbenchServices.deliveryApi!.listLoopItemAttachments = vi.fn(async () => [
+      {
+        id: 'attachment-existing',
+        loop_item_id: item.id,
+        display_name: 'feedback.png',
+        content_type: 'image/png',
+        size_bytes: 2048,
+        sha256: 'existing-hash',
+        created_by_user_id: 1,
+        created_at: '2026-08-26T00:00:00Z',
+        markdown_url: 'wegent://attachments/attachment-existing',
+        markdown:
+          '[feedback.png](wegent://attachments/attachment-existing)\n<!-- wegent-attachment:attachment-existing -->',
+      },
+    ])
+    workbenchServices.deliveryApi!.downloadLoopItemAttachment = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('下载服务不可用'))
+      .mockResolvedValueOnce(undefined)
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    await userEvent.click(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    const download = await screen.findByTestId('cloud-todo-attachment-download-attachment-existing')
+
+    await userEvent.click(download)
+    expect(await screen.findByRole('alert')).toHaveTextContent('下载服务不可用')
+
+    await userEvent.click(download)
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi?.downloadLoopItemAttachment).toHaveBeenCalledTimes(2)
+    )
   })
 
   it('collapses and restores the sidebar chrome', async () => {

@@ -872,11 +872,10 @@
 
 .task-detail-workspace-attachments {
   flex-shrink: 0;
-  margin: 0 16px 14px;
-  padding: 0 13px;
-  border-radius: 10px;
-  background: rgb(var(--color-muted));
-  border-top: 0;
+  margin: 0 20px 14px;
+  padding: 0;
+  border-top: 1px solid rgb(var(--color-border));
+  background: transparent;
 }
 
 .task-detail-workspace-attachments .task-detail-rail-section {
@@ -884,7 +883,7 @@
 }
 
 .task-detail-workspace-attachments .task-detail-section-label {
-  margin: 0 0 6px;
+  margin: 0;
 }
 
 .task-detail-id-row {
@@ -1756,6 +1755,33 @@
   color: rgb(var(--color-text-primary));
 }
 
+.task-detail-rail-file {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 36px;
+  padding: 0;
+}
+
+.task-detail-rail-download {
+  display: grid;
+  min-width: 0;
+  min-height: 36px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.task-detail-rail-download:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 55%);
+  outline-offset: -2px;
+}
+
+.task-detail-rail-download:disabled {
+  cursor: default;
+}
+
 .task-detail-rail-file:hover,
 .task-detail-rail-execution:hover,
 .task-detail-rail-delivery:hover {
@@ -1764,22 +1790,20 @@
 
 .task-detail-rail-icon {
   display: grid;
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  max-width: 32px;
-  min-height: 32px;
-  max-height: 32px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  min-height: 24px;
+  max-height: 24px;
   overflow: hidden;
   place-items: center;
-  border-radius: 9px;
-  background: rgb(var(--color-muted) / 0.72);
   color: rgb(var(--color-text-muted));
 }
 
 .task-detail-rail-icon .icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .task-detail-rail-name {
@@ -1872,7 +1896,7 @@
   inset: 0 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  width: 72px;
+  width: 56px;
   padding-right: 6px;
   background: linear-gradient(90deg, rgb(var(--color-muted) / 0), rgb(var(--color-muted)) 46%);
   color: rgb(var(--color-text-muted));
