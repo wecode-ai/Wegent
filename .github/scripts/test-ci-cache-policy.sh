@@ -89,6 +89,10 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 
+docker_only="${warmup_all_false/docker=false/docker=true}"
+assert_warmup_case "Executor E2E resolver" "$docker_only" \
+  ".github/scripts/resolve-executor-e2e-runtime.sh"
+
 desktop_image="${warmup_all_false/docker=false/docker=true}"
 desktop_image="${desktop_image/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework desktop image" "$desktop_image" \
