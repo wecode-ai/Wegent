@@ -31,7 +31,6 @@ export interface UserProxyConfig {
 
 export interface UpdateUserRuntimeConfigRequest {
   use_user_config: boolean
-  use_proxy?: boolean
 }
 
 function runtimeConfigPath(runtime: UserRuntime) {
@@ -48,7 +47,7 @@ export function createUserApi(client: HttpClient) {
     },
     updateRuntimeConfig(
       runtime: UserRuntime,
-      data: UpdateUserRuntimeConfigRequest,
+      data: UpdateUserRuntimeConfigRequest
     ): Promise<UserRuntimeConfig> {
       return client.put(runtimeConfigPath(runtime), data)
     },
@@ -60,18 +59,12 @@ export function createUserApi(client: HttpClient) {
         proxy_url: proxyUrl,
       })
     },
-    uploadRuntimeAuthJson(
-      runtime: UserRuntime,
-      authJson: string,
-    ): Promise<UserRuntimeConfig> {
+    uploadRuntimeAuthJson(runtime: UserRuntime, authJson: string): Promise<UserRuntimeConfig> {
       return client.post(`${runtimeConfigPath(runtime)}/auth-json`, {
         auth_json: authJson,
       })
     },
-    importRuntimeAuthJson(
-      runtime: UserRuntime,
-      deviceId: string,
-    ): Promise<UserRuntimeConfig> {
+    importRuntimeAuthJson(runtime: UserRuntime, deviceId: string): Promise<UserRuntimeConfig> {
       return client.post(`${runtimeConfigPath(runtime)}/import-device`, {
         device_id: deviceId,
       })
