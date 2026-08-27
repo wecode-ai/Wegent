@@ -44,6 +44,14 @@ A plugin that needs live token throughput should subtract adjacent
 interval. It must not add multiple cumulative samples together, and it should
 reset its own delta baseline when a new turn starts.
 
+Accurate Codex usage is normally reported when a model call settles, not for
+every generated token. Plugins that need lower-latency feedback can also
+observe standard `text-delta` and `reasoning-delta` chunks, estimate live
+generation throughput over a sliding window, and calibrate that estimate with
+later usage samples. Executor streaming text and thinking blocks are projected
+into those standard chunks; tool, plan, and other non-model blocks are excluded
+from the model output stream.
+
 ```js
 export const inject = ["sessions"];
 
