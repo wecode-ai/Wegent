@@ -22,6 +22,7 @@ const state = {
 
 export const EXTERNAL_IMPORT_NODES = {
   folderRoot: 'imp-root',
+  formatsRoot: 'imp-formats',
   subFolder: 'imp-sub',
   product: 'imp-product',
   api: 'imp-api',
@@ -314,6 +315,7 @@ function listNodes(args: Record<string, unknown>): Record<string, unknown> {
       items: visibleNodes([
         node('doc-m1', 'Doc-M1_个人记录', 'doc', '', ''),
         node(EXTERNAL_IMPORT_NODES.folderRoot, 'E2E_项目资料', 'folder', '', ''),
+        node(EXTERNAL_IMPORT_NODES.formatsRoot, 'E2E_格式展示', 'folder', '', ''),
       ]),
     }
   }
@@ -341,10 +343,10 @@ function listNodes(args: Record<string, unknown>): Record<string, unknown> {
   if (folderId === 'folder-d1') {
     return { items: [node('doc-d2', 'Doc-D2_旧设计', 'doc', 'folder-d1', 'space-d')] }
   }
-  if (folderId === EXTERNAL_IMPORT_NODES.folderRoot) {
+  if (folderId === EXTERNAL_IMPORT_NODES.formatsRoot) {
     return {
-      items: visibleNodes([
-        ...[
+      items: visibleNodes(
+        [
           [EXTERNAL_IMPORT_NODES.sheet, 'E2E_在线表格', 'axls', 'ALIDOC'],
           [EXTERNAL_IMPORT_NODES.table, 'E2E_AI表格', 'able', 'ALIDOC'],
           [EXTERNAL_IMPORT_NODES.pdf, 'E2E_文件.pdf', 'pdf', 'FILE'],
@@ -354,8 +356,14 @@ function listNodes(args: Record<string, unknown>): Record<string, unknown> {
           nodeType: 'file',
           contentType,
           extension,
-          parentId: EXTERNAL_IMPORT_NODES.folderRoot,
-        })),
+          parentId: EXTERNAL_IMPORT_NODES.formatsRoot,
+        }))
+      ),
+    }
+  }
+  if (folderId === EXTERNAL_IMPORT_NODES.folderRoot) {
+    return {
+      items: visibleNodes([
         node(
           EXTERNAL_IMPORT_NODES.subFolder,
           'E2E_归档',

@@ -89,6 +89,41 @@ test.describe('External DingTalk document import', () => {
     if (cleanupError) throw cleanupError
   }
 
+  test('distinguishes supported formats from missing provider configuration', async ({
+    page,
+    request,
+  }) => {
+    await runScenario(request, 'formats', async context => {
+      await openKnowledgeBase(page, context.knowledgeBaseId)
+      await page.getByTestId('upload-documents-button').click()
+      await page.getByTestId('dingtalk-source-button').click()
+      await page
+        .getByTestId(`dingtalk-folder-navigate-${EXTERNAL_IMPORT_NODES.formatsRoot}`)
+        .click()
+
+      await expect(
+        page.getByTestId(`dingtalk-node-unsupported-${EXTERNAL_IMPORT_NODES.sheet}`)
+      ).toBeVisible()
+      await expect(
+        page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.sheet}`)
+      ).toHaveCount(0)
+      await expect(
+        page.getByTestId(`dingtalk-node-configure-${EXTERNAL_IMPORT_NODES.table}`)
+      ).toBeVisible()
+      await expect(
+        page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.table}`)
+      ).toHaveCount(0)
+      const pdf = page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.pdf}`)
+      await expect(pdf).toBeEnabled()
+      await pdf.click()
+      await expect(pdf).toHaveAttribute('aria-checked', 'true')
+      await pdf.click()
+      await expect(pdf).toHaveAttribute('aria-checked', 'false')
+      await page.getByTestId('dingtalk-import-cancel').click()
+      expect(await listDocuments(request, context.token, context.knowledgeBaseId)).toEqual([])
+    })
+  })
+
   test('imports one DingTalk document through the add-materials dialog', async ({
     page,
     request,
@@ -100,14 +135,6 @@ test.describe('External DingTalk document import', () => {
       await page.getByTestId('upload-documents-button').click()
       await page.getByTestId('dingtalk-source-button').click()
       await page.getByTestId(`dingtalk-folder-navigate-${EXTERNAL_IMPORT_NODES.folderRoot}`).click()
-      for (const nodeId of [
-        EXTERNAL_IMPORT_NODES.sheet,
-        EXTERNAL_IMPORT_NODES.table,
-        EXTERNAL_IMPORT_NODES.pdf,
-      ]) {
-        await expect(page.getByTestId(`dingtalk-node-unsupported-${nodeId}`)).toBeVisible()
-        await expect(page.getByTestId(`dingtalk-node-select-${nodeId}`)).toHaveCount(0)
-      }
       await page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.product}`).click()
       await page.getByTestId('dingtalk-import-submit').click()
       await expect(page.getByTestId('dingtalk-import-result')).toBeVisible({ timeout: 30_000 })

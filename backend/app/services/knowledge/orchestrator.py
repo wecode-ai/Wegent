@@ -1786,6 +1786,7 @@ class KnowledgeOrchestrator:
             user=user,
             trigger_summary=True,
             replace_active=True,
+            expected_generation=generation,
         )
         if not result["scheduled"]:
             from app.schemas.knowledge import DocumentProcessingStage
@@ -2123,6 +2124,7 @@ class KnowledgeOrchestrator:
         splitter_config: Optional[Dict[str, Any]] = None,
         allow_if_success: bool = False,
         replace_active: bool = False,
+        expected_generation: Optional[int] = None,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
     ) -> Dict[str, Any]:
@@ -2141,6 +2143,7 @@ class KnowledgeOrchestrator:
             splitter_config: Optional splitter configuration dict
             allow_if_success: Whether to re-queue a document that already succeeded
             replace_active: Whether to supersede an in-flight indexing generation
+            expected_generation: Reject a stale handoff from an earlier import
             multimodal_dispatch_ctx: Pre-resolved multimodal dispatch context
                 produced by resolve_dispatch_for_document_or_none before dispatch.
                 Required when the document is video/image.
@@ -2214,6 +2217,7 @@ class KnowledgeOrchestrator:
             document_id=document.id,
             allow_if_success=allow_if_success,
             replace_active=replace_active,
+            expected_generation=expected_generation,
         )
         if not enqueue_decision.should_enqueue:
             logger.info(

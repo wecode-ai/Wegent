@@ -118,7 +118,7 @@ e2e/
 
 ## 钉钉导入 remote 检索验证
 
-`tests/knowledge/dingtalk-import.spec.ts` 的 6 个场景由 CI 的
+`tests/knowledge/dingtalk-import.spec.ts` 的 7 个场景由 CI 的
 `provider-native-chromium` 项目执行。Backend 必须设置 `RAG_RUNTIME_MODE=remote`
 和 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
 Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
@@ -127,6 +127,10 @@ Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AE
 测试通过真实 API 创建并清理专用 Embedding Model、Retriever 和各场景知识库，
 知识库显式绑定检索配置，不依赖管理员预先配置。只模拟钉钉 MCP 和外部 embedding HTTP
 接口；导入任务、remote 索引、Qdrant 存储及分块读取均走真实链路。
+
+格式可选性单独验证：PDF 可选、`axls` 不支持、AI 表格未配置时展示配置入口。
+批量导入目录固定为三篇在线文档；文件下载契约由后端 Provider 测试覆盖，
+本套 E2E 不覆盖 PDF 下载到检索的完整链路。
 
 本地服务就绪后，在 `frontend` 目录执行：
 

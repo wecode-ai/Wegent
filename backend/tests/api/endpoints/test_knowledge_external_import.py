@@ -313,6 +313,46 @@ class TestImportExternalDocument:
         assert response.status_code == 403
 
 
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize(
+    "index_status", [DocumentIndexStatus.QUEUED, DocumentIndexStatus.SUCCESS]
+)
+def test_existing_copy_still_requires_a_valid_target_folder(
+    import_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    configured_dingtalk: None,
+    dispatched: list[int],
+    batch: bool,
+    index_status: DocumentIndexStatus,
+) -> None:
+    kb_id = _create_kb(test_db, test_user.id)
+    node = _create_synced_node(test_db, test_user.id, "existing-copy-folder-check")
+    created = import_client.post(
+        f"/knowledge-bases/{kb_id}/documents/external-import",
+        json=_import_payload(node.dingtalk_node_id),
+    )
+    assert created.status_code == 201
+    document = test_db.get(KnowledgeDocument, created.json()["id"])
+    document.index_status = index_status
+    test_db.commit()
+
+    suffix = "external-import-batch" if batch else "external-import"
+    payload = (
+        _batch_import_payload([node.dingtalk_node_id], folder_id=999999)
+        if batch
+        else _import_payload(node.dingtalk_node_id, folder_id=999999)
+    )
+    response = import_client.post(
+        f"/knowledge-bases/{kb_id}/documents/{suffix}", json=payload
+    )
+
+    assert response.status_code == 400
+    assert dispatched == [document.id]
+    test_db.refresh(document)
+    assert document.index_status == index_status
+
+
 class TestImportExternalDocumentBatch:
     @pytest.mark.parametrize("node_id", ["", "x" * 256])
     def test_rejects_invalid_resource_id_items(

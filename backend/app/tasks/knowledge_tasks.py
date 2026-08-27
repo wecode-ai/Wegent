@@ -135,23 +135,24 @@ def _enqueue_document_summary_task(
 @trace_sync(
     span_name="knowledge.import_external_document",
     tracer_name="knowledge.tasks",
-    extract_attributes=lambda self, document_id: {
+    extract_attributes=lambda self, document_id, expected_generation: {
         "knowledge.document_id": document_id,
+        "knowledge.expected_generation": expected_generation,
     },
 )
-def import_external_document_task(self, document_id: int):
+def import_external_document_task(self, document_id: int, expected_generation: int):
     """
     Celery task for importing one external provider document.
 
-    Claims a fresh processing generation, fetches the external document body,
-    creates the attachment, and reuses the regular indexing pipeline. The
-    generation claim makes redelivered or concurrent older tasks lose their
-    write right, so a deleted or superseded document is never revived.
+    Claims the queued generation once, fetches the external document body,
+    creates the attachment, and reuses the regular indexing pipeline.
+    Duplicate or older messages are skipped before contacting the provider.
     Failures are recorded on the document as a structured processing error
     instead of deleting the placeholder.
 
     Args:
         document_id: Placeholder KnowledgeDocument ID with external identity
+        expected_generation: Generation captured when this message was enqueued
     """
     from app.models.knowledge import KnowledgeDocument
     from app.models.user import User
@@ -163,7 +164,7 @@ def import_external_document_task(self, document_id: int):
     )
 
     with SessionLocal() as db:
-        attempt = begin_external_import_attempt(db, document_id)
+        attempt = begin_external_import_attempt(db, document_id, expected_generation)
         if not attempt.should_execute:
             logger.info(
                 "[Celery External Import] Skipping document %s: %s",

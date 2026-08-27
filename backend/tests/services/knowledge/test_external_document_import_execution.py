@@ -184,6 +184,62 @@ class TestRunExternalDocumentImport:
         assert error["retryable"] is True
         assert error["generation"] == 0
 
+    def test_new_attempt_after_attachment_landing_is_not_replaced_by_old_handoff(
+        self, test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+        document = self._create_placeholder(test_db, test_user)
+        document.attachment_id = 777
+        kb = test_db.get(Kind, document.kind_id)
+        kb.json = {
+            **kb.json,
+            "spec": {
+                **kb.json["spec"],
+                "retrievalConfig": {
+                    "retriever_name": "test-retriever",
+                    "embedding_config": {"model_name": "test-embedding"},
+                },
+            },
+        }
+        test_db.commit()
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=4321), None)),
+        )
+
+        def delete_previous_attachment(**kwargs):
+            # A new attempt wins while storage cleanup is in flight.
+            document.index_generation = 4
+            document.index_status = DocumentIndexStatus.QUEUED
+            test_db.commit()
+            return True
+
+        monkeypatch.setattr(
+            "app.services.context.context_service.delete_context",
+            delete_previous_attachment,
+        )
+        dispatch = MagicMock()
+        monkeypatch.setattr(
+            "app.tasks.knowledge_tasks.index_document_task.delay", dispatch
+        )
+
+        result = knowledge_orchestrator.attach_external_document_content(
+            test_db,
+            document,
+            test_user,
+            ExternalDocumentContent(name="Old", file_extension="md", content=b"old"),
+            generation=0,
+        )
+
+        assert result["scheduled"] is False
+        assert result["reason"] == "stale_generation"
+        dispatch.assert_not_called()
+        test_db.refresh(document)
+        assert document.index_generation == 4
+        assert document.index_status == DocumentIndexStatus.QUEUED
+        assert document.processing_error_payload is None
+
     def test_unsupported_provider_marks_document_failed(
         self,
         test_db: Session,

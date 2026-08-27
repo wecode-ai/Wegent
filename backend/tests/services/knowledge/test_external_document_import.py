@@ -466,7 +466,9 @@ class TestImportDocument:
         assert existing.id == document.id
         assert existing.index_status == DocumentIndexStatus.QUEUED
         # Only the initial dispatch happened; no second task was queued.
-        assert dispatch_calls == [{"document_id": document.id}]
+        assert dispatch_calls == [
+            {"document_id": document.id, "expected_generation": 0}
+        ]
 
     def test_reimport_reuses_stale_active_attempt_without_resolving_source(
         self,
@@ -502,7 +504,9 @@ class TestImportDocument:
 
         assert reused.id == document.id
         assert reused.index_status == DocumentIndexStatus.QUEUED
-        assert dispatch_calls == [{"document_id": document.id}]
+        assert dispatch_calls == [
+            {"document_id": document.id, "expected_generation": 0}
+        ]
 
     def test_reimport_after_delete_creates_new_document(
         self,
@@ -772,7 +776,7 @@ class TestImportDocuments:
         assert result.created == []
         assert result.updated == []
         assert [document.id for document in result.processing] == [busy.id]
-        assert dispatch_calls == [{"document_id": busy.id}]
+        assert dispatch_calls == [{"document_id": busy.id, "expected_generation": 0}]
 
     def test_rejects_invalid_item_before_creating_any_placeholder(
         self,

@@ -65,10 +65,12 @@ def _create_placeholder(
     return document
 
 
-def _run_task(document_id: int) -> None:
+def _run_task(document_id: int, expected_generation: int = 0) -> None:
     from app.tasks.knowledge_tasks import import_external_document_task
 
-    import_external_document_task.run(document_id=document_id)
+    import_external_document_task.run(
+        document_id=document_id, expected_generation=expected_generation
+    )
 
 
 def test_task_imports_document_content(
@@ -205,4 +207,90 @@ def test_task_skips_already_imported_document(
     provider.fetch_content.assert_not_awaited()
     task_db.refresh(document)
     assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert document.index_generation == 3
+
+
+@pytest.mark.parametrize("index_status", list(DocumentIndexStatus))
+def test_old_task_cannot_replace_a_newer_attempt(
+    task_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    index_status: DocumentIndexStatus,
+) -> None:
+    document = _create_placeholder(task_db, test_user.id)
+    document.index_status = index_status
+    document.index_generation = 2
+    task_db.commit()
+    provider = SimpleNamespace(
+        fetch_content=AsyncMock(side_effect=RuntimeError("source unavailable"))
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import.get_external_document_provider",
+        lambda provider_id: provider,
+    )
+
+    _run_task(document.id)
+
+    provider.fetch_content.assert_not_awaited()
+    task_db.refresh(document)
+    assert document.index_status == index_status
+    assert document.index_generation == 2
+    assert document.processing_error_payload is None
+
+
+def test_redelivery_during_fetch_does_not_read_source_again(
+    task_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    document = _create_placeholder(task_db, test_user.id)
+
+    async def fetch(*args):
+        _run_task(document.id)
+        raise RuntimeError("source unavailable")
+
+    provider = SimpleNamespace(fetch_content=AsyncMock(side_effect=fetch))
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import.get_external_document_provider",
+        lambda provider_id: provider,
+    )
+
+    _run_task(document.id)
+
+    provider.fetch_content.assert_awaited_once()
+    task_db.refresh(document)
+    assert document.index_generation == 1
+    assert document.index_status == DocumentIndexStatus.FAILED
+
+
+def test_retry_dispatches_a_new_generation_and_ignores_the_old_message(
+    task_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.knowledge.external_document_import import (
+        external_document_import_service,
+    )
+
+    document = _create_placeholder(task_db, test_user.id)
+    provider = SimpleNamespace(
+        fetch_content=AsyncMock(side_effect=RuntimeError("source unavailable"))
+    )
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_import.get_external_document_provider",
+        lambda provider_id: provider,
+    )
+    _run_task(document.id)
+    dispatched = []
+    monkeypatch.setattr(
+        "app.tasks.knowledge_tasks.import_external_document_task.delay",
+        lambda **kwargs: dispatched.append(kwargs),
+    )
+    external_document_import_service.retry_document_import(
+        task_db, test_user, document.id
+    )
+
+    _run_task(document.id)
+    provider.fetch_content.assert_awaited_once()
+    assert dispatched == [{"document_id": document.id, "expected_generation": 2}]
+    _run_task(**dispatched[0])
+
+    assert provider.fetch_content.await_count == 2
+    task_db.refresh(document)
     assert document.index_generation == 3

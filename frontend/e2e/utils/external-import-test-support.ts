@@ -87,6 +87,7 @@ export async function createExternalImportScenario(
 
   await resetMockMcp(request)
   await configureDingTalkService(request, token, 'docs', true)
+  await configureDingTalkService(request, token, 'ai_table', false)
   await syncDingtalkDocs(request, token)
 
   return { token, knowledgeBaseId, knowledgeBaseName: kbName, prefix }

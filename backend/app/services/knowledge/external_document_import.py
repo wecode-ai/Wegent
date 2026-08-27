@@ -107,68 +107,16 @@ class ExternalDocumentImportService:
         external_resource_id: str,
         folder_id: int = 0,
     ) -> KnowledgeDocument:
-        """Validate the request and create the document record.
-
-        A new external resource gets a placeholder document whose body is
-        fetched by a background task. An existing external identity reuses the
-        same document and starts a new single-version refresh unless that
-        document is already being processed.
-
-        Returns:
-            The new placeholder document.
-
-        Raises:
-            ExternalDocumentImportError: With the HTTP status to surface.
-        """
-        provider = self._validate_import_context(
-            db, user, knowledge_base_id, provider_id
+        """Import one resource through the same contract as a one-item batch."""
+        result = self.import_documents(
+            db=db,
+            user=user,
+            knowledge_base_id=knowledge_base_id,
+            provider_id=provider_id,
+            external_resource_ids=[external_resource_id],
+            folder_id=folder_id,
         )
-
-        existing = self._find_existing_document(
-            db, knowledge_base_id, provider.provider_id, external_resource_id
-        )
-        if existing is not None:
-            db.refresh(existing)
-            if self._is_processing(existing):
-                return existing
-            external_meta = self._resolve_existing_source(db, provider, existing)
-            return self._refresh_existing_document(db, existing, external_meta).document
-
-        external_meta = provider.resolve_importable(db, user, external_resource_id)
-
-        try:
-            document = KnowledgeService.create_external_document(
-                db=db,
-                knowledge_base_id=knowledge_base_id,
-                user_id=user.id,
-                name=_external_document_name(external_meta),
-                external_provider=provider.provider_id,
-                external_resource_id=external_resource_id,
-                folder_id=folder_id,
-                external_meta=external_meta,
-            )
-        except IntegrityError:
-            # Concurrent duplicate submit hit the unique external identity.
-            db.rollback()
-            concurrent = self._find_existing_document(
-                db, knowledge_base_id, provider.provider_id, external_resource_id
-            )
-            if concurrent is None:
-                raise ExternalDocumentImportError(
-                    "This external document could not be imported; please retry"
-                ) from None
-            return concurrent
-
-        self._dispatch_import_task(db, document)
-        logger.info(
-            "[External Import] Created placeholder document %s for %s resource %s "
-            "in KB %s",
-            document.id,
-            provider.provider_id,
-            external_resource_id,
-            knowledge_base_id,
-        )
-        return document
+        return (result.created or result.updated or result.processing)[0]
 
     def _refresh_existing_document(
         self,
@@ -492,10 +440,12 @@ class ExternalDocumentImportService:
         """Start the background body fetch for an external document."""
         from app.tasks.knowledge_tasks import import_external_document_task
 
+        generation = document.index_generation
         try:
-            import_external_document_task.delay(document_id=document.id)
+            import_external_document_task.delay(
+                document_id=document.id, expected_generation=generation
+            )
         except Exception as exc:
-            generation = document.index_generation
             mark_document_index_enqueue_failed(
                 db=db,
                 document_id=document.id,

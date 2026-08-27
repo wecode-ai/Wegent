@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -396,6 +397,45 @@ def test_mark_document_index_failed_persists_error_and_preserves_source_config(
     assert document.processing_error_payload["generation"] == 2
 
 
+def test_failed_old_attempt_does_not_overwrite_another_sessions_new_generation() -> (
+    None
+):
+    engine = create_engine("sqlite:///:memory:")
+    KnowledgeDocument.__table__.create(engine)
+    try:
+        with Session(engine, expire_on_commit=False) as old_worker:
+            document = KnowledgeDocument(
+                kind_id=1,
+                user_id=1,
+                name="external.md",
+                file_extension="md",
+                source_type="external",
+                external_provider="dingtalk",
+                external_resource_id="source",
+                index_status=DocumentIndexStatus.QUEUED,
+                index_generation=1,
+            )
+            old_worker.add(document)
+            old_worker.commit()
+
+            with Session(engine) as new_worker:
+                current = new_worker.get(KnowledgeDocument, document.id)
+                current.index_generation = 2
+                new_worker.commit()
+
+            # The old worker still holds the document from before the provider call.
+            assert document.index_generation == 1
+            finalized = mark_document_index_failed(old_worker, document.id, 1)
+
+            assert finalized is False
+            old_worker.refresh(document)
+            assert document.index_generation == 2
+            assert document.index_status == DocumentIndexStatus.QUEUED
+            assert document.processing_error_payload is None
+    finally:
+        engine.dispose()
+
+
 def test_new_generation_clears_processing_error_and_preserves_source_config(
     test_db: Session, test_user: User
 ):
@@ -422,6 +462,29 @@ def test_new_generation_clears_processing_error_and_preserves_source_config(
     assert document.source_config["converted_attachment_id"] == 99
 
 
+def test_stale_handoff_cannot_replace_a_newer_attempt(
+    test_db: Session, test_user: User
+) -> None:
+    kb = _create_knowledge_base(test_db, test_user)
+    document = _create_document(
+        test_db,
+        test_user,
+        kb,
+        index_status=DocumentIndexStatus.QUEUED,
+        index_generation=4,
+    )
+
+    decision = prepare_document_index_enqueue(
+        test_db, document.id, replace_active=True, expected_generation=2
+    )
+
+    assert decision.should_enqueue is False
+    assert decision.reason == "stale_generation"
+    test_db.refresh(document)
+    assert document.index_generation == 4
+    assert document.index_status == DocumentIndexStatus.QUEUED
+
+
 class TestBeginExternalImportAttempt:
     def _create_external_document(
         self,
@@ -429,7 +492,7 @@ class TestBeginExternalImportAttempt:
         test_user: User,
         knowledge_base: Kind,
         *,
-        index_status: DocumentIndexStatus = DocumentIndexStatus.FAILED,
+        index_status: DocumentIndexStatus = DocumentIndexStatus.QUEUED,
         index_generation: int = 2,
         with_identity: bool = True,
         with_error: bool = True,
@@ -473,7 +536,7 @@ class TestBeginExternalImportAttempt:
         knowledge_base = _create_knowledge_base(test_db, test_user)
         document = self._create_external_document(test_db, test_user, knowledge_base)
 
-        decision = begin_external_import_attempt(test_db, document.id)
+        decision = begin_external_import_attempt(test_db, document.id, 2)
 
         assert decision.should_execute is True
         assert decision.generation == 3
@@ -487,7 +550,7 @@ class TestBeginExternalImportAttempt:
             begin_external_import_attempt,
         )
 
-        decision = begin_external_import_attempt(test_db, 999999)
+        decision = begin_external_import_attempt(test_db, 999999, 2)
 
         assert decision.should_execute is False
         assert decision.reason == "document_not_found"
@@ -504,7 +567,7 @@ class TestBeginExternalImportAttempt:
             test_db, test_user, knowledge_base, with_identity=False
         )
 
-        decision = begin_external_import_attempt(test_db, document.id)
+        decision = begin_external_import_attempt(test_db, document.id, 2)
 
         assert decision.should_execute is False
         assert decision.reason == "no_external_identity"
@@ -525,7 +588,7 @@ class TestBeginExternalImportAttempt:
             with_error=False,
         )
 
-        decision = begin_external_import_attempt(test_db, document.id)
+        decision = begin_external_import_attempt(test_db, document.id, 2)
 
         assert decision.should_execute is False
         assert decision.reason == "already_imported"

@@ -148,7 +148,7 @@ def _record_transition(
 @trace_sync(
     span_name="knowledge.prepare_document_index_enqueue",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False: {
+    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None: {
         "knowledge.document_id": document_id,
         "knowledge.allow_if_success": allow_if_success,
         "knowledge.replace_active": replace_active,
@@ -160,17 +160,20 @@ def prepare_document_index_enqueue(
     *,
     allow_if_success: bool = False,
     replace_active: bool = False,
+    expected_generation: Optional[int] = None,
 ) -> IndexEnqueueDecision:
     """
     Prepare a document for a new indexing generation.
 
     This function is called before sending a Celery task. It updates the
     business state in the database so later duplicate requests can be skipped.
+    A guarded handoff may only advance the generation it already owns.
     """
     document = (
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if document is None:
@@ -188,6 +191,23 @@ def prepare_document_index_enqueue(
         )
 
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        expected_generation is not None
+        and document.index_generation != expected_generation
+    ):
+        db.rollback()
+        _record_transition(
+            "knowledge.index.enqueue.skipped",
+            document_id=document_id,
+            generation=expected_generation,
+            reason="stale_generation",
+        )
+        return IndexEnqueueDecision(
+            should_enqueue=False,
+            generation=expected_generation,
+            reason="stale_generation",
+            previous_status=current_status,
+        )
 
     if current_status in ACTIVE_INDEX_STATUSES and not replace_active:
         stale_reason = _get_active_index_stale_reason(document)
@@ -514,6 +534,7 @@ def mark_document_index_failed(
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if document is None:
@@ -580,26 +601,28 @@ def _skip_import_attempt(
 @trace_sync(
     span_name="knowledge.begin_external_import_attempt",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id: {
+    extract_attributes=lambda db, document_id, expected_generation: {
         "knowledge.document_id": document_id,
+        "knowledge.expected_generation": expected_generation,
     },
 )
 def begin_external_import_attempt(
     db: Session,
     document_id: int,
+    expected_generation: int,
 ) -> ExternalImportAttemptDecision:
     """
-    Claim the next processing generation for an external document import.
+    Consume one queued import generation exactly once.
 
-    Every background import run advances ``index_generation`` so a concurrent
-    or redelivered older task immediately loses its write right (its guarded
-    writes match on the generation it claimed). Skips documents that are
-    missing, have no external identity, or are already successfully imported.
+    The row lock makes the generation check and increment atomic. Only the
+    first delivery may claim it; redelivered or older messages cannot replace
+    an attempt that is already fetching, converting or indexing.
     """
     document = (
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if document is None:
@@ -622,7 +645,16 @@ def begin_external_import_attempt(
             previous_status=current_status,
         )
 
-    next_generation = (document.index_generation or 0) + 1
+    if document.index_generation != expected_generation:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id, expected_generation, "stale_generation"
+        )
+    if current_status != DocumentIndexStatus.QUEUED:
+        db.rollback()
+        return _skip_import_attempt(document_id, expected_generation, "not_queued")
+
+    next_generation = expected_generation + 1
     document.index_generation = next_generation
     document.index_status = DocumentIndexStatus.QUEUED
     document.clear_processing_error_payload()
