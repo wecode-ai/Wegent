@@ -4,6 +4,7 @@ import type {
   WorkspaceTextFileResponse,
   WorkspaceTreeResponse,
 } from '@/types/workspace-files'
+import { isAbsoluteWorkspacePath, isWindowsDriveAbsolutePath } from '@/lib/workspace-paths'
 
 function requireRecord(value: unknown, errorMessage: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -20,12 +21,14 @@ function normalizeModifiedAt(value: unknown, errorMessage: string): string | nul
 
 export function normalizeAbsoluteWorkspacePath(path: string, errorMessage: string): string {
   const normalizedSegments: string[] = []
-  const normalizedPath = path.trim().replace(/\/+/g, '/')
-  if (!normalizedPath.startsWith('/')) {
+  const normalizedPath = path.trim().replace(/\\/g, '/').replace(/\/+/g, '/')
+  if (!isAbsoluteWorkspacePath(normalizedPath)) {
     throw new Error(errorMessage)
   }
 
-  for (const segment of normalizedPath.split('/')) {
+  const drivePrefix = isWindowsDriveAbsolutePath(normalizedPath) ? normalizedPath.slice(0, 2) : ''
+  const pathBody = drivePrefix ? normalizedPath.slice(2) : normalizedPath
+  for (const segment of pathBody.split('/')) {
     if (!segment || segment === '.') continue
     if (segment === '..') {
       if (normalizedSegments.length === 0) {
@@ -37,7 +40,7 @@ export function normalizeAbsoluteWorkspacePath(path: string, errorMessage: strin
     normalizedSegments.push(segment)
   }
 
-  return `/${normalizedSegments.join('/')}`
+  return `${drivePrefix}/${normalizedSegments.join('/')}`
 }
 
 function isWorkspacePathWithin(path: string, rootPath: string): boolean {
@@ -196,5 +199,8 @@ export function splitAbsoluteWorkspaceFilePath(filePath: string): {
   if (!fileName) {
     throw new Error('Workspace file name is required')
   }
-  return { parentPath, fileName }
+  return {
+    parentPath: /^[a-zA-Z]:$/.test(parentPath) ? `${parentPath}/` : parentPath,
+    fileName,
+  }
 }

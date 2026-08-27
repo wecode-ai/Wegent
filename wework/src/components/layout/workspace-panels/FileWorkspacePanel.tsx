@@ -146,7 +146,8 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
 function workspaceParentPath(path: string): string {
   const normalized = path.replace(/\/+$/, '')
   const separatorIndex = normalized.lastIndexOf('/')
-  return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
+  const parentPath = separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
+  return /^[a-zA-Z]:$/.test(parentPath) ? `${parentPath}/` : parentPath
 }
 
 function createPreviewLineTarget(
