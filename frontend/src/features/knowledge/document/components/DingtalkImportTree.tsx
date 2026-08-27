@@ -9,6 +9,18 @@ import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
+import type { ExternalDocumentImportStatuses } from '@/apis/knowledge'
+import type { DocumentIndexStatus } from '@/types/knowledge'
+
+const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
+  success: 'document.upload.dingtalk.imported',
+  failed: 'document.upload.dingtalk.importFailed',
+  queued: 'document.upload.dingtalk.importProcessing',
+  pending_conversion: 'document.upload.dingtalk.importProcessing',
+  converting: 'document.upload.dingtalk.importProcessing',
+  indexing: 'document.upload.dingtalk.importProcessing',
+  not_indexed: 'document.upload.dingtalk.importPending',
+}
 
 /** Import snapshots contain document IDs only; folders are selection shortcuts. */
 export function collectImportableIds(nodes: DingtalkDocNode[], query = ''): string[] {
@@ -38,6 +50,7 @@ export function filterImportTree(nodes: DingtalkDocNode[], query: string): Dingt
 }
 
 interface DingtalkImportTreeProps {
+  importStatuses: ExternalDocumentImportStatuses
   nodes: DingtalkDocNode[]
   query: string
   selectedIds: Set<string>
@@ -73,6 +86,7 @@ function ImportTreeNode({
   const folder = node.node_type === 'folder'
   const hasChildren = Boolean(node.children?.length)
   const importable = node.node_type === 'doc'
+  const importStatus = importable ? props.importStatuses[node.dingtalk_node_id] : undefined
   // A document selects itself; only folders are bulk-selection shortcuts.
   const ids = folder ? collectImportableIds([node]) : importable ? [node.dingtalk_node_id] : []
   const count = ids.filter(id => selectedIds.has(id)).length
@@ -131,6 +145,17 @@ function ImportTreeNode({
           <Icon className="h-4 w-4 shrink-0 text-text-muted" />
           <span className="truncate">{node.name}</span>
         </button>
+        {importStatus && (
+          <span
+            className="ml-1 max-w-[45%] shrink-0 truncate rounded border border-border bg-surface px-1.5 py-0.5 text-xs text-text-secondary"
+            title={t('document.upload.dingtalk.currentKbStatus', {
+              status: t(IMPORT_STATUS_KEYS[importStatus]),
+            })}
+            data-testid={`dingtalk-import-status-${node.dingtalk_node_id}`}
+          >
+            {t(IMPORT_STATUS_KEYS[importStatus])}
+          </span>
+        )}
         {folder || importable ? (
           <button
             type="button"

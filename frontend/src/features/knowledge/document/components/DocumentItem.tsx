@@ -4,6 +4,8 @@
 
 'use client'
 
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+
 import {
   FileText,
   Trash2,
@@ -392,13 +394,7 @@ export function DocumentItem({
                   {t('knowledge:document.document.type.web')}
                 </Badge>
               ) : isExternal ? (
-                <Badge
-                  variant="default"
-                  size="sm"
-                  className="bg-amber-500/10 text-amber-600 border-amber-500/20 text-[9px] px-1 py-0"
-                >
-                  {t('knowledge:document.document.type.external')}
-                </Badge>
+                <ExternalDocumentBadge className="text-[9px] px-1 py-0" />
               ) : (
                 <span className="text-[9px] text-text-muted uppercase">
                   {document.file_extension}
@@ -658,13 +654,7 @@ export function DocumentItem({
             {t('knowledge:document.document.type.web')}
           </Badge>
         ) : isExternal ? (
-          <Badge
-            variant="default"
-            size="sm"
-            className="bg-amber-500/10 text-amber-600 border-amber-500/20"
-          >
-            {t('knowledge:document.document.type.external')}
-          </Badge>
+          <ExternalDocumentBadge />
         ) : (
           <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
         )}

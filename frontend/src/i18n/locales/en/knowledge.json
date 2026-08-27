@@ -577,6 +577,7 @@
         "authRequired": "This page requires authentication and cannot be accessed",
         "addFailed": "Failed to add web page. Please try again",
         "urlRequired": "Please enter a web page URL",
+        "invalidUrl": "Enter a valid web address starting with http:// or https://",
         "refetch": "Re-fetch",
         "refetching": "Fetching...",
         "refetchSuccess": "Web page content updated",
@@ -584,6 +585,14 @@
         "refetchConfirm": "Re-fetch this web page? This will retrieve the latest content from the URL and update the document."
       },
       "dingtalk": {
+        "imported": "Imported · Will update",
+        "importFailed": "Import failed · Retry available",
+        "importProcessing": "Processing",
+        "importPending": "Recorded · Will update",
+        "currentKbStatus": "Current knowledge base: {{status}}",
+        "statusLoading": "Checking import status in this knowledge base…",
+        "statusLoadFailed": "Import status is unavailable. The system will check again when you submit.",
+        "statusRetry": "Retry check",
         "entry": "DingTalk Document",
         "title": "Import a DingTalk Document",
         "hint": "Only DingTalk online text documents (adoc) are supported. Select documents or folders to import; folders include only supported documents, up to 50 per import.",

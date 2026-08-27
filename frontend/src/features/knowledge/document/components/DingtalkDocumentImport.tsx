@@ -24,6 +24,7 @@ import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 import { cn } from '@/lib/utils'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import { DingtalkImportTree, collectImportableIds, filterImportTree } from './DingtalkImportTree'
+import { useExternalImportStatuses } from '../hooks/useExternalImportStatuses'
 
 // Maximum documents one batch import may create; mirrors the backend cap.
 const MAX_IMPORT_DOCUMENTS = 50
@@ -65,6 +66,7 @@ function formatLastSynced(iso: string | null | undefined): string {
 }
 
 interface DingtalkDocumentImportProps {
+  knowledgeBaseId: number
   /** Batch-import the expanded document IDs; resolves with the submit result */
   onImport: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
   /** Called after the user acknowledges the import result */
@@ -78,6 +80,7 @@ interface DingtalkDocumentImportProps {
 }
 
 export function DingtalkDocumentImport({
+  knowledgeBaseId,
   onImport,
   onDone,
   onDraftChange,
@@ -195,6 +198,8 @@ export function DingtalkDocumentImport({
     () => collectImportableIds([...sources.docs.nodes, ...sources.wikispace.nodes]),
     [sources.docs.nodes, sources.wikispace.nodes]
   )
+  const importStatuses = useExternalImportStatuses(knowledgeBaseId, availableIds)
+  const refreshImportStatuses = importStatuses.retry
   // A directory refresh can remove documents, but must never add new ones to a selection.
   useEffect(() => {
     const available = new Set(availableIds)
@@ -240,9 +245,11 @@ export function DingtalkDocumentImport({
     } catch (err) {
       setSubmitError(mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.dingtalk.addFailed'))
     } finally {
+      // A failed batch may also have created some copies before returning an error.
+      refreshImportStatuses()
       setSubmitting(false)
     }
-  }, [canSubmit, onImport, expandedIds, t])
+  }, [canSubmit, onImport, expandedIds, t, refreshImportStatuses])
 
   const handleDone = useCallback(() => {
     setResult(null)
@@ -466,6 +473,7 @@ export function DingtalkDocumentImport({
                         data-testid="dingtalk-document-list"
                       >
                         <DingtalkImportTree
+                          importStatuses={importStatuses.statuses}
                           nodes={source.nodes}
                           query={searchQuery}
                           selectedIds={selectedIds}
@@ -491,6 +499,31 @@ export function DingtalkDocumentImport({
           </>
         )}
       </div>
+
+      {result === null && (importStatuses.loading || importStatuses.failed) && (
+        <div
+          className="flex shrink-0 items-center gap-2 px-5 pb-2 text-xs text-text-secondary"
+          role="status"
+        >
+          <span>
+            {t(
+              importStatuses.failed
+                ? 'document.upload.dingtalk.statusLoadFailed'
+                : 'document.upload.dingtalk.statusLoading'
+            )}
+          </span>
+          {importStatuses.failed && (
+            <Button
+              variant="ghost"
+              className="min-h-11 shrink-0"
+              onClick={importStatuses.retry}
+              data-testid="dingtalk-import-status-retry"
+            >
+              {t('document.upload.dingtalk.statusRetry')}
+            </Button>
+          )}
+        </div>
+      )}
 
       {((result === null && (overLimit || !canManageDocuments)) || errorText) && (
         <div className="shrink-0 space-y-2 px-5 pb-3" role="alert">

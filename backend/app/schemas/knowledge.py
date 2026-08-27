@@ -1061,6 +1061,15 @@ class ExternalDocumentBatchImportRequest(BaseModel):
     )
 
 
+class ExternalDocumentStatusRequest(BaseModel):
+    """Bounded lookup of existing copies, independent of listing pagination."""
+
+    provider: str = Field(..., min_length=1, max_length=32)
+    external_resource_ids: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    ] = Field(..., min_length=1, max_length=500)
+
+
 class KnowledgeDocumentUpdate(BaseModel):
     """Schema for updating a knowledge document."""
 

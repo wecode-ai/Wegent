@@ -1642,6 +1642,7 @@ export function DocumentList({
         isOrganization={isOrganization}
       />
       <DocumentUpload
+        knowledgeBaseId={knowledgeBase.id}
         open={showUpload}
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}

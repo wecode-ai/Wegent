@@ -577,6 +577,7 @@
         "authRequired": "该网页需要登录，暂不支持",
         "addFailed": "添加网页失败，请重试",
         "urlRequired": "请输入网页地址",
+        "invalidUrl": "请输入以 http:// 或 https:// 开头的有效网页地址",
         "refetch": "重新抓取",
         "refetching": "抓取中...",
         "refetchSuccess": "网页内容已更新",
@@ -584,6 +585,14 @@
         "refetchConfirm": "确定要重新抓取此网页吗？系统将重新获取网页内容并更新文档。"
       },
       "dingtalk": {
+        "imported": "已导入·将更新",
+        "importFailed": "导入失败·可重试",
+        "importProcessing": "处理中",
+        "importPending": "已收录·将更新",
+        "currentKbStatus": "当前知识库：{{status}}",
+        "statusLoading": "正在检查当前知识库的导入状态…",
+        "statusLoadFailed": "无法确认当前知识库的导入状态，提交时将由系统重新检查。",
+        "statusRetry": "重试查询",
         "entry": "钉钉文档",
         "title": "导入钉钉文档",
         "hint": "仅支持钉钉在线文字文档（adoc）。可选择文档或文件夹批量导入；文件夹仅导入其中符合条件的文档，最多 50 篇。",

@@ -90,6 +90,7 @@ const WEB_ERROR_KEYS = {
 } as const
 
 interface DocumentUploadProps {
+  knowledgeBaseId: number
   open: boolean
   onOpenChange: (open: boolean) => void
   onUploadComplete: (
@@ -119,6 +120,7 @@ export function DocumentUpload(props: DocumentUploadProps) {
 }
 
 function DocumentUploadSession({
+  knowledgeBaseId,
   onOpenChange,
   onUploadComplete,
   onWebAdd,
@@ -171,6 +173,7 @@ function DocumentUploadSession({
   const [textError, setTextError] = useState<string | null>(null)
   const [webUrl, setWebUrl] = useState('')
   const [webError, setWebError] = useState<string | null>(null)
+  const [webTouched, setWebTouched] = useState(false)
   const [showDiscard, setShowDiscard] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const filesBusy =
@@ -343,12 +346,15 @@ function DocumentUploadSession({
   }
 
   const isWebUrlValid = (() => {
+    if (!/^https?:\/\//i.test(webUrl.trim())) return false
     try {
       return ['http:', 'https:'].includes(new URL(webUrl.trim()).protocol)
     } catch {
       return false
     }
   })()
+  const webValidationError =
+    webTouched && webUrl.trim() && !isWebUrlValid ? t('document.upload.web.invalidUrl') : null
   const handleWebSubmit = async () => {
     if (!onWebAdd || !isWebUrlValid || !beginSubmit('web')) return
     setWebError(null)
@@ -698,7 +704,13 @@ function DocumentUploadSession({
                     id="web-url"
                     type="url"
                     data-testid="document-web-url"
-                    className="h-11"
+                    className={cn(
+                      'h-11',
+                      webValidationError && 'border-error focus-visible:ring-error'
+                    )}
+                    aria-invalid={Boolean(webValidationError)}
+                    aria-describedby={webValidationError ? 'web-url-error' : undefined}
+                    onBlur={() => setWebTouched(true)}
                     placeholder={t('document.upload.web.urlPlaceholder')}
                     value={webUrl}
                     onChange={e => {
@@ -706,6 +718,11 @@ function DocumentUploadSession({
                       setWebError(null)
                     }}
                   />
+                  {webValidationError && (
+                    <p id="web-url-error" role="alert" className="text-sm text-error">
+                      {webValidationError}
+                    </p>
+                  )}
                 </div>
                 <p className="text-xs text-text-muted">{t('document.upload.web.hint')}</p>
                 {errorMessage(webError)}
@@ -729,6 +746,7 @@ function DocumentUploadSession({
               className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
             >
               <DingtalkDocumentImport
+                knowledgeBaseId={knowledgeBaseId}
                 onImport={handleDingtalkImport}
                 onDone={() => sourceCompleted('dingtalk')}
                 onDraftChange={setDingtalkHasDraft}

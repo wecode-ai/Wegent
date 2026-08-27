@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_providers import (
@@ -72,6 +72,31 @@ class ExternalDocumentBatchImportResult:
 
 class ExternalDocumentImportService:
     """External document import orchestration (single and batch)."""
+
+    def get_import_statuses(
+        self,
+        db: Session,
+        user: User,
+        knowledge_base_id: int,
+        provider_id: str,
+        external_resource_ids: list[str],
+    ) -> dict[str, DocumentIndexStatus]:
+        """Read current copies without fetching provider content or queuing work."""
+        provider = self._validate_import_context(
+            db, user, knowledge_base_id, provider_id
+        )
+        rows = (
+            db.query(
+                KnowledgeDocument.external_resource_id, KnowledgeDocument.index_status
+            )
+            .filter(
+                KnowledgeDocument.kind_id == knowledge_base_id,
+                KnowledgeDocument.external_provider == provider.provider_id,
+                KnowledgeDocument.external_resource_id.in_(external_resource_ids),
+            )
+            .all()
+        )
+        return {resource_id: index_status for resource_id, index_status in rows}
 
     def import_document(
         self,

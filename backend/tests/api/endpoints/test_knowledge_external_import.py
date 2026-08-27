@@ -638,6 +638,118 @@ def _create_failed_external_document(
     return document
 
 
+class TestExternalImportStatus:
+    def test_reads_import_status_across_folders_but_only_in_current_kb(
+        self, import_client: TestClient, test_db: Session, test_user: User
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id, "status-kb")
+        other_id = _create_kb(test_db, test_user.id, "other-status-kb")
+        folder = KnowledgeFolderService.create_folder(
+            test_db, kb_id, test_user.id, KnowledgeFolderCreate(name="Nested")
+        )
+        current = _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status="success"
+        )
+        current.folder_id = folder.id
+        test_db.commit()
+        _create_failed_external_document(
+            test_db, test_user.id, other_id, index_status="failed"
+        )
+
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-status",
+            json={"provider": "dingtalk", "external_resource_ids": ["z" * 32, "new"]},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json() == {"z" * 32: "success"}
+
+    @pytest.mark.parametrize(
+        "index_status", ["failed", "queued", "indexing", "not_indexed"]
+    )
+    def test_reports_existing_copy_state_without_starting_an_import(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        dispatched: list[int],
+        index_status: str,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        _create_failed_external_document(
+            test_db, test_user.id, kb_id, index_status=index_status
+        )
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-status",
+            json={"provider": "dingtalk", "external_resource_ids": ["z" * 32]},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"z" * 32: index_status}
+        assert dispatched == []
+
+    def test_does_not_confuse_other_providers_or_unrequested_documents(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        document = _create_failed_external_document(test_db, test_user.id, kb_id)
+        document.external_provider = "other-provider"
+        test_db.commit()
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-status",
+            json={"provider": "dingtalk", "external_resource_ids": ["z" * 32]},
+        )
+        assert response.status_code == 200
+        assert response.json() == {}
+
+    def test_rejects_a_foreign_knowledge_base(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+    ) -> None:
+        other_user = User(user_name="status-outsider", password_hash="unused")
+        test_db.add(other_user)
+        test_db.commit()
+        kb_id = _create_kb(test_db, other_user.id)
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-status",
+            json={"provider": "dingtalk", "external_resource_ids": ["z" * 32]},
+        )
+        assert response.status_code == 404
+
+    def test_rejects_users_without_import_permission(
+        self,
+        import_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+        monkeypatch.setattr(
+            KnowledgeService,
+            "can_manage_knowledge_base_documents",
+            staticmethod(lambda db, kb_id, user_id: False),
+        )
+        response = import_client.post(
+            f"/knowledge-bases/{kb_id}/documents/external-import-status",
+            json={"provider": "dingtalk", "external_resource_ids": ["z" * 32]},
+        )
+        assert response.status_code == 403
+
+    def test_bounds_status_lookup_requests(self, import_client: TestClient) -> None:
+        response = import_client.post(
+            "/knowledge-bases/1/documents/external-import-status",
+            json={
+                "provider": "dingtalk",
+                "external_resource_ids": [str(i) for i in range(501)],
+            },
+        )
+        assert response.status_code == 422
+
+
 class TestRetryExternalDocumentImport:
     def test_requeues_failed_document(
         self,

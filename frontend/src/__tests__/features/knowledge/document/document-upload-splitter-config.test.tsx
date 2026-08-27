@@ -108,7 +108,12 @@ describe('DocumentUpload splitter config defaults', () => {
     })
 
     render(
-      <DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={onUploadComplete} />
+      <DocumentUpload
+        knowledgeBaseId={42}
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={onUploadComplete}
+      />
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm upload (1)' }))
@@ -185,7 +190,12 @@ describe('DocumentUpload splitter config defaults', () => {
     })
 
     render(
-      <DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={onUploadComplete} />
+      <DocumentUpload
+        knowledgeBaseId={42}
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={onUploadComplete}
+      />
     )
 
     fireEvent.click(screen.getByTestId('document-creation-retry-file-1'))
@@ -238,6 +248,7 @@ describe('DocumentUpload source interactions', () => {
       const [open, setOpen] = useState(true)
       return (
         <DocumentUpload
+          knowledgeBaseId={42}
           open={open}
           onOpenChange={value => {
             onOpenChange(value)

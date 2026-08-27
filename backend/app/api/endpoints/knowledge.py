@@ -37,6 +37,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
 from app.db.session import SessionLocal
+from app.models.knowledge import DocumentIndexStatus
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -50,6 +51,7 @@ from app.schemas.knowledge import (
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
     ExternalDocumentImportRequest,
+    ExternalDocumentStatusRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
@@ -902,6 +904,30 @@ async def import_external_document_batch(
         ],
         requested_count=result.requested_count,
     )
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/external-import-status",
+    response_model=dict[str, DocumentIndexStatus],
+)
+@trace_sync("get_external_document_import_statuses", "knowledge.api")
+def get_external_document_import_statuses(
+    knowledge_base_id: int,
+    data: ExternalDocumentStatusRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, DocumentIndexStatus]:
+    """Check candidate identities across the entire current knowledge base."""
+    try:
+        return external_document_import_service.get_import_statuses(
+            db,
+            current_user,
+            knowledge_base_id,
+            data.provider,
+            data.external_resource_ids,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 # Document-specific endpoints (without knowledge_base_id in path)

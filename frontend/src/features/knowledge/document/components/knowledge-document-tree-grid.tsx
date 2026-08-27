@@ -4,6 +4,8 @@
 
 'use client'
 
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   flexRender,
@@ -530,6 +532,9 @@ export function KnowledgeDocumentTreeGrid({
             )
           }
           const document = node.document
+          if (document.source_type === 'external') {
+            return <ExternalDocumentBadge />
+          }
           if (document.source_type === 'table') {
             return (
               <Badge

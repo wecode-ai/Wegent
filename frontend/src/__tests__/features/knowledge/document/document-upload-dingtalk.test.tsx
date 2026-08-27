@@ -3,12 +3,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 import { DocumentUpload } from '@/features/knowledge/document/components/DocumentUpload'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 const mockUseBatchAttachment = jest.fn()
+const mockGetExternalDocumentImportStatuses = jest.fn()
+
+jest.mock('@/apis/knowledge', () => ({
+  ...jest.requireActual('@/apis/knowledge'),
+  getExternalDocumentImportStatuses: (...args: unknown[]) =>
+    mockGetExternalDocumentImportStatuses(...args),
+}))
 
 const mockGetSyncStatus = jest.fn()
 const mockGetDocs = jest.fn()
@@ -187,6 +194,7 @@ async function openDingtalkMode(
 ) {
   render(
     <DocumentUpload
+      knowledgeBaseId={42}
       open={true}
       onOpenChange={jest.fn()}
       onUploadComplete={jest.fn()}
@@ -216,15 +224,151 @@ describe('DocumentUpload dingtalk source', () => {
     setupBatchAttachment()
     setupDocsApi()
     setupWikispaceApi()
+    mockGetExternalDocumentImportStatuses.mockReset().mockResolvedValue({})
   })
 
+  it('shows current-KB import outcomes on document leaves, including collapsed descendants', async () => {
+    mockGetExternalDocumentImportStatuses.mockResolvedValue({
+      'doc-1': 'success',
+      'doc-2': 'failed',
+      'doc-3': 'indexing',
+    })
+    await openDingtalkMode()
+    await waitFor(() =>
+      expect(mockGetExternalDocumentImportStatuses).toHaveBeenCalledWith(42, 'dingtalk', [
+        'doc-1',
+        'doc-2',
+        'doc-3',
+      ])
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(await screen.findByText('document.upload.dingtalk.imported')).toBeInTheDocument()
+    expect(screen.getByText('document.upload.dingtalk.importFailed')).toBeInTheDocument()
+    expect(screen.getByText('document.upload.dingtalk.importProcessing')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('dingtalk-folder-option-folder-1')).queryByTestId(
+        'dingtalk-import-status-folder-1'
+      )
+    ).not.toBeInTheDocument()
+  })
+
+  it('reports an unknown import status and lets the user retry without losing selection', async () => {
+    mockGetExternalDocumentImportStatuses.mockRejectedValue(new Error('offline'))
+    await openDingtalkMode()
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    expect(await screen.findByText('document.upload.dingtalk.statusLoadFailed')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-import-status-doc-3')).not.toBeInTheDocument()
+    mockGetExternalDocumentImportStatuses.mockResolvedValue({ 'doc-3': 'success' })
+    fireEvent.click(screen.getByTestId('dingtalk-import-status-retry'))
+    expect(await screen.findByTestId('dingtalk-import-status-doc-3')).toHaveTextContent(
+      'document.upload.dingtalk.imported'
+    )
+    expect(screen.queryByText('document.upload.dingtalk.statusLoadFailed')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-select-doc-3')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('does not display a late response from a previous knowledge base', async () => {
+    let resolveOld: (value: Record<string, string>) => void = () => {}
+    mockGetExternalDocumentImportStatuses.mockImplementation(
+      (kbId: number, _provider: string, ids: string[]) =>
+        kbId === 42 && ids.length
+          ? new Promise(resolve => {
+              resolveOld = resolve
+            })
+          : Promise.resolve({})
+    )
+    const props = {
+      open: true,
+      onOpenChange: jest.fn(),
+      onUploadComplete: jest.fn(),
+      onDingtalkImport: jest.fn(),
+    }
+    const { rerender } = render(<DocumentUpload knowledgeBaseId={42} {...props} />)
+    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    await screen.findByTestId('dingtalk-document-list')
+    await waitFor(() =>
+      expect(mockGetExternalDocumentImportStatuses).toHaveBeenCalledWith(42, 'dingtalk', [
+        'doc-1',
+        'doc-2',
+        'doc-3',
+      ])
+    )
+    rerender(<DocumentUpload knowledgeBaseId={43} {...props} />)
+    await waitFor(() =>
+      expect(mockGetExternalDocumentImportStatuses).toHaveBeenCalledWith(43, 'dingtalk', [
+        'doc-1',
+        'doc-2',
+        'doc-3',
+      ])
+    )
+    await act(async () => resolveOld({ 'doc-3': 'success' }))
+    expect(screen.queryByTestId('dingtalk-import-status-doc-3')).not.toBeInTheDocument()
+  })
+
+  it('refreshes import status with the directory and preserves the selected documents', async () => {
+    mockGetExternalDocumentImportStatuses.mockResolvedValue({ 'doc-3': 'indexing' })
+    await openDingtalkMode()
+    expect(await screen.findByTestId('dingtalk-import-status-doc-3')).toHaveTextContent(
+      'document.upload.dingtalk.importProcessing'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    mockSyncDocs.mockResolvedValue({})
+    mockGetDocs.mockResolvedValue({ nodes: [...DOCS_TREE], total_count: 5 })
+    mockGetExternalDocumentImportStatuses.mockResolvedValue({ 'doc-3': 'success' })
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+    await waitFor(() =>
+      expect(screen.getByTestId('dingtalk-import-status-doc-3')).toHaveTextContent(
+        'document.upload.dingtalk.imported'
+      )
+    )
+    expect(screen.getByTestId('dingtalk-node-select-doc-3')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it.each(['123', 'https:example.com', 'ftp://example.com'])(
+    'explains invalid URL %s after blur and clears the error when corrected',
+    invalidUrl => {
+      const onWebAdd = jest.fn()
+      render(
+        <DocumentUpload
+          knowledgeBaseId={42}
+          open={true}
+          onOpenChange={jest.fn()}
+          onUploadComplete={jest.fn()}
+          onWebAdd={onWebAdd}
+        />
+      )
+      fireEvent.mouseDown(screen.getByTestId('document-source-web'), { button: 0, ctrlKey: false })
+      const input = screen.getByTestId('document-web-url')
+      fireEvent.blur(input)
+      expect(input).not.toHaveAttribute('aria-invalid', 'true')
+      fireEvent.change(input, { target: { value: invalidUrl } })
+      fireEvent.blur(input)
+      expect(input).toHaveAttribute('aria-invalid', 'true')
+      expect(input).toHaveAccessibleDescription('document.upload.web.invalidUrl')
+      expect(screen.getByTestId('document-web-submit')).toBeDisabled()
+      expect(onWebAdd).not.toHaveBeenCalled()
+      fireEvent.change(input, { target: { value: 'https://example.com/article' } })
+      expect(input).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.queryByText('document.upload.web.invalidUrl')).not.toBeInTheDocument()
+      expect(screen.getByTestId('document-web-submit')).toBeEnabled()
+    }
+  )
+
   it('shows the dingtalk entry only when the handler is provided', () => {
-    render(<DocumentUpload open={true} onOpenChange={jest.fn()} onUploadComplete={jest.fn()} />)
+    render(
+      <DocumentUpload
+        knowledgeBaseId={42}
+        open={true}
+        onOpenChange={jest.fn()}
+        onUploadComplete={jest.fn()}
+      />
+    )
 
     expect(screen.queryByTestId('dingtalk-source-button')).not.toBeInTheDocument()
 
     render(
       <DocumentUpload
+        knowledgeBaseId={42}
         open={true}
         onOpenChange={jest.fn()}
         onUploadComplete={jest.fn()}
@@ -682,6 +826,7 @@ describe('DocumentUpload dingtalk source', () => {
     })
     render(
       <DocumentUpload
+        knowledgeBaseId={42}
         open={true}
         onOpenChange={onOpenChange}
         onUploadComplete={jest.fn()}
@@ -702,6 +847,26 @@ describe('DocumentUpload dingtalk source', () => {
     expect(onOpenChange).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('dingtalk-import-done'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('refreshes import status after completion when another source still has a draft', async () => {
+    await openDingtalkMode({
+      onDingtalkImport: jest.fn().mockImplementation(async () => {
+        mockGetExternalDocumentImportStatuses.mockResolvedValue({ 'doc-3': 'queued' })
+        return { createdCount: 1, updatedCount: 0, processingCount: 0 }
+      }),
+    })
+    fireEvent.mouseDown(screen.getByTestId('document-source-text'), { button: 0, ctrlKey: false })
+    fireEvent.change(screen.getByTestId('document-text-content'), {
+      target: { value: 'Unsaved draft' },
+    })
+    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    fireEvent.click(await screen.findByTestId('dingtalk-import-done'))
+    expect(await screen.findByTestId('dingtalk-import-status-doc-3')).toHaveTextContent(
+      'document.upload.dingtalk.importProcessing'
+    )
   })
 
   it.each([
@@ -734,6 +899,7 @@ describe('DocumentUpload dingtalk source', () => {
 
     render(
       <DocumentUpload
+        knowledgeBaseId={42}
         open={true}
         onOpenChange={jest.fn()}
         onUploadComplete={jest.fn()}
@@ -754,6 +920,7 @@ describe('DocumentUpload dingtalk source', () => {
 
     render(
       <DocumentUpload
+        knowledgeBaseId={42}
         open={true}
         onOpenChange={jest.fn()}
         onUploadComplete={jest.fn()}

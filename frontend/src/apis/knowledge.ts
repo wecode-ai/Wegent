@@ -160,6 +160,27 @@ export interface ExternalDocumentBatchImportRequest {
   folder_id?: number
 }
 
+export type ExternalDocumentImportStatuses = Record<string, KnowledgeDocument['index_status']>
+
+/** Check candidates across the entire KB, without a folder or listing-page filter. */
+export async function getExternalDocumentImportStatuses(
+  knowledgeBaseId: number,
+  provider: string,
+  resourceIds: string[]
+): Promise<ExternalDocumentImportStatuses> {
+  const ids = [...new Set(resourceIds)]
+  const statuses: ExternalDocumentImportStatuses = {}
+  // Bound requests to the server's lookup limit, not the 50-document import limit.
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = await apiClient.post<ExternalDocumentImportStatuses>(
+      `/knowledge-bases/${knowledgeBaseId}/documents/external-import-status`,
+      { provider, external_resource_ids: ids.slice(offset, offset + 500) }
+    )
+    Object.assign(statuses, batch)
+  }
+  return statuses
+}
+
 export interface ExternalDocumentBatchImportResult {
   created: KnowledgeDocument[]
   updated: KnowledgeDocument[]

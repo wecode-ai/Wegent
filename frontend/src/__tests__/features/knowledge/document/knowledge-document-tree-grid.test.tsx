@@ -74,6 +74,26 @@ const requiredTreeGridProps = {
 }
 
 describe('KnowledgeDocumentTreeGrid', () => {
+  it('identifies imported documents as external rather than just their file extension', () => {
+    const documents = [createDocument({ source_type: 'external', file_extension: 'md' })]
+    const { nodes, index } = buildKnowledgeResourceTree([], documents)
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn={false}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+    expect(screen.getByText('document.document.type.external')).toBeInTheDocument()
+    expect(screen.queryByText('md')).not.toBeInTheDocument()
+  })
+
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
     const documents = [createDocument({ id: 11, name: 'inside-folder.txt', folder_id: 1 })]
