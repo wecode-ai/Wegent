@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentIndexStatus,
     DocumentSourceType,
@@ -99,6 +100,63 @@ class TestRunExternalDocumentImport:
         assert attached["document"].id == document.id
         assert attached["content"] is content
         assert attached["generation"] == 0
+
+    @pytest.mark.parametrize("previous_conversion", [None, 9876])
+    def test_imported_docx_is_sent_to_converter(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        previous_conversion: int | None,
+    ) -> None:
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "KNOWLEDGE_CONVERSION_ENABLED", True)
+        monkeypatch.setattr(settings, "KNOWLEDGE_CONVERSION_FILE_TYPES", "docx")
+        document = self._create_placeholder(test_db, test_user)
+        document.converted_attachment_id = previous_conversion
+        kb = test_db.get(Kind, document.kind_id)
+        kb.json = {
+            **kb.json,
+            "spec": {
+                **kb.json["spec"],
+                "retrievalConfig": {
+                    "retriever_name": "test-retriever",
+                    "embedding_config": {"model_name": "test-embedding"},
+                },
+            },
+        }
+        test_db.commit()
+        content = ExternalDocumentContent(
+            name="External Word Document", file_extension="docx", content=b"word bytes"
+        )
+        monkeypatch.setattr(
+            get_external_document_provider("dingtalk"),
+            "fetch_content",
+            AsyncMock(return_value=content),
+        )
+        monkeypatch.setattr(
+            "app.services.context.context_service.upload_attachment",
+            MagicMock(return_value=(SimpleNamespace(id=4321), None)),
+        )
+        convert = MagicMock(return_value=SimpleNamespace(id="conversion-task"))
+        index = MagicMock(return_value=SimpleNamespace(id="index-task"))
+        monkeypatch.setattr("app.core.celery_app.celery_app.send_task", convert)
+        monkeypatch.setattr(
+            "app.tasks.knowledge_tasks.index_document_task.delay", index
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+
+        test_db.refresh(document)
+        assert document.file_extension == "docx"
+        assert document.index_status == DocumentIndexStatus.PENDING_CONVERSION
+        assert document.converted_attachment_id is None
+        assert document.name == "Run Doc"
+        assert convert.call_args.args == ("knowledge_doc_converter.convert_document",)
+        assert convert.call_args.kwargs["kwargs"]["file_extension"] == "docx"
+        assert convert.call_args.kwargs["kwargs"]["attachment_id"] == 4321
+        index.assert_not_called()
 
     def test_fetch_failure_marks_document_failed(
         self,

@@ -131,7 +131,7 @@ class ExternalDocumentImportService:
             db.refresh(existing)
             if self._is_processing(existing):
                 return existing
-            external_meta = provider.resolve_importable(db, user, external_resource_id)
+            external_meta = self._resolve_existing_source(db, provider, existing)
             return self._refresh_existing_document(db, existing, external_meta).document
 
         external_meta = provider.resolve_importable(db, user, external_resource_id)
@@ -368,7 +368,9 @@ class ExternalDocumentImportService:
                     refreshable.append(
                         (
                             existing_document,
-                            provider.resolve_importable(db, user, resource_id),
+                            self._resolve_existing_source(
+                                db, provider, existing_document
+                            ),
                         )
                     )
                 continue
@@ -417,6 +419,18 @@ class ExternalDocumentImportService:
             self._dispatch_import_task(db, document)
             created.append(document)
         return created
+
+    @staticmethod
+    def _resolve_existing_source(
+        db: Session,
+        provider: ExternalDocumentProvider,
+        document: KnowledgeDocument,
+    ) -> dict:
+        """Use the original importer's authorization, as the worker does."""
+        owner = db.get(User, document.user_id)
+        if owner is None:
+            raise ExternalDocumentImportError("The original importer no longer exists")
+        return provider.resolve_importable(db, owner, document.external_resource_id)
 
     @staticmethod
     def _validate_import_context(

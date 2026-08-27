@@ -21,6 +21,7 @@ from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
 )
+from app.schemas.share import MemberRole
 from app.services.knowledge.external_document_import import (
     external_document_import_service,
     run_external_document_import,
@@ -33,9 +34,61 @@ from app.services.knowledge.external_document_providers import (
     get_external_document_provider,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
+from app.services.share import knowledge_share_service
 
 from .conftest import create_external_import_kb as _create_kb
 from .conftest import create_synced_node as _create_synced_node
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_manager_reimports_with_original_importers_source_authorization(
+    test_db: Session,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    dispatched: list[int],
+    batch: bool,
+) -> None:
+    manager = User(
+        user_name="kb-manager",
+        password_hash=test_user.password_hash,
+        email="manager@example.com",
+        is_active=True,
+    )
+    test_db.add(manager)
+    test_db.commit()
+    kb_id = _create_kb(test_db, test_user.id)
+    knowledge_share_service.add_member(
+        test_db,
+        resource_id=kb_id,
+        current_user_id=test_user.id,
+        target_user_id=manager.id,
+        role=MemberRole.Maintainer,
+    )
+    node = _create_synced_node(test_db, test_user.id, "owner-source")
+    monkeypatch.setattr(
+        "app.services.dingtalk_doc_service.DingTalkDocService.is_configured",
+        lambda user: user.id == test_user.id,
+    )
+    document = external_document_import_service.import_document(
+        test_db, test_user, kb_id, "dingtalk", node.dingtalk_node_id
+    )
+    document.index_status = DocumentIndexStatus.SUCCESS
+    document.is_active = True
+    test_db.commit()
+
+    if batch:
+        external_document_import_service.import_documents(
+            test_db, manager, kb_id, "dingtalk", [node.dingtalk_node_id]
+        )
+    else:
+        external_document_import_service.import_document(
+            test_db, manager, kb_id, "dingtalk", node.dingtalk_node_id
+        )
+
+    test_db.refresh(document)
+    assert document.user_id == test_user.id
+    assert document.index_status == DocumentIndexStatus.QUEUED
+    assert dispatched == [document.id, document.id]
 
 
 class TestExternalSourceUnavailable:

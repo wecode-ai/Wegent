@@ -5,6 +5,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import Link from 'next/link'
 import {
   AlertCircle,
   Check,
@@ -232,7 +233,12 @@ export function DingtalkDocumentImport({
   }, [])
 
   const canSubmit =
-    canManageDocuments && !submitting && expandedIds.length > 0 && !overLimit && result === null
+    canManageDocuments &&
+    !source.notConfigured &&
+    !submitting &&
+    expandedIds.length > 0 &&
+    !overLimit &&
+    result === null
 
   const handleSubmit = useCallback(async () => {
     if (!canSubmit) return
@@ -398,24 +404,26 @@ export function DingtalkDocumentImport({
                       />
                     </div>
                   )}
-                  <Button
-                    variant="ghost"
-                    className="ml-auto h-11 w-11 shrink-0 p-0"
-                    onClick={handleRefresh}
-                    disabled={submitting || source.refreshing || source.loading}
-                    aria-label={t(
-                      source.refreshing
-                        ? 'document.upload.dingtalk.refreshing'
-                        : 'document.upload.dingtalk.refresh'
-                    )}
-                    data-testid="dingtalk-import-refresh"
-                  >
-                    {source.refreshing ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
+                  {!source.notConfigured && (
+                    <Button
+                      variant="ghost"
+                      className="ml-auto h-11 w-11 shrink-0 p-0"
+                      onClick={handleRefresh}
+                      disabled={submitting || source.refreshing || source.loading}
+                      aria-label={t(
+                        source.refreshing
+                          ? 'document.upload.dingtalk.refreshing'
+                          : 'document.upload.dingtalk.refresh'
+                      )}
+                      data-testid="dingtalk-import-refresh"
+                    >
+                      {source.refreshing ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  )}
                 </div>
                 {source.loading ? (
                   <div className="flex items-center justify-center gap-2 p-6 text-sm text-text-secondary">
@@ -423,7 +431,7 @@ export function DingtalkDocumentImport({
                     {t('document.upload.dingtalk.loading')}
                   </div>
                 ) : source.notConfigured ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-surface p-3 text-sm text-text-secondary">
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface p-3 text-sm text-text-secondary">
                     <AlertCircle className="h-4 w-4 shrink-0" />
                     <span>
                       {t(
@@ -432,6 +440,14 @@ export function DingtalkDocumentImport({
                           : 'document.upload.dingtalk.wikispaceNotConfigured'
                       )}
                     </span>
+                    <Button asChild variant="primary" className="min-h-11">
+                      <Link
+                        href="/settings?tab=integrations"
+                        data-testid="dingtalk-go-to-settings-button"
+                      >
+                        {t('document.goToSettings')}
+                      </Link>
+                    </Button>
                   </div>
                 ) : (
                   <>

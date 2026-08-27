@@ -1763,6 +1763,7 @@ class KnowledgeOrchestrator:
         # A failed initial attempt may already hold an attachment. Replace it
         # on retry and clean it up after the guarded write succeeds.
         previous_attachment_id = document.attachment_id
+        previous_converted_id = document.converted_attachment_id
 
         self._land_external_content(
             db,
@@ -1774,8 +1775,9 @@ class KnowledgeOrchestrator:
 
         db.refresh(document)
 
-        if previous_attachment_id and previous_attachment_id != attachment.id:
-            delete_attachment_best_effort(db, document.user_id, previous_attachment_id)
+        for previous_id in {previous_attachment_id, previous_converted_id}:
+            if previous_id and previous_id != attachment.id:
+                delete_attachment_best_effort(db, document.user_id, previous_id)
 
         result = self._schedule_indexing_celery(
             db=db,
@@ -1836,9 +1838,12 @@ class KnowledgeOrchestrator:
         }
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
+        # A conversion belongs to the previous body, never to its replacement.
+        merged_source_config.pop("converted_attachment_id", None)
 
         update_fields = {
             KnowledgeDocument.attachment_id: attachment.id,
+            KnowledgeDocument.file_extension: content.file_extension,
             KnowledgeDocument.file_size: len(content.content),
             KnowledgeDocument.source_config: merged_source_config,
             KnowledgeDocument.updated_at: now,

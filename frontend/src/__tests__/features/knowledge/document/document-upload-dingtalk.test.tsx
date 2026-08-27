@@ -979,8 +979,9 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.queryByTestId('dingtalk-import-result')).not.toBeInTheDocument()
   })
 
-  it('shows the not-configured hint instead of the list', async () => {
+  it.each(['docs', 'wikispace'])('offers configuration for unavailable %s', async source => {
     mockGetSyncStatus.mockResolvedValue({ is_configured: false, total_nodes: 0 })
+    mockGetWikispaceSyncStatus.mockResolvedValue({ is_configured: false, total_nodes: 0 })
 
     render(
       <DocumentUpload
@@ -992,10 +993,25 @@ describe('DocumentUpload dingtalk source', () => {
       />
     )
     fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+    if (source === 'wikispace') {
+      fireEvent.click(await screen.findByTestId('dingtalk-import-tab-wikispace'))
+    }
 
-    await waitFor(() => expect(mockGetSyncStatus).toHaveBeenCalled())
-    expect(await screen.findByText('DingTalk Docs is not configured')).toBeInTheDocument()
+    expect(
+      await screen.findByText(
+        source === 'docs'
+          ? 'DingTalk Docs is not configured'
+          : 'DingTalk wiki spaces are not configured'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-go-to-settings-button')).toHaveAttribute(
+      'href',
+      '/settings?tab=integrations'
+    )
+    expect(screen.queryByTestId('dingtalk-import-refresh')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-submit')).toBeDisabled()
     expect(screen.queryByTestId('dingtalk-document-list')).not.toBeInTheDocument()
     expect(mockGetDocs).not.toHaveBeenCalled()
+    expect(mockGetWikispaceNodes).not.toHaveBeenCalled()
   })
 })
