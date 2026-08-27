@@ -51,18 +51,17 @@ export class ExecutorSessionProjector {
 
     if (event === 'thread/tokenUsage/updated' || event === 'thread.tokenUsage.updated') {
       const runtimeUsage = recordField(recordField(payload, 'data'), 'tokenUsage')
-      const usage = tokenUsage(
-        Object.keys(recordField(runtimeUsage, 'last')).length
-          ? recordField(runtimeUsage, 'last')
-          : recordField(runtimeUsage, 'total')
-      )
-      if (!usage) return
+      const totalUsage = tokenUsage(recordField(runtimeUsage, 'total'))
+      const lastUsage = tokenUsage(recordField(runtimeUsage, 'last'))
+      const increment = usageIncrement(totalUsage, state.sourceUsage, lastUsage)
+      if (!increment || !totalUsage) return
       this.ensureOpenTurn(state, subtaskId)
-      state.usage = usage
+      state.sourceUsage = totalUsage
+      state.usage = addUsage(state.usage, increment)
       const appended = state.session.append('assistant/chunk', {
         turn: state.turn,
         step: 1,
-        chunk: { type: 'usage', usage },
+        chunk: { type: 'usage', usage: state.usage },
       })
       state.sourceEventSeqs.push(appended.seq)
       return
@@ -91,6 +90,7 @@ export class ExecutorSessionProjector {
       textStarted: false,
       reasoningStarted: false,
       usage: null,
+      sourceUsage: null,
       sourceEventSeqs: [],
       generatedUserMessageIds: new Set(),
     }
@@ -177,7 +177,7 @@ export class ExecutorSessionProjector {
     const completedText = responseText(data)
     if (!state.text && completedText) this.appendDelta(state, subtaskId, 'text', completedText)
     const completedUsage = responseUsage(data)
-    if (completedUsage) state.usage = completedUsage
+    if (!state.usage && completedUsage) state.usage = completedUsage
     this.closeTurn(state, event, data)
   }
 
@@ -260,13 +260,48 @@ function tokenUsage(value) {
   const output = nonNegativeInteger(total.outputTokens)
   if (input === null || output === null) return null
   const cached = nonNegativeInteger(total.cachedInputTokens) ?? 0
+  const cacheWrite = nonNegativeInteger(total.cacheWriteInputTokens) ?? 0
   const reasoning = nonNegativeInteger(total.reasoningOutputTokens)
   return {
     inputTokens: Math.max(0, input - cached),
     outputTokens: output,
     ...(cached ? { cacheReadTokens: cached } : {}),
+    ...(cacheWrite ? { cacheWriteTokens: cacheWrite } : {}),
     ...(reasoning === null ? {} : { reasoningTokens: reasoning }),
   }
+}
+
+function usageIncrement(total, previousTotal, last) {
+  if (!total) return null
+  if (!previousTotal) return last ?? total
+  const keys = usageKeys(total, previousTotal)
+  if (keys.some(key => usageValue(total, key) < usageValue(previousTotal, key))) {
+    return last ?? total
+  }
+  return Object.fromEntries(
+    keys.map(key => [key, usageValue(total, key) - usageValue(previousTotal, key)])
+  )
+}
+
+function addUsage(current, increment) {
+  const keys = usageKeys(current, increment)
+  return Object.fromEntries(
+    keys.map(key => [key, usageValue(current, key) + usageValue(increment, key)])
+  )
+}
+
+function usageKeys(...values) {
+  return [
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+    'reasoningTokens',
+  ].filter(key => values.some(value => value && Object.hasOwn(value, key)))
+}
+
+function usageValue(usage, key) {
+  return usage?.[key] ?? 0
 }
 
 function responseUsage(data) {
