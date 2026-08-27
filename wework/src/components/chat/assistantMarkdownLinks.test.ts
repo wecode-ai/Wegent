@@ -42,6 +42,14 @@ describe('classifyMarkdownLink', () => {
     })
   })
 
+  test('classifies Windows drive-letter roots as files', () => {
+    expect(classifyMarkdownLink('C:/')).toEqual({ kind: 'file', path: 'C:/' })
+  })
+
+  test('classifies lowercase Windows drive-letter paths as files', () => {
+    expect(classifyMarkdownLink('d:/foo')).toEqual({ kind: 'file', path: 'd:/foo' })
+  })
+
   test('classifies other schemes as external', () => {
     expect(classifyMarkdownLink('https://example.com/repo')).toEqual({ kind: 'external' })
     expect(classifyMarkdownLink('vscode://repo/path')).toEqual({ kind: 'external' })
