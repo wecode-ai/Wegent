@@ -2,27 +2,22 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""
-ERP department visibility config stored in Redis.
+"""ERP-backed department visibility filtering.
 
-Hides specific departments from non-whitelisted users when searching via
-the internal department auth endpoint. Config lives in a single Redis hash
-so HR-driven ad-hoc changes take effect immediately without a redeploy.
+ERP owns the hidden department list. Departments returned by the ERP
+``/api/open/search?keyword=T2`` query are hidden from non-whitelisted users.
+Only the local user whitelist is maintained in Redis.
 
-Redis layout:
+Redis layout::
+
     key:    wecode:erp:dept_visibility
-    fields:
-        hidden_items     JSON list[str]  Department IDs or names to hide
-        whitelist_users  JSON list[str]  user_name values exempt from filter
+    field:  whitelist_users  JSON list[str]  user_name values exempt from filter
+    key:    wecode:erp:dept_visibility:t2_ids:v1
+    value:  JSON list[str]  Department IDs returned by the ERP T2 search
+    ttl:    300 seconds
 
-Hidden list items are matched against either DepartmentInfo.id (numeric/string
-ID match) or DepartmentInfo.name/label (string-name match). Items are stored
-as a single list; matching is type-aware so a department name that happens
-to equal another department's id will not cause cross-type collisions.
-
-On Redis failure the filter is fail-open: searches return the full ERP
-result. The visibility rule is a soft HR policy, not an auth boundary,
-so degraded availability is preferred over a broken search experience.
+The visibility rule is a soft HR policy, not an auth boundary. Redis and ERP
+failures therefore fail open and preserve the full department search result.
 """
 
 from __future__ import annotations
@@ -33,20 +28,21 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 from wecode.cache.base import get_redis_client
-from wecode.service.erp_client import DepartmentInfo
+from wecode.service.erp_client import DepartmentInfo, erp_client
 
 logger = logging.getLogger(__name__)
 
 REDIS_KEY = "wecode:erp:dept_visibility"
-FIELD_HIDDEN = "hidden_items"
 FIELD_WHITELIST = "whitelist_users"
-_VALID_FIELDS = {FIELD_HIDDEN, FIELD_WHITELIST}
+HIDDEN_DEPARTMENT_CACHE_KEY = "wecode:erp:dept_visibility:t2_ids:v1"
+HIDDEN_DEPARTMENT_CACHE_TTL = 300
+_VALID_FIELDS = {FIELD_WHITELIST}
 
 
 @dataclass
 class VisibilityConfig:
-    hidden_items: set[str] = field(default_factory=set)
     whitelist_users: set[str] = field(default_factory=set)
+    redis_available: bool = True
 
 
 def _decode(value) -> Optional[str]:
@@ -64,11 +60,11 @@ def _normalize_list(items: Iterable) -> list[str]:
     for item in items:
         if item is None:
             continue
-        s = str(item).strip()
-        if not s or s in seen:
+        value = str(item).strip()
+        if not value or value in seen:
             continue
-        seen.add(s)
-        out.append(s)
+        seen.add(value)
+        out.append(value)
     return out
 
 
@@ -82,7 +78,7 @@ def _read_field(client, field_name: str) -> list[str]:
     except json.JSONDecodeError:
         logger.warning(
             f"dept_visibility: corrupt JSON in field {field_name!r}, "
-            f"treating as empty"
+            "treating as empty"
         )
         return []
     if not isinstance(data, list):
@@ -91,28 +87,21 @@ def _read_field(client, field_name: str) -> list[str]:
 
 
 def get_visibility_config() -> VisibilityConfig:
-    """Read full visibility config from Redis. Fail-open on any error."""
+    """Read the local whitelist from Redis. Fail-open on any error."""
     client = get_redis_client()
     if client is None:
-        return VisibilityConfig()
+        return VisibilityConfig(redis_available=False)
     try:
-        hidden = _read_field(client, FIELD_HIDDEN)
-        whitelist = _read_field(client, FIELD_WHITELIST)
         return VisibilityConfig(
-            hidden_items=set(hidden),
-            whitelist_users=set(whitelist),
+            whitelist_users=set(_read_field(client, FIELD_WHITELIST))
         )
     except Exception as e:
         logger.warning(f"dept_visibility: config read failed, fail-open: {e}")
-        return VisibilityConfig()
+        return VisibilityConfig(redis_available=False)
 
 
 def write_field(field_name: str, items: list[str]) -> list[str]:
-    """Replace one config field. Returns the normalized list actually stored.
-
-    Raises RuntimeError if Redis is unavailable or the write itself fails so
-    the admin caller sees a clear error instead of a silent no-op.
-    """
+    """Replace the local whitelist field with normalized values."""
     if field_name not in _VALID_FIELDS:
         raise ValueError(f"Unknown field: {field_name}")
 
@@ -129,69 +118,75 @@ def write_field(field_name: str, items: list[str]) -> list[str]:
     return normalized
 
 
-def _split_hidden_items(hidden_items: set[str]) -> tuple[set[str], set[str]]:
-    """Split mixed hidden list into id-like and name-like buckets.
+def _normalize_department_id(value: object) -> str:
+    """Normalize department IDs consistently across ERP and search results."""
+    value_str = str(value).strip()
+    return str(int(value_str)) if value_str.isdigit() else value_str
 
-    A purely numeric token is treated as a department ID; everything else
-    is treated as a department name/label. Departments are then matched
-    by-type so a department name that happens to equal another department's
-    numeric id does not cause cross-type false hides.
+
+def _read_hidden_department_cache(client) -> Optional[set[str]]:
+    """Read cached T2 department IDs, returning None on miss or error."""
+    try:
+        raw = client.get(HIDDEN_DEPARTMENT_CACHE_KEY)
+        if raw is None:
+            return None
+        decoded = _decode(raw)
+        data = json.loads(decoded)
+        if not isinstance(data, list):
+            logger.warning("dept_visibility: invalid T2 cache format")
+            return None
+        return {_normalize_department_id(item) for item in data if item is not None}
+    except Exception as e:
+        logger.warning(f"dept_visibility: T2 cache read failed: {e}")
+        return None
+
+
+def get_hidden_department_ids() -> Optional[set[str]]:
+    """Get T2 department IDs from Redis or ERP.
+
+    None means the visibility data could not be resolved and callers should
+    fail open. An empty set is a valid successful ERP response.
     """
-    ids: set[str] = set()
-    names: set[str] = set()
-    for item in hidden_items:
-        if item.isdigit():
-            # Normalize to strip leading zeros so "001" matches dept.id
-            # after Pydantic serializes a numeric JSON value as "1".
-            ids.add(str(int(item)))
-        else:
-            names.add(item)
-    return ids, names
+    client = get_redis_client()
+    if client is None:
+        return None
 
+    cached = _read_hidden_department_cache(client)
+    if cached is not None:
+        return cached
 
-def is_hidden(
-    dept: DepartmentInfo,
-    hidden_items: set[str],
-    hidden_ids: Optional[set[str]] = None,
-    hidden_names: Optional[set[str]] = None,
-) -> bool:
-    """Return True if the department should be hidden.
+    hidden_ids = erp_client.search_hidden_department_ids()
+    if hidden_ids is None:
+        return None
 
-    Matching is type-aware: numeric tokens in the hidden list match
-    against DepartmentInfo.id only, and non-numeric tokens match against
-    DepartmentInfo.name/label only.
-
-    Callers may pre-split the hidden list and pass `hidden_ids` /
-    `hidden_names` to avoid repeated splitting in tight loops.
-    """
-    if hidden_ids is None or hidden_names is None:
-        hidden_ids, hidden_names = _split_hidden_items(hidden_items)
-
-    if dept.id is not None:
-        dept_id_str = str(dept.id)
-        if dept_id_str.isdigit():
-            dept_id_str = str(int(dept_id_str))
-        if dept_id_str in hidden_ids:
-            return True
-    if dept.name and dept.name in hidden_names:
-        return True
-    if dept.label and dept.label in hidden_names:
-        return True
-    return False
+    normalized_ids = {_normalize_department_id(item) for item in hidden_ids}
+    try:
+        client.set(
+            HIDDEN_DEPARTMENT_CACHE_KEY,
+            json.dumps(sorted(normalized_ids)),
+            ex=HIDDEN_DEPARTMENT_CACHE_TTL,
+        )
+    except Exception as e:
+        logger.warning(f"dept_visibility: T2 cache write failed: {e}")
+    return normalized_ids
 
 
 def filter_hidden_for_user(
     user_name: Optional[str], departments: list[DepartmentInfo]
 ) -> list[DepartmentInfo]:
-    """Drop hidden departments unless the user is whitelisted."""
+    """Drop ERP T2 departments unless the user is whitelisted."""
     config = get_visibility_config()
-    if not config.hidden_items:
+    if not config.redis_available:
         return departments
     if user_name and user_name in config.whitelist_users:
         return departments
-    hidden_ids, hidden_names = _split_hidden_items(config.hidden_items)
+
+    hidden_ids = get_hidden_department_ids()
+    if hidden_ids is None:
+        return departments
     return [
-        d
-        for d in departments
-        if not is_hidden(d, config.hidden_items, hidden_ids, hidden_names)
+        department
+        for department in departments
+        if department.id is None
+        or _normalize_department_id(department.id) not in hidden_ids
     ]
