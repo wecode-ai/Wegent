@@ -916,6 +916,7 @@ jobs:
           E2E_USE_ISOLATED_USERS: "false"
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
+          E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || needs.build-executor-e2e-runtime.outputs.image }}
           E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
@@ -941,6 +942,7 @@ jobs:
             --env MOCK_MODEL_SERVER_URL \
             --env E2E_CLAUDE_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
+            --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \

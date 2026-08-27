@@ -316,6 +316,14 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_CLAUDE_MODEL_SERVER_URL' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F \
+      'E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == '\''true'\'' && '\''wegent/e2e-claudecode-executor:latest'\'' || needs.build-executor-e2e-runtime.outputs.image }}' \
+      >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--env E2E_CLAUDE_EXECUTOR_IMAGE' >/dev/null ||
   sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null ||
