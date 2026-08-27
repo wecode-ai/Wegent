@@ -2,7 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::{
+    ffi::OsString,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 
 use wegent_executor::process_environment::{normalized_process_path, process_env};
 
@@ -13,18 +16,18 @@ fn env_lock() -> MutexGuard<'static, ()> {
 
 struct EnvGuard {
     key: &'static str,
-    previous: Option<String>,
+    previous: Option<OsString>,
 }
 
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
-        let previous = std::env::var(key).ok();
+        let previous = std::env::var_os(key);
         std::env::set_var(key, value);
         Self { key, previous }
     }
 
     fn remove(key: &'static str) -> Self {
-        let previous = std::env::var(key).ok();
+        let previous = std::env::var_os(key);
         std::env::remove_var(key);
         Self { key, previous }
     }
