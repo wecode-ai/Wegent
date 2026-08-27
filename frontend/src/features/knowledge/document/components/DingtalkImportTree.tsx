@@ -6,13 +6,13 @@
 
 import {
   ChevronRight,
-  Database,
   File,
   FileSpreadsheet,
   FileText,
   Folder,
   FolderOpen,
   Presentation,
+  Table2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
@@ -28,7 +28,7 @@ const FILE_ICONS = new Map<string, { icon: typeof FileText; className: string }>
   ['pdf', { icon: FileText, className: 'text-error' }],
   ['txt', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
   ['md', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
-  ['able', { icon: Database, className: 'text-primary' }],
+  ['able', { icon: Table2, className: 'text-primary' }],
   ['axls', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
   ['xlsx', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
   ['csv', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],

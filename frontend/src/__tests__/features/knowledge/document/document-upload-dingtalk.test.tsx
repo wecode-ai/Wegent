@@ -219,7 +219,7 @@ describe('DocumentUpload dingtalk source', () => {
   it('shows colored format icons independently of import eligibility', async () => {
     const formats = [
       ['adoc', 'lucide-file-text', 'text-blue-600', 'dark:text-blue-400'],
-      ['able', 'lucide-database', 'text-primary'],
+      ['able', 'lucide-table-2', 'text-primary'],
       ['axls', 'lucide-file-spreadsheet', 'text-green-600', 'dark:text-green-400'],
       ['pptx', 'lucide-presentation', 'text-orange-600', 'dark:text-orange-400'],
       ['pdf', 'lucide-file-text', 'text-error'],
