@@ -707,7 +707,7 @@ def test_executor_warmpool_is_enabled_by_default(monkeypatch):
         reloaded_config = importlib.reload(config)
         assert reloaded_config.EXECUTOR_WARMPOOL_ENABLED is True
         assert reloaded_config.EXECUTOR_NON_GIT_WARMPOOL_ENABLED is False
-        assert reloaded_config.EXECUTOR_GIT_WARMPOOL_ENABLED is False
+        assert reloaded_config.EXECUTOR_GIT_WARMPOOL_ENABLED is True
 
     importlib.reload(config)
 
