@@ -612,7 +612,18 @@
         "resultUpdated": "updated {{count}}",
         "resultProcessing": "Already processing {{count}} (skipped)",
         "resultSeparator": ", ",
-        "done": "Done"
+        "done": "Done",
+        "sourceNavigation": "DingTalk sources",
+        "expandFolder": "Expand {{name}}",
+        "collapseFolder": "Collapse {{name}}",
+        "documentCount": "{{count}} documents",
+        "searchCount": "{{count}} matches",
+        "selectAll": "Select all",
+        "clearSelection": "Clear selection",
+        "selectSearchResults": "Select results",
+        "clearSearchSelection": "Clear result selection",
+        "searchSelectionHint": "Only matching documents can be selected while searching",
+        "noSearchResults": "No matching documents"
       },
       "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files.",
       "sources": {

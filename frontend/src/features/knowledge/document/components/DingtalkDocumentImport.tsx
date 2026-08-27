@@ -8,9 +8,8 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import {
   AlertCircle,
   Check,
-  ChevronRight,
+  BookOpen,
   FileText,
-  Folder,
   Info,
   Loader2,
   RefreshCw,
@@ -24,6 +23,7 @@ import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 import { cn } from '@/lib/utils'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
+import { DingtalkImportTree, collectImportableIds, filterImportTree } from './DingtalkImportTree'
 
 // Maximum documents one batch import may create; mirrors the backend cap.
 const MAX_IMPORT_DOCUMENTS = 50
@@ -56,59 +56,6 @@ const EMPTY_SOURCE: SourceState = {
   loadFailed: false,
   refreshFailed: false,
   refreshing: false,
-}
-
-function flattenTree(nodes: DingtalkDocNode[]): DingtalkDocNode[] {
-  const result: DingtalkDocNode[] = []
-  const walk = (items: DingtalkDocNode[]) => {
-    for (const item of items) {
-      result.push(item)
-      if (item.children?.length) walk(item.children)
-    }
-  }
-  walk(nodes)
-  return result
-}
-
-function collectDocIds(node: DingtalkDocNode): string[] {
-  const ids: string[] = []
-  if (node.node_type === 'doc') ids.push(node.dingtalk_node_id)
-  for (const child of node.children ?? []) ids.push(...collectDocIds(child))
-  return ids
-}
-
-// Selection key for one node: docs and folders get distinct prefixes so a
-// folder and a same-ID document never collide in the selection set.
-function nodeKey(node: DingtalkDocNode): string {
-  return `${node.node_type === 'folder' ? 'folder' : 'doc'}:${node.dingtalk_node_id}`
-}
-
-// Expand the selected docs/folders into the deduplicated document IDs that
-// will actually be imported. Folders resolve to their importable descendant
-// documents at submit time; the source folder structure is never copied.
-// Both directory sources are walked so a selection survives switching tabs.
-function expandSelection(nodes: DingtalkDocNode[], selectedKeys: Set<string>): string[] {
-  const result: string[] = []
-  const seen = new Set<string>()
-  const addAll = (ids: string[]) => {
-    for (const id of ids) {
-      if (!seen.has(id)) {
-        seen.add(id)
-        result.push(id)
-      }
-    }
-  }
-  const walk = (node: DingtalkDocNode): void => {
-    if (node.node_type === 'doc' && selectedKeys.has(nodeKey(node))) {
-      addAll([node.dingtalk_node_id])
-    }
-    if (node.node_type === 'folder' && selectedKeys.has(nodeKey(node))) {
-      addAll(collectDocIds(node))
-    }
-    for (const child of node.children ?? []) walk(child)
-  }
-  for (const node of nodes) walk(node)
-  return result
 }
 
 function formatLastSynced(iso: string | null | undefined): string {
@@ -144,15 +91,15 @@ export function DingtalkDocumentImport({
     docs: EMPTY_SOURCE,
     wikispace: EMPTY_SOURCE,
   })
-  const [path, setPath] = useState<DingtalkDocNode[]>([])
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set())
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [result, setResult] = useState<DingtalkBatchImportSummary | null>(null)
   useEffect(() => {
-    onDraftChange(result === null && selectedKeys.size > 0)
-  }, [onDraftChange, result, selectedKeys])
+    onDraftChange(result === null && selectedIds.size > 0)
+  }, [onDraftChange, result, selectedIds])
 
   const resultItems = result
     ? [
@@ -229,7 +176,6 @@ export function DingtalkDocumentImport({
         setSourceState(activeSource, { refreshing: false, refreshFailed: true })
         return
       }
-      setPath([])
       setSourceState(activeSource, { refreshing: false })
     } catch {
       // Refresh failed: keep the old directory and the current selection.
@@ -239,33 +185,39 @@ export function DingtalkDocumentImport({
 
   const handleSourceChange = useCallback((key: DingtalkSourceKey) => {
     setActiveSource(key)
-    setPath([])
-    setSearchQuery('')
   }, [])
 
-  const flattenedNodes = useMemo(() => flattenTree(source.nodes), [source.nodes])
-
-  const visibleNodes = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase()
-    if (query) {
-      return flattenedNodes.filter(node => node.name.toLowerCase().includes(query))
-    }
-    if (path.length === 0) return source.nodes
-    return path[path.length - 1].children ?? []
-  }, [searchQuery, flattenedNodes, source.nodes, path])
-
-  // Selections are counted across both directory sources so a selection made
-  // on one tab is neither lost nor silently dropped when submitting on the
-  // other tab.
-  const expandedIds = useMemo(
-    () => expandSelection([...sources.docs.nodes, ...sources.wikispace.nodes], selectedKeys),
-    [sources.docs.nodes, sources.wikispace.nodes, selectedKeys]
+  const visibleNodes = useMemo(
+    () => filterImportTree(source.nodes, searchQuery),
+    [source.nodes, searchQuery]
   )
+  const availableIds = useMemo(
+    () => collectImportableIds([...sources.docs.nodes, ...sources.wikispace.nodes]),
+    [sources.docs.nodes, sources.wikispace.nodes]
+  )
+  // A directory refresh can remove documents, but must never add new ones to a selection.
+  useEffect(() => {
+    const available = new Set(availableIds)
+    setSelectedIds(current => {
+      const next = new Set([...current].filter(id => available.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [availableIds])
+  const expandedIds = availableIds.filter(id => selectedIds.has(id))
   const overLimit = expandedIds.length > MAX_IMPORT_DOCUMENTS
+  const visibleIds = collectImportableIds(visibleNodes)
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
-  const toggleSelect = useCallback((node: DingtalkDocNode) => {
-    setSelectedKeys(current => {
-      const key = nodeKey(node)
+  const toggleSelect = useCallback((ids: string[]) => {
+    setSelectedIds(current => {
+      const next = new Set(current)
+      const clear = ids.every(id => next.has(id))
+      ids.forEach(id => (clear ? next.delete(id) : next.add(id)))
+      return next
+    })
+  }, [])
+  const toggleExpanded = useCallback((key: string) => {
+    setExpandedKeys(current => {
       const next = new Set(current)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -282,7 +234,7 @@ export function DingtalkDocumentImport({
     setSubmitError(null)
     try {
       const summary = await onImport(expandedIds)
-      setSelectedKeys(new Set())
+      setSelectedIds(new Set())
       setResult(summary)
     } catch (err) {
       setSubmitError(mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.dingtalk.addFailed'))
@@ -306,89 +258,6 @@ export function DingtalkDocumentImport({
         (source.loadFailed ? t('document.upload.dingtalk.loadFailed') : null))
 
   const searchActive = searchQuery.trim().length > 0
-
-  const renderNodeRow = (node: DingtalkDocNode) => {
-    const importable = node.node_type === 'doc'
-    const selectable = importable || node.node_type === 'folder'
-    const selected = selectedKeys.has(nodeKey(node))
-    const rowTestId =
-      node.node_type === 'folder'
-        ? `dingtalk-folder-option-${node.dingtalk_node_id}`
-        : `dingtalk-document-option-${node.dingtalk_node_id}`
-    return (
-      <div
-        key={node.dingtalk_node_id}
-        className="flex min-h-11 items-center gap-2 px-2"
-        data-testid={rowTestId}
-      >
-        {selectable ? (
-          <button
-            type="button"
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded transition-colors"
-            onClick={() => toggleSelect(node)}
-            disabled={submitting || result !== null}
-            aria-label={node.name}
-            aria-pressed={selected}
-            data-testid={`dingtalk-node-select-${node.dingtalk_node_id}`}
-          >
-            <span
-              className={cn(
-                'flex h-5 w-5 items-center justify-center rounded border transition-colors',
-                selected
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border hover:border-primary'
-              )}
-            >
-              {selected && <Check className="h-3.5 w-3.5" />}
-            </span>
-          </button>
-        ) : (
-          <span className="h-11 w-11 shrink-0 flex items-center justify-center">
-            <span className="h-5 w-5" />
-          </span>
-        )}
-        {node.node_type === 'folder' ? (
-          <Folder className="w-4 h-4 text-primary flex-shrink-0" />
-        ) : (
-          <FileText
-            className={cn(
-              'w-4 h-4 flex-shrink-0',
-              importable ? 'text-primary' : 'text-text-secondary'
-            )}
-          />
-        )}
-        <span
-          title={node.name}
-          className={cn(
-            'min-w-0 flex-1 truncate text-sm',
-            selectable ? 'text-text-primary' : 'text-text-secondary'
-          )}
-        >
-          {node.name}
-        </span>
-        {node.node_type === 'folder' && !searchActive && (
-          <Button
-            variant="ghost"
-            className="h-11 w-11 shrink-0 p-0"
-            onClick={() => setPath(current => [...current, node])}
-            disabled={submitting || result !== null}
-            aria-label={node.name}
-            data-testid={`dingtalk-folder-navigate-${node.dingtalk_node_id}`}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-        )}
-        {!selectable && (
-          <span
-            className="text-xs text-text-secondary"
-            data-testid={`dingtalk-node-unsupported-${node.dingtalk_node_id}`}
-          >
-            {t('document.upload.dingtalk.unsupported')}
-          </span>
-        )}
-      </div>
-    )
-  }
 
   return (
     <>
@@ -448,140 +317,176 @@ export function DingtalkDocumentImport({
           )
         ) : (
           <>
-            <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:flex">
-              <div className="col-span-2 flex shrink-0">
-                {(Object.keys(sources) as DingtalkSourceKey[]).map(key => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={cn(
-                      'h-11 rounded-md px-3 text-sm transition-colors',
-                      activeSource === key
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'text-text-secondary hover:text-text-primary'
-                    )}
-                    onClick={() => handleSourceChange(key)}
-                    disabled={submitting}
-                    data-testid={
-                      key === 'docs'
-                        ? 'dingtalk-import-tab-my-docs'
-                        : 'dingtalk-import-tab-wikispace'
-                    }
-                  >
-                    {t(
-                      key === 'docs'
-                        ? 'document.upload.dingtalk.myDocs'
-                        : 'document.upload.dingtalk.wikispace'
-                    )}
-                  </button>
-                ))}
-              </div>
-              {!source.notConfigured && (
-                <div className="relative min-w-0 flex-1">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
-                  <Input
-                    className="h-11 pl-9"
-                    aria-label={t('document.upload.dingtalk.searchPlaceholder')}
-                    placeholder={t('document.upload.dingtalk.searchPlaceholder')}
-                    value={searchQuery}
-                    onChange={event => setSearchQuery(event.target.value)}
-                    disabled={submitting}
-                    data-testid="dingtalk-import-search"
-                  />
-                </div>
-              )}
-              <Button
-                variant="outline"
-                className="col-start-2 h-11 w-11 shrink-0 gap-1.5 p-0 md:ml-auto md:w-auto md:px-3"
-                onClick={handleRefresh}
-                disabled={submitting || source.refreshing || source.loading}
-                aria-label={
-                  source.refreshing
-                    ? t('document.upload.dingtalk.refreshing')
-                    : t('document.upload.dingtalk.refresh')
-                }
-                data-testid="dingtalk-import-refresh"
+            <div className="flex min-h-0 flex-1 flex-col border-t border-border md:flex-row max-md:flex-none [@media(max-height:640px)]:flex-none">
+              <nav
+                aria-label={t('document.upload.dingtalk.sourceNavigation')}
+                className="flex shrink-0 gap-1 border-b border-border py-2 md:w-44 md:flex-col md:border-b-0 md:border-r md:pr-2"
+                data-testid="dingtalk-import-source-navigation"
               >
-                {source.refreshing ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4" />
-                )}
-                <span className="hidden md:inline">
-                  {source.refreshing
-                    ? t('document.upload.dingtalk.refreshing')
-                    : t('document.upload.dingtalk.refresh')}
-                </span>
-              </Button>
-            </div>
-
-            {source.loading && (
-              <div className="flex shrink-0 items-center justify-center gap-2 p-6 text-sm text-text-secondary">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {t('document.upload.dingtalk.loading')}
-              </div>
-            )}
-
-            {!source.loading && source.notConfigured && (
-              <div className="shrink-0 flex items-center gap-2 p-3 bg-surface rounded-lg text-sm text-text-secondary">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>
-                  {activeSource === 'docs'
-                    ? t('document.upload.dingtalk.notConfigured')
-                    : t('document.upload.dingtalk.wikispaceNotConfigured')}
-                </span>
-              </div>
-            )}
-
-            {!source.loading && !source.notConfigured && visibleNodes.length === 0 && (
-              <div className="shrink-0 p-3 bg-surface rounded-lg text-sm text-text-secondary">
-                {t('document.upload.dingtalk.empty')}
-              </div>
-            )}
-
-            {!source.loading && !source.notConfigured && visibleNodes.length > 0 && (
-              <>
-                {!searchActive && path.length > 0 && (
-                  <div
-                    className="flex shrink-0 items-center gap-1 overflow-hidden text-sm"
-                    data-testid="dingtalk-import-breadcrumb"
-                  >
+                {(Object.keys(sources) as DingtalkSourceKey[]).map(key => {
+                  const Icon = key === 'docs' ? FileText : BookOpen
+                  const count = collectImportableIds(sources[key].nodes).filter(id =>
+                    selectedIds.has(id)
+                  ).length
+                  return (
                     <button
+                      key={key}
                       type="button"
-                      className="inline-flex min-h-11 shrink-0 items-center text-text-secondary hover:text-text-primary"
-                      onClick={() => setPath([])}
-                      data-testid="dingtalk-import-breadcrumb-root"
+                      className={cn(
+                        'flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-2 text-left text-sm md:flex-none',
+                        activeSource === key
+                          ? 'bg-primary/10 font-medium text-primary'
+                          : 'text-text-primary hover:bg-surface'
+                      )}
+                      aria-pressed={activeSource === key}
+                      onClick={() => handleSourceChange(key)}
+                      disabled={submitting}
+                      data-testid={
+                        key === 'docs'
+                          ? 'dingtalk-import-tab-my-docs'
+                          : 'dingtalk-import-tab-wikispace'
+                      }
                     >
-                      {t(
-                        activeSource === 'docs'
-                          ? 'document.upload.dingtalk.myDocs'
-                          : 'document.upload.dingtalk.wikispace'
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span
+                        className="min-w-0 flex-1 truncate"
+                        title={t(
+                          key === 'docs'
+                            ? 'document.upload.dingtalk.myDocs'
+                            : 'document.upload.dingtalk.wikispace'
+                        )}
+                      >
+                        {t(
+                          key === 'docs'
+                            ? 'document.upload.dingtalk.myDocs'
+                            : 'document.upload.dingtalk.wikispace'
+                        )}
+                      </span>
+                      {count > 0 && (
+                        <span
+                          className="rounded-full bg-surface px-1.5 text-xs text-text-secondary"
+                          aria-label={t('document.upload.dingtalk.selectedCount', { count })}
+                        >
+                          {count}
+                        </span>
                       )}
                     </button>
-                    {path.map((node, index) => (
-                      <span key={node.dingtalk_node_id} className="flex min-w-0 items-center gap-1">
-                        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-text-secondary" />
-                        <span
-                          title={node.name}
-                          className={cn(
-                            'truncate',
-                            index === path.length - 1 ? 'text-text-primary' : 'text-text-secondary'
-                          )}
-                        >
-                          {node.name}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div
-                  className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border divide-y divide-border max-md:flex-none max-md:overflow-visible [@media(max-height:640px)]:flex-none [@media(max-height:640px)]:overflow-visible"
-                  data-testid="dingtalk-document-list"
-                >
-                  {visibleNodes.map(renderNodeRow)}
+                  )
+                })}
+              </nav>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col md:pl-2">
+                <div className="flex shrink-0 items-center gap-2 py-2">
+                  {!source.notConfigured && (
+                    <div className="relative min-w-0 flex-1">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                      <Input
+                        className="h-11 pl-9"
+                        aria-label={t('document.upload.dingtalk.searchPlaceholder')}
+                        placeholder={t('document.upload.dingtalk.searchPlaceholder')}
+                        value={searchQuery}
+                        onChange={event => setSearchQuery(event.target.value)}
+                        disabled={submitting}
+                        data-testid="dingtalk-import-search"
+                      />
+                    </div>
+                  )}
+                  <Button
+                    variant="ghost"
+                    className="ml-auto h-11 w-11 shrink-0 p-0"
+                    onClick={handleRefresh}
+                    disabled={submitting || source.refreshing || source.loading}
+                    aria-label={t(
+                      source.refreshing
+                        ? 'document.upload.dingtalk.refreshing'
+                        : 'document.upload.dingtalk.refresh'
+                    )}
+                    data-testid="dingtalk-import-refresh"
+                  >
+                    {source.refreshing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
                 </div>
-              </>
-            )}
+                {source.loading ? (
+                  <div className="flex items-center justify-center gap-2 p-6 text-sm text-text-secondary">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t('document.upload.dingtalk.loading')}
+                  </div>
+                ) : source.notConfigured ? (
+                  <div className="flex items-center gap-2 rounded-lg bg-surface p-3 text-sm text-text-secondary">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>
+                      {t(
+                        activeSource === 'docs'
+                          ? 'document.upload.dingtalk.notConfigured'
+                          : 'document.upload.dingtalk.wikispaceNotConfigured'
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-x-2 text-xs text-text-secondary">
+                      <span>
+                        {t(
+                          searchActive
+                            ? 'document.upload.dingtalk.searchCount'
+                            : 'document.upload.dingtalk.documentCount',
+                          { count: visibleIds.length }
+                        )}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        className="min-h-11 text-xs text-primary"
+                        disabled={submitting || !visibleIds.length}
+                        onClick={() => toggleSelect(visibleIds)}
+                        data-testid="dingtalk-import-select-all"
+                      >
+                        {t(
+                          searchActive
+                            ? allVisibleSelected
+                              ? 'document.upload.dingtalk.clearSearchSelection'
+                              : 'document.upload.dingtalk.selectSearchResults'
+                            : allVisibleSelected
+                              ? 'document.upload.dingtalk.clearSelection'
+                              : 'document.upload.dingtalk.selectAll'
+                        )}
+                      </Button>
+                    </div>
+                    {searchActive && (
+                      <p className="shrink-0 pb-2 text-xs text-text-muted">
+                        {t('document.upload.dingtalk.searchSelectionHint')}
+                      </p>
+                    )}
+                    {visibleNodes.length ? (
+                      <div
+                        className="min-h-0 flex-1 overflow-y-auto max-md:flex-none max-md:overflow-visible [@media(max-height:640px)]:flex-none [@media(max-height:640px)]:overflow-visible"
+                        data-testid="dingtalk-document-list"
+                      >
+                        <DingtalkImportTree
+                          nodes={source.nodes}
+                          query={searchQuery}
+                          selectedIds={selectedIds}
+                          expandedKeys={expandedKeys}
+                          disabled={submitting}
+                          onToggle={toggleSelect}
+                          onExpand={toggleExpanded}
+                        />
+                      </div>
+                    ) : (
+                      <p className="p-3 text-sm text-text-secondary">
+                        {t(
+                          searchActive
+                            ? 'document.upload.dingtalk.noSearchResults'
+                            : 'document.upload.dingtalk.empty'
+                        )}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
           </>
         )}
       </div>

@@ -67,6 +67,10 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
         'document.upload.dingtalk.submitButton': 'Import',
+        'document.upload.dingtalk.selectAll': 'Select all',
+        'document.upload.dingtalk.clearSelection': 'Clear selection',
+        'document.upload.dingtalk.selectSearchResults': 'Select results',
+        'document.upload.dingtalk.clearSearchSelection': 'Clear result selection',
         'document.upload.adding': 'Adding...',
         'document.folder.selectFolder': 'Select folder',
         'document.folder.rootLevel': 'Root level',
@@ -351,7 +355,7 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
   })
 
-  it('keeps the current folder when refreshing succeeds but reloading fails', async () => {
+  it('keeps expanded folders and siblings when refreshing succeeds but reloading fails', async () => {
     mockSyncDocs.mockResolvedValue({ added: 0, updated: 1, deleted: 0, total: 5 })
     await openDingtalkMode()
 
@@ -365,7 +369,7 @@ describe('DocumentUpload dingtalk source', () => {
       'Failed to refresh'
     )
     expect(screen.getByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
   })
 
   it('searches documents by name across the whole tree', async () => {
@@ -399,29 +403,125 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.queryByTestId('dingtalk-node-unsupported-folder-1')).not.toBeInTheDocument()
   })
 
-  it('navigates into folders with a breadcrumb', async () => {
+  it('expands folders inline without selecting them or hiding sibling documents', async () => {
     await openDingtalkMode()
 
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
 
     expect(await screen.findByTestId('dingtalk-document-option-doc-1')).toBeInTheDocument()
-    expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
-    expect(screen.getByTestId('dingtalk-import-breadcrumb-root')).toHaveClass('min-h-11')
+    expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 0')
+    expect(screen.getByTestId('dingtalk-folder-navigate-folder-1')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
     expect(screen.getByTestId('dingtalk-import-cancel')).toHaveClass('min-h-11')
-    fireEvent.click(screen.getByTestId('dingtalk-import-breadcrumb-root'))
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(screen.queryByTestId('dingtalk-document-option-doc-1')).not.toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
   })
 
-  it('deduplicates folder and document selections when counting', async () => {
-    await openDingtalkMode()
+  it('selects only matching leaves while preserving their ancestors and the prior expansion state', async () => {
+    const onDingtalkImport = jest
+      .fn()
+      .mockResolvedValue({ createdCount: 2, updatedCount: 0, processingCount: 0 })
+    await openDingtalkMode({ onDingtalkImport })
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), { target: { value: 'spec' } })
+    expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('dingtalk-import-select-all'))
+    expect(screen.getByTestId('dingtalk-import-select-all')).toHaveTextContent(
+      'Clear result selection'
+    )
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), { target: { value: '' } })
+    expect(screen.queryByTestId('dingtalk-document-option-doc-1')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['doc-1', 'doc-3']))
+  })
 
-    // Select the whole folder (docs 1 and 2) plus one doc inside it.
+  it('keeps explicit selections on refresh without selecting new descendants and drops removed documents', async () => {
+    await openDingtalkMode()
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    mockSyncDocs.mockResolvedValue({ added: 1, updated: 0, deleted: 1, total: 3 })
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        folderNode('folder-1', 'Project', [
+          docNode('doc-2', 'API Doc'),
+          docNode('doc-4', 'New Doc'),
+        ]),
+      ],
+      total_count: 3,
+    })
+    fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+    await screen.findByTestId('dingtalk-document-option-doc-4')
+    expect(screen.getByTestId('dingtalk-node-select-doc-4')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    expect(screen.getByTestId('dingtalk-node-select-doc-2')).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    )
+  })
+
+  it('selects nested descendants and clears a fully selected subtree', async () => {
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        folderNode('folder-1', 'Project', [
+          folderNode('nested', 'Nested', [docNode('doc-1', 'Spec Doc')]),
+          docNode('doc-2', 'API Doc'),
+        ]),
+      ],
+      total_count: 4,
+    })
+    await openDingtalkMode()
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    expect(screen.getByTestId('dingtalk-node-select-nested')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-nested'))
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    )
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 0')
+    expect(screen.getByTestId('dingtalk-import-submit')).toBeDisabled()
+  })
+
+  it('allows excluding a child from a selected folder and submits only the remaining documents', async () => {
+    const onDingtalkImport = jest
+      .fn()
+      .mockResolvedValue({ createdCount: 1, updatedCount: 0, processingCount: 0 })
+    await openDingtalkMode({ onDingtalkImport })
+
+    // Folder selection includes both importable children, not the unsupported file.
     fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
     expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
 
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(screen.getByTestId('dingtalk-node-select-doc-1')).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(await screen.findByTestId('dingtalk-node-select-doc-1'))
-    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+    expect(screen.getByTestId('dingtalk-node-select-folder-1')).toHaveAttribute(
+      'aria-checked',
+      'mixed'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['doc-2']))
   })
 
   it('expands folder selections into document ids on submit', async () => {

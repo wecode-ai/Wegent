@@ -74,6 +74,13 @@ function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
 
 type UploadMode = 'file' | 'text' | 'web' | 'dingtalk'
 
+const SOURCE_HEIGHT: Record<UploadMode, string> = {
+  file: 'h-[540px] md:h-[480px]',
+  web: 'h-[440px] md:h-[344px]',
+  text: 'h-[580px]',
+  dingtalk: 'h-[720px]',
+}
+
 const WEB_ERROR_KEYS = {
   FETCH_FAILED: 'document.upload.web.fetchFailed',
   FETCH_TIMEOUT: 'document.upload.web.fetchTimeout',
@@ -429,7 +436,11 @@ function DocumentUploadSession({
       }}
     >
       <DialogContent
-        className="flex h-[min(720px,90dvh)] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl"
+        className={cn(
+          'top-[5dvh] flex max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl',
+          SOURCE_HEIGHT[uploadMode]
+        )}
+        data-testid="document-upload-dialog"
         hideCloseButton
         preventEscapeClose={busy || showDiscard}
         preventOutsideClick={busy || showDiscard}
@@ -454,7 +465,7 @@ function DocumentUploadSession({
           onValueChange={selectSource}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <TabsList className="mx-5 mb-4 h-auto shrink-0 justify-start gap-2 rounded-none bg-transparent p-0">
+          <TabsList className="mx-5 mb-4 grid h-auto shrink-0 auto-cols-fr grid-flow-col gap-2 rounded-none bg-transparent p-0">
             {sources.map(source => (
               <TabsTrigger
                 key={source.id}

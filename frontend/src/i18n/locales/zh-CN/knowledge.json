@@ -612,7 +612,18 @@
         "resultUpdated": "更新 {{count}} 篇",
         "resultProcessing": "{{count}} 篇已在处理中，本次跳过",
         "resultSeparator": "，",
-        "done": "完成"
+        "done": "完成",
+        "sourceNavigation": "钉钉来源",
+        "expandFolder": "展开 {{name}}",
+        "collapseFolder": "收起 {{name}}",
+        "documentCount": "{{count}} 篇文档",
+        "searchCount": "匹配 {{count}} 篇",
+        "selectAll": "选择全部",
+        "clearSelection": "取消全部选择",
+        "selectSearchResults": "选择搜索结果",
+        "clearSearchSelection": "取消搜索结果选择",
+        "searchSelectionHint": "搜索时仅选择匹配文档",
+        "noSearchResults": "未找到匹配的文档"
       },
       "videoModelNotSupported": "当前多模态分析模型不支持视频，请先在知识库设置中切换为支持视频的模型后再上传视频文件。",
       "sources": {
