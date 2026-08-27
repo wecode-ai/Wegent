@@ -7,19 +7,17 @@
 import { ExternalDocumentBadge } from './ExternalDocumentBadge'
 
 import {
-  FileText,
   Trash2,
   Pencil,
   ExternalLink,
-  Table2,
   MoreVertical,
-  Globe,
   CloudDownload,
   RotateCcw,
   Download,
   FolderInput,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   DropdownMenu,
@@ -476,13 +474,11 @@ export function DocumentItem({
           <div
             className={`p-1 bg-primary/10 rounded ${canManage ? 'group-hover:opacity-0' : ''} transition-opacity`}
           >
-            {isTable ? (
-              <Table2 className="w-3 h-3 text-primary" />
-            ) : isWeb ? (
-              <Globe className="w-3 h-3 text-primary" />
-            ) : (
-              <FileText className="w-3 h-3 text-primary" />
-            )}
+            <DocumentFormatIcon
+              extension={document.file_extension}
+              sourceType={document.source_type}
+              className="h-3 w-3"
+            />
           </div>
           {/* More actions dropdown - shown on hover, replaces icon */}
           {canManage && hasManageActions && (
@@ -590,13 +586,10 @@ export function DocumentItem({
       >
         {/* File icon */}
         <div className="flex-shrink-0">
-          {isTable ? (
-            <Table2 className="w-4 h-4 text-primary" />
-          ) : isWeb ? (
-            <Globe className="w-4 h-4 text-primary" />
-          ) : (
-            <FileText className="w-4 h-4 text-primary" />
-          )}
+          <DocumentFormatIcon
+            extension={document.file_extension}
+            sourceType={document.source_type}
+          />
         </div>
 
         {/* File name */}

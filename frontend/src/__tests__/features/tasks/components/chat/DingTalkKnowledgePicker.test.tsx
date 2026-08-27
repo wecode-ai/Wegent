@@ -148,7 +148,7 @@ describe('DingTalkDocumentColumn', () => {
       ['pptx', 'lucide-presentation', 'text-orange-600'],
       ['pdf', 'lucide-file-text', 'text-error'],
       ['dlink', 'lucide-link-2', 'text-blue-600'],
-      ['mp3', 'lucide-file', 'text-text-muted'],
+      ['mp3', 'lucide-file-headphone', 'text-orange-600'],
     ]
     const documents = formats.map(([extension]) => ({
       ...docNode,

@@ -23,20 +23,18 @@ import {
   CloudDownload,
   Download,
   ExternalLink,
-  FileText,
   Folder,
   FolderInput,
   FolderOpen,
   FolderPlus,
-  Globe,
   Pencil,
   RotateCcw,
-  Table2,
   Trash2,
 } from 'lucide-react'
 
 import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
+import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/hooks/use-toast'
@@ -373,13 +371,10 @@ export function KnowledgeDocumentTreeGrid({
                 style={indent > 0 ? { paddingLeft: `${indent}px` } : undefined}
               >
                 {expandAllFolders && <div className="h-6 w-6 flex-shrink-0" />}
-                {isTable ? (
-                  <Table2 className="w-4 h-4 text-primary flex-shrink-0" />
-                ) : isWeb ? (
-                  <Globe className="w-4 h-4 text-primary flex-shrink-0" />
-                ) : (
-                  <FileText className="w-4 h-4 text-primary flex-shrink-0" />
-                )}
+                <DocumentFormatIcon
+                  extension={document.file_extension}
+                  sourceType={document.source_type}
+                />
                 <TooltipProvider>
                   <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>

@@ -75,7 +75,7 @@ const requiredTreeGridProps = {
 
 describe('KnowledgeDocumentTreeGrid', () => {
   it('identifies imported documents as external rather than just their file extension', () => {
-    const documents = [createDocument({ source_type: 'external', file_extension: 'md' })]
+    const documents = [createDocument({ source_type: 'external', file_extension: '.PDF' })]
     const { nodes, index } = buildKnowledgeResourceTree([], documents)
     render(
       <KnowledgeDocumentTreeGrid
@@ -91,7 +91,11 @@ describe('KnowledgeDocumentTreeGrid', () => {
       />
     )
     expect(screen.getByText('document.document.type.external')).toBeInTheDocument()
-    expect(screen.queryByText('md')).not.toBeInTheDocument()
+    expect(screen.queryByText('.PDF')).not.toBeInTheDocument()
+    expect(screen.getByText('doc.txt').parentElement?.querySelector('svg')).toHaveClass(
+      'lucide-file-text',
+      'text-error'
+    )
   })
 
   it('renders folders and documents through visible TreeGrid rows', () => {

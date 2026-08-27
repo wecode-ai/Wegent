@@ -262,6 +262,7 @@ describe('DocumentUpload dingtalk source', () => {
       ['axls', 'lucide-file-spreadsheet', 'text-green-600', 'dark:text-green-400'],
       ['pptx', 'lucide-presentation', 'text-orange-600', 'dark:text-orange-400'],
       ['pdf', 'lucide-file-text', 'text-error'],
+      ['mp3', 'lucide-file-headphone', 'text-orange-600', 'dark:text-orange-400'],
       ['unknown', 'lucide-file', 'text-text-muted'],
     ]
     mockGetDocs.mockResolvedValue({
@@ -277,6 +278,7 @@ describe('DocumentUpload dingtalk source', () => {
       ).toHaveClass(...iconClasses)
     }
     expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-node-select-mp3')).not.toBeInTheDocument()
   })
 
   it('identifies dlink resources without offering or submitting them for import', async () => {

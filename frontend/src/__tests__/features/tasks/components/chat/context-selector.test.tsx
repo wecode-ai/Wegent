@@ -1033,6 +1033,8 @@ describe('ContextSelector organization grouping', () => {
         {
           id: 101,
           name: 'API.md',
+          file_extension: '.PDF',
+          source_type: 'external',
           folder_id: 10,
         },
       ],
@@ -1063,6 +1065,10 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeInTheDocument()
     })
 
+    expect(
+      screen.getByTestId('knowledge-picker-document-node-document-101').querySelector('svg')
+    ).toHaveClass('lucide-file-text', 'text-error')
+
     fireEvent.change(screen.getByTestId('context-selector-knowledge-search-input'), {
       target: { value: 'Specs' },
     })
@@ -1071,6 +1077,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeInTheDocument()
     })
     expect(screen.getByText('API.md')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('knowledge-picker-document-node-document-101').querySelector('svg')
+    ).toHaveClass('lucide-file-text', 'text-error')
     expect(screen.getAllByText('Specs').length).toBeGreaterThan(0)
   })
 
