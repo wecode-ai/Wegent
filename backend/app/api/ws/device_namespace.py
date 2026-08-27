@@ -1706,7 +1706,6 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["runtime_transfer_host"] = runtime_transfer_host
         session["runtime_instance_id"] = payload.runtime_instance_id
         session["execution_target_id"] = payload.app_device_id or payload.device_id
-        session["execution_environment"] = "local" if payload.app_device_id else "cloud"
         session["registered"] = True
 
         device_room = f"device:{user_id}:{payload.device_id}"
@@ -2088,13 +2087,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         user_id = session.get("user_id")
         runtime_device_id = session.get("device_id")
         execution_target_id = session.get("execution_target_id")
-        environment = session.get("execution_environment")
         runtime_instance_id = session.get("runtime_instance_id")
         if (
             not user_id
             or not runtime_device_id
             or not execution_target_id
-            or environment not in {"local", "cloud"}
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
@@ -2110,7 +2107,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 execution_target_id=str(execution_target_id),
                 runtime_device_id=str(runtime_device_id),
                 runtime_instance_id=str(runtime_instance_id),
-                environment=str(environment),
+                # The Executor pull channel only carries cloud work; local rows
+                # are claimed by the desktop App which resolves local model
+                # credentials at claim time and never writes them to the queue.
+                environment="cloud",
                 runtime_capacity=runtime_capacity,
             )
         )

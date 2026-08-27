@@ -3431,6 +3431,11 @@ class LoopItemExecutionService:
         except Exception as exc:
             model_label = str(execution.runtime_selection.get("model") or "")
             model_label = model_label or "the selected runtime default"
+            logger.exception(
+                "[RuntimeV2] Execution payload build failed: execution_id=%s model=%s",
+                execution.id,
+                model_label,
+            )
             raise WeworkRuntimeConfigurationError(
                 f"Execution model '{model_label}' is unavailable"
             ) from exc

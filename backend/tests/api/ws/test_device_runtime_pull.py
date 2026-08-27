@@ -18,7 +18,6 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
             "user_id": 17,
             "device_id": "cloud-device",
             "execution_target_id": "cloud-device",
-            "execution_environment": "cloud",
             "runtime_instance_id": "runtime-1",
         }
     )
@@ -55,14 +54,13 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_app_executor_pulls_work_for_its_app_target(monkeypatch):
+async def test_app_executor_pulls_cloud_work_for_its_app_target(monkeypatch):
     namespace = DeviceNamespace()
     namespace.get_session = AsyncMock(
         return_value={
             "user_id": 17,
             "device_id": "executor-runtime-device",
             "execution_target_id": "electron-app-device",
-            "execution_environment": "local",
             "runtime_instance_id": "runtime-1",
         }
     )
@@ -93,7 +91,7 @@ async def test_app_executor_pulls_work_for_its_app_target(monkeypatch):
             "execution_target_id": "electron-app-device",
             "runtime_device_id": "executor-runtime-device",
             "runtime_instance_id": "runtime-1",
-            "environment": "local",
+            "environment": "cloud",
             "runtime_capacity": {
                 "limit": 1,
                 "active": 0,

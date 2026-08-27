@@ -4,6 +4,7 @@ import { runtimeTaskReconciliationSnapshot } from '@/features/workbench/runtimeT
 import type { RuntimeTaskCreateRequest } from '@/types/api'
 
 const LOCAL_QUEUE_POLL_MS = 3000
+const LOCAL_QUEUE_DEVICE_CACHE_MS = 30_000
 const LOCAL_QUEUE_HEARTBEAT_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_RECOVERY_INTERVAL_MS = 60_000
 const LOCAL_QUEUE_LEASE_SECONDS = 300
@@ -57,18 +58,67 @@ export async function stopLocalRobotQueueExecution(
  */
 export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () => void {
   const executionApi = services.localLoopItemExecutionApi
+  const cloudExecutionApi = services.projectAutomationApi
   const runtimeWorkApi = services.runtimeWorkApi
-  if (!executionApi || !runtimeWorkApi) {
+  const deviceApi = services.deviceApi
+  if (!executionApi || !runtimeWorkApi || !deviceApi) {
     console.warn('[local-robot-queue] dispatcher unavailable', {
       hasExecutionApi: Boolean(executionApi),
       hasRuntimeWorkApi: Boolean(runtimeWorkApi),
+      hasDeviceApi: Boolean(deviceApi),
     })
     return () => undefined
   }
 
   let disposed = false
   let dispatching = false
-  const keepRunAlive = (execution: LocalLoopItemExecution, deviceId: string, taskId: string) => {
+  let resolvedDeviceIds: string[] | null = null
+  let deviceCacheExpiresAt = 0
+
+  // A robot may be bound to any local-capable device (the desktop executor
+  // itself is `local`, companion apps are `app`). Claim from every one of
+  // them so robots bound to a different local device are not stuck in queue.
+  const localDeviceIds = async (): Promise<string[]> => {
+    const now = Date.now()
+    if (resolvedDeviceIds && now < deviceCacheExpiresAt) return resolvedDeviceIds
+    try {
+      const devices = await deviceApi.listDevices()
+      const ids = Array.from(
+        new Set(
+          devices
+            .filter(device => device.device_type === 'local' || device.device_type === 'app')
+            .map(device => device.device_id)
+            .filter((deviceId): deviceId is string => Boolean(deviceId))
+        )
+      )
+      resolvedDeviceIds = ids
+      deviceCacheExpiresAt = now + LOCAL_QUEUE_DEVICE_CACHE_MS
+      return ids
+    } catch (cause) {
+      console.warn('[local-robot-queue] failed to resolve local devices', {
+        error: cause instanceof Error ? cause.message : String(cause),
+      })
+    }
+    return resolvedDeviceIds ?? []
+  }
+
+  const claimNext = async (deviceId: string) => {
+    const claim = {
+      execution_device_id: deviceId,
+      lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
+    }
+    const cloudExecution = await cloudExecutionApi?.claimNext(claim)
+    if (cloudExecution) return { execution: cloudExecution, cloud: true }
+    const localExecution = await executionApi.claimNext(claim)
+    return localExecution ? { execution: localExecution, cloud: false } : null
+  }
+
+  const keepRunAlive = (
+    execution: LocalLoopItemExecution,
+    deviceId: string,
+    taskId: string,
+    cloud: boolean
+  ) => {
     // Long runs outlive the 5-minute claim lease. Heartbeat until the run
     // reaches a terminal state (heartbeat returns null for terminal rows) so
     // the lease recovery never requeues a task that is still executing.
@@ -77,12 +127,9 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         window.clearInterval(timer)
         return
       }
-      const heartbeat = executionApi.heartbeat(
-        execution.id,
-        deviceId,
-        taskId,
-        LOCAL_QUEUE_LEASE_SECONDS
-      )
+      const heartbeat = cloud
+        ? cloudExecutionApi!.heartbeat(execution, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
+        : executionApi.heartbeat(execution.id, deviceId, taskId, LOCAL_QUEUE_LEASE_SECONDS)
       void heartbeat
         .then(updated => {
           if (!updated) window.clearInterval(timer)
@@ -95,11 +142,21 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
   }
 
   const dispatchOnce = async (): Promise<void> => {
-    let execution: LocalLoopItemExecution | null
+    const deviceIds = await localDeviceIds()
+    if (deviceIds.length === 0) return
+    let execution: LocalLoopItemExecution | null = null
+    let isCloudExecution = false
+    let claimDeviceId: string | null = null
     try {
-      execution = await executionApi.claimNext({
-        lease_seconds: LOCAL_QUEUE_LEASE_SECONDS,
-      })
+      for (const deviceId of deviceIds) {
+        const claimed = await claimNext(deviceId)
+        if (claimed) {
+          execution = claimed.execution
+          isCloudExecution = claimed.cloud
+          claimDeviceId = deviceId
+          break
+        }
+      }
     } catch (cause) {
       console.warn('[local-robot-queue] claim failed', {
         error: cause instanceof Error ? cause.message : String(cause),
@@ -107,7 +164,7 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
       return
     }
     if (!execution) return
-    const deviceId = nonEmptyString(execution.execution_device_id)
+    const deviceId = claimDeviceId ?? nonEmptyString(execution.execution_device_id)
     if (!deviceId) {
       throw new Error('Claimed local execution has no execution device')
     }
@@ -190,12 +247,14 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         model: request.modelId ?? null,
         hasAdditionalContext: true,
       })
-      const fenced = await executionApi.startRequested(
-        execution.id,
-        deviceId,
-        taskId,
-        LOCAL_QUEUE_LEASE_SECONDS
-      )
+      const fenced = isCloudExecution
+        ? await cloudExecutionApi!.startRequested(execution, deviceId, taskId)
+        : await executionApi.startRequested(
+            execution.id,
+            deviceId,
+            taskId,
+            LOCAL_QUEUE_LEASE_SECONDS
+          )
       if (!fenced) throw new Error('Execution is no longer dispatchable')
       startRequested = true
       const response = await runtimeWorkApi.createRuntimeTask(request)
@@ -203,13 +262,23 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         throw new Error(`Runtime accepted task '${response.taskId}' instead of '${taskId}'`)
       }
       runtimeAccepted = true
-      await executionApi.runtimeStart(
-        execution.id,
-        deviceId,
-        response.taskId,
-        LOCAL_QUEUE_LEASE_SECONDS
-      )
-      keepRunAlive(execution, deviceId, response.taskId)
+      if (isCloudExecution) {
+        await cloudExecutionApi!.runtimeStart(
+          execution,
+          deviceId,
+          response.taskId,
+          prompt,
+          request.modelId ?? null
+        )
+      } else {
+        await executionApi.runtimeStart(
+          execution.id,
+          deviceId,
+          response.taskId,
+          LOCAL_QUEUE_LEASE_SECONDS
+        )
+      }
+      keepRunAlive(execution, deviceId, response.taskId, isCloudExecution)
       console.log('[local-robot-queue] dispatched', {
         executionId: execution.id,
         loopItemId: execution.loop_item_id,
@@ -228,9 +297,14 @@ export function startLocalRobotQueueDispatcher(services: WorkbenchServices): () 
         taskId,
         error: errorText,
       })
-      const fail = startRequested
-        ? executionApi.dispatchUnknown(execution.id, deviceId, taskId, errorText)
-        : executionApi.dispatchFailed(execution.id, errorText)
+      const fail =
+        startRequested && isCloudExecution
+          ? cloudExecutionApi!.dispatchUnknown(execution, deviceId, taskId, errorText)
+          : startRequested
+            ? executionApi.dispatchUnknown(execution.id, deviceId, taskId, errorText)
+            : isCloudExecution
+              ? cloudExecutionApi!.dispatchFailed(execution, errorText)
+              : executionApi.dispatchFailed(execution.id, errorText)
       await fail.catch(failCause => {
         console.warn('[local-robot-queue] failed to persist dispatch outcome', {
           error: failCause instanceof Error ? failCause.message : String(failCause),

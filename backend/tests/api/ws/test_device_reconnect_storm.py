@@ -348,7 +348,6 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     assert upsert_calls[0][1][8] == "local-app-device"
     saved_session = save_session.await_args.args[1]
     assert saved_session["execution_target_id"] == "local-app-device"
-    assert saved_session["execution_environment"] == "local"
     assert enter_room.await_args_list[-1].args == (
         "sid-app",
         "execution-target:7:local-app-device",
