@@ -29,7 +29,6 @@ from pydantic import BaseModel, Field
 from executor_manager.common.config import ROUTE_PREFIX
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.constants import DEFAULT_DOCKER_HOST
 from executor_manager.executors.docker.utils import get_running_task_details
 from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
@@ -1135,25 +1134,26 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
 
         if request.executor_name:
-            # Direct cancel to specified container
-            port, error = await asyncio.to_thread(
-                executor._get_container_port,
+            # Direct cancel to specified executor
+            address_result = await asyncio.to_thread(
+                executor.get_container_address,
                 request.executor_name,
             )
-            if not port:
+            if address_result.get("status") != "success":
+                error = address_result.get(
+                    "error_msg",
+                    f"Executor {request.executor_name} not found",
+                )
                 logger.warning(
-                    f"[v1/cancel] Container {request.executor_name} not found: {error}"
+                    f"[v1/cancel] Executor {request.executor_name} not found: {error}"
                 )
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Container {request.executor_name} not found: {error}",
+                    detail=f"Executor {request.executor_name} not found: {error}",
                 )
 
-            # Send cancel request to container
-            cancel_url = (
-                f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel"
-                f"?task_id={request.task_id}"
-            )
+            base_url = address_result["base_url"].rstrip("/")
+            cancel_url = f"{base_url}/api/tasks/cancel?task_id={request.task_id}"
             if request.subtask_id is not None:
                 cancel_url += f"&subtask_id={request.subtask_id}"
 

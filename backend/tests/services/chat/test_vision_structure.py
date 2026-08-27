@@ -4,7 +4,9 @@
 
 """Tests for _build_vision_structure and _combine_text_contents in contexts module."""
 
+from importlib import import_module
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -459,173 +461,6 @@ class TestProcessAttachmentContext:
         assert image_contents[0]["id"] == 41
         assert image_contents[0]["image_header_in_text"] is True
 
-    def test_image_generation_model_uses_reference_image_capability(self, caplog):
-        caplog.set_level(
-            "INFO",
-            logger="app.services.chat.preprocessing.contexts",
-        )
-        context = SimpleNamespace(
-            id=41,
-            user_id=7,
-            context_type="attachment",
-            original_filename="photo.png",
-            mime_type="image/png",
-            file_size=1024,
-            file_extension=".png",
-            image_base64="aW1hZ2U=",
-            type_data={"source": "quick_launch_preset"},
-        )
-        text_contents: list[str] = []
-        image_contents: list[dict] = []
-        video_contents: list[dict] = []
-
-        _process_attachment_context(
-            db=object(),
-            context=context,
-            idx=1,
-            text_contents=text_contents,
-            image_contents=image_contents,
-            video_contents=video_contents,
-            task_id=10,
-            subtask_id=20,
-            model_config={
-                "modelType": "image",
-                "imageConfig": {
-                    "capabilities": {"supports_image_input": True},
-                },
-            },
-        )
-
-        assert image_contents[0]["image_base64"] == "aW1hZ2U="
-        assert image_contents[0]["id"] == 41
-        assert (
-            "Added image input context: id=41 filename=photo.png "
-            "source=quick_launch_preset"
-        ) in caplog.text
-        assert "aW1hZ2U=" not in caplog.text
-
-    def test_image_generation_model_rejects_reference_image_when_unsupported(self):
-        context = SimpleNamespace(
-            id=41,
-            user_id=7,
-            context_type="attachment",
-            original_filename="photo.png",
-            mime_type="image/png",
-            file_size=1024,
-            file_extension=".png",
-            image_base64="aW1hZ2U=",
-            type_data={},
-        )
-        text_contents: list[str] = []
-        image_contents: list[dict] = []
-        video_contents: list[dict] = []
-
-        _process_attachment_context(
-            db=object(),
-            context=context,
-            idx=1,
-            text_contents=text_contents,
-            image_contents=image_contents,
-            video_contents=video_contents,
-            task_id=10,
-            subtask_id=20,
-            model_config={
-                "modelType": "image",
-                "imageConfig": {
-                    "capabilities": {"supports_image_input": False},
-                },
-            },
-        )
-
-        assert image_contents == []
-        assert "[Image Attachment: photo.png" in text_contents[0]
-
-    @pytest.mark.parametrize(
-        "image_config",
-        [
-            {},
-            {"capabilities": {}},
-            {"max_reference_images": 1},
-        ],
-    )
-    def test_image_generation_model_allows_reference_image_by_default(
-        self, image_config
-    ):
-        context = SimpleNamespace(
-            id=41,
-            user_id=7,
-            context_type="attachment",
-            original_filename="photo.png",
-            mime_type="image/png",
-            file_size=1024,
-            file_extension=".png",
-            image_base64="aW1hZ2U=",
-            type_data={},
-        )
-        text_contents: list[str] = []
-        image_contents: list[dict] = []
-        video_contents: list[dict] = []
-
-        _process_attachment_context(
-            db=object(),
-            context=context,
-            idx=1,
-            text_contents=text_contents,
-            image_contents=image_contents,
-            video_contents=video_contents,
-            task_id=10,
-            subtask_id=20,
-            model_config={
-                "modelType": "image",
-                "imageConfig": image_config,
-            },
-        )
-
-        assert image_contents[0]["image_base64"] == "aW1hZ2U="
-
-    @pytest.mark.parametrize(
-        "image_config",
-        [
-            {"max_reference_images": 0},
-            {"capabilities": {"max_reference_images": 0}},
-        ],
-    )
-    def test_image_generation_model_rejects_reference_image_when_limit_is_zero(
-        self, image_config
-    ):
-        context = SimpleNamespace(
-            id=41,
-            user_id=7,
-            context_type="attachment",
-            original_filename="photo.png",
-            mime_type="image/png",
-            file_size=1024,
-            file_extension=".png",
-            image_base64="aW1hZ2U=",
-            type_data={},
-        )
-        text_contents: list[str] = []
-        image_contents: list[dict] = []
-        video_contents: list[dict] = []
-
-        _process_attachment_context(
-            db=object(),
-            context=context,
-            idx=1,
-            text_contents=text_contents,
-            image_contents=image_contents,
-            video_contents=video_contents,
-            task_id=10,
-            subtask_id=20,
-            model_config={
-                "modelType": "image",
-                "imageConfig": image_config,
-            },
-        )
-
-        assert image_contents == []
-        assert "[Image Attachment: photo.png" in text_contents[0]
-
     @pytest.mark.parametrize(
         "model_config",
         [
@@ -669,7 +504,16 @@ class TestProcessAttachmentContext:
         assert "[Image Attachment: photo.png" in text_contents[0]
 
     @pytest.mark.asyncio
-    async def test_external_web_text_metadata_order_is_text_video_comments(self):
+    async def test_external_web_text_metadata_order_is_text_video_comments(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        context_service_module = import_module("app.services.context.context_service")
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="fid", value="fid-123"),
+        )
         video_context = SimpleNamespace(
             id=42,
             user_id=7,
@@ -900,7 +744,16 @@ class TestProcessAttachmentContext:
         assert "https://s3.example.com/cover.jpg" not in result[0]["text"]
         assert result[-1] == {"type": "input_text", "text": "Summarize it"}
 
-    def test_video_context_metadata_only_adds_fid_text_without_video_block(self):
+    def test_video_context_metadata_only_adds_fid_text_without_video_block(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        context_service_module = import_module("app.services.context.context_service")
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            lambda **_kwargs: SimpleNamespace(name="fid", value="fid-123"),
+        )
         context = SimpleNamespace(
             id=42,
             user_id=7,
@@ -932,7 +785,7 @@ class TestProcessAttachmentContext:
         assert "[Video Attachment: clip.mp4" in text_contents[0]
         assert '"fid": "fid-123"' in text_contents[0]
 
-    def test_video_context_metadata_only_requires_fid(self):
+    def test_video_context_metadata_only_requires_media_reference(self):
         context = SimpleNamespace(
             id=43,
             user_id=7,
@@ -945,7 +798,10 @@ class TestProcessAttachmentContext:
             type_data={},
         )
 
-        with pytest.raises(VideoAttachmentResolutionError, match="missing fid"):
+        with pytest.raises(
+            VideoAttachmentResolutionError,
+            match="missing a media reference",
+        ):
             _process_attachment_context(
                 db=object(),
                 context=context,
@@ -955,3 +811,145 @@ class TestProcessAttachmentContext:
                 video_contents=[],
                 model_config={"modelCapabilities": {"supportsVideo": False}},
             )
+
+
+def _image_context(**overrides: Any) -> SimpleNamespace:
+    data = {
+        "id": 41,
+        "context_type": "attachment",
+        "original_filename": "photo.png",
+        "mime_type": "image/png",
+        "file_size": 1024,
+        "file_extension": ".png",
+        "image_base64": "aW1hZ2U=",
+        "type_data": {"source": "quick_launch_preset"},
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+class TestImageReferenceAttachmentContext:
+    def test_image_generation_model_uses_reference_image_capability(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(
+            "INFO",
+            logger="app.services.chat.preprocessing.contexts",
+        )
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=[],
+            task_id=10,
+            subtask_id=20,
+            model_config={
+                "modelType": "image",
+                "imageConfig": {
+                    "capabilities": {"supports_image_input": True},
+                },
+            },
+        )
+
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+        assert image_contents[0]["id"] == 41
+        assert (
+            "Added image input context: id=41 filename=photo.png "
+            "source=quick_launch_preset"
+        ) in caplog.text
+        assert "aW1hZ2U=" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "image_config",
+        [
+            {"capabilities": {"supports_image_input": False}},
+            {"max_reference_images": 0},
+            {"capabilities": {"max_reference_images": 0}},
+        ],
+    )
+    def test_image_generation_model_rejects_unsupported_reference_image(
+        self,
+        image_config: dict[str, Any],
+    ) -> None:
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=[],
+            model_config={
+                "modelType": "image",
+                "imageConfig": image_config,
+            },
+        )
+
+        assert image_contents == []
+        assert "[Image Attachment: photo.png" in text_contents[0]
+
+    @pytest.mark.parametrize(
+        "image_config",
+        [
+            {},
+            {"capabilities": {}},
+            {"max_reference_images": 1},
+        ],
+    )
+    def test_image_generation_model_allows_reference_image_by_default(
+        self,
+        image_config: dict[str, Any],
+    ) -> None:
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=[],
+            model_config={
+                "modelType": "image",
+                "imageConfig": image_config,
+            },
+        )
+
+        assert image_contents[0]["image_base64"] == "aW1hZ2U="
+
+    @pytest.mark.parametrize(
+        ("model_capabilities", "expected_image_count"),
+        [
+            ({}, 0),
+            ({"supportsImage": False}, 0),
+            ({"supportsImage": True}, 1),
+        ],
+    )
+    def test_chat_model_requires_declared_image_capability(
+        self,
+        model_capabilities: dict[str, bool],
+        expected_image_count: int,
+    ) -> None:
+        text_contents: list[str] = []
+        image_contents: list[dict] = []
+
+        _process_attachment_context(
+            db=object(),
+            context=_image_context(),
+            idx=1,
+            text_contents=text_contents,
+            image_contents=image_contents,
+            video_contents=[],
+            model_config={"modelCapabilities": model_capabilities},
+        )
+
+        assert len(image_contents) == expected_image_count

@@ -304,7 +304,7 @@ export function SitesPage() {
   ])
   const smartAppsApi = useMemo(() => {
     if (!isLocalFirst) {
-      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }))
+      return createSmartAppsApi(createHttpClient({ baseUrl: apiBaseUrl }), apiBaseUrl)
     }
     if (!cloudConnection.isConnected || !cloudConnection.apiBaseUrl || !cloudConnection.token) {
       return null
@@ -315,7 +315,8 @@ export function SitesPage() {
         baseUrl: cloudConnection.apiBaseUrl,
         getToken: () => token,
         redirectOnUnauthorized: false,
-      })
+      }),
+      cloudConnection.apiBaseUrl
     )
   }, [
     apiBaseUrl,

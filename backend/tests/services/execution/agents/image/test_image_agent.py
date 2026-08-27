@@ -189,12 +189,12 @@ class TestImageAgent:
     @pytest.mark.asyncio
     async def test_execute_uses_prompt_image_as_direct_reference(
         self,
-        mock_session_manager,
-        mock_shutdown_manager,
-        mock_emitter,
-        mock_intent_analyzer,
-        sample_request,
-    ):
+        mock_session_manager: MagicMock,
+        mock_shutdown_manager: MagicMock,
+        mock_emitter: AsyncMock,
+        mock_intent_analyzer: AsyncMock,
+        sample_request: ExecutionRequest,
+    ) -> None:
         from app.services.execution.agents.image.image_agent import ImageAgent
         from app.services.execution.agents.image.providers.base import (
             ImageGenerationResult,
@@ -614,7 +614,7 @@ class TestImageAgentExtractReferenceImages:
 
 
 class TestImageAgentNormalizePrompt:
-    def test_extracts_reference_image_without_attachment_metadata(self):
+    def test_extracts_reference_image_without_attachment_metadata(self) -> None:
         from app.services.execution.agents.image.image_agent import ImageAgent
 
         prompt = [

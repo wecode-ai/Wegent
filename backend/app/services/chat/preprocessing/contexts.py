@@ -357,9 +357,7 @@ def _process_attachment_context(
     video_contents: List[dict],  # New parameter for video attachments
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
-    model_config: Optional[
-        dict[str, Any]
-    ] = None,  # New parameter for model capabilities
+    model_config: Optional[dict[str, Any]] = None,
     metadata_only_for_large_documents: bool = False,
     inline_attachment_content: bool = True,
 ) -> None:
@@ -375,7 +373,9 @@ def _process_attachment_context(
         video_contents: List to append video content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
-        model_config: Optional model config for capability check
+        model_config: Optional model config for image and video capability checks
+        metadata_only_for_large_documents: Whether to replace large document
+            text with metadata and a short preview.
         inline_attachment_content: Whether to include parsed text/image content.
     """
     if not inline_attachment_content:
@@ -1620,7 +1620,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
-        model_config=model_config,  # Pass model config for video capability check
+        model_config=model_config,
         metadata_only_for_large_documents=metadata_only_for_large_attachments,
         initial_text_contents=external_web_content_texts,
         inline_attachment_content=inline_attachment_content,
@@ -1800,9 +1800,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
-    model_config: Optional[
-        dict[str, Any]
-    ] = None,  # New parameter for model capabilities
+    model_config: Optional[dict[str, Any]] = None,
     metadata_only_for_large_documents: bool = False,
     initial_text_contents: Optional[List[str]] = None,
     inline_attachment_content: bool = True,
@@ -1816,7 +1814,7 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
-        model_config: Optional model config for video capability check.
+        model_config: Optional model config for image and video capability checks.
         metadata_only_for_large_documents: Whether to replace large document
             text with metadata and a short preview.
         initial_text_contents: Optional text snippets to inject before
@@ -1844,7 +1842,7 @@ async def _process_attachment_contexts_for_message(
                 video_contents,  # Pass new container
                 task_id=task_id,
                 subtask_id=subtask_id,
-                model_config=model_config,  # Pass model config
+                model_config=model_config,
                 metadata_only_for_large_documents=metadata_only_for_large_documents,
                 inline_attachment_content=inline_attachment_content,
             )
