@@ -3,8 +3,8 @@ import { isAbsoluteWorkspacePath, isWindowsDriveAbsolutePath } from './workspace
 
 describe('isWindowsDriveAbsolutePath', () => {
   test('recognizes forward- and backslash Windows drive-letter paths', () => {
-    expect(isWindowsDriveAbsolutePath('D:/jiaqi62/Projects/wegent')).toBe(true)
-    expect(isWindowsDriveAbsolutePath('D:\\jiaqi62\\Projects\\wegent')).toBe(true)
+    expect(isWindowsDriveAbsolutePath('C:/projects/example-app')).toBe(true)
+    expect(isWindowsDriveAbsolutePath('C:\\projects\\example-app')).toBe(true)
     expect(isWindowsDriveAbsolutePath('c:/repo')).toBe(true)
   })
 
@@ -18,7 +18,7 @@ describe('isWindowsDriveAbsolutePath', () => {
 describe('isAbsoluteWorkspacePath', () => {
   test('accepts POSIX and Windows drive-letter absolute paths', () => {
     expect(isAbsoluteWorkspacePath('/Users/me/repo')).toBe(true)
-    expect(isAbsoluteWorkspacePath('D:/jiaqi62/Projects/wegent')).toBe(true)
+    expect(isAbsoluteWorkspacePath('C:/projects/example-app')).toBe(true)
   })
 
   test('rejects relative paths', () => {

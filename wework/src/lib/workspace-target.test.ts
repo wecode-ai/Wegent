@@ -52,11 +52,9 @@ describe('resolveWorkspaceTarget', () => {
       },
     ]
 
-    expect(
-      createLocalFileWorkspaceTarget('D:\\jiaqi62\\Projects\\Wegent-Internal\\wegent', devices)
-    ).toEqual({
+    expect(createLocalFileWorkspaceTarget('C:\\projects\\example-app\\wegent', devices)).toEqual({
       deviceId: 'device-local-real',
-      path: 'D:/jiaqi62/Projects/Wegent-Internal',
+      path: 'C:/projects/example-app',
       source: 'runtime',
       workspaceSource: 'local',
     })

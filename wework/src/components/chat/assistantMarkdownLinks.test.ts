@@ -21,16 +21,16 @@ describe('decodeMarkdownFilePath', () => {
 
 describe('classifyMarkdownLink', () => {
   test('classifies Windows drive-letter absolute paths as files', () => {
-    expect(classifyMarkdownLink('D:/jiaqi62/Projects/Wegent-Internal/wegent')).toEqual({
+    expect(classifyMarkdownLink('C:/projects/example-app/wegent')).toEqual({
       kind: 'file',
-      path: 'D:/jiaqi62/Projects/Wegent-Internal/wegent',
+      path: 'C:/projects/example-app/wegent',
     })
   })
 
   test('classifies backslash Windows drive-letter paths as files', () => {
-    expect(classifyMarkdownLink('D:\\jiaqi62\\Projects\\Wegent-Internal\\wegent')).toEqual({
+    expect(classifyMarkdownLink('C:\\projects\\example-app\\wegent')).toEqual({
       kind: 'file',
-      path: 'D:\\jiaqi62\\Projects\\Wegent-Internal\\wegent',
+      path: 'C:\\projects\\example-app\\wegent',
     })
   })
 
