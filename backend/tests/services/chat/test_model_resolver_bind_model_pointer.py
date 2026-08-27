@@ -330,6 +330,39 @@ class TestExtractModelConfigExplicitErrors:
 class TestResolveModelForBotWithPointer:
     """End-to-end (mocked DB) reproduction of the qiqi10-style incident."""
 
+    def test_pointer_model_whitelist_blocks_disallowed_override(self):
+        bot = _make_bot(model_ref_name="minute-video-bot-model")
+        pointer_spec = {
+            "modelConfig": {
+                "bind_model": "Seedance-2.0-Fast",
+                "bind_model_type": "public",
+                "allowed_models": [
+                    {
+                        "name": "Seedance-2.0-Fast",
+                        "type": "public",
+                        "namespace": "default",
+                    }
+                ],
+            },
+            "isCustomConfig": True,
+        }
+        pointer_kind = _model_kind("minute-video-bot-model", pointer_spec)
+
+        with patch(
+            "app.services.chat.config.model_resolver._find_model_with_namespace"
+        ) as mock_find:
+            mock_find.return_value = (pointer_kind, pointer_spec)
+            with pytest.raises(ValueError, match="Seedance-2.0-Fast-Online"):
+                _resolve_model_for_bot(
+                    db=MagicMock(),
+                    bot=bot,
+                    user_id=1,
+                    override_model_name="Seedance-2.0-Fast-Online",
+                    force_override=True,
+                )
+
+        mock_find.assert_called_once()
+
     def test_bot_with_pointer_model_resolves_to_real_target(self):
         """
         Bot.spec.modelRef -> private Model {bind_model, allowed_models} (no env)
