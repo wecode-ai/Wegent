@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { DocumentList } from '@/features/knowledge/document/components/DocumentList'
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
@@ -11,6 +11,13 @@ import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/
 let mockDocuments: KnowledgeDocument[] = []
 let mockFolders: KnowledgeFolder[] = []
 const mockFolderTree = jest.fn()
+const mockCreateWebDocument = jest.fn()
+const mockRefreshDocuments = jest.fn()
+
+jest.mock('@/apis/knowledge', () => ({
+  ...jest.requireActual('@/apis/knowledge'),
+  createWebDocument: (...args: unknown[]) => mockCreateWebDocument(...args),
+}))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -44,7 +51,7 @@ jest.mock('@/features/knowledge/document/hooks/useDocuments', () => ({
     remove: jest.fn(),
     batchDelete: jest.fn(),
     transfer: jest.fn(),
-    refresh: jest.fn(),
+    refresh: mockRefreshDocuments,
     fetchWithFolder: jest.fn(),
     page: 1,
     pageSize: 20,
@@ -82,7 +89,28 @@ jest.mock('@/features/knowledge/document/components/DocumentDetailDialog', () =>
   DocumentDetailDialog: () => null,
 }))
 jest.mock('@/features/knowledge/document/components/DocumentUpload', () => ({
-  DocumentUpload: () => null,
+  DocumentUpload: ({
+    open,
+    onWebAdd,
+    onOpenChange,
+  }: {
+    open: boolean
+    onWebAdd: (url: string) => Promise<void>
+    onOpenChange: (open: boolean) => void
+  }) =>
+    open ? (
+      <div data-testid="upload-dialog">
+        <button
+          data-testid="submit-web"
+          onClick={() => void onWebAdd('https://example.com/article')}
+        >
+          Submit web
+        </button>
+        <button data-testid="close-upload" onClick={() => onOpenChange(false)}>
+          Close
+        </button>
+      </div>
+    ) : null,
 }))
 jest.mock('@/features/knowledge/document/components/DeleteDocumentDialog', () => ({
   DeleteDocumentDialog: () => null,
@@ -224,6 +252,20 @@ describe('DocumentList summary header', () => {
     mockDocuments = []
     mockFolders = []
     mockFolderTree.mockClear()
+    mockCreateWebDocument.mockReset()
+    mockRefreshDocuments.mockReset()
+  })
+
+  it('refreshes added web documents without closing the source dialog from the parent', async () => {
+    mockCreateWebDocument.mockResolvedValue({ success: true, document: createDocument() })
+    render(<DocumentList knowledgeBase={createKnowledgeBase()} canUpload={true} />)
+    fireEvent.click(screen.getByTestId('upload-documents-button'))
+    fireEvent.click(screen.getByTestId('submit-web'))
+    await waitFor(() => expect(mockCreateWebDocument).toHaveBeenCalled())
+    await waitFor(() => expect(mockRefreshDocuments).toHaveBeenCalled())
+    expect(screen.getByTestId('upload-dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('close-upload'))
+    expect(screen.queryByTestId('upload-dialog')).not.toBeInTheDocument()
   })
 
   it('shows inline summary edit button when manual summary exists after AI failure', () => {

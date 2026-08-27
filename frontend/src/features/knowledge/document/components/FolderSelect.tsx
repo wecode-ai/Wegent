@@ -25,6 +25,7 @@ interface FolderSelectProps {
   className?: string
   /** Test id for the select trigger */
   triggerTestId?: string
+  disabled?: boolean
 }
 
 /** Folder picker shared by the upload dialog's import modes. */
@@ -34,6 +35,7 @@ export function FolderSelect({
   onFolderChange,
   className = 'space-y-1.5',
   triggerTestId,
+  disabled = false,
 }: FolderSelectProps) {
   const { t } = useTranslation('knowledge')
 
@@ -42,7 +44,11 @@ export function FolderSelect({
   return (
     <div className={className}>
       <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-      <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
+      <Select
+        disabled={disabled}
+        value={String(folderId)}
+        onValueChange={val => onFolderChange?.(Number(val))}
+      >
         <SelectTrigger className="h-11 min-w-[44px]" data-testid={triggerTestId}>
           <SelectValue />
         </SelectTrigger>

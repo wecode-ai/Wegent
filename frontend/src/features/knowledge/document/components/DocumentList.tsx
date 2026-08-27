@@ -31,7 +31,7 @@ import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
-import { DocumentUpload, type TableDocument } from './DocumentUpload'
+import { DocumentUpload } from './DocumentUpload'
 
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
@@ -697,19 +697,6 @@ export function DocumentList({
     return results
   }
 
-  const handleTableAdd = async (data: TableDocument) => {
-    await create({
-      name: data.name,
-      file_extension: 'table',
-      file_size: 0,
-      source_type: 'table',
-      source_config: data.source_config,
-      folder_id: selectedUploadFolderId || 0,
-    })
-    setShowUpload(false)
-    onDocumentsChanged?.()
-  }
-
   const handleWebAdd = async (url: string, name?: string) => {
     // Import the API function
     const { createWebDocument } = await import('@/apis/knowledge')
@@ -732,7 +719,6 @@ export function DocumentList({
       setDocumentSelection(nextSelectedIds)
     }
 
-    setShowUpload(false)
     onDocumentsChanged?.()
   }
 
@@ -1659,7 +1645,6 @@ export function DocumentList({
         open={showUpload}
         onOpenChange={setShowUpload}
         onUploadComplete={handleUploadComplete}
-        onTableAdd={handleTableAdd}
         onWebAdd={handleWebAdd}
         onDingtalkImport={handleDingtalkImport}
         isSharedKnowledgeBase={Boolean(groupInfo) && groupInfo?.groupType !== 'personal'}

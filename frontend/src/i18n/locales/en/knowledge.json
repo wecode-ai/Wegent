@@ -509,7 +509,7 @@
       "fileList": "{{count}} files selected",
       "clearAll": "Clear All",
       "startUpload": "Upload {{count}} Files",
-      "confirmUpload": "Confirm ({{count}} files)",
+      "confirmUpload": "Add files ({{count}})",
       "confirming": "Creating documents...",
       "summary": "Completed: {{success}} succeeded, {{failed}} failed",
       "status": {
@@ -567,7 +567,7 @@
         "urlPlaceholder": "https://example.com/article",
         "nameLabel": "Document Name (Optional)",
         "namePlaceholder": "Uses page title if not specified",
-        "submitButton": "Fetch and Add",
+        "submitButton": "Add web page",
         "fetching": "Fetching web page...",
         "success": "Web page content fetched successfully",
         "fetchFailed": "Unable to access the web page. Please check if the URL is correct",
@@ -592,7 +592,7 @@
         "empty": "No importable DingTalk documents yet. Click Refresh to load the latest directory.",
         "loadFailed": "Failed to load DingTalk documents. Please try again later",
         "addFailed": "Failed to import the DingTalk document. Please try again",
-        "submitButton": "Import",
+        "submitButton": "Import documents ({{count}})",
         "myDocs": "My documents",
         "wikispace": "DingTalk wiki",
         "wikispaceNotConfigured": "DingTalk wiki spaces are not configured yet. Configure them in Settings first.",
@@ -612,7 +612,20 @@
         "resultSeparator": ", ",
         "done": "Done"
       },
-      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files."
+      "videoModelNotSupported": "The current multimodal analysis model does not support video. Switch to a video-capable model in the knowledge base settings before uploading video files.",
+      "sources": {
+        "file": "Local files",
+        "web": "Web link",
+        "text": "Text"
+      },
+      "textTitle": "Title (optional)",
+      "addText": "Add text",
+      "unsavedDraft": "Unsaved content",
+      "sourceAdded": "Materials added. Your other drafts have been kept. Continue adding materials or check processing progress in the document list.",
+      "discardTitle": "Discard unsaved content?",
+      "discardDescription": "Closing clears unsaved content from every source. Materials already added are not affected.",
+      "keepEditing": "Keep editing",
+      "discard": "Discard and close"
     },
     "permission": {
       "noAccess": "You do not have permission to perform this action",

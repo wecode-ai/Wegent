@@ -226,7 +226,26 @@ describe('DocumentUpload dingtalk source', () => {
       />
     )
 
-    expect(screen.getByTestId('dingtalk-source-button')).toHaveClass('h-11')
+    expect(screen.getByTestId('dingtalk-source-button')).toHaveClass('min-h-11')
+  })
+
+  it('preserves text and DingTalk selections when switching between source tabs', async () => {
+    await openDingtalkMode()
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-3'))
+
+    fireEvent.mouseDown(screen.getByTestId('document-source-text'), { button: 0, ctrlKey: false })
+    fireEvent.change(screen.getByTestId('document-text-content'), {
+      target: { value: 'Keep this draft' },
+    })
+    fireEvent.mouseDown(screen.getByTestId('dingtalk-source-button'), {
+      button: 0,
+      ctrlKey: false,
+    })
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
+
+    fireEvent.mouseDown(screen.getByTestId('document-source-text'), { button: 0, ctrlKey: false })
+    expect(screen.getByTestId('document-text-content')).toHaveValue('Keep this draft')
+    expect(mockGetDocs).toHaveBeenCalledTimes(1)
   })
 
   it('shows the cached directory without syncing and displays last refresh time', async () => {

@@ -4,10 +4,9 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   AlertCircle,
-  ArrowLeft,
   Check,
   ChevronRight,
   FileText,
@@ -16,7 +15,6 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react'
-import { DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -24,7 +22,6 @@ import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 import { cn } from '@/lib/utils'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
-import { FolderSelect } from './FolderSelect'
 
 // Maximum documents one batch import may create; mirrors the backend cap.
 const MAX_IMPORT_DOCUMENTS = 50
@@ -119,18 +116,12 @@ function formatLastSynced(iso: string | null | undefined): string {
 }
 
 interface DingtalkDocumentImportProps {
-  /** Return to the upload source picker */
-  onBack: () => void
   /** Batch-import the expanded document IDs; resolves with the submit result */
   onImport: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
   /** Called after the user acknowledges the import result */
   onDone?: () => void
-  /** Currently selected folder ID for import destination (0 = root) */
-  folderId?: number
-  /** Flat list of folder names with IDs for the selector */
-  folderOptions?: Array<{ id: number; name: string; depth: number }>
-  /** Callback when folder selection changes */
-  onFolderChange?: (folderId: number) => void
+  onDraftChange: (hasDraft: boolean) => void
+  renderFooter: (action: ReactNode) => ReactNode
   /** Whether the current knowledge base is shared with other members */
   isSharedKnowledgeBase?: boolean
   /** Whether the user may manage documents in the current knowledge base */
@@ -138,12 +129,10 @@ interface DingtalkDocumentImportProps {
 }
 
 export function DingtalkDocumentImport({
-  onBack,
   onImport,
   onDone,
-  folderId = 0,
-  folderOptions = [],
-  onFolderChange,
+  onDraftChange,
+  renderFooter,
   isSharedKnowledgeBase = false,
   canManageDocuments = true,
 }: DingtalkDocumentImportProps) {
@@ -159,6 +148,10 @@ export function DingtalkDocumentImport({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [result, setResult] = useState<DingtalkBatchImportSummary | null>(null)
+  useEffect(() => {
+    onDraftChange(result === null && selectedKeys.size > 0)
+  }, [onDraftChange, result, selectedKeys])
+
   const resultItems = result
     ? [
         result.createdCount > 0 &&
@@ -287,6 +280,7 @@ export function DingtalkDocumentImport({
     setSubmitError(null)
     try {
       const summary = await onImport(expandedIds)
+      setSelectedKeys(new Set())
       setResult(summary)
     } catch (err) {
       setSubmitError(mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.dingtalk.addFailed'))
@@ -296,6 +290,7 @@ export function DingtalkDocumentImport({
   }, [canSubmit, onImport, expandedIds, t])
 
   const handleDone = useCallback(() => {
+    setResult(null)
     onDone?.()
   }, [onDone])
 
@@ -331,6 +326,7 @@ export function DingtalkDocumentImport({
             onClick={() => toggleSelect(node)}
             disabled={submitting || result !== null}
             aria-label={node.name}
+            aria-pressed={selected}
             data-testid={`dingtalk-node-select-${node.dingtalk_node_id}`}
           >
             <span
@@ -392,21 +388,7 @@ export function DingtalkDocumentImport({
 
   return (
     <>
-      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-11 w-11 shrink-0"
-          onClick={onBack}
-          disabled={submitting}
-          data-testid="dingtalk-import-back"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
-        <DialogTitle>{t('document.upload.dingtalk.title')}</DialogTitle>
-      </DialogHeader>
-
-      <div className="py-4 space-y-4">
+      <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
         <p className="text-sm text-text-secondary">{t('document.upload.dingtalk.hint')}</p>
 
         {isSharedKnowledgeBase && (
@@ -431,7 +413,7 @@ export function DingtalkDocumentImport({
           )
         ) : (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-lg border border-border p-0.5">
                 {(Object.keys(sources) as DingtalkSourceKey[]).map(key => (
                   <button
@@ -444,6 +426,7 @@ export function DingtalkDocumentImport({
                         : 'text-text-secondary hover:text-text-primary'
                     )}
                     onClick={() => handleSourceChange(key)}
+                    disabled={submitting}
                     data-testid={
                       key === 'docs'
                         ? 'dingtalk-import-tab-my-docs'
@@ -463,7 +446,7 @@ export function DingtalkDocumentImport({
                 variant="outline"
                 className="h-11 gap-1.5"
                 onClick={handleRefresh}
-                disabled={source.refreshing || source.loading}
+                disabled={submitting || source.refreshing || source.loading}
                 data-testid="dingtalk-import-refresh"
               >
                 {source.refreshing ? (
@@ -556,7 +539,7 @@ export function DingtalkDocumentImport({
                   </div>
                 )}
                 <div
-                  className="border border-border rounded-lg divide-y divide-border max-h-[260px] overflow-y-auto"
+                  className="border border-border rounded-lg divide-y divide-border"
                   data-testid="dingtalk-document-list"
                 >
                   {visibleNodes.map(renderNodeRow)}
@@ -594,13 +577,6 @@ export function DingtalkDocumentImport({
                 <span>{t('document.upload.dingtalk.noPermission')}</span>
               </div>
             )}
-
-            <FolderSelect
-              folderId={folderId}
-              folderOptions={folderOptions}
-              onFolderChange={onFolderChange}
-              triggerTestId="dingtalk-import-folder-select"
-            />
           </>
         )}
 
@@ -615,8 +591,8 @@ export function DingtalkDocumentImport({
         )}
       </div>
 
-      <div className="flex justify-end gap-2">
-        {result !== null ? (
+      {renderFooter(
+        result !== null ? (
           <Button
             variant="primary"
             className="min-h-11"
@@ -626,35 +602,24 @@ export function DingtalkDocumentImport({
             {t('document.upload.dingtalk.done')}
           </Button>
         ) : (
-          <>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={onBack}
-              disabled={submitting}
-              data-testid="dingtalk-import-cancel"
-            >
-              {t('common:actions.cancel')}
-            </Button>
-            <Button
-              variant="primary"
-              className="min-h-11"
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              data-testid="dingtalk-import-submit"
-            >
-              {submitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {t('document.upload.adding')}
-                </>
-              ) : (
-                t('document.upload.dingtalk.submitButton')
-              )}
-            </Button>
-          </>
-        )}
-      </div>
+          <Button
+            variant="primary"
+            className="min-h-11"
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            data-testid="dingtalk-import-submit"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                {t('document.upload.adding')}
+              </>
+            ) : (
+              t('document.upload.dingtalk.submitButton', { count: expandedIds.length })
+            )}
+          </Button>
+        )
+      )}
     </>
   )
 }
