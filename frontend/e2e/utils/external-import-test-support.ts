@@ -327,11 +327,15 @@ export async function openKnowledgeBase(page: Page, knowledgeBaseId: number): Pr
 export async function importThroughDialog(
   page: Page,
   nodeIds: string[],
-  options: { targetFolderName?: string } = {}
+  options: { sourceFolderPath?: string[]; targetFolderName?: string } = {}
 ): Promise<void> {
   await page.getByTestId('upload-documents-button').click()
   await page.getByTestId('dingtalk-source-button').click()
   await expect(page.getByTestId('dingtalk-document-list')).toBeVisible({ timeout: 30_000 })
+
+  for (const folderId of options.sourceFolderPath ?? []) {
+    await page.getByTestId(`dingtalk-folder-navigate-${folderId}`).click()
+  }
 
   for (const nodeId of nodeIds) {
     await page.getByTestId(`dingtalk-node-select-${nodeId}`).click()

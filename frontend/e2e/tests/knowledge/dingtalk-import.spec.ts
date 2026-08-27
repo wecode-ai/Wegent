@@ -85,7 +85,9 @@ test.describe('External DingTalk document import', () => {
     await runScenario(request, 'single', async context => {
       await openKnowledgeBase(page, context.knowledgeBaseId)
 
-      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product])
+      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
+        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+      })
       await page.getByTestId('dingtalk-import-done').click()
 
       const document = await waitForDocument(
@@ -163,7 +165,9 @@ test.describe('External DingTalk document import', () => {
       })
 
       await openKnowledgeBase(page, context.knowledgeBaseId)
-      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product])
+      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
+        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+      })
       await expect(page.getByTestId('dingtalk-import-result')).toContainText('updated 1')
       await page.getByTestId('dingtalk-import-done').click()
 
@@ -194,7 +198,9 @@ test.describe('External DingTalk document import', () => {
       })
 
       await openKnowledgeBase(page, context.knowledgeBaseId)
-      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product, EXTERNAL_IMPORT_NODES.api])
+      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product, EXTERNAL_IMPORT_NODES.api], {
+        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
+      })
       await page.getByTestId('dingtalk-import-done').click()
 
       const okDocument = await waitForDocument(
