@@ -215,7 +215,6 @@ fi
 
 cd "$WEWORK_DIR"
 pnpm run prepare:electron
-node electron/node_modules/electron/install.js
 if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
