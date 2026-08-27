@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    dsh_plugin_storage,
     external_tasks,
     feedback,
     groups,
@@ -161,6 +162,11 @@ api_router.include_router(
     runtime_profiles.router,
     prefix="/v1/runtime-profiles",
     tags=["runtime-profiles"],
+)
+api_router.include_router(
+    dsh_plugin_storage.router,
+    prefix="/v1/dsh-plugin-storage",
+    tags=["dsh-plugin-storage"],
 )
 api_router.include_router(
     runtime_profiles.project_router,
