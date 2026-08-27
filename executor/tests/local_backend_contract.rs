@@ -569,7 +569,7 @@ async fn local_backend_runtime_rpc_handler_compresses_large_ack_payloads() {
             "content": "large transcript 中文🙂".repeat(80_000),
         }],
     });
-    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         Arc::new(StaticRuntimeWorkHandler(expected.clone())),
@@ -612,7 +612,7 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
         json!([{"success": true, "task": null}]),
     ]);
     let (event_tx, event_rx) = broadcast::channel(8);
-    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         Arc::new(StaticRuntimeWorkHandler(json!({"success": true}))),
@@ -645,7 +645,7 @@ async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
 async fn runtime_polling_does_not_block_initial_liveness_heartbeat() {
     let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
     let (event_tx, event_rx) = broadcast::channel(8);
-    let runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         Arc::new(PendingRuntimeWorkHandler),
@@ -670,7 +670,7 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let _runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         handler,
@@ -714,7 +714,7 @@ async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let _runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         handler,

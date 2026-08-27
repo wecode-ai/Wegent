@@ -23,6 +23,10 @@ describe('desktop resource migration', () => {
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
+    const devAppWatcher = await readFile(
+      join(weworkRoot, 'scripts/dev-wework-app-watch.mjs'),
+      'utf8'
+    )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe(
@@ -41,6 +45,9 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['build:dsh-app']).toBe(
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'
     )
+    expect(devAppWatcher).toContain('outDir: appWebRoot')
+    expect(devAppWatcher).toContain('emptyOutDir: true')
+    expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
   })
 

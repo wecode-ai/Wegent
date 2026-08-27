@@ -89,7 +89,7 @@ function sortDevicesForProjectCreation(devices: DeviceInfo[]): DeviceInfo[] {
     const rightCloud = isCloudDevice(right) ? 0 : 1
     if (leftCloud !== rightCloud) return leftCloud - rightCloud
 
-    return (left.name || left.device_id).localeCompare(right.name || right.device_id)
+    return (left.name ?? '').localeCompare(right.name ?? '')
   })
 }
 
@@ -130,7 +130,7 @@ function getFolderProjectName(path: string): string {
 }
 
 function getDeviceLabel(device: DeviceInfo): string {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 function getInitialActiveDeviceId(

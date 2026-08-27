@@ -1,6 +1,9 @@
 import type { DeviceInfo } from '@/types/api'
 
-type AppDeviceLike = Pick<DeviceInfo, 'device_id' | 'device_type' | 'app_device_id'>
+type AppDeviceLike = Pick<
+  DeviceInfo,
+  'device_id' | 'device_type' | 'app_device_id' | 'socket_device_id'
+>
 
 function normalizeDeviceId(value: string | null | undefined): string | null {
   const trimmed = value?.trim()
@@ -35,7 +38,7 @@ export function isCurrentAppDevice(
 ): boolean {
   const ids = currentAppDeviceIdSet(appDeviceIds)
   if (ids.size === 0) return false
-  return [device.device_id, device.app_device_id].some(value => {
+  return [device.device_id, device.app_device_id, device.socket_device_id].some(value => {
     const deviceId = normalizeDeviceId(value)
     return Boolean(deviceId && ids.has(deviceId))
   })

@@ -10,6 +10,8 @@ EXECUTOR_ISOLATION="false"
 ELECTRON_ARGS=()
 ISOLATED_EXECUTOR_HOME=""
 MANAGED_SOURCE_EXECUTOR="false"
+WEWORK_APP_WATCH_PID=""
+WEWORK_APP_WATCH_READY_FILE=""
 
 # shellcheck source=../../scripts/lib/cargo-cache.sh
 source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
@@ -124,8 +126,15 @@ resolve_macos_target() {
 }
 
 cleanup() {
+  if [ -n "$WEWORK_APP_WATCH_PID" ] && kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
+    kill "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+    wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+  fi
   if [ -n "$ISOLATED_EXECUTOR_HOME" ]; then
     rm -rf "$ISOLATED_EXECUTOR_HOME"
+  fi
+  if [ -n "$WEWORK_APP_WATCH_READY_FILE" ]; then
+    rm -f "$WEWORK_APP_WATCH_READY_FILE"
   fi
 }
 
@@ -162,6 +171,8 @@ if [ -z "${WEWORK_EXECUTOR_PATH:-}" ]; then
 fi
 export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
 export WEWORK_NODE_PATH="${WEWORK_NODE_PATH:-$WEWORK_DIR/node_modules/.cache/execution-runtime-node-dev/bin/node}"
+export WEWORK_APP_HOT_RELOAD="1"
+export WEWORK_APP_WEB_ROOT="$WEWORK_DIR/dsh/app-wework/web"
 
 if [ -n "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   export CODEX_BINARY_PATH="$WEWORK_DEV_CODEX_BINARY"
@@ -230,6 +241,28 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
 fi
 if [ ! -x "$WEWORK_NODE_PATH" ]; then
   echo "Error: Node runtime is not executable: $WEWORK_NODE_PATH" >&2
+  exit 1
+fi
+
+WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
+rm -f "$WEWORK_APP_WATCH_READY_FILE"
+export WEWORK_APP_WATCH_READY_FILE
+node "$SCRIPT_DIR/dev-wework-app-watch.mjs" &
+WEWORK_APP_WATCH_PID="$!"
+
+for _ in $(seq 1 240); do
+  if [ -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
+    break
+  fi
+  if ! kill -0 "$WEWORK_APP_WATCH_PID" 2>/dev/null; then
+    wait "$WEWORK_APP_WATCH_PID" 2>/dev/null || true
+    echo "Error: Original Wework application build watcher exited before becoming ready." >&2
+    exit 1
+  fi
+  sleep 0.25
+done
+if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
+  echo "Error: Original Wework application build watcher did not become ready." >&2
   exit 1
 fi
 

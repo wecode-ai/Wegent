@@ -13,12 +13,26 @@ use crate::local::session::{
 pub(super) fn default_session_handler(
     configured_workspace_root: Option<PathBuf>,
 ) -> LocalSessionHandler {
-    let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", true);
+    configured_session_handler(configured_workspace_root, true, "http://localhost:17888")
+}
+
+pub(super) fn app_sidecar_session_handler(
+    configured_workspace_root: Option<PathBuf>,
+) -> LocalSessionHandler {
+    configured_session_handler(configured_workspace_root, false, "http://localhost:0")
+}
+
+fn configured_session_handler(
+    configured_workspace_root: Option<PathBuf>,
+    gateway_enabled_default: bool,
+    public_base_url_default: &str,
+) -> LocalSessionHandler {
+    let gateway_enabled = env_bool("DEVICE_SESSION_GATEWAY_ENABLED", gateway_enabled_default);
     let public_base_url = env::var("DEVICE_PUBLIC_BASE_URL")
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "http://localhost:17888".to_owned());
+        .unwrap_or_else(|| public_base_url_default.to_owned());
     let code_server_port = env::var("DEVICE_CODE_SERVER_PORT")
         .ok()
         .and_then(|value| value.trim().parse::<u16>().ok())

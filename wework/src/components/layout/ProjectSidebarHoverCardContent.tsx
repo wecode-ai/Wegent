@@ -9,6 +9,7 @@ export interface ProjectHoverSource {
   id: string
   kind: 'host' | 'path'
   value: string
+  detail?: string
   actionLabel?: string
   onOpen?: () => void
 }
@@ -115,13 +116,20 @@ export function ProjectSidebarHoverCardContent({
                 <span className="flex h-5 w-4 shrink-0 items-center justify-center text-text-muted">
                   <SourceIcon kind={source.kind} />
                 </span>
-                <span
-                  className={cn(
-                    'min-w-0 flex-1 text-sm leading-5 text-text-primary',
-                    source.kind === 'path' ? 'break-all font-mono text-xs' : 'truncate'
+                <span className="min-w-0 flex-1">
+                  <span
+                    className={cn(
+                      'block text-sm leading-5 text-text-primary',
+                      source.kind === 'path' ? 'break-all font-mono text-xs' : 'truncate'
+                    )}
+                  >
+                    {source.value}
+                  </span>
+                  {source.detail && (
+                    <span className="block truncate font-mono text-xs leading-5 text-text-muted">
+                      {t('workbench.device_id', { id: source.detail })}
+                    </span>
                   )}
-                >
-                  {source.value}
                 </span>
                 {source.onOpen && (
                   <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover/source:opacity-100 group-focus-visible/source:opacity-100" />

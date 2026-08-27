@@ -194,17 +194,6 @@ class LoopItemExecutionClaim(ProjectChatSchema):
     assigner_user_id: int | None = Field(default=None)
 
 
-class LoopItemExecutionDeviceClaim(ProjectChatSchema):
-    """Claim the next queued local run for any robot bound to a device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
-
-
 class LoopItemExecutionHeartbeat(ProjectChatSchema):
     """Extend the lease of a running robot run."""
 

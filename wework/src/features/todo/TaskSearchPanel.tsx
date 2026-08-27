@@ -39,7 +39,7 @@ export function TaskSearchPanel({
   return (
     <div
       data-testid="cloud-project-task-search-panel"
-      className="absolute right-6 top-12 z-30 w-[560px] max-w-[calc(100vw-48px)] rounded-xl border border-border bg-background p-3 shadow-xl"
+      className="electron-titlebar-interactive-region absolute right-6 top-12 z-30 w-[560px] max-w-[calc(100vw-48px)] rounded-xl border border-border bg-background p-3 shadow-xl"
     >
       <div className="relative">
         <Search className="absolute left-3 top-2.5 h-4 w-4 text-text-muted" />

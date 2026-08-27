@@ -1082,14 +1082,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/v1/loop-item-executions/claim-my-next'
-    ) {
-      json(response, 200, null)
-      return
-    }
-
     if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
       json(response, 200, { apps: [] })
       return

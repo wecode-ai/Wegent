@@ -123,6 +123,7 @@ class CloudProjectBoardConfig(BaseModel):
     statuses: list[CloudProjectBoardStatus] = Field(
         default_factory=default_board_statuses
     )
+    processing_start_status_id: str | None = None
 
     @model_validator(mode="after")
     def validate_statuses(self) -> "CloudProjectBoardConfig":
@@ -131,6 +132,16 @@ class CloudProjectBoardConfig(BaseModel):
             raise ValueError("board status ids must be unique")
         if len(self.statuses) > 50:
             raise ValueError("board supports at most 50 statuses")
+        if not ids:
+            if self.processing_start_status_id is not None:
+                raise ValueError(
+                    "processing_start_status_id requires at least one board status"
+                )
+            return self
+        if self.processing_start_status_id is None:
+            self.processing_start_status_id = ids[1] if len(ids) > 1 else ids[0]
+        elif self.processing_start_status_id not in ids:
+            raise ValueError("processing_start_status_id must reference a board status")
         return self
 
 
@@ -232,6 +243,7 @@ class CloudProjectResponse(BaseModel):
     workflow_definition: ProjectWorkflowDefinition = Field(
         default_factory=ProjectWorkflowDefinition
     )
+    workflow_automation_id: str | None = None
     visibility: ProjectVisibility = "private"
     created_by_user_id: int
     current_user_id: int = 0
@@ -262,6 +274,7 @@ class CloudProjectResponse(BaseModel):
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
+                "workflow_automation_id": metadata.get("workflow_automation_id"),
                 "visibility": (
                     "public" if metadata.get("visibility") == "public" else "private"
                 ),

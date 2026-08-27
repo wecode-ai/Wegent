@@ -13,6 +13,7 @@ export default defineConfig([
     'dummy-non-existing-folder',
     'electron/dummy-non-existing-folder',
     '**/public/vendor',
+    'src-tauri',
     'test-results',
   ]),
   {

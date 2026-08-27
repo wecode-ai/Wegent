@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -1653,14 +1653,8 @@ describe('TaskActivityView', () => {
   it('exposes the current AI manager execution to the workflow summary', async () => {
     runtimeWorkMock.value = {
       projects: [],
-      chats: [
-        {
-          deviceId: 'device-1',
-          projectId: null,
-          tasks: [{ taskId: 'manager-runtime-1', title: 'AI manager' }],
-        },
-      ],
-      totalTasks: 1,
+      chats: [],
+      totalTasks: 0,
     }
     const managerMessage: ProjectChatMessage = {
       ...agentMessage,
@@ -1671,9 +1665,9 @@ describe('TaskActivityView', () => {
         kind: 'project_automation_run',
         automation_run_id: 'manager-run-1',
         run_id: 'manager-run-1',
-        run_status: 'running',
+        run_status: 'queued',
       },
-      status: 'streaming',
+      status: 'pending',
       runtimeAddress: { deviceId: 'device-1', taskId: 'manager-runtime-1' },
     }
     const previousManagerMessage: ProjectChatMessage = {
@@ -1720,6 +1714,14 @@ describe('TaskActivityView', () => {
     await waitFor(() =>
       expect(onWorkflowManagerExecutionChange).toHaveBeenLastCalledWith(expect.any(Function))
     )
+    const openExecution = [...onWorkflowManagerExecutionChange.mock.calls]
+      .reverse()
+      .map(call => call[0])
+      .find(candidate => typeof candidate === 'function')
+    act(() => openExecution())
+
+    expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
+    expect(screen.getByTestId('runtime-execution-detail-status')).toHaveTextContent('排队中')
   })
 
   it('refreshes the workflow plan when the AI manager finishes', async () => {

@@ -1960,7 +1960,6 @@ export function WorkbenchProvider({
           onAssistantStart: (address, turnId) => {
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
-            lifecycleStore.turnStarted(address, turnId)
             syncProjectTaskExecutionStatus(address, 'running')
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
@@ -1972,7 +1971,6 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address, turnId, outcome)
             syncProjectTaskExecutionStatus(address, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,

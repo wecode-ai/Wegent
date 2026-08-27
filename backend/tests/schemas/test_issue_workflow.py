@@ -222,6 +222,33 @@ def test_workflow_definition_requires_a_rule_for_ai_advancement() -> None:
         )
 
 
+def test_ai_stage_constraints_reject_execution_configuration() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="AI stage constraints cannot define execution configuration: develop",
+    ):
+        ProjectWorkflowDefinition.model_validate(
+            {
+                "version": 1,
+                "stage_mode": "dag",
+                "advancement_policy": "ai",
+                "ai_automation_rule_id": "manager-rule",
+                "nodes": [
+                    {
+                        "id": "develop",
+                        "name": "开发",
+                        "execution_mode": "robot",
+                        "execution_config": {
+                            "execution_device_id": "local-device",
+                            "model": "gpt-5.6-codex",
+                            "workspace_binding": {"type": "standalone"},
+                        },
+                    }
+                ],
+            }
+        )
+
+
 def test_workflow_node_preserves_unconfigured_robot_execution() -> None:
     definition = ProjectWorkflowDefinition.model_validate(
         {

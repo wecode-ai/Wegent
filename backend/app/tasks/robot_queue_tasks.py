@@ -98,7 +98,7 @@ def _queued_devices(db) -> list[tuple[int, str]]:
         )
         .where(
             LoopItemExecution.status == "queued",
-            LoopItemExecution.execution_environment == "cloud",
+            LoopItemExecution.execution_environment.in_(("local", "cloud")),
             LoopItemExecution.execution_device_id.is_not(None),
             LoopItemExecution.execution_device_id != "",
         )
@@ -117,18 +117,12 @@ async def consume_queues_background() -> None:
         with get_db_session() as db:
             devices = _queued_devices(db)
         for owner_user_id, device_id in devices:
-            online = await device_service.get_device_online_info(
-                owner_user_id,
-                device_id,
+            await get_sio().emit(
+                "runtime.tasks.available",
+                {},
+                room=f"execution-target:{owner_user_id}:{device_id}",
+                namespace="/local-executor",
             )
-            socket_id = (online or {}).get("socket_id") if online else None
-            if socket_id:
-                await get_sio().emit(
-                    "runtime.tasks.available",
-                    {},
-                    to=socket_id,
-                    namespace="/local-executor",
-                )
     except Exception:
         logger.exception("[RobotQueue] Work availability notification failed")
 
