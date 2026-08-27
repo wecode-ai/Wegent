@@ -10,6 +10,7 @@ import MessagesArea, {
 import type { DisplayMessage } from '@/features/tasks/presentation/useMessagePresenter'
 import type { TaskStateSnapshot } from '@wegent/chat-core'
 import type { KnowledgeBaseWithGroupInfo, KnowledgeDocument } from '@/types/knowledge'
+import type { InteractiveFormAnswerPayload } from '@/types/api'
 
 const messageBubbleRenderSpy = jest.fn()
 const saveToKnowledgeDialogRenderSpy = jest.fn()
@@ -265,6 +266,55 @@ describe('MessagesArea memoization', () => {
     rerender(<MessagesArea {...props} />)
 
     expect(messageBubbleRenderSpy).toHaveBeenCalledTimes(firstRenderCount)
+  })
+
+  it('submits an interactive form rendered while the message is streaming', () => {
+    mockMessages = [
+      {
+        id: 'ai-streaming-form',
+        type: 'ai',
+        content: '',
+        timestamp: Date.now(),
+        status: 'streaming',
+        subtaskId: 8,
+        result: { blocks: [] },
+      },
+    ]
+    const onSendMessage = jest.fn()
+    render(
+      <MessagesArea
+        selectedTeam={null}
+        selectedRepo={null}
+        selectedBranch={null}
+        isGroupChat={false}
+        onSendMessage={onSendMessage}
+      />
+    )
+    const streamingBubbleProps = messageBubbleRenderSpy.mock.lastCall?.[0] as {
+      onAskUserSubmit: (
+        toolUseId: string,
+        formattedMessage: string,
+        answer: InteractiveFormAnswerPayload
+      ) => void
+    }
+    const answer: InteractiveFormAnswerPayload = {
+      type: 'interactive_form_question',
+      tool_use_id: 'form-tool',
+      task_id: 5,
+      subtask_id: 8,
+      success: true,
+      status: 'answered',
+      answers: { style: '电影感' },
+    }
+
+    act(() => streamingBubbleProps.onAskUserSubmit('form-tool', 'formatted answer', answer))
+
+    expect(onSendMessage).toHaveBeenCalledWith('formatted answer', {
+      interactiveFormAnswer: {
+        ...answer,
+        message: 'formatted answer',
+      },
+    })
   })
 
   it('only supplies save-to-knowledge actions to authenticated users', () => {

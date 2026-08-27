@@ -50,7 +50,20 @@ const makeAttachmentContext = (
   }) as SubtaskContextBrief
 
 describe('ContextBadgeList', () => {
-  it('renders image attachments as compact thumbnails', () => {
+  it('top-aligns mixed media so compact images do not stretch to video height', () => {
+    const { container } = render(
+      <ContextBadgeList
+        contexts={[
+          makeAttachmentContext(1, 'reference.mp4', '.mp4'),
+          makeAttachmentContext(2, 'reference.png', '.png'),
+        ]}
+      />
+    )
+
+    expect(container.firstChild).toHaveClass('items-start')
+  })
+
+  it('renders sent media compactly and keeps documents full width', () => {
     render(
       <ContextBadgeList
         contexts={[

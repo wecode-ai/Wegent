@@ -98,6 +98,15 @@
     "reconnecting": "正在重连...（第 {{count}} 次尝试）",
     "reconnected": "已重新连接"
   },
+  "cards": {
+    "video_director": {
+      "title": "视频生成",
+      "completed": "视频已生成",
+      "processing": "正在创建视频",
+      "failed": "视频生成失败",
+      "view_detail": "查看详情"
+    }
+  },
   "messages": {
     "assistant": "AI 助手",
     "system": "系统",
@@ -723,6 +732,7 @@
       "adaptive": "自适应"
     },
     "generating": "正在生成视频...",
+    "loading": "正在加载视频...",
     "preparing": "准备中...",
     "progress": "生成进度: {{progress}}%",
     "completed": "视频生成完成",
@@ -734,6 +744,14 @@
     "duration_section": "时长",
     "duration_auto": "智能时长",
     "resolution_section": "分辨率"
+  },
+  "asyncCards": {
+    "loading": "正在加载卡片...",
+    "pleaseWait": "任务处理中，请稍候",
+    "failed": "异步任务执行失败",
+    "videoTitle": "创意视频",
+    "viewDetails": "查看详情",
+    "panelDescription": "查看当前结果，并继续下一阶段的视频创作"
   },
   "image": {
     "title": "图片生成",
@@ -812,6 +830,10 @@
       "invalidContent": "标题或正文不符合要求，请检查后重试",
       "saveFailed": "保存失败，请稍后重试"
     }
+  },
+  "externalWebContent": {
+    "videoMetadataOnlyTitle": "当前模型不支持视频内容理解",
+    "videoMetadataOnlyDescription": "如需理解视频，请切换到支持视频理解的模型。"
   },
   "dingtalkDocs": {
     "tabTitle": "钉钉文档",

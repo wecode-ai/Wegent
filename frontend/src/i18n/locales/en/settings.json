@@ -164,6 +164,7 @@
     }
   },
   "bot": {
+    "secondary_llm_model_placeholder": "Select an LLM model",
     "allowed_models": {
       "label": "Restrict Available Models",
       "description": "When enabled, users can only select from the models listed below",
@@ -172,7 +173,9 @@
     },
     "errors": {
       "default_model_required_when_restrict": "A default model must be selected when model restriction is enabled",
-      "default_model_must_be_in_allowed": "The default model must be in the allowed models list"
+      "default_model_must_be_in_allowed": "The default model must be in the allowed models list",
+      "video_model_required": "Please select a video model",
+      "secondary_llm_model_required": "Please select an LLM model for planning"
     }
   },
   "team": {
@@ -212,6 +215,10 @@
       },
       "core": {
         "model_description": "Uses the system default when unset; choose one only when needed.",
+        "video_model_label": "Video model",
+        "secondary_llm_model_label": "LLM model",
+        "secondary_llm_model_description": "Choose the text model that understands requests and invokes the video workflow.",
+        "video_model_description": "Choose the video model passed to the production workflow.",
         "prompt_description": "Defines the agent role, goals, and response style.",
         "skills_description": "Add common skills so the agent can call tools when needed.",
         "knowledge_description": "New chats start with these knowledge bases; more can still be added in chat.",

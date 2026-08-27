@@ -39,6 +39,7 @@ interface TeamModeEditorProps {
   scope?: 'personal' | 'group' | 'all' | 'public'
   groupName?: string
   modelCategoryType?: ModelCategoryType
+  allowGenerationPrimaryModel?: boolean
   /** Pipeline mode: requireConfirmation settings for each bot */
   requireConfirmationMap?: Record<number, boolean>
   setRequireConfirmationMap?: React.Dispatch<React.SetStateAction<Record<number, boolean>>>
@@ -75,6 +76,7 @@ export default function TeamModeEditor({
   scope,
   groupName,
   modelCategoryType,
+  allowGenerationPrimaryModel,
   requireConfirmationMap,
   setRequireConfirmationMap,
   contextPassingMap,
@@ -110,6 +112,7 @@ export default function TeamModeEditor({
             scope={scope}
             groupName={groupName}
             modelCategoryType={modelCategoryType}
+            allowGenerationPrimaryModel={allowGenerationPrimaryModel}
           />
         )}
 

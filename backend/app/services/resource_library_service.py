@@ -2007,12 +2007,15 @@ class ResourceLibraryService:
 
     def _is_public(self, source: Kind) -> bool:
         capability = self._capability(source)
-        if capability:
+        if source.user_id == 0:
             return (
-                capability.get("visibility") == "public"
-                and capability.get("publishStatus") == "published"
+                capability.get("visibility", "public") == "public"
+                and capability.get("publishStatus", "published") == "published"
             )
-        return source.user_id == 0
+        return (
+            capability.get("visibility") == "public"
+            and capability.get("publishStatus") == "published"
+        )
 
     def _effective_capability(self, source: Kind) -> dict[str, Any]:
         capability = self._capability(source)

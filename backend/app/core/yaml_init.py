@@ -27,6 +27,14 @@ from app.services.admin_password_bootstrap import (
 from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
+_additional_init_data_directories: list[Path] = []
+
+
+def register_additional_init_data_directory(directory: Path) -> None:
+    """Register an optional resource directory supplied by an extension."""
+    resolved = directory.resolve()
+    if resolved not in _additional_init_data_directories:
+        _additional_init_data_directories.append(resolved)
 
 
 def _is_newer_skill_version(existing: Any, candidate_version: Any) -> bool:
@@ -728,12 +736,40 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         else:
             logger.warning(f"Relative path does not exist: {relative_dir}")
 
-    logger.info(f"Scanning initialization directory: {init_dir}")
+    init_directories = [init_dir, *_additional_init_data_directories]
+    logger.info(f"Scanning initialization directories: {init_directories}")
 
     try:
         # Apply all public resources (Shell, Ghost, Bot, Team, Skill)
         # All resources are now public (user_id=0) and accessible by all users
-        summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
+        summaries = [
+            scan_and_apply_yaml_directory(user_id, directory, db, force=force)
+            for directory in init_directories
+        ]
+        if len(summaries) == 1:
+            summary = summaries[0]
+        else:
+            summary = {
+                "status": (
+                    "error"
+                    if any(item.get("status") == "error" for item in summaries)
+                    else "completed"
+                ),
+                "directories": summaries,
+                "resources_total": sum(
+                    item.get("resources_total", 0) for item in summaries
+                ),
+                "resources_applied": sum(
+                    item.get("resources_applied", 0) for item in summaries
+                ),
+                "resources_failed": sum(
+                    item.get("resources_failed", 0) for item in summaries
+                ),
+                "public_resources": sum(
+                    item.get("public_resources", 0) for item in summaries
+                ),
+                "skills": sum(item.get("skills", 0) for item in summaries),
+            }
 
         logger.info(f"YAML initialization completed: {summary}")
         return summary

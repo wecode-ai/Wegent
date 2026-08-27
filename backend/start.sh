@@ -403,7 +403,11 @@ echo -e "${BLUE}[7/7] Starting backend server...${NC}"
 # Set PYTHONPATH to include project root
 PROJECT_ROOT=$(cd .. && pwd)
 export PYTHONPATH="${PYTHONPATH}:${PROJECT_ROOT}"
+export LOG_FILE_ENABLED="${LOG_FILE_ENABLED:-true}"
+export LOG_DIR="${LOG_DIR:-$PROJECT_ROOT/logs/backend}"
+mkdir -p "$LOG_DIR"
 echo -e "${GREEN}✓ PYTHONPATH set to include: $PROJECT_ROOT${NC}"
+echo -e "${GREEN}✓ Backend logs: $LOG_DIR/info.log${NC}"
 
 # Activate uv's virtual environment
 if [ -d ".venv" ]; then

@@ -19,9 +19,11 @@ from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.main import create_app
 from app.mcp_server import server as mcp_server_module
 from app.mcp_server.server import (
+    _CARDS_MCP_SPEC,
     MCP_APP_SPECS,
     ExternalKnowledgeUser,
     _build_external_knowledge_mcp_app,
+    _build_mcp_app,
     _create_knowledge_mcp_app,
     _default_external_auth_handler,
     external_knowledge_mcp_server,
@@ -185,6 +187,23 @@ def test_get_mcp_knowledge_config_uses_sse_endpoint():
     assert (
         config["wegent-knowledge"]["url"] == "http://localhost:8000/mcp/knowledge/sse"
     )
+
+
+def test_cards_mcp_root_returns_metadata_json():
+    app = _build_mcp_app(_CARDS_MCP_SPEC)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "service": "wegent-cards-mcp",
+        "transport": "streamable-http",
+        "endpoints": {
+            "mcp": "/mcp/cards/sse",
+            "health": "/mcp/cards/health",
+        },
+    }
 
 
 def test_knowledge_mcp_sse_without_trailing_slash_does_not_redirect():

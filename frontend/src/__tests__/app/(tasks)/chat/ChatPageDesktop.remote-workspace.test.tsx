@@ -3,10 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import { ChatPageDesktop } from '@/app/(tasks)/chat/ChatPageDesktop'
+import { openTaskRightPanel, registerTaskRightPanel } from '@/features/tasks/components/right-panel'
 
 let mockSearchParams: URLSearchParams | undefined = new URLSearchParams()
 let mockRuntimeConfig = {
@@ -165,6 +166,15 @@ jest.mock('@/features/tasks/components/remote-workspace', () => ({
   ),
 }))
 
+registerTaskRightPanel('test-panel', ({ onClose }) => (
+  <div data-testid="test-right-panel">
+    panel content
+    <button type="button" onClick={onClose}>
+      close panel
+    </button>
+  </div>
+))
+
 describe('ChatPageDesktop remote workspace integration', () => {
   beforeEach(() => {
     mockSearchParams = new URLSearchParams()
@@ -213,6 +223,33 @@ describe('ChatPageDesktop remote workspace integration', () => {
       taskType: 'chat',
       teamModeFilter: 'all',
       showRepositorySelector: true,
+    })
+  })
+
+  test('opens registered panels in a desktop split view', () => {
+    render(<ChatPageDesktop />)
+
+    act(() => {
+      openTaskRightPanel({
+        panelType: 'test-panel',
+        panelProps: {},
+      })
+    })
+
+    expect(screen.getByTestId('chat-page-main-pane')).toHaveStyle({ width: '400px' })
+    expect(screen.getByTestId('task-right-panel-container')).toHaveClass('min-w-0', 'flex-1')
+    expect(screen.getByTestId('task-right-panel-container')).not.toHaveClass('w-[720px]')
+    expect(screen.getByTestId('test-right-panel')).toBeInTheDocument()
+    expect(chatAreaProps.at(-1)).toMatchObject({
+      isSplitViewOpen: true,
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'close panel' }))
+
+    expect(screen.queryByTestId('task-right-panel-container')).not.toBeInTheDocument()
+    expect(screen.getByTestId('chat-page-main-pane')).toHaveStyle({ width: '100%' })
+    expect(chatAreaProps.at(-1)).toMatchObject({
+      isSplitViewOpen: false,
     })
   })
 })

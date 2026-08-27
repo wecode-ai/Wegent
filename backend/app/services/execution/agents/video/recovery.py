@@ -134,15 +134,24 @@ def _do_recover_video_jobs() -> int:
             # Extract recovery data
             job_id = video_job.get("job_id")
             provider = video_job.get("provider")
+            query_url = video_job.get("query_url")
+            card_type = video_job.get("card_type")
             video_block_id = video_job.get("video_block_id")
             poll_count = video_job.get("poll_count", 0)
             progress = video_job.get("progress", 0)
             intent_result = video_job.get("intent_result")
 
-            if not job_id or not provider or not video_block_id:
+            has_provider_context = bool(provider)
+            has_card_context = bool(card_type and query_url)
+            if (
+                not job_id
+                or not video_block_id
+                or not (has_provider_context or has_card_context)
+            ):
                 logger.warning(
                     f"[video_recovery] Missing required fields for subtask {subtask.id}: "
-                    f"job_id={job_id}, provider={provider}, video_block_id={video_block_id}"
+                    f"job_id={job_id}, provider={provider}, "
+                    f"card_type={card_type}, video_block_id={video_block_id}"
                 )
                 continue
 
@@ -154,31 +163,49 @@ def _do_recover_video_jobs() -> int:
             logger.info(
                 f"[video_recovery] Recovering video job: "
                 f"subtask_id={subtask.id}, task_id={task_id}, job_id={job_id}, "
-                f"provider={provider}, poll_count={poll_count}"
+                f"provider={provider}, card_type={card_type}, "
+                f"poll_count={poll_count}"
             )
 
-            # Re-queue Celery task with fixed task_id to prevent duplicates
+            # Re-queue through the shared schedule lease.
             from app.tasks.video_tasks import dispatch_video_polling_task
 
-            dispatch_video_polling_task(
+            celery_task_id = dispatch_video_polling_task(
                 subtask_id=subtask.id,
                 task_id=task_id,
                 user_id=user_id,
                 job_id=job_id,
-                provider_protocol=provider,
+                provider_protocol=provider or "",
                 video_block_id=video_block_id,
                 model_config=model_config,
                 message_id=subtask.message_id,
                 intent_result=intent_result,
                 poll_count=poll_count,
                 last_progress=progress,
+                card_context=(
+                    {
+                        "query_url": query_url,
+                        "card_type": card_type,
+                        "preview_title": video_job.get("preview_title"),
+                        "progress_text": video_job.get("progress_text"),
+                    }
+                    if has_card_context
+                    else None
+                ),
             )
 
-            recovered_count += 1
-            logger.info(
-                f"[video_recovery] Successfully re-queued video job: "
-                f"subtask_id={subtask.id}, job_id={job_id}"
-            )
+            if celery_task_id:
+                recovered_count += 1
+                logger.info(
+                    f"[video_recovery] Successfully re-queued video job: "
+                    f"subtask_id={subtask.id}, job_id={job_id}, "
+                    f"celery_task_id={celery_task_id}"
+                )
+            else:
+                logger.info(
+                    f"[video_recovery] Video job already has a queued poll: "
+                    f"subtask_id={subtask.id}, job_id={job_id}"
+                )
 
         return recovered_count
 
