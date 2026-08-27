@@ -511,6 +511,14 @@ def _resolve_model_for_bot(
     # This is the single validation point covering all call paths (chat, task creation,
     # subscription, retry, etc.).
     allowed_models = raw_agent_config.get("allowed_models")
+    if not allowed_models and override_model_name and bot_crd.spec.modelRef:
+        _, bound_model_spec = _find_model_with_namespace(
+            db, bot_crd.spec.modelRef.name, user_id
+        )
+        if bound_model_spec:
+            bound_model_config = bound_model_spec.get("modelConfig", {})
+            if isinstance(bound_model_config, dict):
+                allowed_models = bound_model_config.get("allowed_models")
     if (
         allowed_models
         and override_model_name
