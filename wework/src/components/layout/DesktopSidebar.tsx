@@ -12,7 +12,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Laptop,
   Loader2,
   MessageCircle,
@@ -4051,13 +4050,16 @@ export function DesktopSidebar({
                   )
                 }
 
-                const Icon = (props: React.ComponentProps<typeof Grid3X3>) => (
-                  <DshIcon {...props} name={item.icon} />
-                )
                 return (
                   <DesktopSidebarNavItem
                     key={item.id}
-                    icon={Icon}
+                    iconElement={
+                      <DshIcon
+                        name={item.icon}
+                        aria-hidden="true"
+                        className="h-4 w-4 text-current"
+                      />
+                    }
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}

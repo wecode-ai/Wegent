@@ -46,7 +46,7 @@ function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   if (pathname.startsWith('/app/harness-')) {
     return <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
-  if (routeIcon) {
+  if (routeIcon !== undefined) {
     return <DshIcon name={routeIcon} aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   if (tab.kind === 'board') {
