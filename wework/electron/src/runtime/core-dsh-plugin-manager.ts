@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { embeddedNodeArguments } from './embedded-node-runtime.js'
+import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 const PROFILE_NAME = 'wework-core'
 const STATE_FILE = '.wework-core-plugins.json'
@@ -320,7 +320,7 @@ export class CoreDshPluginManager {
     try {
       await this.runCommand(
         command,
-        embeddedNodeArguments(this.options.environment, [pnpmEntry, ...args]),
+        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
         this.pnpmCommandOptions()
       )
     } catch (error) {
@@ -329,7 +329,7 @@ export class CoreDshPluginManager {
       await allowBuild(this.profileRoot, matcher)
       await this.runCommand(
         command,
-        embeddedNodeArguments(this.options.environment, [pnpmEntry, ...args]),
+        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
         this.pnpmCommandOptions()
       ).catch(reason => {
         throw commandError('pnpm', reason)
@@ -340,7 +340,7 @@ export class CoreDshPluginManager {
   private async preflight(): Promise<void> {
     await this.runCommand(
       this.options.nodeCommand,
-      embeddedNodeArguments(this.options.environment, [
+      runtimeNodeArgs(this.options.environment, [
         this.options.dshEntry,
         '--profile',
         PROFILE_NAME,
