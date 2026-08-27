@@ -162,6 +162,8 @@ where
         let handles = Arc::clone(&self.handles);
         let sink = self.sink.clone();
         Box::pin(async move {
+            let mut fields = task_fields(&task_id, subtask_id.as_deref().unwrap_or(""));
+            log_executor_event("task cancellation requested", &fields);
             let state = {
                 let mut guard = handles.lock().expect("background task lock");
                 let key = subtask_id
@@ -171,13 +173,40 @@ where
                 key.and_then(|key| guard.remove(&key))
             };
             let Some(state) = state else {
+                fields.push(("result", "not_running".to_owned()));
+                log_executor_event("task cancellation skipped", &fields);
                 return false;
             };
             state.handle.abort();
-            let _ = state.handle.await;
-            sink.send(state.builder.response_cancelled("Task cancelled"))
+            match state.handle.await {
+                Ok(()) => {
+                    fields.push(("abort_result", "already_finished".to_owned()));
+                }
+                Err(error) if error.is_cancelled() => {
+                    fields.push(("abort_result", "cancelled".to_owned()));
+                }
+                Err(error) => {
+                    fields.push(("abort_result", "join_failed".to_owned()));
+                    fields.push(("abort_error", truncate_for_log(&error.to_string())));
+                }
+            }
+            log_executor_event("task execution stop confirmed", &fields);
+            fields.push(("callback_event", "response.incomplete".to_owned()));
+            match sink
+                .send(state.builder.response_cancelled("Task cancelled"))
                 .await
-                .is_ok()
+            {
+                Ok(()) => {
+                    log_executor_event("task cancellation completed", &fields);
+                    true
+                }
+                Err(message) => {
+                    fields.push(("error_len", message.len().to_string()));
+                    fields.push(("error", truncate_for_log(&message)));
+                    log_executor_event("task cancellation callback failed", &fields);
+                    false
+                }
+            }
         })
     }
 }

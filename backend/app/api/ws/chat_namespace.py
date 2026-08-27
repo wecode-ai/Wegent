@@ -1336,6 +1336,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 subtask_id=payload.subtask_id,
                 bot=[{"shell_type": payload.shell_type or "Chat"}],
                 user={"id": user_id},
+                executor_name=executor_name,
             )
 
             logger.info(
