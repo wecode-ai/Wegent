@@ -1181,8 +1181,13 @@ if (hasSingleInstanceLock) {
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
+  const componentResourcesRoot =
+    !app.isPackaged && configuredComponentResourcesRoot
+      ? resolve(configuredComponentResourcesRoot)
+      : resourcesRoot
   componentUpdates ??= new ComponentUpdateManager({
-    resourcesRoot,
+    resourcesRoot: componentResourcesRoot,
     dataDirectory: app.getPath('userData'),
     updateBaseUrl,
     currentAppVersion: app.getVersion(),
@@ -1211,7 +1216,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
       WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
       WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-        resourcesRoot,
+        componentResourcesRoot,
         'bundled-plugins',
         'wework-personal'
       ),
