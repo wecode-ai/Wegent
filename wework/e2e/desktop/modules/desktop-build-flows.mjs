@@ -284,7 +284,7 @@ function mcpElicitationConfigToml(evidencePath) {
     '[mcp_servers.wegent_sites_interactions]',
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
-    'default_tools_approval_mode = "approve"',
+    'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
 }
