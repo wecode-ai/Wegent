@@ -6,11 +6,23 @@ source_digest="${SOURCE_DIGEST:?SOURCE_DIGEST is required}"
 repository_owner="${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER is required}"
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
 
+manifest_json="$(docker manifest inspect --verbose "$base_image")"
 base_digest="$(
-  docker buildx imagetools inspect "$base_image" |
-    awk '$1 == "Digest:" { print $2; exit }'
+  jq -r '
+    if type == "array" then
+      map(
+        select(
+          .Descriptor.platform.os == "linux" and
+          .Descriptor.platform.architecture == "amd64"
+        )
+      )[0].Descriptor.digest
+    else
+      .Descriptor.digest
+    end
+  ' <<< "$manifest_json"
 )"
 test -n "$base_digest"
+test "$base_digest" != "null"
 
 pinned_base_image="${base_image%@*}@$base_digest"
 runtime_digest="$(
