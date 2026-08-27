@@ -229,6 +229,7 @@ export function AiChatModal({
         createTask={createConversation}
         onAddressChange={rememberAddress}
         runtimeContext={runtimeContext}
+        allowInitialGoal
         emptyStateText={t(
           'todo.issue_task_composer_empty',
           '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'

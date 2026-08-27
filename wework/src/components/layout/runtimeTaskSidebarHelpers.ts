@@ -181,8 +181,8 @@ export function hasExpandedRuntimeSidebarTaskItems(
 }
 
 export function getRuntimeTaskWorkspaceTitle(workspace: RuntimeDeviceWorkspace) {
-  const deviceLabel = workspace.deviceName || workspace.deviceId
-  return `${deviceLabel} ${workspace.workspacePath}`
+  const deviceName = workspace.deviceName?.trim()
+  return deviceName ? `${deviceName} ${workspace.workspacePath}` : workspace.workspacePath
 }
 
 export function getRuntimeTaskWorkspacePath(

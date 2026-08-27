@@ -27,6 +27,9 @@ import {
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -146,6 +149,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     ref
   ) {
     const { t } = useTranslation('common')
+    const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
+    const openPluginCenterAction =
+      actions.find(action => action.id === 'plugin-center.open') ?? null
     const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
     const menuRef = useRef<HTMLDivElement>(null)
     const modelMenuRef = useRef<HTMLDivElement>(null)
@@ -389,20 +395,22 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
       })
 
-      commands.push({
-        id: 'plugin-marketplace',
-        title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
-        description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
-        group: pluginGroup,
-        searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
-        Icon: Store,
-        trailingIcon: ExternalLink,
-        testId: 'plugin-marketplace',
-        onSelect: () => navigateTo('/plugins'),
-      })
+      if (openPluginCenterAction) {
+        commands.push({
+          id: 'plugin-marketplace',
+          title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
+          description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
+          group: pluginGroup,
+          searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
+          Icon: Store,
+          trailingIcon: ExternalLink,
+          testId: 'plugin-marketplace',
+          onSelect: () => executeDshAction(openPluginCenterAction),
+        })
+      }
 
       return commands
-    }, [appCandidates, appearanceMode, t])
+    }, [appCandidates, appearanceMode, openPluginCenterAction, t])
 
     const slashCommands = useMemo(
       () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],

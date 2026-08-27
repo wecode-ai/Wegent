@@ -10,6 +10,7 @@ interface TaskSidebarHoverCardContentProps {
   branchLabel?: string | null
   workspacePath?: string | null
   hostLabel?: string | null
+  hostId?: string | null
   updatedLabel?: string | null
   branchWarning?: boolean
 }
@@ -17,10 +18,12 @@ interface TaskSidebarHoverCardContentProps {
 function HoverRow({
   icon,
   value,
+  detail,
   mono = false,
 }: {
   icon: ReactNode
   value: string
+  detail?: string | null
   mono?: boolean
 }) {
   return (
@@ -28,14 +31,21 @@ function HoverRow({
       <span className="flex h-5 w-4 shrink-0 items-center justify-center text-text-muted">
         {icon}
       </span>
-      <span
-        className={
-          mono
-            ? 'min-w-0 flex-1 break-all font-mono text-xs leading-5 text-text-primary'
-            : 'min-w-0 flex-1 truncate text-sm leading-5 text-text-primary'
-        }
-      >
-        {value}
+      <span className="min-w-0 flex-1">
+        <span
+          className={
+            mono
+              ? 'block break-all font-mono text-xs leading-5 text-text-primary'
+              : 'block truncate text-sm leading-5 text-text-primary'
+          }
+        >
+          {value}
+        </span>
+        {detail && (
+          <span className="block truncate font-mono text-xs leading-5 text-text-muted">
+            {detail}
+          </span>
+        )}
       </span>
     </div>
   )
@@ -49,6 +59,7 @@ export function TaskSidebarHoverCardContent({
   branchLabel,
   workspacePath,
   hostLabel,
+  hostId,
   updatedLabel,
   branchWarning = false,
 }: TaskSidebarHoverCardContentProps) {
@@ -73,7 +84,13 @@ export function TaskSidebarHoverCardContent({
         ) : workspacePath ? (
           <HoverRow icon={<FolderOpen className="h-4 w-4" />} value={workspacePath} mono />
         ) : null}
-        {hostLabel && <HoverRow icon={<Server className="h-4 w-4" />} value={hostLabel} />}
+        {hostLabel && (
+          <HoverRow
+            icon={<Server className="h-4 w-4" />}
+            value={hostLabel}
+            detail={hostId ? t('workbench.device_id', { id: hostId }) : null}
+          />
+        )}
       </div>
       {branchWarning && (
         <div className="flex items-start gap-2 text-sm leading-5 text-orange-500">

@@ -39,6 +39,10 @@ describe('Wework update channel manifests', () => {
       'stable-darwin-aarch64.json',
       'stable-darwin-x86_64.json',
       'stable-windows-x86_64.json',
+      'components-stable-macos-arm64.json',
+      'components-stable-macos-x64.json',
+      'components-stable-windows-x64.json',
+      'components-stable-linux-x64.json',
     ])
     expect(hasCompleteChannelAssets(stableAssets, 'stable')).toBe(true)
     expect(
@@ -55,6 +59,10 @@ describe('Wework update channel manifests', () => {
           'beta-darwin-aarch64.json',
           'beta-darwin-x86_64.json',
           'beta-windows-x86_64.json',
+          'components-beta-macos-arm64.json',
+          'components-beta-macos-x64.json',
+          'components-beta-windows-x64.json',
+          'components-beta-linux-x64.json',
         ],
         'beta'
       )

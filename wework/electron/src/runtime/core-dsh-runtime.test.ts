@@ -109,6 +109,12 @@ describe('core DSH runtime', () => {
         '@wegent/dsh-electron-host': expect.stringContaining('wework-electron-host'),
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
+        '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
+        '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
+        '@wegent/dsh-ui-plugin-center': expect.stringContaining('wework-ui-plugin-center'),
+        '@wegent/dsh-ui-applications': expect.stringContaining('wework-ui-applications'),
+        '@wegent/dsh-ui-automations': expect.stringContaining('wework-ui-automations'),
+        '@wegent/dsh-ui-cloud-work': expect.stringContaining('wework-ui-cloud-work'),
       },
       dsh: {
         profile: {
@@ -119,6 +125,12 @@ describe('core DSH runtime', () => {
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
             '@wegent/dsh-executor-runtime',
+            '@wegent/dsh-ui-core-apps',
+            '@wegent/dsh-ui-core-settings',
+            '@wegent/dsh-ui-plugin-center',
+            '@wegent/dsh-ui-applications',
+            '@wegent/dsh-ui-automations',
+            '@wegent/dsh-ui-cloud-work',
           ],
         },
       },
@@ -132,6 +144,7 @@ describe('core DSH runtime', () => {
       )
     ).toEqual({
       dshVersion: CORE_DSH_VERSION,
+      managedUiPlugins: true,
       role: 'core',
       sourceFingerprint: 'a'.repeat(64),
     })
@@ -155,6 +168,88 @@ describe('core DSH runtime', () => {
     await expect(
       readFile(join(profileModules, 'dsh-terminal-runtime', 'package.json'), 'utf8')
     ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-core-apps', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-core-settings', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-plugin-center', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-applications', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-automations', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await expect(
+      readFile(join(profileModules, 'dsh-ui-cloud-work', 'package.json'), 'utf8')
+    ).resolves.toBe('{}')
+    await root.remove()
+  })
+
+  test('prepares an empty UI plugin profile for desktop E2E composition coverage', async () => {
+    const root = await temporaryDirectory('core-dsh-empty-ui-profile-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'e')
+    const dataDirectory = join(root.path, 'data')
+
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory,
+      environment: {
+        VITE_WEWORK_E2E: 'true',
+        WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1',
+        WEWORK_NODE_PATH: '/managed/node',
+      },
+      port: 3080,
+    })
+    const profileRoot = join(launch.dshHome, 'profiles', 'wework-core')
+    const manifest = JSON.parse(await readFile(join(profileRoot, 'package.json'), 'utf8'))
+
+    expect(Object.keys(manifest.dependencies)).toEqual([
+      '@wegent/dsh-app-wework',
+      '@wegent/dsh-electron-host',
+      '@wegent/dsh-executor-runtime',
+      '@wegent/dsh-terminal-runtime',
+    ])
+    expect(manifest.dsh.profile.bundles).toEqual([
+      '@deepseek-ai/dsh-base',
+      '@wegent/dsh-electron-host',
+      '@wegent/dsh-terminal-runtime',
+      '@wegent/dsh-app-wework',
+      '@deepseek-ai/dsh-web-app',
+      '@wegent/dsh-executor-runtime',
+    ])
+    await expect(
+      readFile(
+        join(profileRoot, 'node_modules', '@wegent', 'dsh-ui-core-apps', 'package.json'),
+        'utf8'
+      )
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(
+      JSON.parse(await readFile(join(profileRoot, '.wework-runtime.json'), 'utf8'))
+    ).toMatchObject({ managedUiPlugins: false })
+    await root.remove()
+  })
+
+  test('exposes Electron Node internals required by the DSH module loader', async () => {
+    const root = await temporaryDirectory('core-dsh-electron-node-')
+    const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'b')
+    const launch = await prepareCoreDshLaunch({
+      runtimeRoot: runtime.root,
+      dataDirectory: join(root.path, 'data'),
+      environment: {
+        WEWORK_NODE_PATH: '/managed/node',
+        WEWORK_NODE_RUNTIME_KIND: 'electron',
+      },
+      port: 3080,
+    })
+
+    expect(launch.args[0]).toBe('--expose-internals')
+    expect(launch.args[1]).toBe(
+      join(runtime.root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+    )
     await root.remove()
   })
 
@@ -244,7 +339,7 @@ describe('core DSH runtime', () => {
     await root.remove()
   })
 
-  test('repairs stale managed paths and removes obsolete managed sidebar plugins', async () => {
+  test('repairs stale managed paths without removing native DSH plugins', async () => {
     const root = await temporaryDirectory('core-dsh-stale-dependency-')
     const runtime = await writeRuntime(root.path, CORE_DSH_VERSION, 'a')
     const dataDirectory = join(root.path, 'data')
@@ -259,9 +354,35 @@ describe('core DSH runtime', () => {
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
     manifest.dependencies['@wegent/dsh-app-wework'] = 'file:/deleted/runtime/wework-app'
     manifest.dependencies['@wegent/dsh-sidebar-example'] = 'file:/obsolete'
-    manifest.dependencies['dsh-turn-review'] = '1.2.3'
-    manifest.dsh.profile.bundles.push('@wegent/dsh-sidebar-example', 'dsh-turn-review')
+    manifest.dependencies['@wework-e2e/native-dsh-consumer'] = 'file:./fixtures/consumer'
+    manifest.dependencies['@wework-e2e/independent-dsh-plugin'] = '1.2.3'
+    manifest.dsh.profile.bundles.push(
+      '@wegent/dsh-sidebar-example',
+      '@wework-e2e/native-dsh-provider',
+      '@wework-e2e/native-dsh-consumer',
+      '@wework-e2e/independent-dsh-plugin'
+    )
     await writeFile(manifestPath, JSON.stringify(manifest))
+    const consumerRoot = join(profileRoot, 'node_modules', '@wework-e2e', 'native-dsh-consumer')
+    await mkdir(consumerRoot, { recursive: true })
+    await writeFile(
+      join(consumerRoot, 'package.json'),
+      JSON.stringify({
+        name: '@wework-e2e/native-dsh-consumer',
+        peerDependencies: { '@wework-e2e/native-dsh-provider': '*' },
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
+    )
+    const providerRoot = join(profileRoot, 'node_modules', '@wework-e2e', 'native-dsh-provider')
+    await mkdir(providerRoot, { recursive: true })
+    await writeFile(
+      join(providerRoot, 'package.json'),
+      JSON.stringify({
+        name: '@wework-e2e/native-dsh-provider',
+        version: '2.1.0',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      })
+    )
     const lockfilePaths = [
       join(profileRoot, 'pnpm-lock.yaml'),
       join(profileRoot, 'node_modules', '.pnpm', 'lock.yaml'),
@@ -278,10 +399,21 @@ describe('core DSH runtime', () => {
     })
 
     const repaired = JSON.parse(await readFile(manifestPath, 'utf8'))
-    expect(repaired.dependencies['@wegent/dsh-app-wework']).toBe(`file:${runtime.appPluginRoot}`)
+    expect(repaired.dependencies['@wegent/dsh-app-wework']).toBe(
+      `file:${runtime.pluginRoots['@wegent/dsh-app-wework']}`
+    )
     expect(repaired.dependencies).not.toHaveProperty('@wegent/dsh-sidebar-example')
     expect(repaired.dsh.profile.bundles).not.toContain('@wegent/dsh-sidebar-example')
-    expect(repaired.dependencies['dsh-turn-review']).toBe('1.2.3')
+    expect(repaired.dependencies['@wework-e2e/native-dsh-provider']).toBe('2.1.0')
+    expect(repaired.dependencies['@wework-e2e/native-dsh-consumer']).toBe(
+      'file:./fixtures/consumer'
+    )
+    expect(repaired.dsh.profile.bundles).toContain('@wework-e2e/native-dsh-provider')
+    expect(repaired.dsh.profile.bundles).toContain('@wework-e2e/native-dsh-consumer')
+    expect(repaired.dsh.profile.bundles.indexOf('@wework-e2e/native-dsh-provider')).toBeLessThan(
+      repaired.dsh.profile.bundles.indexOf('@wework-e2e/native-dsh-consumer')
+    )
+    expect(repaired.dependencies['@wework-e2e/independent-dsh-plugin']).toBe('1.2.3')
     await Promise.all(
       lockfilePaths.map(path =>
         expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
@@ -298,23 +430,27 @@ async function writeRuntime(
 ): Promise<{
   root: string
   fingerprint: string
-  appPluginRoot: string
-  pluginRoot: string
-  executorPluginRoot: string
-  terminalPluginRoot: string
+  pluginRoots: Record<string, string>
 }> {
   const fingerprint = fingerprintCharacter.repeat(64)
   const runtime = join(root, fingerprint)
   const packageRoot = join(runtime, 'node_modules', '@deepseek-ai', 'dsh')
-  const appPluginRoot = join(runtime, 'plugins', 'wework-app')
-  const pluginRoot = join(runtime, 'plugins', 'wework-electron-host')
-  const executorPluginRoot = join(runtime, 'plugins', 'wework-executor-runtime')
-  const terminalPluginRoot = join(runtime, 'plugins', 'wework-terminal-runtime')
+  const pluginRoots = Object.fromEntries(
+    [
+      ['@wegent/dsh-app-wework', 'wework-app'],
+      ['@wegent/dsh-electron-host', 'wework-electron-host'],
+      ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
+      ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
+      ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],
+      ['@wegent/dsh-ui-core-settings', 'wework-ui-core-settings'],
+      ['@wegent/dsh-ui-plugin-center', 'wework-ui-plugin-center'],
+      ['@wegent/dsh-ui-applications', 'wework-ui-applications'],
+      ['@wegent/dsh-ui-automations', 'wework-ui-automations'],
+      ['@wegent/dsh-ui-cloud-work', 'wework-ui-cloud-work'],
+    ].map(([packageName, directory]) => [packageName, join(runtime, 'plugins', directory)])
+  )
   await mkdir(join(packageRoot, 'lib'), { recursive: true })
-  await mkdir(appPluginRoot, { recursive: true })
-  await mkdir(pluginRoot, { recursive: true })
-  await mkdir(executorPluginRoot, { recursive: true })
-  await mkdir(terminalPluginRoot, { recursive: true })
+  await Promise.all(Object.values(pluginRoots).map(root => mkdir(root, { recursive: true })))
   await writeFile(
     join(runtime, 'runtime.json'),
     JSON.stringify({
@@ -325,16 +461,12 @@ async function writeRuntime(
   )
   await writeFile(join(packageRoot, 'package.json'), JSON.stringify({ version }))
   await writeFile(join(packageRoot, 'lib', 'bin.js'), '')
-  await writeFile(join(appPluginRoot, 'package.json'), '{}')
-  await writeFile(join(pluginRoot, 'package.json'), '{}')
-  await writeFile(join(executorPluginRoot, 'package.json'), '{}')
-  await writeFile(join(terminalPluginRoot, 'package.json'), '{}')
+  await Promise.all(
+    Object.values(pluginRoots).map(root => writeFile(join(root, 'package.json'), '{}'))
+  )
   return {
     root: runtime,
     fingerprint,
-    appPluginRoot,
-    pluginRoot,
-    executorPluginRoot,
-    terminalPluginRoot,
+    pluginRoots,
   }
 }

@@ -4,7 +4,6 @@ import {
   CloudConnectionContext,
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
-import { setActiveWorkbenchAppRegistry, WorkbenchAppRegistry } from '@/plugin-runtime/apps'
 import { DesktopAppSwitcher } from './DesktopAppSwitcher'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: false }))
@@ -48,36 +47,37 @@ describe('DesktopAppSwitcher', () => {
   })
 
   test('does not expose hidden plugin applications', () => {
-    const registry = new WorkbenchAppRegistry()
-    registry.register({
-      key: 'visible',
-      mode: 'native',
-      path: '/visible',
-      labelKey: 'visible.label',
-      label: 'Visible',
-      descriptionKey: 'visible.description',
-      description: 'Visible application',
-    })
-    registry.register({
-      key: 'hidden',
-      mode: 'native',
-      path: '/hidden',
-      hiddenInSwitcher: true,
-      labelKey: 'hidden.label',
-      label: 'Hidden',
-      descriptionKey: 'hidden.description',
-      description: 'Hidden application',
-    })
-    const restore = setActiveWorkbenchAppRegistry(registry)
-
-    try {
-      render(<DesktopAppSwitcher activeApp="visible" onNavigate={vi.fn()} />)
-      fireEvent.click(screen.getByTestId('chrome-tab-visible'))
-      expect(screen.getByTestId('app-switcher-option-visible')).toBeInTheDocument()
-      expect(screen.queryByTestId('app-switcher-option-hidden')).not.toBeInTheDocument()
-    } finally {
-      restore()
+    const apps = [
+      {
+        id: 'visible',
+        mode: 'native',
+        path: '/visible',
+        labelKey: 'visible.label',
+        label: 'Visible',
+        descriptionKey: 'visible.description',
+        description: 'Visible application',
+      },
+      {
+        id: 'hidden',
+        mode: 'native',
+        path: '/hidden',
+        hiddenInSwitcher: true,
+        labelKey: 'hidden.label',
+        label: 'Hidden',
+        descriptionKey: 'hidden.description',
+        description: 'Hidden application',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.app' ? apps : []),
+      subscribe: () => () => undefined,
+      attach: () => ({ update: () => undefined, dispose: () => undefined }),
     }
+
+    render(<DesktopAppSwitcher activeApp="visible" onNavigate={vi.fn()} />)
+    fireEvent.click(screen.getByTestId('chrome-tab-visible'))
+    expect(screen.getByTestId('app-switcher-option-visible')).toBeInTheDocument()
+    expect(screen.queryByTestId('app-switcher-option-hidden')).not.toBeInTheDocument()
   })
 
   test('renders always-visible view tabs and navigates directly', () => {
