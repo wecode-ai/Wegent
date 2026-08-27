@@ -376,7 +376,7 @@ function DocumentUploadSession({
     if (next.id === 'dingtalk') setDingtalkVisited(true)
   }
 
-  const footer = (source: UploadMode, action: ReactNode) =>
+  const footer = (source: UploadMode, action: ReactNode, status?: ReactNode) =>
     source === uploadMode ? (
       <DocumentUploadFooter
         folderId={folderId}
@@ -385,6 +385,7 @@ function DocumentUploadSession({
         onCancel={requestClose}
         disabled={busy}
         dingtalk={source === 'dingtalk'}
+        status={status}
       >
         {action}
       </DocumentUploadFooter>
@@ -720,7 +721,7 @@ function DocumentUploadSession({
                 onImport={handleDingtalkImport}
                 onDone={() => sourceCompleted('dingtalk')}
                 onDraftChange={setDingtalkHasDraft}
-                renderFooter={action => footer('dingtalk', action)}
+                renderFooter={(action, status) => footer('dingtalk', action, status)}
                 isSharedKnowledgeBase={isSharedKnowledgeBase}
                 canManageDocuments={canManageDocuments}
               />

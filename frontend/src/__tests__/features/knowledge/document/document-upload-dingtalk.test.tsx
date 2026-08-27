@@ -39,6 +39,8 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.entry': 'DingTalk document',
         'document.upload.dingtalk.title': 'Import DingTalk documents',
         'document.upload.dingtalk.hint': 'Pick DingTalk documents to import.',
+        'document.upload.dingtalk.help': 'Import details',
+        'document.upload.dingtalk.compactHint': 'Online text documents (adoc), up to 50 per import',
         'document.upload.dingtalk.loading': 'Loading DingTalk documents...',
         'document.upload.dingtalk.notConfigured': 'DingTalk Docs is not configured',
         'document.upload.dingtalk.wikispaceNotConfigured':
@@ -248,7 +250,7 @@ describe('DocumentUpload dingtalk source', () => {
     expect(mockGetDocs).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the cached directory without syncing and displays last refresh time', async () => {
+  it('shows the cached directory and reveals import details without refreshing it', async () => {
     await openDingtalkMode()
 
     expect(mockGetDocs).toHaveBeenCalled()
@@ -256,7 +258,12 @@ describe('DocumentUpload dingtalk source', () => {
     // Top level shows the folder and the standalone doc.
     expect(screen.getByTestId('dingtalk-folder-option-folder-1')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-document-option-doc-3')).toBeInTheDocument()
+    expect(screen.queryByText('Pick DingTalk documents to import.')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-import-last-synced')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Import details' }))
+    expect(await screen.findByText('Pick DingTalk documents to import.')).toBeVisible()
     expect(screen.getByTestId('dingtalk-import-last-synced')).toHaveTextContent('Last refreshed')
+    expect(mockSyncDocs).not.toHaveBeenCalled()
   })
 
   it('does not retry a failed initial load until refresh is clicked', async () => {

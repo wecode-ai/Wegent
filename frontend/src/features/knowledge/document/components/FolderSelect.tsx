@@ -4,6 +4,7 @@
 
 'use client'
 
+import { useId } from 'react'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -38,19 +39,28 @@ export function FolderSelect({
   disabled = false,
 }: FolderSelectProps) {
   const { t } = useTranslation('knowledge')
+  const selectId = useId()
 
   if (folderOptions.length === 0) return null
 
   return (
     <div className={className}>
-      <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
+      <Label htmlFor={selectId} className="shrink-0 text-sm font-medium">
+        {t('document.folder.selectFolder')}
+      </Label>
       <Select
         disabled={disabled}
         value={String(folderId)}
         onValueChange={val => onFolderChange?.(Number(val))}
       >
-        <SelectTrigger className="h-11 min-w-[44px]" data-testid={triggerTestId}>
-          <SelectValue />
+        <SelectTrigger
+          id={selectId}
+          className="h-11 min-w-[44px] flex-1 [&>svg]:shrink-0"
+          data-testid={triggerTestId}
+        >
+          <span className="min-w-0 truncate text-left">
+            <SelectValue />
+          </span>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>

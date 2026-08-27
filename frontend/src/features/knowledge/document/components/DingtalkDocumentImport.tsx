@@ -11,12 +11,14 @@ import {
   ChevronRight,
   FileText,
   Folder,
+  Info,
   Loader2,
   RefreshCw,
   Search,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTranslation } from '@/hooks/useTranslation'
 import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
@@ -121,7 +123,7 @@ interface DingtalkDocumentImportProps {
   /** Called after the user acknowledges the import result */
   onDone?: () => void
   onDraftChange: (hasDraft: boolean) => void
-  renderFooter: (action: ReactNode) => ReactNode
+  renderFooter: (action: ReactNode, status?: ReactNode) => ReactNode
   /** Whether the current knowledge base is shared with other members */
   isSharedKnowledgeBase?: boolean
   /** Whether the user may manage documents in the current knowledge base */
@@ -316,7 +318,7 @@ export function DingtalkDocumentImport({
     return (
       <div
         key={node.dingtalk_node_id}
-        className="flex items-center gap-3 p-3"
+        className="flex min-h-11 items-center gap-2 px-2"
         data-testid={rowTestId}
       >
         {selectable ? (
@@ -356,8 +358,9 @@ export function DingtalkDocumentImport({
           />
         )}
         <span
+          title={node.name}
           className={cn(
-            'flex-1 truncate text-sm',
+            'min-w-0 flex-1 truncate text-sm',
             selectable ? 'text-text-primary' : 'text-text-secondary'
           )}
         >
@@ -369,6 +372,7 @@ export function DingtalkDocumentImport({
             className="h-11 w-11 shrink-0 p-0"
             onClick={() => setPath(current => [...current, node])}
             disabled={submitting || result !== null}
+            aria-label={node.name}
             data-testid={`dingtalk-folder-navigate-${node.dingtalk_node_id}`}
           >
             <ChevronRight className="w-4 h-4" />
@@ -388,12 +392,43 @@ export function DingtalkDocumentImport({
 
   return (
     <>
-      <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
-        <p className="text-sm text-text-secondary">{t('document.upload.dingtalk.hint')}</p>
+      <div
+        className={cn(
+          'flex min-h-0 flex-1 flex-col gap-2 overflow-hidden px-5 py-3 max-md:overflow-y-auto [@media(max-height:640px)]:overflow-y-auto',
+          result !== null && 'overflow-y-auto'
+        )}
+      >
+        <div className="flex shrink-0 items-center text-xs text-text-secondary">
+          <p>{t('document.upload.dingtalk.compactHint')}</p>
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                className="h-11 w-11 shrink-0 p-0"
+                aria-label={t('document.upload.dingtalk.help')}
+                data-testid="dingtalk-import-help"
+              >
+                <Info className="h-4 w-4" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="space-y-2 text-sm">
+              <p>{t('document.upload.dingtalk.hint')}</p>
+              {source.status?.last_synced_at && (
+                <p
+                  className="text-xs text-text-secondary"
+                  data-testid="dingtalk-import-last-synced"
+                >
+                  {t('document.upload.dingtalk.lastSynced')}:{' '}
+                  {formatLastSynced(source.status.last_synced_at)}
+                </p>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
 
         {isSharedKnowledgeBase && (
           <div
-            className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm text-text-secondary"
+            className="flex shrink-0 items-center gap-2 rounded-lg bg-surface p-2 text-xs text-text-secondary"
             data-testid="dingtalk-import-shared-hint"
           >
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -404,7 +439,7 @@ export function DingtalkDocumentImport({
         {result !== null ? (
           resultItems.length > 0 && (
             <div
-              className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm"
+              className="flex shrink-0 items-start gap-2 rounded-lg bg-surface p-3 text-sm"
               data-testid="dingtalk-import-result"
             >
               <Check className="w-4 h-4 text-primary flex-shrink-0" />
@@ -413,8 +448,8 @@ export function DingtalkDocumentImport({
           )
         ) : (
           <>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex rounded-lg border border-border p-0.5">
+            <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 md:flex">
+              <div className="col-span-2 flex shrink-0">
                 {(Object.keys(sources) as DingtalkSourceKey[]).map(key => (
                   <button
                     key={key}
@@ -441,12 +476,30 @@ export function DingtalkDocumentImport({
                   </button>
                 ))}
               </div>
-              <div className="flex-1" />
+              {!source.notConfigured && (
+                <div className="relative min-w-0 flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-secondary" />
+                  <Input
+                    className="h-11 pl-9"
+                    aria-label={t('document.upload.dingtalk.searchPlaceholder')}
+                    placeholder={t('document.upload.dingtalk.searchPlaceholder')}
+                    value={searchQuery}
+                    onChange={event => setSearchQuery(event.target.value)}
+                    disabled={submitting}
+                    data-testid="dingtalk-import-search"
+                  />
+                </div>
+              )}
               <Button
                 variant="outline"
-                className="h-11 gap-1.5"
+                className="col-start-2 h-11 w-11 shrink-0 gap-1.5 p-0 md:ml-auto md:w-auto md:px-3"
                 onClick={handleRefresh}
                 disabled={submitting || source.refreshing || source.loading}
+                aria-label={
+                  source.refreshing
+                    ? t('document.upload.dingtalk.refreshing')
+                    : t('document.upload.dingtalk.refresh')
+                }
                 data-testid="dingtalk-import-refresh"
               >
                 {source.refreshing ? (
@@ -454,42 +507,23 @@ export function DingtalkDocumentImport({
                 ) : (
                   <RefreshCw className="w-4 h-4" />
                 )}
-                {source.refreshing
-                  ? t('document.upload.dingtalk.refreshing')
-                  : t('document.upload.dingtalk.refresh')}
+                <span className="hidden md:inline">
+                  {source.refreshing
+                    ? t('document.upload.dingtalk.refreshing')
+                    : t('document.upload.dingtalk.refresh')}
+                </span>
               </Button>
             </div>
 
-            {source.status?.last_synced_at && (
-              <p className="text-xs text-text-secondary" data-testid="dingtalk-import-last-synced">
-                {t('document.upload.dingtalk.lastSynced')}:{' '}
-                {formatLastSynced(source.status.last_synced_at)}
-              </p>
-            )}
-
-            {!source.notConfigured && (
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-                <Input
-                  className="h-11 pl-9"
-                  placeholder={t('document.upload.dingtalk.searchPlaceholder')}
-                  value={searchQuery}
-                  onChange={event => setSearchQuery(event.target.value)}
-                  disabled={submitting}
-                  data-testid="dingtalk-import-search"
-                />
-              </div>
-            )}
-
             {source.loading && (
-              <div className="flex items-center justify-center gap-2 p-6 text-sm text-text-secondary">
+              <div className="flex shrink-0 items-center justify-center gap-2 p-6 text-sm text-text-secondary">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {t('document.upload.dingtalk.loading')}
               </div>
             )}
 
             {!source.loading && source.notConfigured && (
-              <div className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm text-text-secondary">
+              <div className="shrink-0 flex items-center gap-2 p-3 bg-surface rounded-lg text-sm text-text-secondary">
                 <AlertCircle className="w-4 h-4 flex-shrink-0" />
                 <span>
                   {activeSource === 'docs'
@@ -500,7 +534,7 @@ export function DingtalkDocumentImport({
             )}
 
             {!source.loading && !source.notConfigured && visibleNodes.length === 0 && (
-              <div className="p-3 bg-surface rounded-lg text-sm text-text-secondary">
+              <div className="shrink-0 p-3 bg-surface rounded-lg text-sm text-text-secondary">
                 {t('document.upload.dingtalk.empty')}
               </div>
             )}
@@ -509,12 +543,12 @@ export function DingtalkDocumentImport({
               <>
                 {!searchActive && path.length > 0 && (
                   <div
-                    className="flex items-center gap-1 text-sm"
+                    className="flex shrink-0 items-center gap-1 overflow-hidden text-sm"
                     data-testid="dingtalk-import-breadcrumb"
                   >
                     <button
                       type="button"
-                      className="inline-flex min-h-11 items-center text-text-secondary hover:text-text-primary"
+                      className="inline-flex min-h-11 shrink-0 items-center text-text-secondary hover:text-text-primary"
                       onClick={() => setPath([])}
                       data-testid="dingtalk-import-breadcrumb-root"
                     >
@@ -525,12 +559,14 @@ export function DingtalkDocumentImport({
                       )}
                     </button>
                     {path.map((node, index) => (
-                      <span key={node.dingtalk_node_id} className="flex items-center gap-1">
-                        <ChevronRight className="w-3.5 h-3.5 text-text-secondary" />
+                      <span key={node.dingtalk_node_id} className="flex min-w-0 items-center gap-1">
+                        <ChevronRight className="w-3.5 h-3.5 shrink-0 text-text-secondary" />
                         <span
-                          className={
+                          title={node.name}
+                          className={cn(
+                            'truncate',
                             index === path.length - 1 ? 'text-text-primary' : 'text-text-secondary'
-                          }
+                          )}
                         >
                           {node.name}
                         </span>
@@ -539,57 +575,49 @@ export function DingtalkDocumentImport({
                   </div>
                 )}
                 <div
-                  className="border border-border rounded-lg divide-y divide-border"
+                  className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border divide-y divide-border max-md:flex-none max-md:overflow-visible [@media(max-height:640px)]:flex-none [@media(max-height:640px)]:overflow-visible"
                   data-testid="dingtalk-document-list"
                 >
                   {visibleNodes.map(renderNodeRow)}
                 </div>
               </>
             )}
-
-            <div
-              className="flex items-center gap-2 text-sm"
-              data-testid="dingtalk-import-selected-count"
-            >
-              <span className="font-medium">
-                {t('document.upload.dingtalk.selectedCount', {
-                  count: expandedIds.length,
-                })}
-              </span>
-            </div>
-
-            {overLimit && (
-              <div
-                className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm"
-                data-testid="dingtalk-import-limit-error"
-              >
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{t('document.upload.dingtalk.limitError')}</span>
-              </div>
-            )}
-
-            {!canManageDocuments && (
-              <div
-                className="flex items-center gap-2 p-3 bg-surface rounded-lg text-sm text-text-secondary"
-                data-testid="dingtalk-import-no-permission"
-              >
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
-                <span>{t('document.upload.dingtalk.noPermission')}</span>
-              </div>
-            )}
           </>
         )}
-
-        {errorText && (
-          <div
-            className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm"
-            data-testid="dingtalk-import-error"
-          >
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{errorText}</span>
-          </div>
-        )}
       </div>
+
+      {((result === null && (overLimit || !canManageDocuments)) || errorText) && (
+        <div className="shrink-0 space-y-2 px-5 pb-3" role="alert">
+          {result === null && overLimit && (
+            <div
+              className="flex shrink-0 items-center gap-2 p-2 bg-error/10 text-error rounded-lg text-xs"
+              data-testid="dingtalk-import-limit-error"
+            >
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{t('document.upload.dingtalk.limitError')}</span>
+            </div>
+          )}
+
+          {result === null && !canManageDocuments && (
+            <div
+              className="flex shrink-0 items-center gap-2 p-2 bg-surface rounded-lg text-xs text-text-secondary"
+              data-testid="dingtalk-import-no-permission"
+            >
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{t('document.upload.dingtalk.noPermission')}</span>
+            </div>
+          )}
+          {errorText && (
+            <div
+              className="flex shrink-0 items-center gap-2 p-2 bg-error/10 text-error rounded-lg text-xs"
+              data-testid="dingtalk-import-error"
+            >
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{errorText}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {renderFooter(
         result !== null ? (
@@ -615,9 +643,18 @@ export function DingtalkDocumentImport({
                 {t('document.upload.adding')}
               </>
             ) : (
-              t('document.upload.dingtalk.submitButton', { count: expandedIds.length })
+              t('document.upload.dingtalk.submitButton')
             )}
           </Button>
+        ),
+        result === null && (
+          <span
+            className="text-xs text-text-secondary"
+            aria-live="polite"
+            data-testid="dingtalk-import-selected-count"
+          >
+            {t('document.upload.dingtalk.selectedCount', { count: expandedIds.length })}
+          </span>
         )
       )}
     </>
