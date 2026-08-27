@@ -1,6 +1,6 @@
-import type { LucideIcon } from 'lucide-react'
+import type { LucideProps } from 'lucide-react'
 import { ChevronRight } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 interface DesktopSidebarHeaderProps {
@@ -29,7 +29,7 @@ export function DesktopSidebarHeader({
 }
 
 interface DesktopSidebarNavItemProps {
-  icon: LucideIcon
+  icon: ComponentType<LucideProps>
   label: string
   onClick: () => void
   selected?: boolean
