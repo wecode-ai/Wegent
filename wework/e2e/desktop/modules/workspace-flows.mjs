@@ -403,7 +403,8 @@ async function verifyWorkspaceIssueCreation(control) {
   const projectName = 'Workspace Issue E2E'
   const issueDescription =
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
-  const twoLineIssueDescription = '验证侧边栏折叠描述可以完整显示两行内容并且不会出现多余的渐变遮罩'
+  const twoLineBreakMarker = '换行标记'
+  const twoLineIssueDescription = `折叠描述第一行${twoLineBreakMarker}折叠描述第二行`
   await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
   await control.command('waitFor', '[data-testid="cloud-project-name"]', {
     visible: true,
@@ -626,6 +627,26 @@ async function verifyWorkspaceIssueCreation(control) {
       value: twoLineIssueDescription,
     }
   )
+  await control.command(
+    'selectText',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      value: twoLineBreakMarker,
+    }
+  )
+  await control.command(
+    'press',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      key: 'Enter',
+    }
+  )
+  await waitForElementCount(
+    control,
+    `${collapsedDescriptionSelector} .bn-block-outer`,
+    2,
+    'The two-line regression fixture did not split into two editor blocks'
+  )
   await waitForAttribute(
     control,
     collapsedDescriptionSelector,
@@ -642,6 +663,7 @@ async function verifyWorkspaceIssueCreation(control) {
   const twoLineDescriptionBlocks = JSON.parse(
     await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-block-outer`)
   )
+  const firstTwoLineDescriptionBlock = twoLineDescriptionBlocks.at(0)
   const lastTwoLineDescriptionBlock = twoLineDescriptionBlocks.at(-1)
   const twoLineDescriptionLineHeight = Number.parseFloat(
     await control.command('getComputedStyleValue', `${collapsedDescriptionSelector} p`, {
@@ -649,9 +671,14 @@ async function verifyWorkspaceIssueCreation(control) {
     })
   )
   assert.ok(
-    twoLineDescriptionParagraphMetrics.height >= twoLineDescriptionLineHeight * 2 - 1,
+    firstTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock.bottom - firstTwoLineDescriptionBlock.top >=
+        twoLineDescriptionLineHeight * 2 - 1,
     `The two-line regression fixture did not wrap to two lines: ${JSON.stringify({
       paragraph: twoLineDescriptionParagraphMetrics,
+      firstBlock: firstTwoLineDescriptionBlock,
+      lastBlock: lastTwoLineDescriptionBlock,
       lineHeight: twoLineDescriptionLineHeight,
     })}`
   )
@@ -990,6 +1017,17 @@ async function waitForAttribute(control, selector, name, expected, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`${message}: expected ${name}=${expected}, received ${actual}`)
+}
+
+async function waitForElementCount(control, selector, expected, message) {
+  const startedAt = Date.now()
+  let actual = 0
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    actual = Number(await control.command('getElementCount', selector))
+    if (actual === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: expected ${expected}, received ${actual}`)
 }
 
 async function verifyWorkspaceTabIsolation(control) {
