@@ -5,12 +5,14 @@
 'use client'
 
 import {
+  BookOpen,
   ChevronRight,
   File,
   FileSpreadsheet,
   FileText,
   Folder,
   FolderOpen,
+  Link2,
   Presentation,
   Table2,
 } from 'lucide-react'
@@ -28,6 +30,7 @@ const FILE_ICONS = new Map<string, { icon: typeof FileText; className: string }>
   ['pdf', { icon: FileText, className: 'text-error' }],
   ['txt', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
   ['md', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
+  ['dlink', { icon: Link2, className: 'text-blue-600 dark:text-blue-400' }],
   ['able', { icon: Table2, className: 'text-primary' }],
   ['axls', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
   ['xlsx', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
@@ -133,6 +136,8 @@ function ImportTreeNode({
   const { query, selectedIds, expandedKeys, disabled, onToggle, onExpand } = props
   const searching = Boolean(query.trim())
   const folder = node.node_type === 'folder'
+  const wikiRoot =
+    folder && node.source === 'wikispace' && node.dingtalk_node_id === node.workspace_id
   const hasChildren = Boolean(node.children?.length)
   const importable = isImportable(node, props.aiTableConfigured)
   const importStatus = importable ? props.importStatuses[node.dingtalk_node_id] : undefined
@@ -150,7 +155,13 @@ function ImportTreeNode({
   const visible = filterImportTree([node], query)[0]
   if (!visible) return null
   const fileIcon = FILE_ICONS.get(node.extension ?? '')
-  const Icon = folder ? (open ? FolderOpen : Folder) : (fileIcon?.icon ?? File)
+  const Icon = wikiRoot
+    ? BookOpen
+    : folder
+      ? open
+        ? FolderOpen
+        : Folder
+      : (fileIcon?.icon ?? File)
   const selectDisabled = disabled || !ids.length || (folder && searching)
   return (
     <>
@@ -199,7 +210,11 @@ function ImportTreeNode({
           <Icon
             className={cn(
               'h-4 w-4 shrink-0',
-              folder ? 'text-text-secondary' : (fileIcon?.className ?? 'text-text-muted')
+              wikiRoot
+                ? 'text-primary'
+                : folder
+                  ? 'text-text-secondary'
+                  : (fileIcon?.className ?? 'text-text-muted')
             )}
           />
           <span className="truncate">{node.name}</span>
@@ -251,7 +266,9 @@ function ImportTreeNode({
             className="shrink-0 px-2 text-xs text-text-secondary"
             data-testid={`dingtalk-node-unsupported-${node.dingtalk_node_id}`}
           >
-            {t('document.upload.dingtalk.unsupported')}
+            {node.extension
+              ? t('document.upload.dingtalk.unsupportedFormat', { extension: node.extension })
+              : t('document.upload.dingtalk.unsupported')}
           </span>
         )}
       </div>

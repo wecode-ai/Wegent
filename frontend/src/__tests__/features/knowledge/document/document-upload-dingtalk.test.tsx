@@ -38,6 +38,8 @@ jest.mock('@/apis/dingtalk-doc', () => ({
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
+      const dingtalk = jest.requireActual('@/i18n/locales/en/knowledge.json').document.upload
+        .dingtalk
       const translations: Record<string, string> = {
         'document.document.upload': 'Upload documents',
         'document.document.dropzone': 'Drop files here',
@@ -62,8 +64,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.wikispace': 'DingTalk wiki',
         'document.upload.dingtalk.lastSynced': 'Last refreshed',
         'document.upload.dingtalk.unsupported': 'Cannot be imported',
+        'document.upload.dingtalk.unsupportedFormat': dingtalk.unsupportedFormat,
         'document.upload.dingtalk.selectedCount': 'Selected: {{count}}',
-        'document.upload.dingtalk.folderDocumentCount': '{{count}} documents',
+        'document.upload.dingtalk.folderDocumentCount': dingtalk.folderDocumentCount,
+        'document.upload.dingtalk.documentCount': dingtalk.documentCount,
+        'document.upload.dingtalk.searchCount': dingtalk.searchCount,
         'document.upload.dingtalk.folderDocumentCountHint':
           'Importable documents, including all descendants',
         'document.upload.dingtalk.limitError': 'At most 50 documents can be imported at once',
@@ -216,6 +221,41 @@ async function openDingtalkMode(
 }
 
 describe('DocumentUpload dingtalk source', () => {
+  it('distinguishes wiki roots from folders while expanding their contents', async () => {
+    mockGetWikispaceNodes.mockResolvedValue({
+      nodes: [
+        makeNode({
+          ...folderNode('space-1', 'Knowledge base', [
+            makeNode({
+              ...folderNode('nested', 'Folder', [
+                docNode('wiki-doc', 'Wiki Doc', { source: 'wikispace' }),
+              ]),
+              source: 'wikispace',
+              workspace_id: 'space-1',
+            }),
+          ]),
+          source: 'wikispace',
+          workspace_id: 'space-1',
+        }),
+      ],
+      total_count: 3,
+    })
+    await openDingtalkMode()
+    expect(screen.getByTestId('dingtalk-node-name-folder-1').querySelector('svg')).toHaveClass(
+      'lucide-folder'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-import-tab-wikispace'))
+    const root = await screen.findByTestId('dingtalk-node-name-space-1')
+    expect(root.querySelector('svg')).toHaveClass('lucide-book-open', 'text-primary')
+    fireEvent.click(root)
+    expect(root.querySelector('svg')).toHaveClass('lucide-book-open')
+    const nested = screen.getByTestId('dingtalk-node-name-nested')
+    expect(nested.querySelector('svg')).toHaveClass('lucide-folder', 'text-text-secondary')
+    fireEvent.click(nested)
+    expect(nested.querySelector('svg')).toHaveClass('lucide-folder-open')
+    expect(screen.getByTestId('dingtalk-node-name-wiki-doc')).toBeInTheDocument()
+  })
+
   it('shows colored format icons independently of import eligibility', async () => {
     const formats = [
       ['adoc', 'lucide-file-text', 'text-blue-600', 'dark:text-blue-400'],
@@ -238,6 +278,40 @@ describe('DocumentUpload dingtalk source', () => {
       ).toHaveClass(...iconClasses)
     }
     expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
+  })
+
+  it('identifies dlink resources without offering or submitting them for import', async () => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({ createdCount: 1 })
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        makeNode({
+          dingtalk_node_id: 'link-1',
+          name: 'Linked document',
+          node_type: 'file',
+          content_type: 'OTHER',
+          extension: 'dlink',
+        }),
+        docNode('doc-1', 'Text document'),
+      ],
+      total_count: 2,
+    })
+    await openDingtalkMode({ onDingtalkImport })
+    const link = screen.getByTestId('dingtalk-node-name-link-1')
+    expect(link.querySelector('svg')).toHaveClass('lucide-link-2', 'text-blue-600')
+    expect(link).toBeDisabled()
+    expect(screen.getByTestId('dingtalk-node-unsupported-link-1')).toHaveTextContent(
+      'Cannot be imported (dlink)'
+    )
+    expect(screen.queryByTestId('dingtalk-node-select-link-1')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), {
+      target: { value: 'Linked' },
+    })
+    expect(screen.getByText('0 matching importable documents')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-select-all')).toBeDisabled()
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), { target: { value: '' } })
+    fireEvent.click(screen.getByTestId('dingtalk-import-select-all'))
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['doc-1']))
   })
 
   it.each(['docs', 'wikispace'] as const)(
@@ -728,20 +802,22 @@ describe('DocumentUpload dingtalk source', () => {
   it('shows stable folder document totals across expansion, selection, and search', async () => {
     await openDingtalkMode()
     const total = screen.getByTestId('dingtalk-folder-document-count-folder-1')
-    expect(total).toHaveTextContent('2 documents')
+    expect(screen.getByText('3 importable documents')).toBeInTheDocument()
+    expect(total).toHaveTextContent('Importable: 2')
     expect(total).toHaveAttribute('title', 'Importable documents, including all descendants')
 
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
-    expect(total).toHaveTextContent('2 documents')
+    expect(total).toHaveTextContent('Importable: 2')
     fireEvent.click(screen.getByTestId('dingtalk-node-select-doc-1'))
-    expect(total).toHaveTextContent('2 documents')
+    expect(total).toHaveTextContent('Importable: 2')
     expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 1')
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
-    expect(total).toHaveTextContent('2 documents')
+    expect(total).toHaveTextContent('Importable: 2')
 
     fireEvent.change(screen.getByTestId('dingtalk-import-search'), { target: { value: 'spec' } })
     expect(screen.queryByTestId('dingtalk-document-option-doc-2')).not.toBeInTheDocument()
-    expect(total).toHaveTextContent('2 documents')
+    expect(screen.getByText('1 matching importable documents')).toBeInTheDocument()
+    expect(total).toHaveTextContent('Importable: 2')
   })
 
   it('counts unique importable descendants regardless of import status and shows empty folders as zero', async () => {
@@ -765,24 +841,24 @@ describe('DocumentUpload dingtalk source', () => {
     })
     await openDingtalkMode()
     expect(screen.getByTestId('dingtalk-folder-document-count-folder-1')).toHaveTextContent(
-      '3 documents'
+      'Importable: 3'
     )
     fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
     expect(await screen.findByTestId('dingtalk-import-status-doc-2')).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-folder-document-count-nested')).toHaveTextContent(
-      '1 documents'
+      'Importable: 1'
     )
     expect(screen.getByTestId('dingtalk-folder-document-count-empty')).toHaveTextContent(
-      '0 documents'
+      'Importable: 0'
     )
     expect(screen.getByTestId('dingtalk-folder-document-count-unsupported')).toHaveTextContent(
-      '0 documents'
+      'Importable: 0'
     )
     expect(screen.queryByTestId('dingtalk-folder-document-count-doc-2')).not.toBeInTheDocument()
     fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
     expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 3')
     expect(screen.getByTestId('dingtalk-folder-document-count-folder-1')).toHaveTextContent(
-      '3 documents'
+      'Importable: 3'
     )
   })
 
