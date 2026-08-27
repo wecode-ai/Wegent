@@ -74,7 +74,7 @@ async function prepareComponentAssets() {
     await readFile(join(componentResourcesRoot, 'components.json'), 'utf8')
   )
   const componentAssets = {}
-  for (const id of ['coreDsh', 'weworkCorePlugins', 'executor', 'codex']) {
+  for (const id of ['coreDsh', 'weworkCorePlugins', 'bundledPlugins', 'executor', 'codex', 'dws']) {
     const component = packaged.components[id]
     if (!component?.path || !component?.sha256 || !component?.version) {
       throw new Error(`Packaged component metadata is incomplete: ${id}`)

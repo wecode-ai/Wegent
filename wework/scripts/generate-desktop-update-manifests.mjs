@@ -6,8 +6,16 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-const [assetsDirectory, outputDirectory, version, channel, repository, releaseTag, notesPath] =
-  process.argv.slice(2)
+const [
+  assetsDirectory,
+  outputDirectory,
+  version,
+  channel,
+  repository,
+  releaseTag,
+  notesPath,
+  sourceSha,
+] = process.argv.slice(2)
 
 if (
   !assetsDirectory ||
@@ -16,10 +24,11 @@ if (
   !channel ||
   !repository ||
   !releaseTag ||
-  !notesPath
+  !notesPath ||
+  !sourceSha
 ) {
   throw new Error(
-    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file>'
+    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file> <source-sha>'
   )
 }
 if (channel !== 'stable' && channel !== 'beta') {
@@ -31,7 +40,8 @@ const output = resolve(outputDirectory)
 const notes = await readFile(resolve(notesPath), 'utf8')
 const releaseDate = new Date().toISOString()
 const releaseBaseUrl = `https://github.com/${repository}/releases/download/${releaseTag}`
-const componentBaseUrl = `https://github.com/${repository}/releases/download/wework-updater`
+const sharedComponentBaseUrl = `https://github.com/${repository}/releases/download/wework-updater`
+const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
 await mkdir(output, { recursive: true })
 
 const macArm = await asset(`WeWork_${version}_macos_arm64.zip`)
@@ -113,7 +123,7 @@ for (const [platform, architecture] of [
       contentSha256: component.contentSha256,
       archiveSha256,
       archiveBytes: archive.size,
-      downloadUrl: `${componentBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
     }
   }
@@ -124,6 +134,7 @@ for (const [platform, architecture] of [
         {
           schemaVersion: 1,
           appVersion: version,
+          sourceSha,
           channel: targetChannel,
           platform,
           arch: architecture,
