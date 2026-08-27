@@ -403,7 +403,7 @@ async function verifyWorkspaceIssueCreation(control) {
   const projectName = 'Workspace Issue E2E'
   const issueDescription =
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
-  const twoLineIssueDescription = '考虑为wegent模型设计增加opencode提供商（zen/go/free）'
+  const twoLineIssueDescription = '验证侧边栏折叠描述可以完整显示两行内容并且不会出现多余的渐变遮罩'
   await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
   await control.command('waitFor', '[data-testid="cloud-project-name"]', {
     visible: true,
