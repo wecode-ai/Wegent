@@ -1150,6 +1150,12 @@ async fn app_ipc_lists_codex_skills_from_runtime_directories() {
 
 #[tokio::test]
 async fn app_ipc_resolves_review_and_git_device_commands() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
     let command_handler = CaptureCommandHandler::default();
     let seen_request = Arc::clone(&command_handler.seen_request);
     let server = AppIpcServer::new().with_command_handler(command_handler);
@@ -1162,7 +1168,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
                 "method": "device.execute_command",
                 "params": {
                     "command_key": "git_diff",
-                    "path": "/tmp/project"
+                    "path": workspace.path().display().to_string()
                 }
             })
             .to_string(),
