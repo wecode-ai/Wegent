@@ -385,6 +385,8 @@ EXECUTOR_IMAGE: wegent-executor:latest # 执行器镜像
 
 Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Electron IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
 
+Executor 准备 Git 工作区时会禁用交互式凭据提示，并同时使用总超时和 Git HTTP low-speed 限制。`WEGENT_GIT_CLONE_TIMEOUT_SECONDS` 控制总超时，默认 600 秒并限制在 1-3600 秒；`WEGENT_GIT_HTTP_LOW_SPEED_LIMIT` 和 `WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS` 默认分别为 1024 字节/秒和 60 秒。总超时后会终止 Git 所在的整个进程组、清理本次 clone 的半成品目录，并向任务返回终态错误；已有工作区也必须通过本地 `HEAD` 校验，避免把中断 clone 留下的 `.git` 目录误判为可用仓库。该流程不会自动重试。
+
 Claude Code 恢复交互表单会话时，executor 只把与本次已回答表单具有相同 `tool_use_id`、且工具类型仍为交互表单的 defer 视为恢复阶段残留结果。模型随后返回不同 `tool_use_id` 的表单表示新的用户澄清，即使同一响应还包含文本，也必须继续代理到交互 MCP 并等待用户输入，不能按旧 defer 丢弃。
 
 附件在进入 Codex 前由 executor 按类型转换：图片作为本地图片输入，文本附件附带受限预览和完整本地路径，ZIP、PDF 等二进制附件则附带文件名、MIME 类型、大小和本地路径。即使用户只发送附件而正文为空，Codex 仍能从输入上下文定位该文件；不同类型的上下文互斥生成，避免图片或文本附件被重复注入。
