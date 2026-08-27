@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { delimiter, dirname, join } from 'node:path'
 
 export interface ElectronNodeRuntimeOptions {
@@ -107,6 +107,7 @@ async function materializeNodeLauncher(
   platform: NodeJS.Platform
 ): Promise<void> {
   await mkdir(dirname(launcherPath), { recursive: true, mode: 0o700 })
+  await rm(launcherPath, { force: true })
   if (platform === 'win32') {
     const escaped = helperExecPath.replaceAll('%', '%%').replaceAll('"', '""')
     await writeFile(

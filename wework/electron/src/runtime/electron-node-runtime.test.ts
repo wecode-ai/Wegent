@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { readFile, stat } from 'node:fs/promises'
+import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { promisify } from 'node:util'
 import { describe, expect, test } from 'vitest'
@@ -93,6 +93,30 @@ describe('prepareElectronNodeRuntime', () => {
       )
 
       expect(result.stdout).toBe('1')
+    }
+  )
+
+  test.skipIf(process.platform === 'win32')(
+    'replaces a stale symlink without modifying its Helper target',
+    async () => {
+      const directory = await import('node:fs/promises').then(fs => fs.mkdtemp('/tmp/wework-node-'))
+      const helperExecPath = join(directory, 'Electron Helper')
+      const launcherPath = join(directory, 'runtime', 'bin', 'node')
+      await writeFile(helperExecPath, 'packaged Electron Helper')
+      await mkdir(join(directory, 'runtime', 'bin'), { recursive: true })
+      await symlink(helperExecPath, launcherPath)
+
+      await prepareElectronNodeRuntime({
+        dataDirectory: directory,
+        environment: { PATH: process.env.PATH },
+        helperExecPath,
+        nodeVersion: process.version,
+        platform: process.platform,
+      })
+
+      expect(await readFile(helperExecPath, 'utf8')).toBe('packaged Electron Helper')
+      expect((await stat(launcherPath)).isFile()).toBe(true)
+      expect(await readFile(launcherPath, 'utf8')).toContain('export ELECTRON_RUN_AS_NODE=1')
     }
   )
 
