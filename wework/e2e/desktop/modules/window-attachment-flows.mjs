@@ -31,6 +31,8 @@ import {
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_RESUME_COMPLETION,
+  PROVIDER_SWITCH_RESUME_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
   TURN_NAVIGATION_REGRESSION_TURN_COUNT,
@@ -122,6 +124,18 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_IDS, PROVIDER_SWITCH_LUNA_LABELS)
+  await sendPrompt(control, composerSelector, PROVIDER_SWITCH_RESUME_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_RESUME_COMPLETION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    3,
+    'Resuming the loaded official thread with Luna did not make exactly one additional request'
+  )
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
