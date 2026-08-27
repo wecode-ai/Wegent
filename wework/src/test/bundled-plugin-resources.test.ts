@@ -161,9 +161,10 @@ describe('bundled plugin resources', () => {
 
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
-    expect(builderConfig).toContain("appId: 'io.wecode.wework'")
-    expect(builderConfig).toContain("productName: 'WeWork'")
-    expect(builderConfig).toContain("executableName: 'wework'")
+    expect(builderConfig).toContain('appId: identity.identifier')
+    expect(builderConfig).toContain('productName: identity.productName')
+    expect(builderConfig).toContain('executableName: identity.executableName')
+    expect(builderConfig).toContain('weworkAppId: identity.identifier')
     expect(workflow).toMatch(
       /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )
@@ -191,6 +192,7 @@ describe('bundled plugin resources', () => {
     expect(installerHooks).toContain('Software\\you\\WeWork')
     expect(installerHooks).toContain('InstallLocation')
     expect(installerHooks).toContain('${GetOptions} $R0 "/P"')
+    expect(installerHooks).toContain('$R0\\${APP_EXECUTABLE_FILENAME}')
   })
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {
