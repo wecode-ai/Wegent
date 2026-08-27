@@ -523,6 +523,79 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
   })
 
+  it('opens and selects whole-KB-only external sources without a document loader', async () => {
+    const onReplaceContexts = jest.fn()
+    registerExternalKnowledgeSource(FAKE_PROVIDER, {
+      providerId: FAKE_PROVIDER,
+      label: 'Fake Provider',
+      capabilities: {
+        supportsKnowledgeBaseSelection: true,
+        supportsDocumentSelection: false,
+        supportsDocumentTree: false,
+        supportsScopedRetrieval: false,
+      },
+      scopes: [
+        {
+          key: 'organization',
+          label: 'Organization',
+          icon: 'organization',
+        },
+      ],
+      listKnowledgeBases: mockListFakeKnowledgeBases,
+      toRef: kb => ({
+        provider: FAKE_PROVIDER,
+        mode: 'explicit',
+        id: kb.knowledge_base_id,
+        name: kb.knowledge_base_name,
+        scope: kb.scope ?? undefined,
+      }),
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-external-kb-lib-1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-document-column')).toHaveTextContent('Fake Lib')
+      expect(screen.getByTestId('knowledge-picker-document-column')).toHaveTextContent(
+        'picker.emptyDocuments'
+      )
+    })
+    expect(mockListFakeNodes).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          type: 'external_knowledge',
+          ref: expect.objectContaining({
+            provider: FAKE_PROVIDER,
+            id: 'lib-1',
+          }),
+        }),
+      ]
+    )
+  })
+
   it('opens external knowledge bases without selecting them when whole-KB selection is unsupported', async () => {
     const onSelect = jest.fn()
     registerExternalKnowledgeSource(FAKE_PROVIDER, {

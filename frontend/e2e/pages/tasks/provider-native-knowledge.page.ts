@@ -4,7 +4,13 @@ export class ProviderNativeKnowledgePage {
   constructor(private readonly page: Page) {}
 
   async openPicker(): Promise<void> {
-    await this.page.getByTestId('knowledge-context-button').click()
+    const contextButton = this.page.getByTestId('knowledge-context-button')
+    if (!(await contextButton.isVisible().catch(() => false))) {
+      await this.page.getByTestId('mobile-input-more-actions-button').click()
+      await expect(this.page.getByTestId('mobile-input-more-actions-menu')).toBeVisible()
+    }
+    await expect(contextButton).toBeVisible()
+    await contextButton.click()
     await expect(this.page.getByTestId('knowledge-source-picker')).toBeVisible()
     const personalSource = this.page.getByTestId('knowledge-picker-source-personal')
     const personalSourceIsActive = await personalSource.evaluate(element =>
@@ -139,9 +145,10 @@ export class ProviderNativeKnowledgePage {
     await expect(knowledgeBase).toBeVisible()
   }
 
-  private async closePicker(): Promise<void> {
+  async closePicker(): Promise<void> {
     await this.page.keyboard.press('Escape')
     await expect(this.page.getByTestId('context-selector-popover')).toBeHidden()
+    await expect(this.page.getByTestId('context-selector-drawer')).toBeHidden()
   }
 
   private async expectIncludeSubfoldersControlHidden(): Promise<void> {

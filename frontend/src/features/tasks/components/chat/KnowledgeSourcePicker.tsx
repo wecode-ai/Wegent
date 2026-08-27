@@ -7,7 +7,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
-  ChevronLeft,
   ChevronRight,
   Cloud,
   Database,
@@ -27,7 +26,6 @@ import { TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
 import type {
   ContextItem,
@@ -62,6 +60,16 @@ import {
   useDingTalkKnowledgeSelection,
 } from './DingTalkKnowledgePicker'
 import { KnowledgeSelectionControl } from './KnowledgeSelectionControl'
+import {
+  KnowledgeSourcePickerLayout,
+  ResponsiveDrilldownHeader,
+  ResponsiveSecondaryOption,
+  ResponsiveSecondaryOptions,
+} from './KnowledgeSourcePickerResponsive'
+import {
+  type KnowledgeSourceKey,
+  useKnowledgePickerNavigation,
+} from './useKnowledgePickerNavigation'
 
 export interface GroupedKnowledgeBases {
   personal: KnowledgeBase[]
@@ -74,15 +82,6 @@ export interface GroupedKnowledgeBaseGroup {
   displayName: string
   items: KnowledgeBase[]
 }
-
-type SourceKey =
-  | 'personal'
-  | 'group'
-  | 'organization'
-  | 'dingtalk'
-  | 'dingtalk:docs'
-  | 'dingtalk:wikispace'
-  | `external:${string}`
 
 const INTERNAL_DOCUMENT_PAGE_SIZE = 200
 const DEFAULT_EXTERNAL_SCOPE_ICON = 'cloud'
@@ -102,19 +101,6 @@ interface KnowledgeSourcePickerProps {
   onDeselectMultiple?: (ids: (number | string)[]) => void
   onReplaceContexts: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
 }
-
-interface ActiveInternalKnowledgeBase {
-  source: 'internal'
-  knowledgeBase: KnowledgeBase
-}
-
-interface ActiveExternalKnowledgeBase {
-  source: 'external'
-  provider: ExternalKnowledgeSource
-  knowledgeBase: ExternalKnowledgeBase
-}
-
-type ActiveKnowledgeBase = ActiveInternalKnowledgeBase | ActiveExternalKnowledgeBase
 
 interface InternalTreeNode {
   id: string
@@ -595,11 +581,21 @@ export function KnowledgeSourcePicker({
     () => externalSources.filter(source => source.listKnowledgeBases),
     [externalSources]
   )
-  const [activeSource, setActiveSource] = useState<SourceKey>('personal')
-  const [activeGroup, setActiveGroup] = useState<string | null>(null)
-  const [externalScope, setExternalScope] = useState<ExternalKnowledgeScope | null>(null)
-  const [activeKnowledgeBase, setActiveKnowledgeBase] = useState<ActiveKnowledgeBase | null>(null)
-  const [activeDingTalkSpace, setActiveDingTalkSpace] = useState<DingtalkDocNode | null>(null)
+  const {
+    activeSource,
+    activeGroup,
+    externalScope,
+    activeKnowledgeBase,
+    activeDingTalkSpace,
+    selectSource,
+    selectGroup,
+    selectExternalScope: navigateToExternalScope,
+    selectDingTalkSection,
+    openInternalKnowledgeBase,
+    openExternalKnowledgeBase,
+    openDingTalkSpace,
+    back: navigateBack,
+  } = useKnowledgePickerNavigation()
   const dingtalkTrees = useDingTalkDocTrees({ enabled: activeSource.startsWith('dingtalk') })
   const {
     selectedIds: selectedDingTalkIds,
@@ -661,16 +657,15 @@ export function KnowledgeSourcePicker({
   }, [browseableExternalSources])
 
   useEffect(() => {
+    if (!externalScope) return
     if (!activeExternalSource) {
-      setExternalScope(null)
+      selectSource(activeSource)
       return
     }
     const scopes = getExternalKnowledgeScopes(activeExternalSource)
-    setExternalScope(prev => {
-      if (prev && scopes.some(scope => scope.key === prev)) return prev
-      return null
-    })
-  }, [activeExternalSource])
+    if (scopes.some(scope => scope.key === externalScope)) return
+    selectSource(activeSource)
+  }, [activeExternalSource, activeSource, externalScope, selectSource])
 
   const groupEntries = useMemo(
     () => Array.from(groupedKnowledgeBases.group.entries()),
@@ -699,31 +694,31 @@ export function KnowledgeSourcePicker({
   const sourceRows = useMemo(
     () => [
       {
-        key: 'personal' as SourceKey,
+        key: 'personal' as KnowledgeSourceKey,
         label: t('picker.sources.personal'),
         count: groupedKnowledgeBases.personal.length,
         icon: User,
       },
       {
-        key: 'group' as SourceKey,
+        key: 'group' as KnowledgeSourceKey,
         label: t('picker.sources.group'),
         count: groupedKnowledgeBases.group.size,
         icon: Users,
       },
       {
-        key: 'organization' as SourceKey,
+        key: 'organization' as KnowledgeSourceKey,
         label: t('picker.sources.organization'),
         count: groupedKnowledgeBases.organization.length,
         icon: Building2,
       },
       {
-        key: 'dingtalk' as SourceKey,
+        key: 'dingtalk' as KnowledgeSourceKey,
         label: tChat('dingtalkDocs.tabTitle'),
         count: 2,
         icon: MessageSquareText,
       },
       ...browseableExternalSources.map(source => ({
-        key: `external:${source.providerId}` as SourceKey,
+        key: `external:${source.providerId}` as KnowledgeSourceKey,
         label: source.label ?? source.providerId,
         count: externalKnowledgeBaseCounts.get(source.providerId) ?? 0,
         icon: Cloud,
@@ -1190,43 +1185,23 @@ export function KnowledgeSourcePicker({
   )
 
   const selectInternalKb = (kb: KnowledgeBase) => {
-    setActiveKnowledgeBase({ source: 'internal', knowledgeBase: kb })
+    openInternalKnowledgeBase(kb)
     if (!internalTreeByKb.has(kb.id)) {
       void loadInternalTree(kb)
     }
   }
 
   const selectExternalKb = (source: ExternalKnowledgeSource, kb: ExternalKnowledgeBase) => {
-    setActiveKnowledgeBase({ source: 'external', provider: source, knowledgeBase: kb })
+    openExternalKnowledgeBase(source, kb)
     const cacheKey = `${source.providerId}:${kb.knowledge_base_id}`
     if (!externalNodesByKb.has(cacheKey)) {
       void loadExternalNodes(source, kb)
     }
   }
 
-  const selectGroup = (name: string) => {
-    setActiveSource('group')
-    setActiveGroup(name)
-    setExternalScope(null)
-    setActiveKnowledgeBase(null)
-    setActiveDingTalkSpace(null)
-  }
-
   const selectExternalScope = (source: ExternalKnowledgeSource, scope: ExternalKnowledgeScope) => {
-    setActiveSource(`external:${source.providerId}`)
-    setActiveGroup(null)
-    setExternalScope(scope)
-    setActiveKnowledgeBase(null)
-    setActiveDingTalkSpace(null)
+    navigateToExternalScope(source.providerId, scope)
     void loadExternalKnowledgeBases(source, scope, searchValue)
-  }
-
-  const selectDingTalkSection = (source: 'dingtalk:docs' | 'dingtalk:wikispace') => {
-    setActiveSource(source)
-    setActiveGroup(null)
-    setExternalScope(null)
-    setActiveKnowledgeBase(null)
-    setActiveDingTalkSpace(null)
   }
 
   const filteredGroupEntries = groupEntries.filter(([, group]) =>
@@ -1386,10 +1361,7 @@ export function KnowledgeSourcePicker({
         <div className="flex h-full min-h-0 flex-col">
           <ResponsiveDrilldownHeader
             label={group?.displayName ?? activeGroup}
-            onBack={() => {
-              setActiveGroup(null)
-              setActiveKnowledgeBase(null)
-            }}
+            onBack={navigateBack}
             testId="knowledge-picker-responsive-group-back"
           />
           <KnowledgeBaseRows
@@ -1451,7 +1423,7 @@ export function KnowledgeSourcePicker({
           lastSyncedAt={dingtalkTrees.wikispaceLastSyncedAt}
           onRetry={dingtalkTrees.fetchWikispace}
           onSync={dingtalkTrees.syncWikispace}
-          onOpen={setActiveDingTalkSpace}
+          onOpen={openDingTalkSpace}
           onToggle={node => toggleDingTalkNode(node, node)}
         />
       )
@@ -1482,10 +1454,7 @@ export function KnowledgeSourcePicker({
                 ? getExternalScopeLabel(activeScope, t)
                 : (activeExternalSource.label ?? activeExternalSource.providerId)
             }
-            onBack={() => {
-              setExternalScope(null)
-              setActiveKnowledgeBase(null)
-            }}
+            onBack={navigateBack}
             testId="knowledge-picker-responsive-external-scope-back"
           />
           {state?.loading ? (
@@ -1541,13 +1510,7 @@ export function KnowledgeSourcePicker({
                 'lg:w-full lg:justify-between lg:rounded-md lg:px-3',
                 active ? 'bg-primary/10 text-primary' : 'hover:bg-surface text-text-primary'
               )}
-              onClick={() => {
-                setActiveSource(row.key)
-                setActiveGroup(null)
-                setExternalScope(null)
-                setActiveKnowledgeBase(null)
-                setActiveDingTalkSpace(null)
-              }}
+              onClick={() => selectSource(row.key)}
               data-testid={
                 row.key === 'dingtalk'
                   ? 'knowledge-picker-dingtalk-parent'
@@ -1855,65 +1818,14 @@ export function KnowledgeSourcePicker({
     activeSource === 'dingtalk:docs' ||
     (activeSource === 'dingtalk:wikispace' && activeDingTalkSpace !== null)
 
-  const closeResponsiveDocumentView = () => {
-    setActiveKnowledgeBase(null)
-    setActiveDingTalkSpace(null)
-    if (activeSource === 'dingtalk:docs') {
-      setActiveSource('dingtalk')
-    }
-  }
-
   return (
-    <div
-      className={cn(
-        'grid h-full min-h-0 grid-cols-1 overflow-hidden',
-        'md:grid-cols-[minmax(280px,0.9fr)_minmax(0,1.1fr)] md:grid-rows-[auto_minmax(0,1fr)]',
-        'lg:h-[min(520px,calc(var(--radix-popover-content-available-height,592px)-72px))] lg:grid-cols-[180px_220px_minmax(0,1fr)] lg:grid-rows-1',
-        hasResponsiveDocumentView ? 'grid-rows-1' : 'grid-rows-[auto_minmax(0,1fr)]'
-      )}
-      data-testid="knowledge-source-picker"
-    >
-      <div
-        className={cn(
-          'min-h-0 border-b border-border md:col-start-1 md:row-start-1 md:block md:border-r lg:col-auto lg:row-auto lg:border-b-0',
-          hasResponsiveDocumentView && 'hidden md:block'
-        )}
-        data-testid="knowledge-picker-source-column"
-      >
-        <div className="h-full min-h-0 overflow-y-auto">{renderSourceColumn()}</div>
-      </div>
-
-      <div
-        className={cn(
-          'min-h-0 border-b border-border md:col-start-1 md:row-start-2 md:block md:border-b-0 md:border-r lg:col-auto lg:row-auto',
-          hasResponsiveDocumentView && 'hidden md:block'
-        )}
-        data-testid="knowledge-picker-knowledge-base-column"
-      >
-        <div className="h-full min-h-0 overflow-y-auto">{renderMiddleColumn()}</div>
-      </div>
-
-      <div
-        className={cn(
-          'min-h-0 overflow-hidden md:col-start-2 md:row-span-2 md:row-start-1 md:flex md:flex-col lg:col-auto lg:row-auto lg:row-span-1',
-          hasResponsiveDocumentView ? 'flex flex-col' : 'hidden'
-        )}
-        data-testid="knowledge-picker-document-column"
-      >
-        {hasResponsiveDocumentView ? (
-          <button
-            type="button"
-            className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-sm font-medium text-text-primary md:hidden"
-            onClick={closeResponsiveDocumentView}
-            data-testid="knowledge-picker-mobile-back"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            {t('document.backToList')}
-          </button>
-        ) : null}
-        <div className="min-h-0 flex-1 overflow-hidden">{renderDocumentColumn()}</div>
-      </div>
-    </div>
+    <KnowledgeSourcePickerLayout
+      hasDocumentView={hasResponsiveDocumentView}
+      sourceColumn={renderSourceColumn()}
+      knowledgeBaseColumn={renderMiddleColumn()}
+      documentColumn={renderDocumentColumn()}
+      onBack={navigateBack}
+    />
   )
 }
 
@@ -2504,87 +2416,6 @@ function ExternalDocumentNode({
           ))
         : null}
     </div>
-  )
-}
-
-function ResponsiveSecondaryOptions({
-  title,
-  testId,
-  children,
-}: {
-  title: string
-  testId: string
-  children: React.ReactNode
-}) {
-  return (
-    <div
-      className="space-y-1 p-2 lg:hidden"
-      data-testid={`knowledge-picker-responsive-${testId}-options`}
-    >
-      <div className="px-3 pb-2 pt-1 text-xs font-medium text-text-muted">{title}</div>
-      {children}
-    </div>
-  )
-}
-
-function ResponsiveSecondaryOption({
-  icon: Icon,
-  label,
-  count,
-  onClick,
-  testId,
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  label: string
-  count?: number
-  onClick: () => void
-  testId: string
-}) {
-  return (
-    <button
-      type="button"
-      className="flex min-h-11 w-full items-center gap-3 rounded-md px-3 py-2 text-left text-text-primary hover:bg-surface"
-      onClick={onClick}
-      data-testid={testId}
-    >
-      <Icon className="h-4 w-4 shrink-0 text-text-muted" />
-      <TruncatedText
-        text={label}
-        focusable={false}
-        className="min-w-0 flex-1 text-sm font-medium"
-      />
-      {count !== undefined ? (
-        <Badge variant="secondary" size="sm">
-          {count}
-        </Badge>
-      ) : null}
-      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-    </button>
-  )
-}
-
-function ResponsiveDrilldownHeader({
-  label,
-  onBack,
-  testId,
-}: {
-  label: string
-  onBack: () => void
-  testId: string
-}) {
-  const { t } = useTranslation('knowledge')
-
-  return (
-    <button
-      type="button"
-      className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-left text-sm font-medium text-text-primary hover:bg-surface lg:hidden"
-      onClick={onBack}
-      aria-label={t('picker.changeSelection', { name: label })}
-      data-testid={testId}
-    >
-      <ChevronLeft className="h-4 w-4 shrink-0" />
-      <TruncatedText text={label} focusable={false} className="min-w-0 flex-1" />
-    </button>
   )
 }
 

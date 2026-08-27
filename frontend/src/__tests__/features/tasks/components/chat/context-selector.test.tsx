@@ -414,7 +414,8 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('knowledge-picker-document-column')).toHaveClass('hidden')
   })
 
-  it('expands group knowledge into first-level group rows before showing knowledge bases', async () => {
+  it('drills into group knowledge before showing knowledge bases on narrow screens', async () => {
+    mockIsMobile = true
     mockGetAllGroupedKnowledgeBases.mockResolvedValue(
       createAllGroupedResponse({
         groups: [
@@ -455,14 +456,15 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-responsive-group-options')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('knowledge-picker-group-dev-group')).toHaveClass('hidden')
-    expect(screen.getByTestId('knowledge-picker-group-dev-group')).toHaveClass('lg:flex')
     expect(screen.getByTestId('knowledge-picker-responsive-group-dev-group')).toHaveTextContent(
       'Dev Experience'
     )
     expect(screen.queryByTestId('knowledge-picker-kb-2')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-group-dev-group'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-responsive-group-dev-group'))
+      await Promise.resolve()
+    })
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-kb-2')).toBeInTheDocument()
     })
@@ -520,17 +522,15 @@ describe('ContextSelector organization grouping', () => {
     })
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
-      expect(
-        screen.getByTestId('knowledge-picker-responsive-group-empty-group')
-      ).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-group-empty-group')).toBeInTheDocument()
     })
 
-    expect(screen.getByTestId('knowledge-picker-responsive-group-empty-group')).toHaveTextContent(
+    expect(screen.getByTestId('knowledge-picker-group-empty-group')).toHaveTextContent(
       'Empty Group'
     )
     expect(screen.getByTestId('knowledge-picker-group-empty-group')).toHaveTextContent('0')
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-group-empty-group'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-group-empty-group'))
     await waitFor(() => {
       expect(screen.getByText('picker.emptyKnowledgeBases')).toBeInTheDocument()
     })
@@ -633,9 +633,9 @@ describe('ContextSelector organization grouping', () => {
 
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
-      expect(
-        screen.getByTestId('knowledge-picker-responsive-group-fallback-group')
-      ).toHaveTextContent('fallback-group')
+      expect(screen.getByTestId('knowledge-picker-group-fallback-group')).toHaveTextContent(
+        'fallback-group'
+      )
     })
   })
 
@@ -1365,11 +1365,9 @@ describe('ContextSelector organization grouping', () => {
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-responsive-dingtalk-options')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-dingtalk-docs')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('knowledge-picker-dingtalk-docs')).toHaveClass('hidden')
-    expect(screen.getByTestId('knowledge-picker-dingtalk-docs')).toHaveClass('lg:flex')
-    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-dingtalk-docs'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-docs'))
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-all-docs')).toBeInTheDocument()
@@ -1450,7 +1448,7 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-dingtalk-wikispace'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
@@ -1528,7 +1526,7 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-parent')).toBeInTheDocument()
     })
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-dingtalk-wikispace'))
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
