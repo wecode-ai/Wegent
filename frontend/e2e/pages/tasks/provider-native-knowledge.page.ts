@@ -5,7 +5,7 @@ export class ProviderNativeKnowledgePage {
 
   async openPicker(): Promise<void> {
     const contextButton = this.page.getByTestId('knowledge-context-button')
-    if (!(await contextButton.isVisible().catch(() => false))) {
+    if (!(await contextButton.isVisible())) {
       await this.page.getByTestId('mobile-input-more-actions-button').click()
       await expect(this.page.getByTestId('mobile-input-more-actions-menu')).toBeVisible()
     }
