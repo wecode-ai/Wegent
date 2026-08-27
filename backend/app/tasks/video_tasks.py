@@ -912,8 +912,8 @@ def _poll_async_card(
 
     query_url = str(card_context.get("query_url") or "")
     card_type = str(card_context.get("card_type") or "")
-    preview_title = str(card_context.get("preview_title") or "视频生成中...")
-    default_progress_text = str(card_context.get("progress_text") or "正在生成，请稍候")
+    preview_title = str(card_context.get("preview_title") or "")
+    default_progress_text = str(card_context.get("progress_text") or "")
 
     def persist_snapshot(
         snapshot: AsyncCardSnapshot,

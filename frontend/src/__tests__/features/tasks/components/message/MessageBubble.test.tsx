@@ -374,11 +374,11 @@ describe('MessageBubble', () => {
     )
   })
 
-  it('renders card blocks when the message text contains a final-format keyword', () => {
+  it('renders card blocks when message text contains the final-format marker', () => {
     const msg: Message = {
       type: 'ai',
-      content: '${$$}$正在合成最终视频',
-      timestamp: new Date('2026-08-25T13:15:41Z').getTime(),
+      content: '${$$}$test-final-format-content',
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
       subtaskStatus: 'COMPLETED',
       status: 'completed',
       result: {
@@ -419,8 +419,8 @@ describe('MessageBubble', () => {
     const msg: Message = {
       type: 'ai',
       content: '',
-      timestamp: new Date('2026-08-26T12:51:13Z').getTime(),
-      subtaskId: 274878057582,
+      timestamp: new Date('2026-01-01T00:00:00Z').getTime(),
+      subtaskId: 456,
       subtaskStatus: 'COMPLETED',
       status: 'completed',
       result: {
@@ -445,7 +445,7 @@ describe('MessageBubble', () => {
       <MessageBubble
         msg={msg}
         index={0}
-        selectedTaskDetail={{ id: 274878057571 } as TaskDetail}
+        selectedTaskDetail={{ id: 123 } as TaskDetail}
         selectedTeam={makeTeam()}
         theme="light"
         t={t}
@@ -459,8 +459,8 @@ describe('MessageBubble', () => {
           type: 'final_prompt',
           final_prompt: 'Build the shopping website.',
         },
-        taskId: 274878057571,
-        subtaskId: 274878057582,
+        taskId: 123,
+        subtaskId: 456,
         isPendingConfirmation: true,
       })
     )

@@ -59,7 +59,7 @@ def test_public_bot_update_accepts_preload_skill_fields():
 def test_public_bot_form_data_accepts_planning_llm() -> None:
     payload = PublicBotCreate.model_validate(
         {
-            "name": "minute-video-bot",
+            "name": "test-video-bot",
             "shell_name": "Chat",
             "secondary_model_name": "planning-llm",
             "secondary_model_namespace": "default",
@@ -72,11 +72,11 @@ def test_public_bot_form_data_accepts_planning_llm() -> None:
 
 def test_public_bot_json_persists_planning_llm() -> None:
     bot_json = _build_bot_json_from_form_data(
-        bot_name="minute-video-bot",
+        bot_name="test-video-bot",
         namespace="default",
         shell_name="Chat",
         shell_namespace="default",
-        ghost_name="minute-video-ghost",
+        ghost_name="test-video-ghost",
         model_ref_name="video-model",
         model_ref_namespace="default",
         secondary_model_name="planning-llm",

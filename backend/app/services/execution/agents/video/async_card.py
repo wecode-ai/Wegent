@@ -267,8 +267,8 @@ class AsyncVideoCardService:
         token_info: TaskTokenInfo,
         task_url: str,
         card_type: str = VIDEO_DIRECTOR_CARD_TYPE,
-        preview_title: str = "视频生成中...",
-        progress_text: str = "正在生成，请稍候",
+        preview_title: str = "",
+        progress_text: str = "",
     ) -> dict[str, Any]:
         try:
             query_url = validate_async_card_query_url(task_url)

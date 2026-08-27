@@ -31,16 +31,16 @@ def test_normalize_async_card_payload_preserves_public_card_json() -> None:
             "wb_data": {
                 "status": "partial_ready",
                 "progress": 55,
-                "progress_text": "分镜已完成",
+                "progress_text": "test-progress-partial",
                 "card": {
-                    "title": "一分钟视频",
-                    "link": "https://qia.example.com/task/1",
-                    "preview_content": {"text": "故事梗概"},
-                    "custom_section": {"label": "内部定制内容"},
+                    "title": "test-card-title",
+                    "link": "https://test-workflow.example.com/task/123",
+                    "preview_content": {"text": "test-preview-content"},
+                    "custom_section": {"label": "test-custom-label"},
                     "buttons": [
                         {
                             "button_id": "generate-entities",
-                            "button_name": "生成主体",
+                            "button_name": "test-chat-action",
                             "button_type": "chat",
                         }
                     ],
@@ -53,8 +53,8 @@ def test_normalize_async_card_payload_preserves_public_card_json() -> None:
 
     assert snapshot.is_partial_ready
     assert snapshot.progress == 55
-    assert snapshot.card["custom_section"] == {"label": "内部定制内容"}
-    assert snapshot.card["link"] == "https://qia.example.com/task/1"
+    assert snapshot.card["custom_section"] == {"label": "test-custom-label"}
+    assert snapshot.card["link"] == "https://test-workflow.example.com/task/123"
     assert snapshot.card["buttons"][0]["button_type"] == "chat"
     assert "polling_url" not in snapshot.card
     assert "_button_configs" not in snapshot.card
@@ -65,7 +65,7 @@ def test_normalize_async_card_payload_rejects_missing_status() -> None:
         {
             "wb_data": {
                 "progress": 20,
-                "card": {"title": "一分钟视频"},
+                "card": {"title": "test-card-title"},
             }
         }
     )
@@ -85,7 +85,7 @@ def test_async_card_block_filters_unsafe_navigation_urls() -> None:
                     "video_url": "https://cdn.example.com/video.mp4",
                     "buttons": [
                         {
-                            "button_name": "详情",
+                            "button_name": "test-link-action",
                             "button_type": "link",
                             "url": "file:///tmp/private",
                             "prompt": "private prompt",
@@ -100,8 +100,8 @@ def test_async_card_block_filters_unsafe_navigation_urls() -> None:
         block_id="card-1",
         card_type="video_director_generation",
         snapshot=snapshot,
-        preview_title="视频生成中...",
-        default_progress_text="正在生成",
+        preview_title="test-preview-title",
+        default_progress_text="test-progress",
     )
 
     assert "link" not in block["card_data"]
@@ -137,7 +137,9 @@ async def test_fetch_async_card_snapshot_reads_wb_data() -> None:
         return original_client(*args, **kwargs)
 
     with patch.object(httpx, "AsyncClient", client_factory):
-        snapshot = await fetch_async_card_snapshot("https://qia.example.com/task/1")
+        snapshot = await fetch_async_card_snapshot(
+            "https://test-workflow.example.com/task/123"
+        )
 
     assert snapshot.is_completed
     assert snapshot.card["video_url"] == "https://cdn.example.com/video.mp4"
@@ -178,20 +180,22 @@ async def test_async_card_service_persists_and_dispatches_card() -> None:
     ):
         result = await service.create(
             token_info=token_info,
-            task_url="https://qia.example.com/task/1",
+            task_url="https://test-workflow.example.com/task/123",
             card_type="video_director_generation",
-            preview_title="视频生成中...",
-            progress_text="正在生成",
         )
 
     video_job = persist.call_args.args[1]
     block = persist.call_args.args[2]
     assert video_job["job_id"].startswith("async-card-")
-    assert video_job["query_url"] == "https://qia.example.com/task/1"
+    assert video_job["query_url"] == "https://test-workflow.example.com/task/123"
+    assert video_job["preview_title"] == ""
+    assert video_job["progress_text"] == ""
     assert block["type"] == "card"
     assert block["card_status"] == "pending"
+    assert block["card_preview_data"]["title"] == ""
+    assert block["card_preview_data"]["progress_text"] == ""
     assert dispatch.call_args.kwargs["card_context"]["query_url"] == (
-        "https://qia.example.com/task/1"
+        "https://test-workflow.example.com/task/123"
     )
     assert emit.call_args.kwargs["block"]["card_type"] == ("video_director_generation")
     assert result == {
@@ -227,7 +231,7 @@ async def test_async_card_service_reports_dispatch_failure() -> None:
         with pytest.raises(RuntimeError, match="queue unavailable"):
             await service.create(
                 token_info=token_info,
-                task_url="https://qia.example.com/task/1",
+                task_url="https://test-workflow.example.com/task/123",
             )
 
     assert persist.call_count == 2

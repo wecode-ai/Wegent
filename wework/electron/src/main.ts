@@ -81,11 +81,16 @@ import {
   resolveConfiguredNodePath,
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
+import {
+  applyBrandRuntimeEnvironment,
+  type BrandRuntimeMetadata,
+} from './runtime/brand-runtime-environment.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
+  weworkAppId?: string
   weworkUpdateBaseUrl?: string
-}
+} & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
@@ -94,9 +99,10 @@ const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
 
 const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), 'io.wecode.wework')
+  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
 app.setPath('userData', resolve(userDataPath))
 
 let mainWindow: BrowserWindow | null = null
@@ -933,7 +939,7 @@ async function configureDesktopRuntime(): Promise<void> {
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'))
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
-    process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   await embeddedBrowserBridge.start()
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
@@ -1186,8 +1192,13 @@ if (hasSingleInstanceLock) {
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
+  const componentResourcesRoot =
+    !app.isPackaged && configuredComponentResourcesRoot
+      ? resolve(configuredComponentResourcesRoot)
+      : resourcesRoot
   componentUpdates ??= new ComponentUpdateManager({
-    resourcesRoot,
+    resourcesRoot: componentResourcesRoot,
     dataDirectory: app.getPath('userData'),
     updateBaseUrl,
     currentAppVersion: app.getVersion(),
@@ -1209,26 +1220,30 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
         ])
       : developmentRuntimeRoot
   const nodeRuntime = await electronNodeRuntime()
-  return {
-    ...nodeRuntime.environment,
-    WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-    WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
-    WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
-    WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-      resourcesRoot,
-      'bundled-plugins',
-      'wework-personal'
-    ),
-    WEGENT_BUNDLED_HOOKS_DIR: join(resourcesRoot, 'bundled-hooks'),
-    ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
-      ? {}
-      : existsSync(components.executor)
-        ? { WEWORK_EXECUTOR_PATH: components.executor }
-        : {}),
-    ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
-      ? {}
-      : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-  }
+  return applyBrandRuntimeEnvironment(
+    {
+      ...nodeRuntime.environment,
+      WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
+      WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+      WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
+        componentResourcesRoot,
+        'bundled-plugins',
+        'wework-personal'
+      ),
+      WEGENT_BUNDLED_HOOKS_DIR: join(componentResourcesRoot, 'bundled-hooks'),
+      ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
+        ? {}
+        : existsSync(components.executor)
+          ? { WEWORK_EXECUTOR_PATH: components.executor }
+          : {}),
+      ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+        ? {}
+        : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
+    },
+    packageMetadata,
+    app.getPath('home')
+  )
 }
 
 function electronNodeRuntime(): Promise<ElectronNodeRuntime> {

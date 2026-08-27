@@ -367,10 +367,17 @@ def test_external_knowledge_mcp_auth_ignores_x_api_key(
         routes=[Route("/", context_response, methods=["GET"])]
     )
 
-    with patch.object(
-        external_knowledge_mcp_server,
-        "streamable_http_app",
-        return_value=fake_streamable_app,
+    with (
+        patch.object(
+            external_knowledge_mcp_server,
+            "streamable_http_app",
+            return_value=fake_streamable_app,
+        ),
+        patch.object(
+            mcp_server_module,
+            "_external_auth_handler",
+            _default_external_auth_handler,
+        ),
     ):
         app = _build_external_knowledge_mcp_app()
         client = TestClient(app)

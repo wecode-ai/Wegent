@@ -131,15 +131,15 @@ describe('publicTeamPayload', () => {
     )
 
     const teamJson = buildPublicTeamJson({
-      name: 'minute-video-team',
+      name: 'test-video-team',
       displayName: 'One-minute Video',
-      description: 'Create a one-minute video',
+      description: 'Test video team',
       bindMode: ['chat'],
       icon: null,
       requiresWorkspace: true,
       mode: 'solo',
       modeSpec,
-      members: [{ botName: 'minute-video-bot', botPrompt: '' }],
+      members: [{ botName: 'test-video-bot', botPrompt: '' }],
     })
 
     expect(teamJson).toMatchObject({

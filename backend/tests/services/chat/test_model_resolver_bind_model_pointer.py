@@ -331,14 +331,14 @@ class TestResolveModelForBotWithPointer:
     """End-to-end (mocked DB) reproduction of the qiqi10-style incident."""
 
     def test_pointer_model_whitelist_blocks_disallowed_override(self):
-        bot = _make_bot(model_ref_name="minute-video-bot-model")
+        bot = _make_bot(model_ref_name="test-pointer-model")
         pointer_spec = {
             "modelConfig": {
-                "bind_model": "Seedance-2.0-Fast",
+                "bind_model": "allowed-test-model",
                 "bind_model_type": "public",
                 "allowed_models": [
                     {
-                        "name": "Seedance-2.0-Fast",
+                        "name": "allowed-test-model",
                         "type": "public",
                         "namespace": "default",
                     }
@@ -346,18 +346,18 @@ class TestResolveModelForBotWithPointer:
             },
             "isCustomConfig": True,
         }
-        pointer_kind = _model_kind("minute-video-bot-model", pointer_spec)
+        pointer_kind = _model_kind("test-pointer-model", pointer_spec)
 
         with patch(
             "app.services.chat.config.model_resolver._find_model_with_namespace"
         ) as mock_find:
             mock_find.return_value = (pointer_kind, pointer_spec)
-            with pytest.raises(ValueError, match="Seedance-2.0-Fast-Online"):
+            with pytest.raises(ValueError, match="disallowed-test-model"):
                 _resolve_model_for_bot(
                     db=MagicMock(),
                     bot=bot,
                     user_id=1,
-                    override_model_name="Seedance-2.0-Fast-Online",
+                    override_model_name="disallowed-test-model",
                     force_override=True,
                 )
 

@@ -7,7 +7,7 @@
 !macro preInit
   ReadRegStr $R0 HKCU "${INSTALL_REGISTRY_KEY}" ""
   ${If} $R0 != ""
-  ${AndIf} ${FileExists} "$R0\WeWork.exe"
+  ${AndIf} ${FileExists} "$R0\${APP_EXECUTABLE_FILENAME}"
     WriteRegStr HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation "$R0"
   ${EndIf}
 !macroend
