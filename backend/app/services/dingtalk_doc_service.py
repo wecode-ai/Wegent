@@ -43,7 +43,7 @@ class DingTalkDocService:
     """Service for syncing and querying DingTalk document nodes."""
 
     @staticmethod
-    def get_user_dingtalk_mcp_url(user: User) -> str | None:
+    def get_user_dingtalk_mcp_url(user: User, service_id: str = "docs") -> str | None:
         """Read and decrypt the user's DingTalk Docs MCP URL from preferences.
 
         Returns the decrypted URL if configured and enabled, None otherwise.
@@ -51,7 +51,7 @@ class DingTalkDocService:
         config = UserMCPService.get_provider_service_config(
             user.preferences,
             provider_id="dingtalk",
-            service_id="docs",
+            service_id=service_id,
         )
         if not config.get("enabled"):
             return None
@@ -440,6 +440,7 @@ class DingTalkDocService:
             )
             workspace_id = node_data.get("workspaceId") or ""
             content_type = node_data.get("contentType") or ""
+            extension = str(node_data.get("extension") or "").strip().lower()
             content_updated_at = DingTalkDocService._parse_update_time(
                 node_data.get("updateTime"), sync_time
             )
@@ -468,6 +469,9 @@ class DingTalkDocService:
                 if existing.content_type != content_type:
                     existing.content_type = content_type
                     changed = True
+                if existing.extension != extension:
+                    existing.extension = extension
+                    changed = True
                 if existing.content_updated_at != content_updated_at:
                     existing.content_updated_at = content_updated_at
                     changed = True
@@ -492,6 +496,7 @@ class DingTalkDocService:
                     node_type=node_type,
                     workspace_id=workspace_id,
                     content_type=content_type,
+                    extension=extension,
                     content_updated_at=content_updated_at,
                     is_active=True,
                     last_synced_at=sync_time,
@@ -603,6 +608,9 @@ class DingTalkDocService:
             "last_synced_at": last_synced[0] if last_synced else None,
             "total_nodes": total,
             "is_configured": is_configured,
+            "ai_table_configured": bool(
+                DingTalkDocService.get_user_dingtalk_mcp_url(user, "ai_table")
+            ),
         }
 
     @staticmethod

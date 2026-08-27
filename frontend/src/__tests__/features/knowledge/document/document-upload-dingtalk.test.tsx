@@ -216,6 +216,57 @@ async function openDingtalkMode(
 }
 
 describe('DocumentUpload dingtalk source', () => {
+  it.each([true, false])(
+    'selects supported files independently of AI Table configuration (%s)',
+    async aiConfigured => {
+      mockGetSyncStatus.mockResolvedValue({
+        is_configured: true,
+        ai_table_configured: aiConfigured,
+      })
+      mockGetDocs.mockResolvedValue({
+        nodes: [
+          docNode('doc', 'Text'),
+          makeNode({
+            dingtalk_node_id: 'pdf',
+            name: 'Report.pdf',
+            node_type: 'file',
+            content_type: 'DOCUMENT',
+            extension: 'pdf',
+          }),
+          makeNode({
+            dingtalk_node_id: 'base',
+            name: 'AI Table',
+            node_type: 'file',
+            extension: 'able',
+          }),
+          makeNode({
+            dingtalk_node_id: 'sheet',
+            name: 'Online sheet',
+            node_type: 'file',
+            extension: 'axls',
+          }),
+        ],
+        total_count: 4,
+      })
+      const onImport = jest
+        .fn()
+        .mockResolvedValue({ createdCount: 2, updatedCount: 0, processingCount: 0 })
+      await openDingtalkMode({ onDingtalkImport: onImport })
+      if (!aiConfigured) {
+        expect(screen.getByTestId('dingtalk-node-configure-base')).toHaveAttribute(
+          'href',
+          '/settings?tab=integrations'
+        )
+      }
+      fireEvent.click(screen.getByTestId('dingtalk-import-select-all'))
+      fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+      await waitFor(() => expect(onImport).toHaveBeenCalled())
+      expect(onImport.mock.calls[0][0]).toEqual(
+        aiConfigured ? ['doc', 'pdf', 'base'] : ['doc', 'pdf']
+      )
+    }
+  )
+
   beforeEach(() => {
     mockUseBatchAttachment.mockReset()
     mockGetSyncStatus.mockReset()

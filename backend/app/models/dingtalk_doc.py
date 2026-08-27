@@ -48,6 +48,7 @@ class DingtalkSyncedNode(Base):
     source = Column(String(16), nullable=False, default=DingTalkNodeSource.DOCS.value)
     # Content type (e.g., ALIDOC)
     content_type = Column(String(32), nullable=False, default="")
+    extension = Column(String(32), nullable=False, default="", server_default="")
     # Document content last updated time from list_nodes updateTime field
     content_updated_at = Column(DateTime, nullable=False, default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)

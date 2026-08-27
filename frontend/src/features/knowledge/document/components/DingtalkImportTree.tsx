@@ -5,6 +5,7 @@
 'use client'
 
 import { ChevronRight, FileText, Folder, FolderOpen } from 'lucide-react'
+import Link from 'next/link'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -23,15 +24,38 @@ const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
 }
 
 /** Import snapshots contain document IDs only; folders are selection shortcuts. */
-export function collectImportableIds(nodes: DingtalkDocNode[], query = ''): string[] {
+function isAiTable(node: DingtalkDocNode): boolean {
+  return (
+    node.node_type === 'file' &&
+    node.content_type.toUpperCase() === 'ALIDOC' &&
+    node.extension === 'able'
+  )
+}
+
+function isImportable(node: DingtalkDocNode, aiTableConfigured: boolean): boolean {
+  if (node.node_type === 'doc') return true
+  if (isAiTable(node)) return aiTableConfigured
+  return (
+    node.node_type === 'file' &&
+    Boolean(node.content_type) &&
+    node.content_type.toUpperCase() !== 'ALIDOC' &&
+    ['pdf', 'docx', 'pptx', 'xlsx', 'csv', 'txt', 'md'].includes(node.extension ?? '')
+  )
+}
+
+export function collectImportableIds(
+  nodes: DingtalkDocNode[],
+  query = '',
+  aiTableConfigured = false
+): string[] {
   const normalized = query.trim().toLowerCase()
   return [
     ...new Set(
       nodes.flatMap(node => [
-        ...(node.node_type === 'doc' && node.name.toLowerCase().includes(normalized)
+        ...(isImportable(node, aiTableConfigured) && node.name.toLowerCase().includes(normalized)
           ? [node.dingtalk_node_id]
           : []),
-        ...collectImportableIds(node.children ?? [], normalized),
+        ...collectImportableIds(node.children ?? [], normalized, aiTableConfigured),
       ])
     ),
   ]
@@ -56,6 +80,7 @@ interface DingtalkImportTreeProps {
   selectedIds: Set<string>
   expandedKeys: Set<string>
   disabled: boolean
+  aiTableConfigured: boolean
   onToggle: (ids: string[]) => void
   onExpand: (key: string) => void
 }
@@ -85,10 +110,14 @@ function ImportTreeNode({
   const searching = Boolean(query.trim())
   const folder = node.node_type === 'folder'
   const hasChildren = Boolean(node.children?.length)
-  const importable = node.node_type === 'doc'
+  const importable = isImportable(node, props.aiTableConfigured)
   const importStatus = importable ? props.importStatuses[node.dingtalk_node_id] : undefined
   // A document selects itself; only folders are bulk-selection shortcuts.
-  const ids = folder ? collectImportableIds([node]) : importable ? [node.dingtalk_node_id] : []
+  const ids = folder
+    ? collectImportableIds([node], '', props.aiTableConfigured)
+    : importable
+      ? [node.dingtalk_node_id]
+      : []
   const count = ids.filter(id => selectedIds.has(id)).length
   const checked = ids.length > 0 && count === ids.length
   const mixed = count > 0 && !checked
@@ -178,6 +207,15 @@ function ImportTreeNode({
           >
             <SelectionIndicator checked={checked} indeterminate={mixed} mixedIcon="bar" />
           </button>
+        ) : isAiTable(node) && !props.aiTableConfigured ? (
+          <Link
+            href="/settings?tab=integrations"
+            className="flex min-h-11 shrink-0 items-center px-2 text-xs text-primary"
+            title={t('document.upload.dingtalk.aiTableNotConfigured')}
+            data-testid={`dingtalk-node-configure-${node.dingtalk_node_id}`}
+          >
+            {t('document.goToSettings')}
+          </Link>
         ) : (
           <span
             className="shrink-0 px-2 text-xs text-text-secondary"

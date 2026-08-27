@@ -543,4 +543,7 @@ class DingTalkWikiSpaceService:
             "last_synced_at": last_synced[0] if last_synced else None,
             "total_nodes": total,
             "is_configured": is_configured,
+            "ai_table_configured": bool(
+                DingTalkDocService.get_user_dingtalk_mcp_url(user, "ai_table")
+            ),
         }

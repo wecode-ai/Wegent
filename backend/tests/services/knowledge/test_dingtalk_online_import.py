@@ -4,13 +4,16 @@
 
 """Online document import against the observed DingTalk MCP response contract."""
 
+import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 from sqlalchemy.orm import Session
 
@@ -27,6 +30,341 @@ from app.services.knowledge.external_document_providers import (
 McpFixture = tuple[dict[str, Any], MagicMock]
 
 
+@pytest.mark.asyncio
+async def test_signed_download_does_not_log_credentials(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def serve(reader, writer):
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndata"
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_providers.validate_upstream_url",
+        lambda url: None,
+    )
+    responses, _ = docs_mcp
+    responses["export_data"] = {
+        "success": True,
+        "data": {
+            "status": "success",
+            "fileName": "Base.xlsx",
+            "downloadUrl": f"http://127.0.0.1:{port}/file?signature=private-download-token",
+        },
+    }
+    async with server:
+        with caplog.at_level(logging.INFO):
+            content = await ai_source.fetch_content(test_db, test_user, "base-1")
+    assert content.content == b"data"
+    assert "private-download-token" not in caplog.text
+
+
+@pytest.fixture
+async def ai_source(
+    test_db: Session, test_user: User, docs_mcp: McpFixture
+) -> DingTalkExternalDocumentProvider:
+    responses, _ = docs_mcp
+    info = {
+        "success": True,
+        "nodeId": "base-1",
+        "name": "Base",
+        "nodeType": "file",
+        "contentType": "ALIDOC",
+        "extension": "able",
+    }
+    responses["list_nodes"] = {"success": True, "nodes": [info]}
+    responses["get_document_info"] = info
+    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    return DingTalkExternalDocumentProvider()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config", [{}, {"enabled": False, "url": "https://mcp.example.test/ai"}]
+)
+async def test_missing_ai_configuration_does_not_block_text_import(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    online_source: DingTalkExternalDocumentProvider,
+    ai_source: DingTalkExternalDocumentProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    config: dict,
+) -> None:
+    responses, _ = docs_mcp
+    monkeypatch.setattr(
+        "app.services.user_mcp_service.UserMCPService.get_provider_service_config",
+        lambda *args, **kwargs: (
+            config
+            if kwargs["service_id"] == "ai_table"
+            else {"enabled": True, "url": "https://mcp.example.test/docs"}
+        ),
+    )
+    with pytest.raises(
+        ExternalDocumentImportError, match="AI Table MCP is not configured"
+    ):
+        ai_source.resolve_importable(test_db, test_user, "base-1")
+    # The directory fixture above refreshes the cache; restore a text node through sync.
+    info = {
+        "success": True,
+        "nodeId": "online-doc",
+        "name": "Text",
+        "nodeType": "file",
+        "contentType": "ALIDOC",
+        "extension": "adoc",
+    }
+    responses["list_nodes"] = {"success": True, "nodes": [info]}
+    responses["get_document_info"] = info
+    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+    assert (
+        await online_source.fetch_content(test_db, test_user, "online-doc")
+    ).file_extension == "md"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"status": "failed", "downloadUrl": "https://files.example.test/secret"},
+        {"status": "pending"},
+        {
+            "status": "success",
+            "fileName": "Base.zip",
+            "downloadUrl": "https://files.example.test/secret",
+        },
+        {"status": "success", "fileName": "Base.xlsx"},
+    ],
+)
+async def test_invalid_export_results_are_not_downloaded(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+    data: dict,
+) -> None:
+    responses, _ = docs_mcp
+    responses["export_data"] = {"success": True, "data": data}
+    with pytest.raises(ExternalDocumentFetchError):
+        await ai_source.fetch_content(test_db, test_user, "base-1")
+    assert signed_download == []
+
+
+@pytest.mark.asyncio
+async def test_export_polling_is_bounded_without_restarting_job(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses, session = docs_mcp
+    responses["export_data"] = {
+        "success": True,
+        "data": {"status": "pending", "taskId": "pending-job"},
+    }
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_providers.asyncio.sleep", AsyncMock()
+    )
+    with pytest.raises(ExternalDocumentFetchError, match="timed out"):
+        await ai_source.fetch_content(test_db, test_user, "base-1")
+    calls = [
+        c.args[1]
+        for c in session.call_tool.await_args_list
+        if c.args[0] == "export_data"
+    ]
+    assert len(calls) == 6
+    assert all(c["taskId"] == "pending-job" and "scope" not in c for c in calls[1:])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url, status_code, limit",
+    [
+        ("https://127.0.0.1/private?signature=secret", 200, 100),
+        ("http://files.example.test/file?signature=secret", 200, 100),
+        ("https://files.example.test/file?signature=secret", 403, 100),
+        ("https://files.example.test/file?signature=secret", 302, 100),
+        ("https://files.example.test/file?signature=secret", 200, 0),
+    ],
+)
+async def test_unsafe_or_failed_download_never_returns_content_or_leaks_url(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    url: str,
+    status_code: int,
+    limit: int,
+) -> None:
+    responses, _ = docs_mcp
+    responses["export_data"] = {
+        "success": True,
+        "data": {"status": "success", "fileName": "Base.xlsx", "downloadUrl": url},
+    }
+    mock_download(monkeypatch, status=status_code, body=b"oversized")
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda host, *args: [
+            (
+                2,
+                1,
+                6,
+                "",
+                ("127.0.0.1" if host == "127.0.0.1" else "93.184.216.34", 443),
+            )
+        ],
+    )
+    monkeypatch.setattr("app.core.config.settings.MAX_UPLOAD_FILE_SIZE_MB", limit)
+    with pytest.raises(ExternalDocumentFetchError) as error:
+        await ai_source.fetch_content(test_db, test_user, "base-1")
+    assert "signature" not in str(error.value)
+    assert "secret" not in str(error.value)
+
+
+def mock_download(monkeypatch, status=200, body=b"exported-workbook") -> list:
+    requests = []
+
+    async def chunks(size):
+        yield body
+
+    @asynccontextmanager
+    async def get(url, **kwargs):
+        requests.append(SimpleNamespace(url=url, **kwargs))
+        yield SimpleNamespace(
+            status=status,
+            headers={},
+            content=SimpleNamespace(iter_chunked=chunks),
+        )
+
+    monkeypatch.setattr(
+        aiohttp,
+        "ClientSession",
+        lambda **kwargs: SimpleNamespace(get=get, close=AsyncMock()),
+    )
+    return requests
+
+
+@pytest.fixture
+def signed_download(monkeypatch: pytest.MonkeyPatch) -> list:
+    requests = mock_download(monkeypatch)
+    monkeypatch.setattr(
+        "socket.getaddrinfo", lambda *args: [(2, 1, 6, "", ("93.184.216.34", 443))]
+    )
+    return requests
+
+
+@pytest.mark.asyncio
+async def test_ai_table_exports_whole_base_and_polls_same_task(
+    test_db: Session, test_user: User, docs_mcp: McpFixture, signed_download: list
+) -> None:
+    responses, session = docs_mcp
+    info = {
+        "success": True,
+        "nodeId": "base-1",
+        "name": "Project",
+        "nodeType": "file",
+        "contentType": "ALIDOC",
+        "extension": "able",
+    }
+    responses["list_nodes"] = {"success": True, "nodes": [info]}
+    responses["get_document_info"] = info
+    responses["export_data"] = lambda args: {
+        "success": True,
+        "data": (
+            {
+                "status": "success",
+                "fileName": "Project.xlsx",
+                "downloadUrl": "https://files.example.test/project",
+            }
+            if "taskId" in args
+            else {"status": "pending", "taskId": "export-1"}
+        ),
+    }
+    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+
+    content = await DingTalkExternalDocumentProvider().fetch_content(
+        test_db, test_user, "base-1"
+    )
+
+    assert content.file_extension == "xlsx"
+    assert content.content == b"exported-workbook"
+    calls = [
+        call.args[1]
+        for call in session.call_tool.await_args_list
+        if call.args[0] == "export_data"
+    ]
+    assert calls == [
+        {"baseId": "base-1", "scope": "all", "format": "excel", "timeoutMs": 30000},
+        {"baseId": "base-1", "taskId": "export-1", "timeoutMs": 30000},
+    ]
+    assert len(signed_download) == 1
+    assert session.urls[-2:] == [
+        "https://mcp.example.test/docs",
+        "https://mcp.example.test/ai_table",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extension", ["pdf", "docx", "pptx", "xlsx", "csv", "txt", "md"]
+)
+async def test_regular_file_download_preserves_bytes_and_extension(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    extension: str,
+) -> None:
+    responses, session = docs_mcp
+    info = {
+        "success": True,
+        "nodeId": "file-pdf",
+        "name": "Report.pdf",
+        "nodeType": "file",
+        "contentType": "DOCUMENT",
+        "extension": extension,
+    }
+    responses["list_nodes"] = {"success": True, "nodes": [info]}
+    responses["get_document_info"] = info
+    responses["download_file"] = {
+        "success": True,
+        "resourceUrl": ["https://files.example.test/report"],
+        "headers": {"x-download-signature": "test-signature"},
+    }
+    requests = mock_download(monkeypatch, body=b"%PDF-test-content")
+    monkeypatch.setattr(
+        "socket.getaddrinfo", lambda *args: [(2, 1, 6, "", ("93.184.216.34", 443))]
+    )
+    await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
+
+    content = await DingTalkExternalDocumentProvider().fetch_content(
+        test_db, test_user, "file-pdf"
+    )
+
+    assert content.file_extension == extension
+    assert content.name == "Report.pdf"
+    assert content.content == b"%PDF-test-content"
+    assert requests[0].headers == {"x-download-signature": "test-signature"}
+    assert requests[0].allow_redirects is False
+    assert session.call_tool.await_args_list[-1].args == (
+        "download_file",
+        {"nodeId": "file-pdf"},
+    )
+
+
 @pytest.fixture
 def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
     """Replace only the external MCP transport and account configuration."""
@@ -36,6 +374,7 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
     session.__aexit__ = AsyncMock(return_value=None)
     session.initialize = AsyncMock()
     session.list_tools = AsyncMock(return_value=SimpleNamespace(tools=[]))
+    session.urls = []
 
     async def call_tool(name: str, arguments: dict[str, Any]) -> SimpleNamespace:
         payload = responses[name]
@@ -52,6 +391,7 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
 
     @asynccontextmanager
     async def transport(**kwargs: Any) -> AsyncIterator[tuple[None, None, None]]:
+        session.urls.append(kwargs["url"])
         yield (None, None, None)
 
     monkeypatch.setattr("mcp.ClientSession", lambda *args, **kwargs: session)
@@ -60,7 +400,7 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
         "app.services.user_mcp_service.UserMCPService.get_provider_service_config",
         lambda *args, **kwargs: {
             "enabled": True,
-            "url": "https://mcp.example.test/dingtalk",
+            "url": f"https://mcp.example.test/{kwargs['service_id']}",
         },
     )
     return responses, session
@@ -153,7 +493,7 @@ async def test_import_reads_metadata_then_returns_only_markdown(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["docs", "wikispace"])
-async def test_both_sources_only_offer_online_text_documents(
+async def test_both_sources_offer_supported_document_formats(
     test_db: Session, test_user: User, docs_mcp: McpFixture, source: str
 ) -> None:
     responses, _ = docs_mcp
@@ -197,7 +537,14 @@ async def test_both_sources_only_offer_online_text_documents(
     actual = {node.dingtalk_node_id: node.node_type for node in synced}
     for name, _, _, _, expected in cases:
         assert actual[name] == expected
-        if expected != "doc":
+        if name in {"text", "lowercase", "table", "pdf", "word"}:
+            assert (
+                DingTalkExternalDocumentProvider().resolve_importable(
+                    test_db, test_user, name
+                )["resource_id"]
+                == name
+            )
+        else:
             with pytest.raises(ExternalDocumentImportError):
                 DingTalkExternalDocumentProvider().resolve_importable(
                     test_db, test_user, name
@@ -205,7 +552,7 @@ async def test_both_sources_only_offer_online_text_documents(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extension", ["axls", "able", "pdf", None])
+@pytest.mark.parametrize("extension", ["axls", "appt", "pdf", None])
 async def test_live_metadata_blocks_unsupported_content_even_with_stale_cache(
     test_db: Session,
     test_user: User,
@@ -220,7 +567,7 @@ async def test_live_metadata_blocks_unsupported_content_even_with_stale_cache(
     }
     session.call_tool.reset_mock()
 
-    with pytest.raises(ExternalDocumentFetchError, match="adoc"):
+    with pytest.raises(ExternalDocumentFetchError, match="cannot be imported"):
         await online_source.fetch_content(test_db, test_user, "online-doc")
 
     assert [call.args[0] for call in session.call_tool.await_args_list] == [

@@ -196,8 +196,14 @@ export function DingtalkDocumentImport({
     [source.nodes, searchQuery]
   )
   const availableIds = useMemo(
-    () => collectImportableIds([...sources.docs.nodes, ...sources.wikispace.nodes]),
-    [sources.docs.nodes, sources.wikispace.nodes]
+    () => [
+      ...new Set(
+        Object.values(sources).flatMap(item =>
+          collectImportableIds(item.nodes, '', Boolean(item.status?.ai_table_configured))
+        )
+      ),
+    ],
+    [sources]
   )
   const importStatuses = useExternalImportStatuses(knowledgeBaseId, availableIds)
   const refreshImportStatuses = importStatuses.retry
@@ -212,7 +218,11 @@ export function DingtalkDocumentImport({
   const expandedIds = availableIds.filter(id => selectedIds.has(id))
   const overLimit = expandedIds.length > MAX_IMPORT_DOCUMENTS
   // Ancestor documents retained for context are not search matches themselves.
-  const visibleIds = collectImportableIds(visibleNodes, searchQuery)
+  const visibleIds = collectImportableIds(
+    visibleNodes,
+    searchQuery,
+    Boolean(source.status?.ai_table_configured)
+  )
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
   const toggleSelect = useCallback((ids: string[]) => {
@@ -339,9 +349,11 @@ export function DingtalkDocumentImport({
               >
                 {(Object.keys(sources) as DingtalkSourceKey[]).map(key => {
                   const Icon = key === 'docs' ? FileText : BookOpen
-                  const count = collectImportableIds(sources[key].nodes).filter(id =>
-                    selectedIds.has(id)
-                  ).length
+                  const count = collectImportableIds(
+                    sources[key].nodes,
+                    '',
+                    Boolean(sources[key].status?.ai_table_configured)
+                  ).filter(id => selectedIds.has(id)).length
                   return (
                     <button
                       key={key}
@@ -495,6 +507,7 @@ export function DingtalkDocumentImport({
                           selectedIds={selectedIds}
                           expandedKeys={expandedKeys}
                           disabled={submitting}
+                          aiTableConfigured={Boolean(source.status?.ai_table_configured)}
                           onToggle={toggleSelect}
                           onExpand={toggleExpanded}
                         />

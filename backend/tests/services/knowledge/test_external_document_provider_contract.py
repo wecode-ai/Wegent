@@ -231,10 +231,12 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         provider,
         markdown: str,
     ) -> None:
-        async def fake_fetch(mcp_url: str, node_id: str) -> str:
-            return markdown
+        async def fake_fetch(
+            mcp_url: str, node_id: str, user: User
+        ) -> tuple[str, bytes]:
+            return "md", markdown.encode("utf-8")
 
-        monkeypatch.setattr(provider, "_fetch_document_markdown", fake_fetch)
+        monkeypatch.setattr(provider, "_fetch_document_content", fake_fetch)
 
     @pytest.mark.asyncio
     async def test_mcp_fetch_sets_explicit_read_timeouts(
@@ -289,12 +291,13 @@ class TestDingTalkProviderContract(ProviderContractSuite):
         monkeypatch.setattr(mcp, "ClientSession", FakeClientSession)
 
         provider = self.make_provider()
-        markdown = await provider._fetch_document_markdown(
+        extension, content = await provider._fetch_document_content(
             "https://mcp.example.test/dingtalk",
             "node-1",
+            SimpleNamespace(),
         )
 
-        assert markdown == "# Imported"
+        assert (extension, content) == ("md", b"# Imported")
         assert observed["transport"] == {
             "url": "https://mcp.example.test/dingtalk",
             "sse_read_timeout": 180,
