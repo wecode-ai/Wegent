@@ -29,13 +29,13 @@ describe('createSmartAppsApi', () => {
     })
     const api = createSmartAppsApi(
       { post } as unknown as HttpClient,
-      'https://wegent.intra.weibo.com/api'
+      'https://api.example.test/api'
     )
 
     const descriptor = await api.getDownload(3)
 
     expect(descriptor.downloadUrl).toBe(
-      'https://wegent.intra.weibo.com/api/smart-apps/marketplace/3/artifact?token=ticket'
+      'https://api.example.test/api/smart-apps/marketplace/3/artifact?token=ticket'
     )
   })
 
