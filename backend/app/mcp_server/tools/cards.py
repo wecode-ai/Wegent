@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 async def create_async_video_card(
     token_info: TaskTokenInfo,
     task_url: str,
-    preview_title: str = "视频生成中...",
-    progress_text: str = "正在生成，请稍候",
+    preview_title: str = "",
+    progress_text: str = "",
     card_type: str = VIDEO_DIRECTOR_CARD_TYPE,
 ) -> dict[str, Any]:
     """Persist a CardBlock and start durable polling."""

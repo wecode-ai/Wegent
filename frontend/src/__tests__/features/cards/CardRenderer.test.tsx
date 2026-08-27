@@ -26,7 +26,7 @@ function buildCard(overrides: Partial<CardBlock> = {}): CardBlock {
     card_data: {},
     card_preview_data: {
       progress: 25,
-      progress_text: '正在生成',
+      progress_text: 'test-progress',
     },
     card_error: null,
     ...overrides,
@@ -51,7 +51,7 @@ describe('CardRenderer', () => {
             card_status: cardStatus,
             card_preview_data: {
               progress: cardStatus === 'pending' ? 25 : 68,
-              progress_text: '分镜生成中',
+              progress_text: 'test-progress-partial',
             },
           })}
         />
@@ -60,9 +60,26 @@ describe('CardRenderer', () => {
       expect(screen.getByTestId('card-video-director-progress')).toHaveTextContent(
         cardStatus === 'pending' ? '25%' : '68%'
       )
-      expect(screen.getByText('分镜生成中')).toBeInTheDocument()
+      expect(screen.getByText('test-progress-partial')).toBeInTheDocument()
     }
   )
+
+  it('uses localized defaults when preview text is empty', () => {
+    render(
+      <CardRenderer
+        block={buildCard({
+          card_preview_data: {
+            title: '',
+            progress: 25,
+            progress_text: '',
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('cards.video_director.title')).toBeInTheDocument()
+    expect(screen.getByText('cards.video_director.processing')).toBeInTheDocument()
+  })
 
   it('renders populated video, cover, and workflow detail link', () => {
     render(
@@ -71,7 +88,7 @@ describe('CardRenderer', () => {
           status: 'done',
           card_status: 'populated',
           card_data: {
-            title: '成片',
+            title: 'test-card-title',
             video_url: 'https://cdn.example.com/video.mp4',
             cover_url: 'https://cdn.example.com/cover.jpg',
             link: 'https://workflow.example.com/tasks/1',
@@ -106,16 +123,16 @@ describe('CardRenderer', () => {
             video_url: 'https://cdn.example.com/video.mp4',
           },
           card_preview_data: {
-            title: '视频生成中',
+            title: 'test-preview-title',
             progress: 100,
-            progress_text: '正在合成最终视频',
+            progress_text: 'test-progress-finalizing',
           },
         })}
       />
     )
 
     expect(screen.getByText('cards.video_director.completed')).toBeInTheDocument()
-    expect(screen.queryByText('视频生成中')).not.toBeInTheDocument()
+    expect(screen.queryByText('test-preview-title')).not.toBeInTheDocument()
   })
 
   it('renders errors and rejects non-HTTP links', () => {
@@ -127,12 +144,12 @@ describe('CardRenderer', () => {
           card_data: {
             link: 'javascript:alert(1)',
           },
-          card_error: '生成失败',
+          card_error: 'test-error',
         })}
       />
     )
 
-    expect(screen.getByTestId('card-video-director-error')).toHaveTextContent('生成失败')
+    expect(screen.getByTestId('card-video-director-error')).toHaveTextContent('test-error')
     expect(screen.queryByTestId('card-video-director-detail')).not.toBeInTheDocument()
     expect(safeCardUrl('javascript:alert(1)')).toBeNull()
   })
@@ -180,7 +197,7 @@ describe('CardRenderer', () => {
             buttons: [
               {
                 button_id: 'generate-entities',
-                button_name: '生成主体',
+                button_name: 'test-chat-action',
                 button_type: 'chat',
               },
             ],
@@ -195,6 +212,6 @@ describe('CardRenderer', () => {
       fireEvent.click(screen.getByTestId('card-video-director-chat-button-0'))
     })
 
-    expect(onChatButtonClick).toHaveBeenCalledWith('生成主体')
+    expect(onChatButtonClick).toHaveBeenCalledWith('test-chat-action')
   })
 })

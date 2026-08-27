@@ -408,22 +408,22 @@ async def test_seedance_passes_through_external_content_blocks(monkeypatch) -> N
     await provider.create_job(
         prompt="Generate a video",
         reference_videos=[
-            {"external_reference": {"id": "video-123"}},
+            {"external_reference": {"id": "test-video-reference-id"}},
         ],
         reference_audios=[
-            {"external_reference": {"id": "audio-456"}},
+            {"external_reference": {"id": "test-audio-reference-id"}},
         ],
     )
 
     assert client.post_kwargs["json"]["content"][1:] == [
         {
             "type": "external_video_reference",
-            "external_video_reference": "video-123",
+            "external_video_reference": "test-video-reference-id",
             "role": "reference_video",
         },
         {
             "type": "external_audio_reference",
-            "external_audio_reference": "audio-456",
+            "external_audio_reference": "test-audio-reference-id",
             "role": "reference_audio",
         },
     ]
@@ -441,24 +441,24 @@ def test_seedance_request_log_includes_external_media_ids() -> None:
     }
     assert _content_item_for_log(
         {
-            "type": "video_media_id",
-            "video_media_id": "video-123",
+            "type": "external_video_reference",
+            "external_video_reference": "test-video-reference-id",
             "role": "reference_video",
         }
     ) == {
-        "type": "video_media_id",
-        "video_media_id": "video-123",
+        "type": "external_video_reference",
+        "external_video_reference": "test-video-reference-id",
         "role": "reference_video",
     }
     assert _content_item_for_log(
         {
-            "type": "audio_media_id",
-            "audio_media_id": "audio-456",
+            "type": "external_audio_reference",
+            "external_audio_reference": "test-audio-reference-id",
             "role": "reference_audio",
         }
     ) == {
-        "type": "audio_media_id",
-        "audio_media_id": "audio-456",
+        "type": "external_audio_reference",
+        "external_audio_reference": "test-audio-reference-id",
         "role": "reference_audio",
     }
 

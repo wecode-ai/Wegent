@@ -16,7 +16,7 @@ RUN dnf upgrade -y \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip \
- && npm install -g @anthropic-ai/claude-code@2.1.199 \
+ && npm install -g @anthropic-ai/claude-code@2.1.247 \
  && npm cache clean --force \
  && dnf clean all \
  && yum clean all \

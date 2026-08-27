@@ -101,6 +101,7 @@ describe('SocketProvider reconnect notification', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    mockIo.mockReset()
     consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation(() => {})
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
     mockGetToken.mockReturnValue('token')
@@ -135,6 +136,7 @@ describe('SocketProvider reconnect notification', () => {
         autoConnect: false,
         reconnection: false,
         transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     socketApi!.onReconnect(mockReconnectCallback)
@@ -264,6 +266,7 @@ describe('SocketProvider reconnect notification', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(mockIo.mock.calls[1][1]).toEqual(
@@ -273,6 +276,7 @@ describe('SocketProvider reconnect notification', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(secondSocket.connect).toHaveBeenCalledTimes(1)
@@ -392,8 +396,8 @@ describe('SocketProvider reconnect notification', () => {
         auth: { token: 'token' },
         autoConnect: false,
         reconnection: false,
-        query: { token: 'token' },
         transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     await waitFor(() => expect(socketApi?.connectionError?.message).toBe('timeout'))
@@ -408,8 +412,8 @@ describe('SocketProvider reconnect notification', () => {
         reconnection: false,
         forceNew: true,
         multiplex: false,
-        query: { token: 'token' },
         transports: ['websocket', 'polling'],
+        tryAllTransports: true,
       })
     )
     expect(secondSocket.connect).toHaveBeenCalledTimes(1)

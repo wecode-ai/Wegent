@@ -228,7 +228,6 @@ if [ -z "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
   WEWORK_CODEX_TARGET="$MACOS_TARGET" pnpm run prepare:codex
 fi
 WEWORK_DWS_TARGET="$MACOS_TARGET" pnpm run prepare:dws
-pnpm run prepare:harness-runtime -- --materialize
 
 if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
   cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
@@ -245,6 +244,8 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
   echo "Error: DWS binary is not executable: $DWS_BINARY_PATH" >&2
   exit 1
 fi
+WEWORK_EXECUTOR_PROFILE=debug pnpm --dir electron prepare:package
+export WEWORK_COMPONENT_RESOURCES_ROOT="$WEWORK_DIR/electron/resources"
 WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
 rm -f "$WEWORK_APP_WATCH_READY_FILE"
 export WEWORK_APP_WATCH_READY_FILE
@@ -267,6 +268,12 @@ if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
   exit 1
 fi
 
+# The parent Wework terminal may expose the release app's Electron-backed Node
+# runtime. A source checkout must create its own Node launcher, while the
+# desktop process itself must always start in Electron app mode.
+unset ELECTRON_RUN_AS_NODE
+unset WEWORK_NODE_PATH
+unset WEWORK_NODE_RUNTIME_KIND
 if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
   pnpm --dir electron dev -- "${ELECTRON_ARGS[@]}"
 else

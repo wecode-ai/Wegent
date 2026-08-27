@@ -92,9 +92,10 @@ async def test_generate_video_returns_validation_error_and_closes_session() -> N
 
 @pytest.mark.asyncio
 async def test_create_async_video_card_returns_validation_error() -> None:
+    create = AsyncMock(side_effect=ValueError("invalid task URL"))
     with patch(
         "app.mcp_server.tools.cards.async_video_card_service.create",
-        new=AsyncMock(side_effect=ValueError("invalid task URL")),
+        new=create,
     ):
         result = await create_async_video_card(
             token_info=TOKEN_INFO,
@@ -102,3 +103,5 @@ async def test_create_async_video_card_returns_validation_error() -> None:
         )
 
     assert result == {"error": "invalid task URL"}
+    assert create.await_args.kwargs["preview_title"] == ""
+    assert create.await_args.kwargs["progress_text"] == ""

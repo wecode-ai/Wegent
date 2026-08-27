@@ -108,7 +108,7 @@ RUN dnf install -y \
     procps-ng iproute lsof less tree unzip ripgrep \
     # Redis server for standalone mode (embedded)
     redis \
-    && npm install -g @anthropic-ai/claude-code@2.1.199 @openai/codex@0.142.5 \
+    && npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.142.5 \
     && dnf clean all \
     && rm -rf /var/cache/dnf/*
 

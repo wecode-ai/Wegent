@@ -440,7 +440,7 @@ class ShellRef(BaseModel):
 
 
 class TeamDisplayConfig(BaseModel):
-    """Team display configuration"""
+    """Team display configuration."""
 
     show_final_answer_only: Optional[bool] = None
 
