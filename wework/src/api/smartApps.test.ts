@@ -16,6 +16,29 @@ describe('createSmartAppsApi', () => {
     expect(get).toHaveBeenCalledWith('/smart-apps/marketplace?q=research&source=official&tag=data')
   })
 
+  test('resolves a Backend artifact path against the connected cloud API', async () => {
+    const post = vi.fn().mockResolvedValue({
+      smartAppId: 3,
+      releaseId: 8,
+      version: '1.0.0',
+      filename: 'research.zip',
+      downloadUrl: '/api/smart-apps/marketplace/3/artifact?token=ticket',
+      sha256: '0'.repeat(64),
+      sizeBytes: 9,
+      expiresAt: '2026-08-27T10:00:00Z',
+    })
+    const api = createSmartAppsApi(
+      { post } as unknown as HttpClient,
+      'https://wegent.intra.weibo.com/api'
+    )
+
+    const descriptor = await api.getDownload(3)
+
+    expect(descriptor.downloadUrl).toBe(
+      'https://wegent.intra.weibo.com/api/smart-apps/marketplace/3/artifact?token=ticket'
+    )
+  })
+
   test('uploads a package before completing the two-phase submission', async () => {
     const post = vi
       .fn()

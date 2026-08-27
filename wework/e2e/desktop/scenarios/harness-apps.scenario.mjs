@@ -244,6 +244,15 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       assert.deepEqual(officialItem?.releaseExtensions?.['com.weibo.build'], {
         pipeline: 'desktop-e2e-official',
       })
+      const officialDownload = await ownerRequest(
+        `/api/smart-apps/marketplace/${officialItem.id}/download`,
+        { method: 'POST' }
+      )
+      assert.match(
+        officialDownload.downloadUrl,
+        new RegExp(`^/api/smart-apps/marketplace/${officialItem.id}/artifact\\?token=`),
+        'Smart app download descriptor did not use the Backend artifact proxy'
+      )
       const [recipient, stranger] = await Promise.all(
         [RECIPIENT_NAME, STRANGER_NAME].map(user_name =>
           ownerRequest('/api/admin/users', {
