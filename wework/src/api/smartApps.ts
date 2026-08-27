@@ -100,7 +100,13 @@ export interface SmartAppSubmissionCompleteResponse {
   item: SmartAppMarketplaceItem | null
 }
 
-export function createSmartAppsApi(client: HttpClient) {
+function resolveSmartAppDownloadUrl(downloadUrl: string, apiBaseUrl: string): string {
+  if (!apiBaseUrl.trim()) return downloadUrl
+  const baseUrl = new URL(apiBaseUrl, window.location.origin)
+  return new URL(downloadUrl, baseUrl).toString()
+}
+
+export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
   const initSubmission = (
     packageInfo: SmartAppPreparedPackage,
     metadata: SmartAppSubmissionMetadata
@@ -146,8 +152,14 @@ export function createSmartAppsApi(client: HttpClient) {
     getItem(id: number) {
       return client.get<SmartAppMarketplaceItem>(`/smart-apps/marketplace/${id}`)
     },
-    getDownload(id: number) {
-      return client.post<SmartAppDownloadDescriptor>(`/smart-apps/marketplace/${id}/download`)
+    async getDownload(id: number) {
+      const descriptor = await client.post<SmartAppDownloadDescriptor>(
+        `/smart-apps/marketplace/${id}/download`
+      )
+      return {
+        ...descriptor,
+        downloadUrl: resolveSmartAppDownloadUrl(descriptor.downloadUrl, apiBaseUrl),
+      }
     },
     getAccess(id: number) {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
