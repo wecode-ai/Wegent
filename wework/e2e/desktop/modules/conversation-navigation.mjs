@@ -839,6 +839,15 @@ async function reopenCurrentTurnNavigationTask(
   const taskId = debugSnapshot.workbench?.currentRuntimeTask?.taskId
   assert.ok(taskId, 'The turn-navigation fixture did not expose its runtime task ID')
 
+  await waitForWorkbenchDebugState(
+    control,
+    snapshot =>
+      snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+      snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+      snapshot.pane?.status?.taskExecution?.running === false,
+    'The turn-navigation fixture did not settle before restarting the application'
+  )
+
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
