@@ -489,6 +489,7 @@ export interface RuntimeProjectRef {
   source?: 'legacy_root' | 'local_project' | 'remote_project' | string
   stateDeviceId?: string | null
   roots?: RuntimeProjectRoot[]
+  sidebarOrder?: number | null
   pinned?: boolean
   pinnedOrder?: number | null
   active?: boolean

@@ -2136,6 +2136,7 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
     const projectSource =
       stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectSidebarOrder = workspace.projectSidebarOrder ?? workspace.project_sidebar_order
     const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
     const rawDefaultProjectSpace = recordValue(
       workspace.defaultProjectSpace ?? workspace.default_project_space
@@ -2214,6 +2215,10 @@ function adaptRuntimeWorkListResponse(
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
           .map(path => ({ kind: 'local', path })),
+        sidebarOrder:
+          typeof projectSidebarOrder === 'number' && Number.isInteger(projectSidebarOrder)
+            ? projectSidebarOrder
+            : null,
         pinned: workspace.projectPinned === true || workspace.project_pinned === true,
         pinnedOrder:
           typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
