@@ -84,6 +84,7 @@ import {
   applyBrandRuntimeEnvironment,
   type BrandRuntimeMetadata,
 } from './runtime/brand-runtime-environment.js'
+import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -94,6 +95,7 @@ const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
+const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
@@ -134,6 +136,7 @@ let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let mainWindowCloseRequestRevision = 0
 let dockVisible = true
+let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
@@ -157,9 +160,14 @@ const appUpdates = new AppUpdateService({
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
+if (keepE2EWindowInBackground) {
+  app.setActivationPolicy('prohibited')
+}
+
 if (!hasSingleInstanceLock) app.quit()
 
 app.on('second-instance', () => {
+  if (keepE2EWindowInBackground) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -675,7 +683,9 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
         if (event === 'closed') mainWindow?.once('closed', listener)
         else mainWindow?.once('ready-to-show', listener)
       },
-      show: () => mainWindow?.show(),
+      show: () => {
+        if (!keepE2EWindowInBackground) mainWindow?.show()
+      },
       webContents: {
         capturePage: async () => {
           if (!mainWindow) throw new Error('Main window is unavailable')
@@ -751,6 +761,10 @@ async function hideMainWindowToBackground(): Promise<void> {
   console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
   target.hide()
   if (process.platform === 'darwin') {
+    if (keepE2EWindowInBackground) {
+      e2eForegroundActivationAllowed = false
+      app.setActivationPolicy('prohibited')
+    }
     app.hide()
     await setDockVisible(false)
   }
@@ -770,6 +784,10 @@ async function cancelMainWindowClose(): Promise<void> {
 async function reactivateMainWindow(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
+  if (keepE2EWindowInBackground) {
+    e2eForegroundActivationAllowed = true
+    app.setActivationPolicy('regular')
+  }
   await setDockVisible(true)
   await loadPrimaryDshView()
   if (target.isMinimized()) target.restore()
@@ -1133,7 +1151,7 @@ function startDesktopRuntime(): Promise<void> {
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
       console.error('[runtime] startup failed', error)
-      mainWindow?.show()
+      if (!keepE2EWindowInBackground) mainWindow?.show()
       void startupSplash?.close().catch(splashError => {
         console.error('[startup-splash] failed to close after runtime failure', splashError)
       })
@@ -1147,6 +1165,11 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    if (keepE2EWindowInBackground) {
+      app.hide()
+      app.dock?.hide()
+      dockVisible = false
+    }
     await cleanupStaleTemporaryImages().catch(error => {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
@@ -1284,12 +1307,17 @@ app.on('window-all-closed', () => {
 })
 
 app.on('activate', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to reactivate main window', error)
   })
 })
 
 app.on('did-become-active', () => {
+  if (keepE2EWindowInBackground && !e2eForegroundActivationAllowed) {
+    app.hide()
+    return
+  }
   if (mainWindow?.isVisible()) return
   void reactivateMainWindow().catch(error => {
     console.error('[window] failed to restore inactive main window', error)
