@@ -57,9 +57,9 @@ EXECUTOR_NON_GIT_WARMPOOL_ENABLED = (
 )
 
 # Git tasks require request-scoped encrypted credentials. Keep this rollout
-# independently configurable so deployments can disable shared warm-pool claims.
+# independently disabled until the executor image contains the secure Git path.
 EXECUTOR_GIT_WARMPOOL_ENABLED = (
-    os.getenv("EXECUTOR_GIT_WARMPOOL_ENABLED", "true").lower() == "true"
+    os.getenv("EXECUTOR_GIT_WARMPOOL_ENABLED", "false").lower() == "true"
 )
 
 # ==================== Executor Manager URLs ====================
