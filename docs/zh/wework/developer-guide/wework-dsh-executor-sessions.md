@@ -39,6 +39,12 @@ Codex 的 `tokenUsage.last` 表示最近一次模型调用的用量；同一 Exe
 `outputTokens` 求差分，再除以采样间隔；不能把多个累计值直接相加。新 turn
 开始后应重置插件自己的差分基线。
 
+Codex 的准确 usage 通常按模型调用结算，不会随每个输出 token 上报。需要更低
+延迟反馈的插件可以同时监听标准 `text-delta` 和 `reasoning-delta` chunk，用
+滑动窗口估算实时生成速度，再用后续 usage 样本校准估算结果。Executor 的流式
+文本和思考 block 会被投影成这两类标准 chunk；工具、计划等非模型文本 block
+不会混入模型输出流。
+
 ```js
 export const inject = ["sessions"];
 

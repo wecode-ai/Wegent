@@ -68,6 +68,84 @@ test('projects executor text, reasoning, usage, and completion into standard ses
   assert.equal(session.events.at(-1).data.reason.kind, 'completed')
 })
 
+test('projects streamed Executor text blocks into standard assistant deltas', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(executorEvent(1, 'response.created', {}))
+  projector.handle(
+    executorEvent(2, 'response.block.created', {
+      block: {
+        id: 'reasoning-1',
+        type: 'thinking',
+        process_kind: 'reasoning',
+        content: 'Inspect',
+        status: 'streaming',
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(3, 'response.block.updated', {
+      block_id: 'reasoning-1',
+      updates: { content_delta: ' logs', status: 'streaming' },
+    })
+  )
+  projector.handle(
+    executorEvent(4, 'response.block.created', {
+      block: {
+        id: 'message-1',
+        type: 'text',
+        process_kind: 'assistant_message',
+        content: 'Fix',
+        status: 'streaming',
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(5, 'response.block.updated', {
+      block_id: 'message-1',
+      updates: { content: 'Fixed', status: 'done' },
+    })
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  const deltas = session.events
+    .filter(
+      event =>
+        event.type === 'assistant/chunk' &&
+        (event.data.chunk.type === 'text-delta' || event.data.chunk.type === 'reasoning-delta')
+    )
+    .map(event => [event.data.chunk.type, event.data.chunk.text])
+  assert.deepEqual(deltas, [
+    ['reasoning-delta', 'Inspect'],
+    ['reasoning-delta', ' logs'],
+    ['text-delta', 'Fix'],
+    ['text-delta', 'ed'],
+  ])
+})
+
+test('ignores non-model workbench blocks in the standard assistant stream', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(
+    executorEvent(1, 'response.block.created', {
+      block: {
+        id: 'tool-1',
+        type: 'tool',
+        content: 'command output',
+        status: 'streaming',
+      },
+    })
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  assert.equal(
+    session.events.some(event => event.type === 'assistant/chunk'),
+    false
+  )
+})
+
 test('keeps parallel executor tasks in independent DSH sessions', () => {
   const sessions = new SessionStoreFixture()
   const projector = new ExecutorSessionProjector(sessions)
