@@ -246,14 +246,21 @@ class TestListNodesInWikispace:
     """Tests for DingTalkWikiSpaceService._list_nodes_in_wikispace."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("node_type", ["folder", "file"])
     async def test_recurses_into_root_folder_and_continues_root_pagination(
         self,
+        node_type: str,
     ) -> None:
         """Lists first page, recurses into folders, then continues root pagination."""
         first_page = _make_mcp_result(
             {
                 "items": [
-                    {"nodeId": "folder-1", "nodeType": "folder", "workspaceId": "WS1"},
+                    {
+                        "nodeId": "folder-1",
+                        "nodeType": node_type,
+                        "workspaceId": "WS1",
+                        "hasChildren": True,
+                    },
                     {"nodeId": "doc-1", "nodeType": "doc", "workspaceId": "WS1"},
                 ],
                 "nextPageToken": "page-2",
@@ -262,7 +269,12 @@ class TestListNodesInWikispace:
         second_page = _make_mcp_result(
             {
                 "items": [
-                    {"nodeId": "folder-2", "nodeType": "folder", "workspaceId": "WS1"},
+                    {
+                        "nodeId": "folder-2",
+                        "nodeType": node_type,
+                        "workspaceId": "WS1",
+                        "hasChildren": True,
+                    },
                     {"nodeId": "doc-2", "nodeType": "doc", "workspaceId": "WS1"},
                 ]
             }

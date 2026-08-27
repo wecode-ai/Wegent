@@ -205,7 +205,8 @@ export function DingtalkDocumentImport({
   }, [availableIds])
   const expandedIds = availableIds.filter(id => selectedIds.has(id))
   const overLimit = expandedIds.length > MAX_IMPORT_DOCUMENTS
-  const visibleIds = collectImportableIds(visibleNodes)
+  // Ancestor documents retained for context are not search matches themselves.
+  const visibleIds = collectImportableIds(visibleNodes, searchQuery)
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
   const toggleSelect = useCallback((ids: string[]) => {

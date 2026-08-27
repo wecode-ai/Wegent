@@ -11,12 +11,15 @@ import { cn } from '@/lib/utils'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 
 /** Import snapshots contain document IDs only; folders are selection shortcuts. */
-export function collectImportableIds(nodes: DingtalkDocNode[]): string[] {
+export function collectImportableIds(nodes: DingtalkDocNode[], query = ''): string[] {
+  const normalized = query.trim().toLowerCase()
   return [
     ...new Set(
       nodes.flatMap(node => [
-        ...(node.node_type === 'doc' ? [node.dingtalk_node_id] : []),
-        ...collectImportableIds(node.children ?? []),
+        ...(node.node_type === 'doc' && node.name.toLowerCase().includes(normalized)
+          ? [node.dingtalk_node_id]
+          : []),
+        ...collectImportableIds(node.children ?? [], normalized),
       ])
     ),
   ]
@@ -68,8 +71,10 @@ function ImportTreeNode({
   const { query, selectedIds, expandedKeys, disabled, onToggle, onExpand } = props
   const searching = Boolean(query.trim())
   const folder = node.node_type === 'folder'
+  const hasChildren = Boolean(node.children?.length)
   const importable = node.node_type === 'doc'
-  const ids = collectImportableIds([node])
+  // A document selects itself; only folders are bulk-selection shortcuts.
+  const ids = folder ? collectImportableIds([node]) : importable ? [node.dingtalk_node_id] : []
   const count = ids.filter(id => selectedIds.has(id)).length
   const checked = ids.length > 0 && count === ids.length
   const mixed = count > 0 && !checked
@@ -91,7 +96,7 @@ function ImportTreeNode({
           className="pointer-events-none absolute bottom-0 right-0 h-px bg-border"
           style={{ left: depth * 16 + 44 }}
         />
-        {folder ? (
+        {folder || hasChildren ? (
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-muted focus-visible:outline-primary"
@@ -104,7 +109,7 @@ function ImportTreeNode({
             )}
             disabled={disabled || !node.children?.length || searching}
             onClick={() => onExpand(key)}
-            data-testid={`dingtalk-folder-navigate-${node.dingtalk_node_id}`}
+            data-testid={`${folder ? 'dingtalk-folder-navigate' : 'dingtalk-node-expand'}-${node.dingtalk_node_id}`}
           >
             <ChevronRight className={cn('h-4 w-4', open && 'rotate-90')} />
           </button>
@@ -148,8 +153,7 @@ function ImportTreeNode({
           </span>
         )}
       </div>
-      {folder &&
-        open &&
+      {open &&
         node.children?.map(child => (
           <ImportTreeNode
             key={`${child.source}:${child.dingtalk_node_id}`}

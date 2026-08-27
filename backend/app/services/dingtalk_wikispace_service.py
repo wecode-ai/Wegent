@@ -302,9 +302,9 @@ class DingTalkWikiSpaceService:
 
         all_nodes.extend(first_batch)
 
-        # Recurse into sub-folders found in the first batch.
+        # Recurse into folders and documents reporting children.
         for node in first_batch:
-            if node.get("nodeType") == "folder":
+            if node.get("nodeType") == "folder" or node.get("hasChildren") is True:
                 ws_id = node.get("workspaceId") or workspace_id
                 node_id = node.get("nodeId")
                 if not node_id:
@@ -335,7 +335,7 @@ class DingTalkWikiSpaceService:
 
             all_nodes.extend(batch)
             for node in batch:
-                if node.get("nodeType") == "folder":
+                if node.get("nodeType") == "folder" or node.get("hasChildren") is True:
                     ws_id = node.get("workspaceId") or workspace_id
                     node_id = node.get("nodeId")
                     if not node_id:

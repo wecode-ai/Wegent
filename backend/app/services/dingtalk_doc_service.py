@@ -154,7 +154,7 @@ class DingTalkDocService:
     ) -> None:
         """Recursively list nodes from the MCP server.
 
-        Traverses folders by calling list_nodes for each folder found.
+        Traverses folders and any node explicitly reporting children.
 
         The DingTalk MCP list_nodes tool does NOT return parent node information
         in the node data. Instead, the parent relationship is implicit: when we
@@ -197,11 +197,10 @@ class DingTalkDocService:
 
             all_nodes.extend(nodes_data)
 
-            # Recursively traverse all folders regardless of hasChildren flag,
-            # because the DingTalk MCP API may not reliably set hasChildren=True
-            # even when a folder contains children.
+            # Documents (reported as files by MCP) can also contain children.
+            # Always traverse folders: their hasChildren flag is unreliable.
             for node in nodes_data:
-                if node.get("nodeType") == "folder":
+                if node.get("nodeType") == "folder" or node.get("hasChildren") is True:
                     node_id = node.get("nodeId", "")
                     ws_id = node.get("workspaceId") or workspace_id
                     await DingTalkDocService._list_nodes_recursive(

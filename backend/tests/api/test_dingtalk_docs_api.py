@@ -100,10 +100,15 @@ class TestGetDingtalkDocs:
         assert data["nodes"][0]["node_type"] == "folder"
         assert data["nodes"][1]["name"] == "Doc A"
 
+    @pytest.mark.parametrize("parent_type", ["folder", "doc"])
     def test_returns_nested_tree_structure(
-        self, dingtalk_client: TestClient, test_db: Session, test_user: User
+        self,
+        dingtalk_client: TestClient,
+        test_db: Session,
+        test_user: User,
+        parent_type: str,
     ) -> None:
-        """Returns tree structure with children nested under parent folders."""
+        """Returns children under folders and documents without changing their type."""
         parent_id = "a" * 32
         child_dingtalk_id = "b" * 32
 
@@ -111,8 +116,8 @@ class TestGetDingtalkDocs:
             test_db,
             test_user.id,
             parent_id,
-            name="Parent Folder",
-            node_type="folder",
+            name="Parent Node",
+            node_type=parent_type,
         )
         _create_synced_node(
             test_db,
@@ -129,12 +134,12 @@ class TestGetDingtalkDocs:
         data = response.json()
         assert data["total_count"] == 2
 
-        # Root should have only the folder
+        # Root should have only the parent node.
         assert len(data["nodes"]) == 1
         root = data["nodes"][0]
-        assert root["name"] == "Parent Folder"
-        assert root["node_type"] == "folder"
-        # Child should be nested under the folder
+        assert root["name"] == "Parent Node"
+        assert root["node_type"] == parent_type
+        # Child should be nested under the parent.
         assert len(root["children"]) == 1
         assert root["children"][0]["name"] == "Child Doc"
 

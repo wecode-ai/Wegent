@@ -655,6 +655,64 @@ class TestListNodesRecursive:
     """Tests for _list_nodes_recursive - verifies folder traversal behavior."""
 
     @pytest.mark.asyncio
+    async def test_recurses_into_document_with_children(self) -> None:
+        """Online documents can be parents even when MCP calls them files."""
+        import json
+        from unittest.mock import AsyncMock
+
+        parent = {
+            "nodeId": "parent-doc",
+            "name": "Parent document",
+            "nodeType": "file",
+            "contentType": "ALIDOC",
+            "extension": "adoc",
+            "hasChildren": True,
+            "workspaceId": "workspace-1",
+        }
+        children = [
+            {
+                "nodeId": node_id,
+                "name": node_id,
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+                "hasChildren": False,
+            }
+            for node_id in ("child-week", "child-untitled")
+        ]
+        responses = {
+            None: [parent],
+            "parent-doc": children,
+        }
+
+        async def list_nodes(tool_name: str, args: dict) -> MagicMock:
+            result = MagicMock()
+            result.meta = None
+            result.content = [
+                MagicMock(type="text", text=json.dumps(responses[args.get("folderId")]))
+            ]
+            return result
+
+        session = MagicMock()
+        session.call_tool = AsyncMock(side_effect=list_nodes)
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            session, None, None, all_nodes, depth=0
+        )
+
+        assert [node["nodeId"] for node in all_nodes] == [
+            "parent-doc",
+            "child-week",
+            "child-untitled",
+        ]
+        assert all(node["parentId"] == "parent-doc" for node in all_nodes[1:])
+        assert session.call_tool.call_count == 2
+        session.call_tool.assert_any_await(
+            "list_nodes",
+            {"pageSize": 50, "folderId": "parent-doc", "workspaceId": "workspace-1"},
+        )
+
+    @pytest.mark.asyncio
     async def test_recurses_into_folder_without_has_children_flag(self) -> None:
         """Folders are recursed into even when hasChildren is absent or False.
 

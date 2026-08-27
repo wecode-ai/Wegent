@@ -384,6 +384,72 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.queryByTestId('dingtalk-document-option-doc-3')).not.toBeInTheDocument()
   })
 
+  it('shows matching child documents nested under a document rather than a folder', async () => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({ createdCount: 1 })
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        docNode('parent-doc', '无标题文档(3)', {
+          children: [
+            docNode('child-week', '8-12周执行版'),
+            docNode('child-untitled', '无标题文档'),
+          ],
+        }),
+      ],
+      total_count: 3,
+    })
+    await openDingtalkMode({ onDingtalkImport })
+    fireEvent.change(screen.getByTestId('dingtalk-import-search'), {
+      target: { value: '8-12周执行版' },
+    })
+    expect(screen.getByTestId('dingtalk-document-option-parent-doc')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-document-option-child-week')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-document-option-child-untitled')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-import-select-all'))
+    expect(screen.getByTestId('dingtalk-node-select-parent-doc')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['child-week']))
+  })
+
+  it('expands document children while selecting parent and child documents independently', async () => {
+    const onDingtalkImport = jest.fn().mockResolvedValue({ createdCount: 1 })
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        folderNode('folder-1', 'Project', [
+          docNode('parent-doc', '无标题文档(3)', {
+            children: [
+              docNode('child-week', '8-12周执行版'),
+              docNode('child-untitled', '无标题文档'),
+            ],
+          }),
+        ]),
+      ],
+      total_count: 4,
+    })
+    await openDingtalkMode({ onDingtalkImport })
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-folder-1'))
+    expect(screen.queryByTestId('dingtalk-document-option-child-week')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-node-expand-parent-doc'))
+    expect(screen.getByTestId('dingtalk-document-option-child-week')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-document-option-child-untitled')).toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 0')
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-folder-1'))
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 3')
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-parent-doc'))
+    expect(screen.getByTestId('dingtalk-node-select-child-week')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+    expect(screen.getByTestId('dingtalk-import-selected-count')).toHaveTextContent('Selected: 2')
+    fireEvent.click(screen.getByTestId('dingtalk-node-select-child-untitled'))
+    fireEvent.click(screen.getByTestId('dingtalk-node-expand-parent-doc'))
+    expect(screen.queryByTestId('dingtalk-document-option-child-week')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledWith(['child-week']))
+  })
+
   it('shows unsupported resources as visible but not selectable', async () => {
     await openDingtalkMode()
 
