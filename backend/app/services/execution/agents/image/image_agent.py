@@ -22,6 +22,7 @@ from app.core.shutdown import shutdown_manager
 from app.services.context import context_service
 from shared.models import EventType, ExecutionEvent, ExecutionRequest
 from shared.prompts.constants import normalize_generation_prompt
+from shared.telemetry.decorators import trace_async
 
 from ...emitters import ResultEmitter
 from ..base import PollingAgent
@@ -47,6 +48,15 @@ class ImageAgent(PollingAgent):
     def name(self) -> str:
         return "ImageAgent"
 
+    @trace_async(
+        "image_agent.execute",
+        "backend.execution.image",
+        extract_attributes=lambda self, request, emitter: {
+            "task.id": str(request.task_id),
+            "subtask.id": str(request.subtask_id),
+            "attachment.count": len(request.attachments or []),
+        },
+    )
     async def execute(
         self,
         request: ExecutionRequest,

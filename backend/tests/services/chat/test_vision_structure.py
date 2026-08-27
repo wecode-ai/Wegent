@@ -5,6 +5,7 @@
 """Tests for _build_vision_structure and _combine_text_contents in contexts module."""
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -119,7 +120,7 @@ class TestCombineTextContents:
         assert result[1]["text"] == "Q"
 
 
-def _image_context(**overrides):
+def _image_context(**overrides: Any) -> SimpleNamespace:
     data = {
         "id": 41,
         "context_type": "attachment",
@@ -135,7 +136,10 @@ def _image_context(**overrides):
 
 
 class TestProcessAttachmentContext:
-    def test_image_generation_model_uses_reference_image_capability(self, caplog):
+    def test_image_generation_model_uses_reference_image_capability(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         caplog.set_level(
             "INFO",
             logger="app.services.chat.preprocessing.contexts",
@@ -175,8 +179,9 @@ class TestProcessAttachmentContext:
         ],
     )
     def test_image_generation_model_rejects_unsupported_reference_image(
-        self, image_config
-    ):
+        self,
+        image_config: dict[str, Any],
+    ) -> None:
         text_contents: list[str] = []
         image_contents: list[dict] = []
 
@@ -203,8 +208,9 @@ class TestProcessAttachmentContext:
         ],
     )
     def test_image_generation_model_allows_reference_image_by_default(
-        self, image_config
-    ):
+        self,
+        image_config: dict[str, Any],
+    ) -> None:
         text_contents: list[str] = []
         image_contents: list[dict] = []
 
@@ -230,8 +236,10 @@ class TestProcessAttachmentContext:
         ],
     )
     def test_chat_model_requires_declared_image_capability(
-        self, model_capabilities, expected_image_count
-    ):
+        self,
+        model_capabilities: dict[str, bool],
+        expected_image_count: int,
+    ) -> None:
         text_contents: list[str] = []
         image_contents: list[dict] = []
 
