@@ -51,6 +51,7 @@ export function useWorkbenchSplitGroups({
     )
   })
   const stateRef = useRef(state)
+  const previousActivePaneKeyRef = useRef(activePaneKey)
   useLayoutEffect(() => {
     stateRef.current = state
   }, [state])
@@ -74,6 +75,8 @@ export function useWorkbenchSplitGroups({
   }, [state, storageKey])
 
   useEffect(() => {
+    if (activePaneKey === previousActivePaneKeyRef.current) return
+    previousActivePaneKeyRef.current = activePaneKey
     commit(current => activateWorkbenchPane(current, activePaneKey))
   }, [activePaneKey, commit])
 
