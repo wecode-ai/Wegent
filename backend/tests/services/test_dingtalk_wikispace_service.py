@@ -37,6 +37,7 @@ def _make_mcp_result(data: object, *, is_error: bool = False) -> MagicMock:
     result = MagicMock()
     result.content = [_make_text_content(data)]
     result.isError = is_error
+    result.meta = None
     return result
 
 
@@ -338,12 +339,22 @@ class TestListNodesInWikispace:
         # parentId is set to workspace_id for root-level nodes to ensure
         # the directory tree correctly shows them under the KB folder.
         assert all_nodes == [
-            {"nodeType": "folder", "workspaceId": "WS1", "parentId": "WS1"},
+            {
+                "nodeType": "folder",
+                "workspaceId": "WS1",
+                "parentId": "WS1",
+                "_raw_metadata": {"nodeType": "folder", "workspaceId": "WS1"},
+            },
             {
                 "nodeId": "doc-1",
                 "nodeType": "doc",
                 "workspaceId": "WS1",
                 "parentId": "WS1",
+                "_raw_metadata": {
+                    "nodeId": "doc-1",
+                    "nodeType": "doc",
+                    "workspaceId": "WS1",
+                },
             },
         ]
         mock_recursive.assert_not_awaited()
@@ -483,7 +494,14 @@ class TestParseListNodesResult:
             _make_mcp_result({"items": [{alias: 123, "name": "Document"}]})
         )
 
-        assert result == [{alias: 123, "name": "Document", "nodeId": "123"}]
+        assert result == [
+            {
+                alias: 123,
+                "name": "Document",
+                "nodeId": "123",
+                "_raw_metadata": {alias: 123, "name": "Document"},
+            }
+        ]
 
     def test_does_not_use_workspace_id_as_document_id(self) -> None:
         """A document cannot borrow its containing workspace's identity."""

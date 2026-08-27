@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Persist the source extension for DingTalk document import classification."""
+"""Cache the original MCP directory node metadata."""
 
 import sqlalchemy as sa
 
@@ -17,9 +17,9 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "dingtalk_synced_nodes",
-        sa.Column("extension", sa.String(32), nullable=False, server_default=""),
+        sa.Column("raw_metadata", sa.JSON(), nullable=True),
     )
 
 
 def downgrade() -> None:
-    op.drop_column("dingtalk_synced_nodes", "extension")
+    op.drop_column("dingtalk_synced_nodes", "raw_metadata")

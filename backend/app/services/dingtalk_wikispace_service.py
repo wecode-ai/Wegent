@@ -245,14 +245,8 @@ class DingTalkWikiSpaceService:
                     result = await session.call_tool(MCP_TOOL_LIST_WIKI_SPACES, args)
 
                     batch, page_token = DingTalkDocService._parse_list_nodes_result(
-                        result
+                        result, allow_workspace_id=True
                     )
-                    batch = [
-                        DingTalkDocService._normalize_mcp_node(
-                            node, allow_workspace_id=True
-                        )
-                        for node in batch
-                    ]
                     kb_nodes.extend(batch)
                     if not page_token:
                         break

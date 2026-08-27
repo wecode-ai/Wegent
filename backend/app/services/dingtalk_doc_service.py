@@ -10,11 +10,13 @@ Uses the MCP client protocol to connect to the user's DingTalk Docs MCP server U
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
@@ -232,7 +234,8 @@ class DingTalkDocService:
     def _normalize_mcp_node(
         node: dict[str, Any], *, allow_workspace_id: bool = False
     ) -> dict[str, Any]:
-        """Return an MCP node with its provider identifier normalized to nodeId."""
+        """Keep the upstream snapshot separate from locally normalized fields."""
+        normalized = {**node, "_raw_metadata": dict(node)}
         id_keys = (
             ["workspaceId", "nodeId", "id", "dingtalk_node_id"]
             if allow_workspace_id
@@ -245,13 +248,16 @@ class DingTalkDocService:
                 continue
             node_id = str(value).strip()
             if node_id:
-                return {**node, "nodeId": node_id}
+                normalized["nodeId"] = node_id
+                break
 
-        return dict(node)
+        return normalized
 
     @staticmethod
     def _parse_list_nodes_result(
         result: Any,
+        *,
+        allow_workspace_id: bool = False,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """Parse the result from MCP list_nodes tool call.
 
@@ -261,8 +267,6 @@ class DingTalkDocService:
 
         Returns a tuple of (nodes, next_page_token).
         """
-        import json
-
         nodes: list[dict[str, Any]] = []
         next_page_token: str | None = None
 
@@ -295,7 +299,9 @@ class DingTalkDocService:
                 if isinstance(data, list):
                     # Direct list of node objects
                     nodes.extend(
-                        DingTalkDocService._normalize_mcp_node(item)
+                        DingTalkDocService._normalize_mcp_node(
+                            item, allow_workspace_id=allow_workspace_id
+                        )
                         for item in data
                         if isinstance(item, dict)
                     )
@@ -306,7 +312,9 @@ class DingTalkDocService:
                         candidate = data.get(key)
                         if isinstance(candidate, list):
                             found_list = [
-                                DingTalkDocService._normalize_mcp_node(item)
+                                DingTalkDocService._normalize_mcp_node(
+                                    item, allow_workspace_id=allow_workspace_id
+                                )
                                 for item in candidate
                                 if isinstance(item, dict)
                             ]
@@ -440,7 +448,7 @@ class DingTalkDocService:
             )
             workspace_id = node_data.get("workspaceId") or ""
             content_type = node_data.get("contentType") or ""
-            extension = str(node_data.get("extension") or "").strip().lower()
+            raw_metadata = node_data.get("_raw_metadata", node_data)
             content_updated_at = DingTalkDocService._parse_update_time(
                 node_data.get("updateTime"), sync_time
             )
@@ -469,8 +477,12 @@ class DingTalkDocService:
                 if existing.content_type != content_type:
                     existing.content_type = content_type
                     changed = True
-                if existing.extension != extension:
-                    existing.extension = extension
+                if json.dumps(existing.raw_metadata, sort_keys=True) != json.dumps(
+                    raw_metadata, sort_keys=True
+                ):
+                    existing.raw_metadata = raw_metadata
+                    # Python/ORM equality conflates JSON booleans and numbers.
+                    flag_modified(existing, "raw_metadata")
                     changed = True
                 if existing.content_updated_at != content_updated_at:
                     existing.content_updated_at = content_updated_at
@@ -496,7 +508,7 @@ class DingTalkDocService:
                     node_type=node_type,
                     workspace_id=workspace_id,
                     content_type=content_type,
-                    extension=extension,
+                    raw_metadata=raw_metadata,
                     content_updated_at=content_updated_at,
                     is_active=True,
                     last_synced_at=sync_time,
@@ -507,14 +519,16 @@ class DingTalkDocService:
 
         try:
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
-            logger.exception(
-                "Failed to commit synced nodes for user %s (source=%s)",
+            logger.error(
+                "Failed to commit synced nodes for user %s (source=%s, error=%s)",
                 user_id,
                 source_value,
+                type(exc).__name__,
             )
-            raise
+            # Database errors may embed the complete raw metadata in SQL parameters.
+            raise RuntimeError("Failed to persist DingTalk directory nodes") from None
 
         total = (
             db.query(DingtalkSyncedNode)

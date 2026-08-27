@@ -204,7 +204,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             parent_node_id="",
             node_type="doc",
             content_type="ALIDOC",
-            extension="adoc",
+            raw_metadata={"extension": "adoc"},
             workspace_id="",
             is_active=True,
             last_synced_at=datetime.now(timezone.utc),

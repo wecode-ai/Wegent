@@ -17,8 +17,9 @@ import aiohttp
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.dingtalk_doc import DingtalkSyncedNode
+from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
 from app.models.user import User
+from app.schemas.dingtalk_doc import DingtalkDocNode
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
 from app.services.knowledge.external_document_providers import (
@@ -410,6 +411,7 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
 @pytest.mark.parametrize(
     "cached_type, cached_content_type, cached_extension",
     [
+        ("doc", "ALIDOC", None),
         ("doc", "ALIDOC", ""),
         ("file", "ALIDOC", ""),
         ("doc", "ALIDOC", "axls"),
@@ -422,7 +424,7 @@ async def test_manual_refresh_makes_online_document_importable_in_place(
     docs_mcp: McpFixture,
     cached_type: str,
     cached_content_type: str,
-    cached_extension: str,
+    cached_extension: str | None,
 ) -> None:
     responses, _ = docs_mcp
     node = DingtalkSyncedNode(
@@ -432,7 +434,11 @@ async def test_manual_refresh_makes_online_document_importable_in_place(
         doc_url="https://alidocs.dingtalk.com/i/nodes/online-doc",
         node_type=cached_type,
         content_type=cached_content_type,
-        extension=cached_extension,
+        raw_metadata=(
+            None
+            if cached_extension is None
+            else {"extension": cached_extension} if cached_extension else {}
+        ),
         last_synced_at=datetime.now(),
     )
     test_db.add(node)
@@ -646,3 +652,75 @@ async def test_empty_or_invalid_markdown_is_not_imported(
 
     with pytest.raises(ExternalDocumentFetchError, match="empty or unreadable"):
         await online_source.fetch_content(test_db, test_user, "online-doc")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", list(DingTalkNodeSource))
+async def test_sync_preserves_original_metadata_and_replaces_snapshot(
+    source: DingTalkNodeSource, test_db: Session, test_user: User, docs_mcp: McpFixture
+) -> None:
+    """Both sync paths retain upstream JSON before ID/parent normalization."""
+    root = {"workspaceId": " WS1 ", "name": "Knowledge", "unknown": [1, None]}
+    parent = {"nodeId": "parent", "name": "Parent", "nodeType": "folder"}
+    child = {
+        "id": " child ",
+        "name": "Document",
+        "nodeType": "file",
+        "extension": " PDF ",
+        "updateTime": 1700000000,
+        "flag": True,
+        "unknown": {"values": [False, None, "原始内容"]},
+        "_raw_metadata": "upstream field must not collide",
+    }
+
+    responses, _ = docs_mcp
+    responses["list_wikiSpaces"] = {"items": [root]}
+    responses["list_nodes"] = lambda args: {
+        "items": [child] if args.get("folderId") else [parent]
+    }
+    sync = (
+        DingTalkDocService.sync_dingtalk_docs
+        if source == DingTalkNodeSource.DOCS
+        else DingTalkWikiSpaceService.sync_wikispace_nodes
+    )
+    await sync(test_user, test_db)
+    test_db.expire_all()
+    node = (
+        test_db.query(DingtalkSyncedNode)
+        .filter_by(user_id=test_user.id, source=source.value, dingtalk_node_id="child")
+        .one()
+    )
+    assert node.raw_metadata == child
+    assert node.parent_node_id == "parent"
+    payload = DingtalkDocNode.model_validate(node).model_dump()
+    assert payload["extension"] == "pdf"
+    assert "raw_metadata" not in payload
+    if source == DingTalkNodeSource.WIKISPACE:
+        cached_root = (
+            test_db.query(DingtalkSyncedNode)
+            .filter_by(
+                user_id=test_user.id, source=source.value, dingtalk_node_id="WS1"
+            )
+            .one()
+        )
+        assert cached_root.raw_metadata == root
+
+    # JSON boolean and number values are distinct even though True == 1.
+    child["flag"] = 1
+    await sync(test_user, test_db)
+    test_db.refresh(node)
+    assert type(node.raw_metadata["flag"]) is int
+
+    # A refresh replaces metadata even when indexed fields are unchanged.
+    child.pop("unknown")
+    child["newField"] = {"version": 2}
+    await sync(test_user, test_db)
+    test_db.refresh(node)
+    assert node.raw_metadata == child
+    assert node.extension == "pdf"
+
+    child.pop("extension")
+    await sync(test_user, test_db)
+    test_db.refresh(node)
+    assert node.raw_metadata == child
+    assert DingtalkDocNode.model_validate(node).extension == ""

@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the extension migration through Alembic against a legacy cache."""
+"""Run the metadata migration through Alembic against a legacy cache."""
 
 from pathlib import Path
 
@@ -44,10 +44,27 @@ def test_upgrade_head_and_rollback_preserve_cached_nodes(tmp_path, monkeypatch) 
 
     with engine.connect() as connection:
         assert connection.execute(
-            sa.text("SELECT extension FROM dingtalk_synced_nodes ORDER BY id")
-        ).scalars().all() == ["", ""]
+            sa.text("SELECT raw_metadata FROM dingtalk_synced_nodes ORDER BY id")
+        ).scalars().all() == [None, None]
+    columns = {
+        column["name"]
+        for column in sa.inspect(engine).get_columns("dingtalk_synced_nodes")
+    }
+    assert "extension" not in columns
+    table = sa.Table("dingtalk_synced_nodes", sa.MetaData(), autoload_with=engine)
+    with engine.begin() as connection:
+        connection.execute(
+            table.update()
+            .where(table.c.id == 1)
+            .values(
+                raw_metadata={"extension": "adoc", "unknown": {"values": [1, None]}}
+            )
+        )
+        assert connection.execute(
+            sa.select(table.c.raw_metadata).where(table.c.id == 1)
+        ).scalar_one() == {"extension": "adoc", "unknown": {"values": [1, None]}}
     command.downgrade(config, "c5d6e7f8a9b0")
-    assert "extension" not in {
+    assert "raw_metadata" not in {
         column["name"]
         for column in sa.inspect(engine).get_columns("dingtalk_synced_nodes")
     }

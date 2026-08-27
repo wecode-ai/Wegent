@@ -44,7 +44,7 @@ def create_synced_node(
         parent_node_id="",
         node_type=node_type,
         content_type="ALIDOC" if node_type == "doc" else "",
-        extension="adoc" if node_type == "doc" else "",
+        raw_metadata={"extension": "adoc" if node_type == "doc" else ""},
         workspace_id="",
         is_active=is_active,
         last_synced_at=datetime.now(timezone.utc),

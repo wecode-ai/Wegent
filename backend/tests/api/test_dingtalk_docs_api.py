@@ -5,11 +5,12 @@
 """API tests for DingTalk synced document endpoints."""
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -17,6 +18,7 @@ from app.api.endpoints.dingtalk_docs import router
 from app.core import security
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.user import User
+from app.services.dingtalk_doc_service import DingTalkDocService
 
 
 @pytest.fixture
@@ -175,6 +177,40 @@ class TestGetDingtalkDocs:
 @pytest.mark.api
 class TestSyncDingtalkDocs:
     """Tests for POST /dingtalk-docs/sync."""
+
+    def test_commit_failure_does_not_log_raw_metadata(
+        self, dingtalk_client: TestClient, test_db: Session, caplog
+    ) -> None:
+        """Service and API logs must not leak directory metadata in SQL errors."""
+        marker = "private-metadata-test-marker"
+        node = {"nodeId": "doc", "name": "Document", "unknown": marker}
+        error = StatementError(
+            "Database rejected write",
+            "INSERT INTO dingtalk_synced_nodes ...",
+            {"raw_metadata": node},
+            ValueError("Database rejected write"),
+        )
+        with (
+            patch.object(
+                DingTalkDocService,
+                "get_user_dingtalk_mcp_url",
+                return_value="https://docs.example.test",
+            ),
+            patch.object(
+                DingTalkDocService,
+                "_fetch_all_nodes",
+                new=AsyncMock(return_value=[node]),
+            ),
+            patch.object(test_db, "commit", side_effect=error),
+            patch.object(test_db, "rollback", wraps=test_db.rollback) as rollback,
+        ):
+            response = dingtalk_client.post("/dingtalk-docs/sync")
+
+        assert response.status_code == 500
+        assert marker not in response.text
+        assert marker not in caplog.text
+        assert "StatementError" in caplog.text
+        rollback.assert_called_once()
 
     @patch(
         "app.api.endpoints.dingtalk_docs.DingTalkDocService.is_configured",
