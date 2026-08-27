@@ -638,18 +638,12 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         uiTimeoutMs,
         'Returning to the Smart app development task did not restore its native browser'
       )
+      await control.command('waitFor', '[data-testid^="right-workspace-browser-tab-"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
-        `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
-          '[data-testid^="right-workspace-browser-tab-"]',
-        {
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      await control.command(
-        'waitFor',
-        `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
-          '[data-testid^="right-workspace-browser-tab-"][data-testid$="-close-button"]',
+        '[data-testid^="right-workspace-browser-tab-"][data-testid$="-close-button"]',
         {
           timeoutMs: uiTimeoutMs,
         }
