@@ -138,23 +138,6 @@ def read_manifest(
             response.release_conn()
 
 
-def read_text_object(
-    client: Minio, bucket: str, prefix: str, filename: str
-) -> str | None:
-    response = None
-    try:
-        response = client.get_object(bucket, storage_key(prefix, filename))
-        return response.read().decode("utf-8")
-    except S3Error as error:
-        if error.code in {"NoSuchKey", "NoSuchObject"}:
-            return None
-        raise
-    finally:
-        if response is not None:
-            response.close()
-            response.release_conn()
-
-
 def version_parts(version: str) -> tuple[int, int, int, int, int]:
     match = VERSION_PATTERN.fullmatch(version)
     if match is None:
@@ -174,21 +157,9 @@ def upload_channel_manifest(
     bucket: str,
     prefix: str,
     path: Path,
-    replace_only_if_newer: bool = False,
 ) -> None:
     if not path.is_file():
         raise SystemExit(f"Updater channel manifest not found: {path}")
-    candidate = json.loads(path.read_text(encoding="utf-8"))
-    if replace_only_if_newer:
-        current = read_manifest(client, bucket, prefix, path.name)
-        if current is not None and version_parts(candidate["version"]) <= version_parts(
-            current["version"]
-        ):
-            print(
-                f"Keeping newer or equal channel manifest: "
-                f"s3://{bucket}/{storage_key(prefix, path.name)}"
-            )
-            return
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
 
 
@@ -197,6 +168,7 @@ def release_advances_channel(
     bucket: str,
     prefix: str,
     path: Path,
+    required_objects: tuple[tuple[str, str], ...] = (),
 ) -> bool:
     if not path.is_file():
         raise SystemExit(f"Updater channel manifest not found: {path}")
@@ -204,21 +176,50 @@ def release_advances_channel(
     current = read_manifest(client, bucket, prefix, path.name)
     if current is None:
         return True
-    advances = version_parts(candidate["version"]) > version_parts(current["version"])
-    if not advances:
+    candidate_version = candidate["version"]
+    current_version = current["version"]
+    if version_parts(candidate_version) > version_parts(current_version):
+        return True
+
+    complete = all(
+        object_exists(client, bucket, object_prefix, filename)
+        for object_prefix, filename in required_objects
+    )
+    if candidate_version == current_version and not complete:
         print(
-            f"Keeping newer or equal release channel: "
+            f"Repairing incomplete release channel at {candidate_version}: "
             f"s3://{bucket}/{storage_key(prefix, path.name)}"
         )
-    return advances
+        return True
+    if (
+        version_parts(current_version) > version_parts(candidate_version)
+        and not complete
+    ):
+        raise SystemExit(
+            f"Newer release channel {current_version} is incomplete; "
+            f"refusing to replace it with {candidate_version}"
+        )
+
+    print(
+        f"Keeping newer or equal release channel: "
+        f"s3://{bucket}/{storage_key(prefix, path.name)}"
+    )
+    return False
 
 
-def electron_manifest_version(content: str, path: Path | None = None) -> str:
-    match = re.search(r"(?m)^version:\s*['\"]?([^'\"\s]+)", content)
-    if match is None:
-        location = f" {path}" if path is not None else ""
-        raise SystemExit(f"Electron updater manifest{location} has no version")
-    return match.group(1)
+def object_exists(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    filename: str,
+) -> bool:
+    try:
+        client.stat_object(bucket, storage_key(prefix, filename))
+        return True
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return False
+        raise
 
 
 def upload_electron_manifest(
@@ -226,23 +227,36 @@ def upload_electron_manifest(
     bucket: str,
     prefix: str,
     path: Path,
-    replace_only_if_newer: bool = False,
 ) -> None:
     if not path.is_file():
         raise SystemExit(f"Electron updater manifest not found: {path}")
-    candidate = path.read_text(encoding="utf-8")
-    candidate_version = electron_manifest_version(candidate, path)
-    if replace_only_if_newer:
-        current = read_text_object(client, bucket, prefix, path.name)
-        if current is not None and version_parts(candidate_version) <= version_parts(
-            electron_manifest_version(current)
-        ):
-            print(
-                f"Keeping newer or equal Electron manifest: "
-                f"s3://{bucket}/{storage_key(prefix, path.name)}"
-            )
-            return
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
+
+
+def publish_channel(
+    client: Minio,
+    bucket: str,
+    release_prefix: str,
+    manifest_prefix: str,
+    output_dir: Path,
+    channel: str,
+    platform: str,
+) -> bool:
+    operating_system, architecture = platform.split("-", 1)
+    channel_manifest = output_dir / f"{channel}-{operating_system}-{architecture}.json"
+    electron_channel = "latest" if channel == "stable" else "beta"
+    electron_manifest = output_dir / f"{electron_channel}-mac.yml"
+    if not release_advances_channel(
+        client,
+        bucket,
+        manifest_prefix,
+        channel_manifest,
+        ((release_prefix, electron_manifest.name),),
+    ):
+        return False
+    upload_electron_manifest(client, bucket, release_prefix, electron_manifest)
+    upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
+    return True
 
 
 def publish_legacy_manifest(
@@ -348,57 +362,38 @@ def main() -> None:
         raise SystemExit(f"Updater manifest not found: {manifest}")
     validate_manifest(manifest, version, expected_platforms)
 
-    advanced_channel = False
+    stable_advanced = False
     for platform in expected_platforms:
-        operating_system, architecture = platform.split("-", 1)
-        channel_manifest = (
-            output_dir / f"{channel}-{operating_system}-{architecture}.json"
-        )
-        if not release_advances_channel(
-            client,
-            bucket,
-            manifest_prefix,
-            channel_manifest,
-        ):
-            continue
-        advanced_channel = True
-        upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
-        if channel == "stable":
-            beta_manifest = output_dir / f"beta-{operating_system}-{architecture}.json"
-            upload_channel_manifest(
-                client,
-                bucket,
-                manifest_prefix,
-                beta_manifest,
-                replace_only_if_newer=True,
-            )
-
-    if not advanced_channel:
-        return
-    electron_channel = "latest" if channel == "stable" else "beta"
-    upload_electron_manifest(
-        client,
-        bucket,
-        prefix,
-        output_dir / f"{electron_channel}-mac.yml",
-    )
-    if channel == "stable":
-        upload_electron_manifest(
+        advanced = publish_channel(
             client,
             bucket,
             prefix,
-            output_dir / "beta-mac.yml",
-            replace_only_if_newer=True,
+            manifest_prefix,
+            output_dir,
+            channel,
+            platform,
         )
-        publish_latest_dmg(client, bucket, prefix, version, artifacts)
-        upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
-        print(
-            "Published the per-architecture legacy manifest after its release assets."
-        )
-        if len(expected_platforms) == 1 and expected_platforms.issubset(
-            MACOS_PLATFORM_PREFIXES
-        ):
-            publish_legacy_manifest(client, bucket, version, manifest_prefix)
+        if channel == "stable":
+            stable_advanced = stable_advanced or advanced
+            publish_channel(
+                client,
+                bucket,
+                prefix,
+                manifest_prefix,
+                output_dir,
+                "beta",
+                platform,
+            )
+
+    if channel != "stable" or not stable_advanced:
+        return
+    publish_latest_dmg(client, bucket, prefix, version, artifacts)
+    upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
+    print("Published the per-architecture legacy manifest after its release assets.")
+    if len(expected_platforms) == 1 and expected_platforms.issubset(
+        MACOS_PLATFORM_PREFIXES
+    ):
+        publish_legacy_manifest(client, bucket, version, manifest_prefix)
 
 
 if __name__ == "__main__":
