@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 const PROFILE_NAME = 'wework-core'
 const STATE_FILE = '.wework-core-plugins.json'
@@ -317,23 +318,34 @@ export class CoreDshPluginManager {
     const command = this.options.nodeCommand
     const pnpmEntry = join(this.options.runtimeRoot, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs')
     try {
-      await this.runCommand(command, [pnpmEntry, ...args], this.pnpmCommandOptions())
+      await this.runCommand(
+        command,
+        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
+        this.pnpmCommandOptions()
+      )
     } catch (error) {
       const matcher = parseBlockedBuildMatcher(commandOutput(error))
       if (!matcher) throw commandError('pnpm', error)
       await allowBuild(this.profileRoot, matcher)
-      await this.runCommand(command, [pnpmEntry, ...args], this.pnpmCommandOptions()).catch(
-        reason => {
-          throw commandError('pnpm', reason)
-        }
-      )
+      await this.runCommand(
+        command,
+        runtimeNodeArgs(this.options.environment, [pnpmEntry, ...args]),
+        this.pnpmCommandOptions()
+      ).catch(reason => {
+        throw commandError('pnpm', reason)
+      })
     }
   }
 
   private async preflight(): Promise<void> {
     await this.runCommand(
       this.options.nodeCommand,
-      [this.options.dshEntry, '--profile', PROFILE_NAME, '--dump-config'],
+      runtimeNodeArgs(this.options.environment, [
+        this.options.dshEntry,
+        '--profile',
+        PROFILE_NAME,
+        '--dump-config',
+      ]),
       this.preflightCommandOptions()
     ).catch(error => {
       throw commandError('DSH profile validation', error)

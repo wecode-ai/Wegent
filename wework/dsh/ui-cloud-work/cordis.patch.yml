@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-cloud-work
+      name: '@wegent/dsh-ui-cloud-work'

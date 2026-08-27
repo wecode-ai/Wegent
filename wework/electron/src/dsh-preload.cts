@@ -11,3 +11,9 @@ contextBridge.exposeInMainWorld('weworkElectronLifecycle', {
     return () => ipcRenderer.off('system:resume', handler)
   },
 })
+
+contextBridge.exposeInMainWorld('weworkElectronExecutionEnvironments', {
+  list: () => ipcRenderer.invoke('runtime:list-execution-environments'),
+  chooseNodeExecutable: () => ipcRenderer.invoke('runtime:choose-node-executable'),
+  useBuiltinNode: () => ipcRenderer.invoke('runtime:use-builtin-node'),
+})

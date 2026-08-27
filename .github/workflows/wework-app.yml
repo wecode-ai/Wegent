@@ -273,6 +273,24 @@ jobs:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
 
+      - name: Verify formal release package startup
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment release-package-startup
+
+      - name: Verify formal release component update
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment component-update
+
       - name: Prepare installer and legacy bridge assets
         shell: bash
         env:
@@ -344,7 +362,14 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" release-assets/* release-manifests/* --clobber
+        run: |
+          set -euo pipefail
+          find release-assets -maxdepth 1 -type f \
+            ! -name 'WeworkComponent_*.tar.gz' \
+            ! -name 'components-*.json' \
+            -print0 |
+            xargs -0 gh release upload "$RELEASE_TAG" --clobber
+          gh release upload "$RELEASE_TAG" release-manifests/* --clobber
 
       - name: Publish rolling update channels
         env:
@@ -361,6 +386,21 @@ jobs:
               --notes "Rolling Electron and legacy Tauri update-channel manifests." \
               --prerelease
           fi
+
+          existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
+          gh release view wework-updater \
+            --json assets \
+            --jq '.assets[].name' > "$existing_component_assets"
+          while IFS= read -r component_asset; do
+            component_name="$(basename "$component_asset")"
+            if grep -Fqx "$component_name" "$existing_component_assets"; then
+              echo "Reusing immutable component asset $component_name."
+              continue
+            fi
+            gh release upload wework-updater "$component_asset"
+            echo "$component_name" >> "$existing_component_assets"
+          done < <(find release-assets -maxdepth 1 -type f \
+            -name 'WeworkComponent_*.tar.gz' -print | sort)
 
           publish_channel() {
             local channel="$1"
@@ -399,6 +439,10 @@ jobs:
               "release-manifests/${channel}-darwin-aarch64.json" \
               "release-manifests/${channel}-darwin-x86_64.json" \
               "release-manifests/${channel}-windows-x86_64.json" \
+              "release-manifests/components-${channel}-macos-arm64.json" \
+              "release-manifests/components-${channel}-macos-x64.json" \
+              "release-manifests/components-${channel}-windows-x64.json" \
+              "release-manifests/components-${channel}-linux-x64.json" \
               --clobber
           }
 

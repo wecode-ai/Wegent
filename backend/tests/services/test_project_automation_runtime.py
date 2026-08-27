@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automation_domain import (
     ProjectAutomationEvent,
     assignment_mode,
@@ -106,6 +105,179 @@ async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_status_event_dispatches_only_when_processing_boundary_is_crossed(
+    monkeypatch,
+):
+    matching_rule = SimpleNamespace(
+        id="matching-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    other_rule = SimpleNamespace(
+        id="other-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [matching_rule, other_rule]
+    db = MagicMock()
+    db.query.return_value = query
+    db.get.return_value = SimpleNamespace(metadata_json={})
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ):
+        dispatched = await processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.status_changed",
+                project_id="project-1",
+                subject_id="task-1",
+                source="board",
+                actor_user_id=7,
+                payload={
+                    "title": "Start implementation",
+                    "status": "in_progress",
+                    "previous_status": "inbox",
+                },
+            ),
+        )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, matching_rule, run)
+    assert run.metadata_json["event"]["type"] == "task.status_changed"
+    assert run.metadata_json["event"]["payload"]["previous_status"] == "inbox"
+
+
+@pytest.mark.asyncio
+async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
+    monkeypatch,
+):
+    rules = [
+        SimpleNamespace(
+            id="rule-1",
+            status="enabled",
+            metadata_json={
+                "trigger_type": "event",
+                "event_type": "task.created",
+            },
+        ),
+        SimpleNamespace(
+            id="rule-2",
+            status="enabled",
+            metadata_json={
+                "trigger_type": "event",
+                "event_type": "task.created",
+            },
+        ),
+    ]
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = rules
+    item_query = MagicMock()
+    item_query.filter.return_value = item_query
+    item_query.one_or_none.return_value = SimpleNamespace(metadata_json={})
+    db = MagicMock()
+    db.query.side_effect = [rule_query, item_query]
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock())
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={"title": "Choose one"},
+        ),
+    )
+
+    assert dispatched == 0
+    dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bound_issue_dispatches_only_its_matching_automation(monkeypatch):
+    bound_rule = SimpleNamespace(
+        id="rule-1",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    other_rule = SimpleNamespace(
+        id="rule-2",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = [bound_rule, other_rule]
+    item_query = MagicMock()
+    item_query.filter.return_value = item_query
+    item_query.one_or_none.return_value = SimpleNamespace(
+        metadata_json={"workflow_automation": {"rule_id": "rule-1"}}
+    )
+    db = MagicMock()
+    db.query.side_effect = [rule_query, item_query]
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.status_changed",
+            project_id="project-1",
+            subject_id="task-1",
+            source="board",
+            actor_user_id=7,
+            payload={
+                "title": "Continue",
+                "previous_status": "inbox",
+                "status": "pending",
+            },
+        ),
+    )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, bound_rule, run)
+
+
+@pytest.mark.asyncio
 async def test_ai_workflow_defers_only_its_coordinator_rule(monkeypatch):
     coordinator = SimpleNamespace(
         id="coordinator-rule",
@@ -165,7 +337,9 @@ async def test_ai_workflow_defers_only_its_coordinator_rule(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_ai_workflow_uses_coordinator_rule_runtime_when_no_override(monkeypatch):
+async def test_ai_workflow_defers_coordinator_rule_when_no_runtime_override(
+    monkeypatch,
+):
     coordinator = SimpleNamespace(
         id="coordinator-rule",
         status="enabled",
@@ -183,27 +357,10 @@ async def test_ai_workflow_uses_coordinator_rule_runtime_when_no_override(monkey
     rule_query = MagicMock()
     rule_query.filter.return_value = rule_query
     rule_query.all.return_value = [coordinator]
-    issue = SimpleNamespace(
-        id="task-1",
-        cloud_project_id="project-1",
-        metadata_json={},
-    )
-    issue_query = MagicMock()
-    issue_query.filter.return_value = issue_query
-    issue_query.one_or_none.return_value = issue
-    planning_run = SimpleNamespace(
-        id="workflow-run-1",
-        metadata_json={"plan_version": 1},
-    )
     db = MagicMock()
-    db.query.side_effect = [rule_query, issue_query]
+    db.query.return_value = rule_query
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
-    monkeypatch.setattr(
-        issue_workflow_planning_service,
-        "ensure_run",
-        MagicMock(return_value=planning_run),
-    )
     processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
 
     dispatched = await processor.process(
@@ -225,10 +382,8 @@ async def test_ai_workflow_uses_coordinator_rule_runtime_when_no_override(monkey
         ),
     )
 
-    assert dispatched == 1
-    dispatch.assert_awaited_once_with(db, coordinator, run)
-    assert run.metadata_json["event"]["payload"]["workflow_run_id"] == planning_run.id
-    assert run.metadata_json["event"]["payload"]["workflow_plan_version"] == 1
+    assert dispatched == 0
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -251,6 +406,43 @@ async def test_manual_assignment_enters_only_existing_project_robot_path(monkeyp
     assert assign.call_args.kwargs["agent_id"] == "agent-1"
     custom.assert_not_called()
     wegent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_invalid_workflow_definition_fails_before_creating_issue(monkeypatch):
+    service = ProjectAutomationExecution()
+    db, _owner, _project, rule, run = _dispatch_objects(
+        {
+            "action": "execute",
+            "role": {"source": "generic"},
+            "event_config": {
+                "runtime_workflow_definition": {
+                    "version": 1,
+                    "stage_mode": "dag",
+                    "advancement_policy": "manual",
+                    "nodes": [
+                        {
+                            "id": "execute",
+                            "name": "",
+                            "execution_mode": "robot",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    ensure_task = MagicMock()
+    fail_run = MagicMock()
+    monkeypatch.setattr(service, "_ensure_run_task", ensure_task)
+    monkeypatch.setattr(service, "_fail_run", fail_run)
+
+    await service.dispatch(db, rule, run)
+
+    ensure_task.assert_not_called()
+    fail_run.assert_called_once()
+    assert (
+        "String should have at least 1 character" in fail_run.call_args.kwargs["error"]
+    )
 
 
 @pytest.mark.asyncio
@@ -428,6 +620,7 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         id=61,
         executor_type="automation_manager",
         execution_device_id="device-1",
+        runtime_task_id="codex-queue-61",
     )
     find_activity = MagicMock(return_value=activity)
     monkeypatch.setattr(ProjectAutomationExecution, "_activity", find_activity)
@@ -445,7 +638,10 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         "executor_type": "automation_manager",
         "run_status": "queued",
         "execution_device_id": "device-1",
+        "runtime_task_id": "codex-queue-61",
     }
+    assert activity.runtime_device_id == "device-1"
+    assert activity.runtime_task_id == "codex-queue-61"
 
 
 def test_manager_plan_submission_rejects_non_owner_before_writes(

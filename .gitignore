@@ -111,6 +111,7 @@ coverage/
 executor/build/
 executor/dist/
 executor/target/
+wework/src-tauri/
 wework/resources/binaries/
 backend/init_data/plugins/wegent-sites/
 backend/init_data/plugins/wegent-mini-program/

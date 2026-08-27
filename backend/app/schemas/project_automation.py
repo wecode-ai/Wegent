@@ -8,6 +8,7 @@ from typing import Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
+from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.project_chat import ProjectChatSchema
 
 AutomationRunStatus = Literal[
@@ -91,7 +92,7 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
@@ -155,7 +156,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] | None = None
     assignment_mode: AutomationAssignmentMode | None = None
     manager_type: AutomationManagerType | None = None
@@ -201,13 +202,21 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
         return self
 
 
+class ProjectAutomationWorkflowMigration(ProjectChatSchema):
+    """Atomically promote the legacy project workflow into one automation."""
+
+    project_version: int = Field(ge=1)
+    automation: ProjectAutomationCreate
+    workflow_definition: ProjectWorkflowDefinition
+
+
 class ProjectAutomationView(ProjectChatSchema):
     id: str
     project_id: str
     name: str
     prompt: str
     trigger_type: Literal["schedule", "event", "workflow"]
-    event_type: Literal["task.created"] | None
+    event_type: Literal["task.created", "task.status_changed"] | None
     event_config: dict[str, Any]
     assignment_mode: AutomationAssignmentMode
     manager_type: AutomationManagerType | None
@@ -234,6 +243,21 @@ class ProjectAutomationView(ProjectChatSchema):
     updated_at: datetime
 
 
+class ProjectAutomationWorkflowMigrationView(ProjectChatSchema):
+    """Result of promoting one legacy workflow into automation storage."""
+
+    automation: ProjectAutomationView
+    project_version: int
+    workflow_automation_id: str
+
+
+class ProjectAutomationDeleteView(ProjectChatSchema):
+    """Project state after deleting one automation."""
+
+    project_version: int
+    workflow_automation_id: str | None
+
+
 class ProjectAutomationRunView(ProjectChatSchema):
     id: str
     automation_id: str
@@ -253,5 +277,5 @@ class ProjectAutomationRunView(ProjectChatSchema):
     completed_at: datetime | None = None
     retryable: bool = False
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] | None = None

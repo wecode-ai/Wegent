@@ -121,14 +121,14 @@ impl LocalBackendConnectionController {
             let runner = if let (Some(handler), Some(event_tx)) =
                 (&self.runtime_work_handler, &self.runtime_event_tx)
             {
-                LocalBackendRunner::new_with_shared_runtime_work_handler(
+                LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                     handler.clone(),
                     event_tx.subscribe(),
                 )
             } else {
-                LocalBackendRunner::new(
+                LocalBackendRunner::new_for_app_sidecar(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                 )

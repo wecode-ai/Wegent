@@ -664,7 +664,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.match(
         inactiveTaskClassName,
-        /(?:^|\s)invisible(?:\s|$)/,
+        /(?:^|\s)hidden(?:\s|$)/,
         'Inactive task browser calls made the task surface visible'
       )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)

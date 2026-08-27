@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   ipcMain,
   Menu,
   nativeImage,
@@ -14,13 +15,16 @@ import {
   WebContentsView,
   webContents,
   type MenuItemConstructorOptions,
+  type OpenDialogOptions,
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
@@ -69,11 +73,18 @@ import {
   scheduleTemporaryImageCleanup,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
+import { ComponentUpdateManager } from './runtime/component-update-manager.js'
+import {
+  prepareElectronNodeRuntime,
+  resolveConfiguredNodePath,
+  type ElectronNodeRuntime,
+} from './runtime/electron-node-runtime.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
+const execFileAsync = promisify(execFile)
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
@@ -107,6 +118,7 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let mainWindowCloseRequestRevision = 0
@@ -114,6 +126,7 @@ let dockVisible = true
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
+let componentUpdates: ComponentUpdateManager | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 let pendingTrayActions: TrayAction[] = []
@@ -806,6 +819,35 @@ function installIpc(): void {
     }
     await startDesktopRuntime()
   })
+  ipcMain.handle('runtime:list-execution-environments', async () => {
+    const runtime = await electronNodeRuntime()
+    const configuredPath = await configuredNodePath()
+    return [
+      {
+        ...runtime.status,
+        configuredPath,
+        restartRequired:
+          configuredPath !== (runtime.status.source === 'configured' ? runtime.status.path : null),
+      },
+    ]
+  })
+  ipcMain.handle('runtime:choose-node-executable', async () => {
+    const options: OpenDialogOptions = {
+      title: 'Select Node.js executable',
+      properties: ['openFile'],
+    }
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options)
+    const path = result.filePaths[0]
+    if (result.canceled || !path) return null
+    const version = await readNodeVersion(path)
+    await requiredPreferences().update({ nodeExecutablePath: path })
+    return { path, version }
+  })
+  ipcMain.handle('runtime:use-builtin-node', async () => {
+    await requiredPreferences().update({ nodeExecutablePath: null })
+  })
 }
 
 async function shutdown(): Promise<void> {
@@ -892,7 +934,9 @@ async function configureDesktopRuntime(): Promise<void> {
         app.isPackaged && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
           ? async () => {
               const paths = packagedHarnessRuntimePaths()
-              await materializeBundledRuntimes(paths.resources, paths.cache, ['workbench'])
+              const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+              if (!resources) throw new Error('DSH runtime resources are unavailable')
+              await materializeBundledRuntimes(resources, paths.cache, ['workbench'])
             }
           : undefined,
     })
@@ -1057,9 +1101,24 @@ function startDesktopRuntime(): Promise<void> {
     await desktopRuntime?.start()
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    await componentUpdates?.confirmStartup()
     runtimePhase = 'ready'
+    void componentUpdates
+      ?.stageAvailableUpdate()
+      .then(staged => {
+        if (staged) console.log('[components] update staged for the next application restart')
+      })
+      .catch(error => {
+        console.error('[components] update check failed', error)
+      })
   })()
-    .catch(error => {
+    .catch(async error => {
+      if (await componentUpdates?.rollbackStartup()) {
+        console.error('[components] startup failed after activation; rolling back and relaunching')
+        app.relaunch()
+        app.exit(1)
+        return
+      }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
       console.error('[runtime] startup failed', error)
@@ -1080,10 +1139,10 @@ if (hasSingleInstanceLock) {
     await cleanupStaleTemporaryImages().catch(error => {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
+    preferences = new PreferencesStore(app.getPath('userData'))
     installDshWindowLabelHeaders()
     installIpc()
     systemResume.start()
-    preferences = new PreferencesStore(app.getPath('userData'))
     windowClosePolicy = new WindowClosePolicy({
       read: async () => {
         const current = await preferences?.read()
@@ -1111,6 +1170,13 @@ if (hasSingleInstanceLock) {
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  componentUpdates ??= new ComponentUpdateManager({
+    resourcesRoot,
+    dataDirectory: app.getPath('userData'),
+    updateBaseUrl,
+    currentAppVersion: app.getVersion(),
+  })
+  const components = await componentUpdates.prepareStartup()
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',
@@ -1122,23 +1188,16 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : app.isPackaged
-      ? await materializeBundledRuntimes(
-          packagedHarnessRuntimePaths().resources,
-          packagedHarnessRuntimePaths().cache,
-          ['core']
-        )
+      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
+          'core',
+        ])
       : developmentRuntimeRoot
-  const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
-  const packagedExecutor = join(resourcesRoot, 'bin', executorName)
-  const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const packagedNode = join(resourcesRoot, 'node-runtime', 'bin', nodeName)
-  const nodePath =
-    process.env.WEWORK_NODE_PATH?.trim() ||
-    (existsSync(packagedNode) ? packagedNode : process.execPath)
+  const nodeRuntime = await electronNodeRuntime()
   return {
-    ...process.env,
+    ...nodeRuntime.environment,
     WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-    WEWORK_NODE_PATH: nodePath,
+    WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+    WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
     WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
       resourcesRoot,
       'bundled-plugins',
@@ -1146,16 +1205,56 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     ),
     ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
       ? {}
-      : existsSync(packagedExecutor)
-        ? { WEWORK_EXECUTOR_PATH: packagedExecutor }
+      : existsSync(components.executor)
+        ? { WEWORK_EXECUTOR_PATH: components.executor }
         : {}),
-    ...(nodePath === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+      ? {}
+      : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
   }
 }
 
-function packagedHarnessRuntimePaths(): { resources: string; cache: string } {
+function electronNodeRuntime(): Promise<ElectronNodeRuntime> {
+  electronNodeRuntimePromise ??= (async () => {
+    const nodePath = await configuredNodePath()
+    return prepareElectronNodeRuntime({
+      dataDirectory: app.getPath('userData'),
+      environment: {
+        ...process.env,
+        ...(nodePath ? { WEWORK_NODE_PATH: nodePath } : {}),
+      },
+      helperExecPath: (process as NodeJS.Process & { helperExecPath: string }).helperExecPath,
+      nodeVersion: nodePath ? await readNodeVersion(nodePath) : process.versions.node,
+      platform: process.platform,
+    })
+  })()
+  return electronNodeRuntimePromise
+}
+
+async function configuredNodePath(): Promise<string | null> {
+  return resolveConfiguredNodePath(await requiredPreferences().read(), process.env)
+}
+
+async function readNodeVersion(path: string): Promise<string> {
+  const environment = { ...process.env }
+  delete environment.ELECTRON_RUN_AS_NODE
+  const { stdout } = await execFileAsync(path, ['--version'], {
+    env: environment,
+    timeout: 5000,
+  })
+  const output = stdout.trim()
+  const match = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(output)
+  if (!match) throw new Error(`Selected executable is not Node.js: ${path}`)
+  return match[1]
+}
+
+function requiredPreferences(): PreferencesStore {
+  if (!preferences) throw new Error('Desktop preferences are unavailable')
+  return preferences
+}
+
+function packagedHarnessRuntimePaths(): { cache: string } {
   return {
-    resources: join(process.resourcesPath, 'harness-runtime'),
     cache: join(app.getPath('userData'), 'managed-runtimes', 'dsh'),
   }
 }

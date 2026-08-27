@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
   MenuSelect,
   PopupMenu,
@@ -330,7 +331,7 @@ export function AutomationDetailWorkspace({
                     },
                     ...devices.map(device => ({
                       value: device.device_id,
-                      label: deviceDisplayName(device, t),
+                      label: deviceDisplayName(device, localDeviceIds, t),
                     })),
                   ]}
                 />
@@ -439,16 +440,13 @@ export function AutomationDetailWorkspace({
 
 function deviceDisplayName(
   device: DeviceInfo,
+  localDeviceIds: string[],
   t: (key: string, fallback: string) => string
 ): string {
-  if (
-    device.device_id === 'local-device' ||
-    device.device_type === 'local' ||
-    device.name === 'Local Executor'
-  ) {
+  if (isCurrentAppDevice(device, localDeviceIds)) {
     return t('workbench.automation_this_computer', '此电脑')
   }
-  return device.name || device.device_id
+  return device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
 }
 
 function FrequencySettings({
