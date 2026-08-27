@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
+import { KnowledgeBaseIcon } from '@/features/knowledge/document/components/KnowledgeBaseIcon'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
@@ -1779,7 +1780,7 @@ function KnowledgeBaseRows({
               onClick={() => onOpen(item)}
               data-testid={`knowledge-picker-kb-${item.id}`}
             >
-              <Database className="h-4 w-4 shrink-0 text-text-muted" />
+              <KnowledgeBaseIcon kbType={item.kb_type} className="h-4 w-4 shrink-0" />
               <span className="min-w-0">
                 <TruncatedText
                   text={item.name}

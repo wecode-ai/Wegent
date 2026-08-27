@@ -268,11 +268,24 @@ describe('DocumentList summary header', () => {
     expect(screen.queryByTestId('upload-dialog')).not.toBeInTheDocument()
   })
 
-  it('shows inline summary edit button when manual summary exists after AI failure', () => {
-    render(<DocumentList knowledgeBase={createKnowledgeBase()} canManageAllDocuments={true} />)
+  it.each([
+    ['notebook', 'lucide-book-open', 'text-primary'],
+    ['classic', 'lucide-database', 'text-text-secondary'],
+    ['code_wiki', 'lucide-code-xml', 'text-primary'],
+  ] as const)(
+    'shows the %s header icon and retains summary editing after AI failure',
+    (kbType, icon, color) => {
+      const { container } = render(
+        <DocumentList
+          knowledgeBase={createKnowledgeBase({ kb_type: kbType })}
+          canManageAllDocuments={true}
+        />
+      )
 
-    expect(screen.getByTestId('kb-summary-inline-edit-button')).toBeInTheDocument()
-  })
+      expect(container.querySelector('svg')).toHaveClass(icon, color, 'w-5', 'h-5', 'flex-shrink-0')
+      expect(screen.getByTestId('kb-summary-inline-edit-button')).toBeInTheDocument()
+    }
+  )
 
   it('shows inline summary edit button when no summary exists yet', () => {
     render(

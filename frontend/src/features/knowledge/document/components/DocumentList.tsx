@@ -10,8 +10,6 @@ import {
   Upload,
   FileText,
   Search,
-  BookOpen,
-  Database,
   Trash2,
   Target,
   FileUp,
@@ -32,6 +30,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DocumentDetailDialog } from './DocumentDetailDialog'
 import { DocumentUpload } from './DocumentUpload'
+import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
 import { EditDocumentDialog } from './EditDocumentDialog'
@@ -1025,8 +1024,6 @@ export function DocumentList({
     },
     [getSelectionPayload, transfer, resetSelection, refresh, fetchFolders, onDocumentsChanged]
   )
-  // Knowledge base type info
-  const isNotebook = (knowledgeBase.kb_type || 'notebook') === 'notebook'
   // Check if RAG is configured (has retriever and embedding model)
   const ragConfigured = !!(
     knowledgeBase.retrieval_config?.retriever_name &&
@@ -1047,11 +1044,7 @@ export function DocumentList({
           </button>
         )}
         {/* Type icon - based on current kb type */}
-        {isNotebook ? (
-          <BookOpen className="w-5 h-5 text-primary flex-shrink-0" />
-        ) : (
-          <Database className="w-5 h-5 text-text-secondary flex-shrink-0" />
-        )}
+        <KnowledgeBaseIcon kbType={knowledgeBase.kb_type} className="w-5 h-5 flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             {/* Group name prefix with click handler */}

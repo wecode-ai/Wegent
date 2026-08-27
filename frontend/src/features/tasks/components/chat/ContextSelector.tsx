@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { Check, Database, Table2 } from 'lucide-react'
+import { BookOpen, Check, Table2 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Input } from '@/components/ui/input'
 import {
@@ -305,7 +305,7 @@ export default function ContextSelector({
                 'data-[state=inactive]:text-text-muted hover:text-text-primary'
               )}
             >
-              <Database className="w-3.5 h-3.5 mr-1.5" />
+              <BookOpen className="w-3.5 h-3.5 mr-1.5" />
               {t('knowledge:title')}
             </TabsTrigger>
             <TabsTrigger

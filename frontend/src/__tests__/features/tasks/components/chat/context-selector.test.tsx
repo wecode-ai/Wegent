@@ -268,47 +268,73 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 
-  it('opens an internal knowledge base without selecting it and uses a separate scope control', async () => {
-    const onSelect = jest.fn()
+  it.each([
+    ['notebook', 'lucide-book-open', 'text-primary'],
+    ['classic', 'lucide-database', 'text-text-secondary'],
+    ['code_wiki', 'lucide-code-xml', 'text-primary'],
+  ] as const)(
+    'shows the %s icon and keeps navigation separate from selection',
+    async (kbType, icon, color) => {
+      const onSelect = jest.fn()
+      mockGetAllGroupedKnowledgeBases.mockResolvedValue(
+        createAllGroupedResponse({
+          organization: [
+            {
+              ...createGroupedKnowledgeBase({ id: 1, name: 'Org KB', namespace: 'acme-corp' }),
+              kb_type: kbType,
+            },
+          ],
+        })
+      )
 
-    render(
-      <ContextSelector
-        open={true}
-        onOpenChange={jest.fn()}
-        selectedContexts={[]}
-        onSelect={onSelect}
-        onDeselect={jest.fn()}
-      >
-        <button>trigger</button>
-      </ContextSelector>
-    )
+      render(
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={[]}
+          onSelect={onSelect}
+          onDeselect={jest.fn()}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      )
 
-    await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
-    await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
-      await Promise.resolve()
-    })
-
-    expect(onSelect).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 1,
-        name: 'Org KB',
-        type: 'knowledge_base',
+      await waitFor(() => {
+        expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
       })
-    )
-    await waitFor(() => {
-      expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
-    })
-  })
+
+      fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+      await waitFor(() => {
+        expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
+      })
+      expect(
+        screen.getByRole('button', { name: 'knowledge:title' }).querySelector('svg')
+      ).toHaveClass('lucide-book-open', 'w-3.5', 'h-3.5')
+      expect(screen.getByTestId('knowledge-picker-kb-1').querySelector('svg')).toHaveClass(
+        icon,
+        color,
+        'h-4',
+        'w-4'
+      )
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+        await Promise.resolve()
+      })
+
+      expect(onSelect).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 1,
+          name: 'Org KB',
+          type: 'knowledge_base',
+        })
+      )
+      await waitFor(() => {
+        expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
+      })
+    }
+  )
 
   it('expands group knowledge into first-level group rows before showing knowledge bases', async () => {
     mockGetAllGroupedKnowledgeBases.mockResolvedValue(
