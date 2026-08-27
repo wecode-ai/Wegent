@@ -19,11 +19,6 @@ def upgrade() -> None:
         "dingtalk_synced_nodes",
         sa.Column("extension", sa.String(32), nullable=False, server_default=""),
     )
-    op.execute(
-        sa.text(
-            "UPDATE dingtalk_synced_nodes SET extension = 'adoc' WHERE node_type = 'doc'"
-        )
-    )
 
 
 def downgrade() -> None:

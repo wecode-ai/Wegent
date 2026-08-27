@@ -216,7 +216,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentImportError(
                 "DingTalk document not found in your synced nodes", status_code=404
             )
-        if node.node_type != "doc" and not get_import_extension(
+        if not get_import_extension(
             {
                 "nodeType": node.node_type,
                 "contentType": node.content_type,

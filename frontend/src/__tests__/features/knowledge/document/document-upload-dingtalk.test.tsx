@@ -132,7 +132,7 @@ function makeNode(overrides: Partial<DingtalkDocNode>): DingtalkDocNode {
 }
 
 function docNode(id: string, name: string, extra: Partial<DingtalkDocNode> = {}) {
-  return makeNode({ dingtalk_node_id: id, name, node_type: 'doc', ...extra })
+  return makeNode({ dingtalk_node_id: id, name, node_type: 'doc', extension: 'adoc', ...extra })
 }
 
 function folderNode(id: string, name: string, children: DingtalkDocNode[] = []): DingtalkDocNode {
@@ -216,6 +216,63 @@ async function openDingtalkMode(
 }
 
 describe('DocumentUpload dingtalk source', () => {
+  it('shows format icons independently of import eligibility', async () => {
+    const formats = [
+      ['adoc', 'lucide-file-text'],
+      ['able', 'lucide-database'],
+      ['axls', 'lucide-file-spreadsheet'],
+      ['pptx', 'lucide-presentation'],
+      ['unknown', 'lucide-file'],
+    ]
+    mockGetDocs.mockResolvedValue({
+      nodes: formats.map(([extension]) =>
+        makeNode({ dingtalk_node_id: extension, node_type: 'file', extension })
+      ),
+      total_count: formats.length,
+    })
+    await openDingtalkMode()
+    for (const [extension, iconClass] of formats) {
+      expect(
+        screen.getByTestId(`dingtalk-node-name-${extension}`).querySelector('svg')
+      ).toHaveClass(iconClass)
+    }
+    expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
+  })
+
+  it.each(['docs', 'wikispace'] as const)(
+    'requires format metadata before selection and restores eligibility after refresh (%s)',
+    async source => {
+      const getNodes = source === 'docs' ? mockGetDocs : mockGetWikispaceNodes
+      const syncNodes = source === 'docs' ? mockSyncDocs : mockSyncWikispaceNodes
+      const staleNodes = [
+        docNode('legacy', 'Legacy Doc', { source, extension: '' }),
+        docNode('unsupported', 'Unsupported Doc', { source, extension: 'axls' }),
+        docNode('missing-type', 'Missing Type', { source, content_type: '' }),
+      ]
+      getNodes.mockResolvedValueOnce({ nodes: staleNodes, total_count: 3 }).mockResolvedValue({
+        nodes: [
+          docNode('legacy', 'Legacy Doc', { source, node_type: 'file' }),
+          ...staleNodes.slice(1),
+        ],
+        total_count: 3,
+      })
+      syncNodes.mockResolvedValue({ added: 0, updated: 1, deleted: 0, total: 3 })
+      await openDingtalkMode()
+      if (source === 'wikispace') {
+        fireEvent.click(screen.getByTestId('dingtalk-import-tab-wikispace'))
+      }
+      await screen.findByTestId('dingtalk-document-option-legacy')
+      for (const node of staleNodes) {
+        expect(
+          screen.queryByTestId(`dingtalk-node-select-${node.dingtalk_node_id}`)
+        ).not.toBeInTheDocument()
+      }
+      fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+      expect(await screen.findByTestId('dingtalk-node-select-legacy')).toBeEnabled()
+      expect(screen.queryByTestId('dingtalk-node-select-unsupported')).not.toBeInTheDocument()
+    }
+  )
+
   it.each([true, false])(
     'selects supported files independently of AI Table configuration (%s)',
     async aiConfigured => {

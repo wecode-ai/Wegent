@@ -45,7 +45,7 @@ def test_upgrade_head_and_rollback_preserve_cached_nodes(tmp_path, monkeypatch) 
     with engine.connect() as connection:
         assert connection.execute(
             sa.text("SELECT extension FROM dingtalk_synced_nodes ORDER BY id")
-        ).scalars().all() == ["adoc", ""]
+        ).scalars().all() == ["", ""]
     command.downgrade(config, "c5d6e7f8a9b0")
     assert "extension" not in {
         column["name"]

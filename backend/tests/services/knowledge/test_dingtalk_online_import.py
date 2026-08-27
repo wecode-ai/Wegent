@@ -407,8 +407,22 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached_type, cached_content_type, cached_extension",
+    [
+        ("doc", "ALIDOC", ""),
+        ("file", "ALIDOC", ""),
+        ("doc", "ALIDOC", "axls"),
+        ("doc", "", "adoc"),
+    ],
+)
 async def test_manual_refresh_makes_online_document_importable_in_place(
-    test_db: Session, test_user: User, docs_mcp: McpFixture
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    cached_type: str,
+    cached_content_type: str,
+    cached_extension: str,
 ) -> None:
     responses, _ = docs_mcp
     node = DingtalkSyncedNode(
@@ -416,13 +430,18 @@ async def test_manual_refresh_makes_online_document_importable_in_place(
         dingtalk_node_id="online-doc",
         name="Online document",
         doc_url="https://alidocs.dingtalk.com/i/nodes/online-doc",
-        node_type="file",
-        content_type="ALIDOC",
+        node_type=cached_type,
+        content_type=cached_content_type,
+        extension=cached_extension,
         last_synced_at=datetime.now(),
     )
     test_db.add(node)
     test_db.commit()
     original_id = node.id
+    with pytest.raises(ExternalDocumentImportError):
+        DingTalkExternalDocumentProvider().resolve_importable(
+            test_db, test_user, "online-doc"
+        )
     responses["list_nodes"] = {
         "success": True,
         "nodes": [

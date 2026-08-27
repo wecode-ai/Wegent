@@ -4,7 +4,16 @@
 
 'use client'
 
-import { ChevronRight, FileText, Folder, FolderOpen } from 'lucide-react'
+import {
+  ChevronRight,
+  Database,
+  File,
+  FileSpreadsheet,
+  FileText,
+  Folder,
+  FolderOpen,
+  Presentation,
+} from 'lucide-react'
 import Link from 'next/link'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -12,6 +21,20 @@ import { cn } from '@/lib/utils'
 import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ExternalDocumentImportStatuses } from '@/apis/knowledge'
 import type { DocumentIndexStatus } from '@/types/knowledge'
+
+const FILE_ICONS = new Map<string, typeof FileText>([
+  ['adoc', FileText],
+  ['docx', FileText],
+  ['pdf', FileText],
+  ['txt', FileText],
+  ['md', FileText],
+  ['able', Database],
+  ['axls', FileSpreadsheet],
+  ['xlsx', FileSpreadsheet],
+  ['csv', FileSpreadsheet],
+  ['appt', Presentation],
+  ['pptx', Presentation],
+])
 
 const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
   success: 'document.upload.dingtalk.imported',
@@ -26,14 +49,15 @@ const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
 /** Import snapshots contain document IDs only; folders are selection shortcuts. */
 function isAiTable(node: DingtalkDocNode): boolean {
   return (
-    node.node_type === 'file' &&
+    node.node_type !== 'folder' &&
     node.content_type.toUpperCase() === 'ALIDOC' &&
     node.extension === 'able'
   )
 }
 
 function isImportable(node: DingtalkDocNode, aiTableConfigured: boolean): boolean {
-  if (node.node_type === 'doc') return true
+  if (node.node_type === 'folder') return false
+  if (node.content_type.toUpperCase() === 'ALIDOC' && node.extension === 'adoc') return true
   if (isAiTable(node)) return aiTableConfigured
   return (
     node.node_type === 'file' &&
@@ -125,7 +149,11 @@ function ImportTreeNode({
   const open = expandedKeys.has(key) || searching
   const visible = filterImportTree([node], query)[0]
   if (!visible) return null
-  const Icon = folder ? (open ? FolderOpen : Folder) : FileText
+  const Icon = folder
+    ? open
+      ? FolderOpen
+      : Folder
+    : (FILE_ICONS.get(node.extension ?? '') ?? File)
   const selectDisabled = disabled || !ids.length || (folder && searching)
   return (
     <>

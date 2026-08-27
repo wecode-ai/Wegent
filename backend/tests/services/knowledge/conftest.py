@@ -43,6 +43,8 @@ def create_synced_node(
         doc_url=f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}",
         parent_node_id="",
         node_type=node_type,
+        content_type="ALIDOC" if node_type == "doc" else "",
+        extension="adoc" if node_type == "doc" else "",
         workspace_id="",
         is_active=is_active,
         last_synced_at=datetime.now(timezone.utc),

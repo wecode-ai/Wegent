@@ -203,6 +203,8 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             doc_url=f"https://alidocs.dingtalk.com/i/nodes/{resource_id}",
             parent_node_id="",
             node_type="doc",
+            content_type="ALIDOC",
+            extension="adoc",
             workspace_id="",
             is_active=True,
             last_synced_at=datetime.now(timezone.utc),
