@@ -361,6 +361,12 @@ class TestExternalSourceUnavailable:
                             new_worker, document_id
                         )
                         assert decision.should_enqueue
+                        # The newer attempt has read and landed the source metadata.
+                        current = new_worker.get(KnowledgeDocument, document_id)
+                        current.update_external_source_config(
+                            status="accessible", last_error=None
+                        )
+                        new_worker.commit()
                         assert mark_document_index_succeeded(
                             new_worker, document_id, decision.generation
                         )

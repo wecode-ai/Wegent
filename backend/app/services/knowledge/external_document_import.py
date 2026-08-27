@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
@@ -486,18 +487,23 @@ def run_external_document_import(
     """
     from app.services.knowledge.orchestrator import knowledge_orchestrator
 
-    provider = get_external_document_provider(document.external_provider or "")
+    # Keep error handling independent of ORM expiration across provider/upload I/O.
+    document_id = document.id
+    provider_id = document.external_provider
+    resource_id = document.external_resource_id
+    owner_user_id = document.user_id
+    provider = get_external_document_provider(provider_id or "")
     try:
         if provider is None:
             raise ExternalDocumentFetchError(
-                f"Unsupported external provider: {document.external_provider}"
+                f"Unsupported external provider: {provider_id}"
             )
         if user is None:
             raise ExternalDocumentFetchError(
-                f"Owner user {document.user_id} no longer exists"
+                f"Owner user {owner_user_id} no longer exists"
             )
         content: ExternalDocumentContent = asyncio.run(
-            provider.fetch_content(db, user, document.external_resource_id)
+            provider.fetch_content(db, user, resource_id)
         )
         knowledge_orchestrator.attach_external_document_content(
             db=db,
@@ -506,25 +512,26 @@ def run_external_document_import(
             content=content,
             generation=generation,
         )
-    except ExternalImportLostWriteError:
+    except (ExternalImportLostWriteError, ObjectDeletedError):
         logger.info(
             "[External Import] Attempt for document %s lost its write right at "
             "generation %s; standing down without touching the document",
-            document.id,
+            document_id,
             generation,
         )
     except ExternalSourceUnavailableError as exc:
-        _mark_external_source_unavailable(db, document, generation)
+        _mark_external_source_unavailable(db, document_id, provider_id, generation)
         logger.warning(
             "[External Import] Source of document %s is no longer accessible: %s",
-            document.id,
+            document_id,
             exc,
         )
     except Exception as exc:
-        _mark_external_import_failed(db, document, generation, exc)
+        db.rollback()
+        _mark_external_import_failed(db, document_id, provider_id, generation)
         logger.error(
             "[External Import] Failed to import document %s: %s",
-            document.id,
+            document_id,
             exc,
             exc_info=True,
         )
@@ -532,7 +539,8 @@ def run_external_document_import(
 
 def _mark_external_source_unavailable(
     db: Session,
-    document: KnowledgeDocument,
+    document_id: int,
+    provider_id: str,
     generation: int,
 ) -> None:
     """Mark the source inaccessible and record the initial import failure.
@@ -543,7 +551,7 @@ def _mark_external_source_unavailable(
     """
     mark_document_index_failed(
         db=db,
-        document_id=document.id,
+        document_id=document_id,
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
@@ -554,21 +562,21 @@ def _mark_external_source_unavailable(
             ),
             retryable=True,
             generation=generation,
-            provider=document.external_provider,
+            provider=provider_id,
         ),
     )
 
 
 def _mark_external_import_failed(
     db: Session,
-    document: KnowledgeDocument,
+    document_id: int,
+    provider_id: str,
     generation: int,
-    exc: Exception,
 ) -> None:
     """Record the fetch failure on the document without deleting it."""
     mark_document_index_failed(
         db=db,
-        document_id=document.id,
+        document_id=document_id,
         generation=generation,
         error=build_processing_error(
             stage=DocumentProcessingStage.SYSTEM,
@@ -578,7 +586,7 @@ def _mark_external_import_failed(
             ),
             retryable=True,
             generation=generation,
-            provider=document.external_provider,
+            provider=provider_id,
         ),
     )
 

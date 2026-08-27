@@ -997,6 +997,9 @@ class TestAttachExternalDocumentContent:
         # A newer attempt already claimed generation 2 and landed its content.
         document.index_generation = 2
         document.attachment_id = 5555
+        document.update_external_source_config(
+            status="inaccessible", last_error="Newer source failure"
+        )
         test_db.commit()
 
         attachment = SimpleNamespace(id=4321)
@@ -1028,6 +1031,8 @@ class TestAttachExternalDocumentContent:
         # The stale attempt neither overwrote the attachment nor deleted the
         # newer attempt's valid attachment.
         assert document.attachment_id == 5555
+        assert document.external_source_config["status"] == "inaccessible"
+        assert document.external_source_config["last_error"] == "Newer source failure"
         assert deleted_ids == [
             {"db": test_db, "context_id": 4321, "user_id": test_user.id}
         ]

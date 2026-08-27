@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
 from app.models.kind import Kind
@@ -1758,32 +1759,43 @@ class KnowledgeOrchestrator:
                 f"document {document.id}"
             )
 
+        # Upload commits can expire the document, including after its deletion.
+        document_id = document.id
+        owner_user_id = document.user_id
+        previous_attachment_id = document.attachment_id
+        previous_converted_id = document.converted_attachment_id
         attachment, _ = context_service.upload_attachment(
             db=db,
-            user_id=document.user_id,
+            user_id=owner_user_id,
             filename=_build_filename(content.name, content.file_extension),
             binary_data=content.content,
             subtask_id=0,
         )
 
-        # A failed initial attempt may already hold an attachment. Replace it
-        # on retry and clean it up after the guarded write succeeds.
-        previous_attachment_id = document.attachment_id
-        previous_converted_id = document.converted_attachment_id
-
-        self._land_external_content(
-            db,
-            document,
-            content,
-            attachment,
-            generation,
-        )
-
-        db.refresh(document)
+        attachment_id = attachment.id
+        try:
+            self._land_external_content(db, document, content, attachment, generation)
+        except Exception as exc:
+            # A failed commit can have an uncertain outcome; keep any linked body.
+            db.rollback()
+            linked_attachment_id = (
+                db.query(KnowledgeDocument.attachment_id)
+                .filter(KnowledgeDocument.id == document_id)
+                .scalar()
+            )
+            if linked_attachment_id != attachment_id:
+                delete_attachment_best_effort(db, owner_user_id, attachment_id)
+            if isinstance(exc, ObjectDeletedError):
+                raise ExternalImportLostWriteError(
+                    f"Document {document_id} was deleted while importing"
+                ) from exc
+            raise
 
         for previous_id in {previous_attachment_id, previous_converted_id}:
-            if previous_id and previous_id != attachment.id:
-                delete_attachment_best_effort(db, document.user_id, previous_id)
+            if previous_id and previous_id != attachment_id:
+                delete_attachment_best_effort(db, owner_user_id, previous_id)
+
+        db.refresh(document)
 
         result = self._schedule_indexing_celery(
             db=db,
@@ -1830,11 +1842,11 @@ class KnowledgeOrchestrator:
         Only this attempt's generation may land the content, and only while
         the document still exists with its external identity. Losing that
         race (user deleted the document, or a newer attempt superseded this
-        one) deletes the just-created attachment and raises
-        ExternalImportLostWriteError, so a deleted document is never revived
-        and no orphan is left behind.
+        one) raises ExternalImportLostWriteError. The caller cleans up the
+        unlinked attachment without accessing the possibly deleted document.
 
         """
+        document_id = document.id
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Refresh the provider-owned source metadata; never touch the user's
@@ -1842,7 +1854,10 @@ class KnowledgeOrchestrator:
         merged_external = {
             **document.external_source_config,
             **dict(content.metadata or {}),
+            "status": "accessible",
         }
+        # Reading the source succeeded even if later conversion/indexing fails.
+        merged_external.pop("last_error", None)
         merged_source_config = dict(document.source_config or {})
         merged_source_config["external"] = merged_external
         # A conversion belongs to the previous body, never to its replacement.
@@ -1859,7 +1874,7 @@ class KnowledgeOrchestrator:
         updated = (
             db.query(KnowledgeDocument)
             .filter(
-                KnowledgeDocument.id == document.id,
+                KnowledgeDocument.id == document_id,
                 KnowledgeDocument.external_provider == document.external_provider,
                 KnowledgeDocument.external_resource_id == document.external_resource_id,
                 KnowledgeDocument.index_generation == generation,
@@ -1869,13 +1884,8 @@ class KnowledgeOrchestrator:
         db.commit()
 
         if not updated:
-            # The document was deleted or superseded while fetching: this
-            # attempt must not revive or overwrite it. Drop the attachment it
-            # just created; older attachments still referenced elsewhere (or
-            # already removed by the deleter) are not touched.
-            delete_attachment_best_effort(db, document.user_id, attachment.id)
             raise ExternalImportLostWriteError(
-                f"Document {document.id} was deleted or superseded while "
+                f"Document {document_id} was deleted or superseded while "
                 f"importing at generation {generation}"
             )
 

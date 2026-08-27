@@ -596,7 +596,7 @@ class TestBeginExternalImportAttempt:
         assert document.index_status == DocumentIndexStatus.SUCCESS
         assert document.index_generation == 2
 
-    def test_first_success_records_external_source_health(
+    def test_index_success_records_time_without_overwriting_source_health(
         self, test_db: Session, test_user: User
     ) -> None:
         from app.services.knowledge.index_state_machine import (
@@ -623,6 +623,6 @@ class TestBeginExternalImportAttempt:
         assert finalized is True
         test_db.refresh(document)
         external = document.external_source_config
-        assert external["status"] == "accessible"
+        assert external["status"] == "inaccessible"
         assert external["last_success_at"]
-        assert "last_error" not in external
+        assert external["last_error"] == "old failure"

@@ -428,14 +428,12 @@ _INDEX_SUCCEEDED_ALLOWED_STATUSES = {
 def _finalize_external_source_on_success(
     document: KnowledgeDocument,
 ) -> None:
-    """Record a successful initial external import."""
+    """Record import completion without inferring source health from indexing."""
     if not document.has_external_identity:
         return
 
     document.update_external_source_config(
-        status="accessible",
         last_success_at=datetime.now(timezone.utc).isoformat(),
-        last_error=None,
     )
 
 

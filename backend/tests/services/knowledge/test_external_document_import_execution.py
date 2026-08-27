@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import delete, event
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -17,6 +18,7 @@ from app.models.knowledge import (
     DocumentStatus,
     KnowledgeDocument,
 )
+from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeDocumentCreate,
@@ -60,6 +62,105 @@ class TestRunExternalDocumentImport:
         test_db.commit()
         test_db.refresh(document)
         return document
+
+    def test_deleted_during_upload_cleans_attachment_and_exits(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        document = self._create_placeholder(test_db, test_user)
+        document_id = document.id
+        monkeypatch.setattr(test_db, "expire_on_commit", True)
+        monkeypatch.setattr(
+            get_external_document_provider("dingtalk"),
+            "fetch_content",
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name="Deleted during upload", file_extension="md", content=b"body"
+                )
+            ),
+        )
+        uploaded_ids: list[int] = []
+
+        def delete_document_during_upload(mapper, connection, attachment) -> None:
+            uploaded_ids.append(attachment.id)
+            # Bypass the worker identity map, as a concurrent deletion would.
+            connection.execute(
+                delete(KnowledgeDocument).where(KnowledgeDocument.id == document_id)
+            )
+
+        event.listen(SubtaskContext, "after_insert", delete_document_during_upload)
+        try:
+            run_external_document_import(test_db, document, test_user, generation=0)
+        finally:
+            event.remove(SubtaskContext, "after_insert", delete_document_during_upload)
+
+        assert test_db.get(KnowledgeDocument, document_id) is None
+        assert len(uploaded_ids) == 1
+        assert test_db.get(SubtaskContext, uploaded_ids[0]) is None
+
+    def test_recovered_source_stays_accessible_when_indexing_fails(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from app.services.knowledge.index_state_machine import (
+            mark_document_index_failed,
+        )
+
+        document = self._create_placeholder(test_db, test_user)
+        document_id = document.id
+        document.update_external_source_config(
+            status="inaccessible",
+            last_error="Source was unavailable",
+            last_success_at="2026-08-01T00:00:00+00:00",
+        )
+        kb = test_db.get(Kind, document.kind_id)
+        kb.json = {
+            **kb.json,
+            "spec": {
+                **kb.json["spec"],
+                "retrievalConfig": {
+                    "retriever_name": "test-retriever",
+                    "embedding_config": {"model_name": "test-embedding"},
+                },
+            },
+        }
+        test_db.commit()
+        monkeypatch.setattr(test_db, "expire_on_commit", True)
+        monkeypatch.setattr(
+            get_external_document_provider("dingtalk"),
+            "fetch_content",
+            AsyncMock(
+                return_value=ExternalDocumentContent(
+                    name="Recovered source", file_extension="md", content=b"new body"
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "app.tasks.knowledge_tasks.index_document_task.delay",
+            MagicMock(return_value=SimpleNamespace(id="index-task")),
+        )
+
+        run_external_document_import(test_db, document, test_user, generation=0)
+        assert mark_document_index_failed(
+            test_db, document_id, document.index_generation
+        )
+
+        current = KnowledgeService.get_document(test_db, document_id, test_user.id)
+        assert current.index_status == DocumentIndexStatus.FAILED
+        assert current.external_source_config["status"] == "accessible"
+        assert "last_error" not in current.external_source_config
+        assert (
+            current.external_source_config["last_success_at"]
+            == "2026-08-01T00:00:00+00:00"
+        )
+        assert (
+            test_db.get(SubtaskContext, current.attachment_id).extracted_text
+            == "new body"
+        )
 
     def test_attaches_content_through_orchestrator(
         self,
