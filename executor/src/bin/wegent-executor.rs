@@ -4,6 +4,9 @@
 
 use std::env;
 
+#[cfg(unix)]
+use std::thread;
+
 use wegent_executor::app::cli::CliArgs;
 
 #[cfg(any(target_os = "macos", test))]
@@ -116,6 +119,7 @@ fn main() {
             std::process::exit(2);
         }
     };
+    install_app_sidecar_lifecycle_watchdog();
     let shell_environment = if should_hydrate_shell_environment(&args) {
         Some(wegent_executor::process_environment::hydrate_process_environment())
     } else {
@@ -140,6 +144,42 @@ fn runtime() -> tokio::runtime::Runtime {
         .build()
         .expect("Tokio runtime should initialize")
 }
+
+#[cfg(unix)]
+fn install_app_sidecar_lifecycle_watchdog() {
+    let Some(lifecycle_fd) = env::var("WEGENT_APP_LIFECYCLE_FD")
+        .ok()
+        .and_then(|value| value.trim().parse::<libc::c_int>().ok())
+        .filter(|value| *value >= 3)
+    else {
+        return;
+    };
+    wegent_executor::logging::write_executor_log_line(&format!(
+        "app sidecar lifecycle watchdog armed fd={lifecycle_fd}"
+    ));
+    thread::spawn(move || {
+        let mut byte = 0_u8;
+        loop {
+            let read_result = unsafe { libc::read(lifecycle_fd, (&mut byte as *mut u8).cast(), 1) };
+            if read_result > 0 {
+                continue;
+            }
+            if read_result < 0
+                && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+            {
+                continue;
+            }
+            break;
+        }
+        unsafe {
+            libc::killpg(libc::getpgrp(), libc::SIGTERM);
+            libc::_exit(0);
+        }
+    });
+}
+
+#[cfg(not(unix))]
+fn install_app_sidecar_lifecycle_watchdog() {}
 
 #[cfg(target_os = "macos")]
 fn install_termination_signal_diagnostics() {

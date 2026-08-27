@@ -22,6 +22,19 @@ window opens or reloads at the root page. If every tab of that type has been clo
 one again. Explicit links to Settings, Plugins, or a specific workspace route take precedence and
 are not replaced by the default tab.
 
+## Node.js execution environment
+
+By default, the Wework desktop app uses the Node.js runtime included in Electron Helper for DSH,
+Skills, MCP, and local executor child processes. It does not ship a second standalone Node.js
+runtime. On macOS, these background processes reuse the Helper application identity, so creating a
+conversation or running a Skill does not add another Node or Wework icon to the Dock.
+
+Open **Settings → Execution environments** to inspect the active Node.js version and path. The
+default is labeled **Built into Electron**. To use a specific version, select an existing Node.js
+executable on the device; Wework labels it **Custom**. Restart Wework after selecting a custom
+executable or restoring the built-in runtime so new DSH, Skill, MCP, and task processes receive the
+updated environment.
+
 ## View app information
 
 Open the account menu in the lower-left corner of Wework and select **About** to view the app name, version, update channel, and project links.

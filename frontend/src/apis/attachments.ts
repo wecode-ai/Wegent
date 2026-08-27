@@ -50,6 +50,11 @@ export interface AttachmentPreviewResponse extends AttachmentDetailResponse {
   download_url: string
 }
 
+export interface AttachmentPlaybackResponse {
+  playback_url: string
+  cover_url?: string | null
+}
+
 /**
  * Public share link response
  */
@@ -628,6 +633,29 @@ export async function createAttachmentDownloadUrl(attachmentId: number): Promise
   return `${getAttachmentDownloadUrl(attachmentId)}?download_token=${encodeURIComponent(data.download_token)}`
 }
 
+export async function getAttachmentPlayback(
+  attachmentId: number,
+  shareToken?: string
+): Promise<AttachmentPlaybackResponse> {
+  const token = getToken()
+  const query = shareToken ? `?share_token=${encodeURIComponent(shareToken)}` : ''
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/playback${query}`, {
+    method: 'GET',
+    headers: {
+      ...(!shareToken && token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to resolve attachment playback (${response.status})`)
+  }
+
+  const data = await response.json()
+  if (!data.playback_url || typeof data.playback_url !== 'string') {
+    throw new Error('Invalid attachment playback response')
+  }
+  return data
+}
+
 interface FetchAttachmentFileOptions {
   filename?: string
   shareToken?: string
@@ -810,6 +838,7 @@ export const attachmentApis = {
   getAttachmentPreview,
   getAttachmentDownloadUrl,
   createAttachmentDownloadUrl,
+  getAttachmentPlayback,
   downloadAttachment,
   deleteAttachment,
   getAttachmentBySubtask,

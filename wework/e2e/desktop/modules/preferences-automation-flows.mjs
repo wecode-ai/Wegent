@@ -182,7 +182,9 @@ async function declineInitialTelemetryConsent(control) {
   await control.command('waitFor', overlaySelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="telemetry-consent-decline"]')
+  await control.command('clickWhenEnabled', '[data-testid="telemetry-consent-decline"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await waitForSnapshot(
     control,
     snapshot => !snapshot.testIds.includes('telemetry-consent-overlay'),

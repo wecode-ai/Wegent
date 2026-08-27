@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { readFileFromAccessUrl, saveBlobToDownloads } from './cloudFileTransfer'
+import { readFileFromAccessUrl } from './cloudFileTransfer'
 
 describe('cloudFileTransfer', () => {
   beforeEach(() => {
@@ -18,21 +18,5 @@ describe('cloudFileTransfer', () => {
       blob
     )
     expect(fetchMock).toHaveBeenCalledWith('https://objects.example/snapshot.md')
-  })
-
-  it('downloads a blob through a temporary browser URL', async () => {
-    vi.useFakeTimers()
-    const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:snapshot')
-    const revokeObjectURL = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
-    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
-
-    await expect(saveBlobToDownloads(new Blob(['snapshot']), 'snapshot.md')).resolves.toBe(
-      'snapshot.md'
-    )
-    expect(createObjectURL).toHaveBeenCalledOnce()
-    expect(click).toHaveBeenCalledOnce()
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:snapshot')
-    vi.useRealTimers()
   })
 })

@@ -201,6 +201,46 @@ jobs:
       - name: Synchronize desktop build version
         run: node wework/scripts/sync-desktop-release-version.mjs "${{ needs.prepare-release.outputs.version }}"
 
+      - name: Prepare Apple signing keychain
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          certificate_path="$RUNNER_TEMP/wework-signing.p12"
+          keychain_path="$RUNNER_TEMP/wework-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$MACOS_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          existing_keychains=()
+          while IFS= read -r existing_keychain; do
+            existing_keychains+=("$existing_keychain")
+          done < <(security list-keychains -d user |
+            sed -E 's/^[[:space:]]*"([^"]+)"$/\1/')
+          security list-keychains -d user -s "$keychain_path" "${existing_keychains[@]}"
+          security import "$certificate_path" \
+            -k "$keychain_path" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          identity="$(security find-identity -v -p codesigning "$keychain_path" |
+            awk '/Developer ID Application/ { print $2; exit }')"
+          [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]] || {
+            echo "Developer ID Application identity not found" >&2
+            exit 1
+          }
+          echo "APPLE_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "MACOS_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
       - name: Prepare Apple notarization key
         if: matrix.platform == 'macos'
         shell: bash
@@ -232,6 +272,24 @@ jobs:
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
+
+      - name: Verify formal release package startup
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment release-package-startup
+
+      - name: Verify formal release component update
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment component-update
 
       - name: Prepare installer and legacy bridge assets
         shell: bash
@@ -304,7 +362,14 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-        run: gh release upload "$RELEASE_TAG" release-assets/* release-manifests/* --clobber
+        run: |
+          set -euo pipefail
+          find release-assets -maxdepth 1 -type f \
+            ! -name 'WeworkComponent_*.tar.gz' \
+            ! -name 'components-*.json' \
+            -print0 |
+            xargs -0 gh release upload "$RELEASE_TAG" --clobber
+          gh release upload "$RELEASE_TAG" release-manifests/* --clobber
 
       - name: Publish rolling update channels
         env:
@@ -322,12 +387,29 @@ jobs:
               --prerelease
           fi
 
+          existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
+          gh release view wework-updater \
+            --json assets \
+            --jq '.assets[].name' > "$existing_component_assets"
+          while IFS= read -r component_asset; do
+            component_name="$(basename "$component_asset")"
+            if grep -Fqx "$component_name" "$existing_component_assets"; then
+              echo "Reusing immutable component asset $component_name."
+              continue
+            fi
+            gh release upload wework-updater "$component_asset"
+            echo "$component_name" >> "$existing_component_assets"
+          done < <(find release-assets -maxdepth 1 -type f \
+            -name 'WeworkComponent_*.tar.gz' -print | sort)
+
           publish_channel() {
             local channel="$1"
             local electron_channel="$channel"
+            local current_assets="$RUNNER_TEMP/current-${channel}-assets.json"
             local current_manifest="$RUNNER_TEMP/current-${channel}.json"
             [[ "$channel" == "stable" ]] && electron_channel="latest"
 
+            gh release view wework-updater --json assets > "$current_assets"
             if gh release download wework-updater \
               --pattern "${channel}-darwin-aarch64.json" \
               --output "$current_manifest" \
@@ -337,8 +419,17 @@ jobs:
                 "$current_manifest")"
               if ! node wework/scripts/update-channel-manifests.mjs \
                 is-newer "$RELEASE_VERSION" "$current_version"; then
-                echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
-                return
+                if node wework/scripts/update-channel-manifests.mjs \
+                  has-complete-channel-assets "$current_assets" "$channel"; then
+                  echo "Keeping newer or equal ${channel} update manifests at ${current_version}."
+                  return
+                fi
+                if node wework/scripts/update-channel-manifests.mjs \
+                  is-newer "$current_version" "$RELEASE_VERSION"; then
+                  echo "::error::The newer ${channel} channel at ${current_version} has incomplete updater assets."
+                  return 1
+                fi
+                echo "Repairing incomplete ${channel} updater assets at ${current_version}."
               fi
             fi
 
@@ -348,6 +439,10 @@ jobs:
               "release-manifests/${channel}-darwin-aarch64.json" \
               "release-manifests/${channel}-darwin-x86_64.json" \
               "release-manifests/${channel}-windows-x86_64.json" \
+              "release-manifests/components-${channel}-macos-arm64.json" \
+              "release-manifests/components-${channel}-macos-x64.json" \
+              "release-manifests/components-${channel}-windows-x64.json" \
+              "release-manifests/components-${channel}-linux-x64.json" \
               --clobber
           }
 

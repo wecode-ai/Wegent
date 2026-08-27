@@ -42,7 +42,6 @@ class UserRuntimeConfigPreference(BaseModel):
     """User-level runtime configuration preference."""
 
     use_user_config: bool = False
-    use_proxy: bool = False
 
 
 class UserProjectWorkPreference(BaseModel):

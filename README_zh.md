@@ -53,19 +53,47 @@ Wegent Web 提供远程智能体的网页界面。智能体使用配置好的模
 
 ## 工作方式
 
-Wegent Desktop 直接使用本地项目和本机运行时，也可以连接 Wegent Backend 使用共享资源和执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
+Wework 是 Wegent 的桌面工作台。Electron 负责桌面窗口、系统能力和进程管理；DeepSeek Harness（DSH）是内嵌的应用与插件运行时，Wework 的产品界面由一组 DSH 插件组合而成。Executor 负责管理任务与会话，并驱动 Codex 在本地项目中完成实际工作。
 
 ```mermaid
 flowchart LR
-    User["用户"] --> Desktop["Wegent Desktop"]
-    User --> Web["Wegent Web"]
-    Desktop --> Local["本地项目与运行环境"]
-    Desktop <--> Backend["Wegent Backend"]
-    Web <--> Backend
-    Backend --> Agents["共享智能体与知识"]
-    Backend --> Space["项目空间"]
-    Backend --> Remote["云端与远程设备"]
+    Electron["Electron<br/>桌面宿主"]
+
+    subgraph DSH["DSH Runtime"]
+        direction TB
+        Core["DSH Core<br/>插件发现、依赖注入与生命周期"]
+        App["dsh-app-wework<br/>Wework 产品外壳与 UI 扩展点"]
+        UI["dsh-ui-*<br/>任务、项目空间、设置、应用与自动化"]
+        ElectronPlugin["dsh-electron-host<br/>Electron 能力桥接"]
+        ExecutorPlugin["dsh-executor-runtime<br/>任务执行与事件适配"]
+        TerminalPlugin["dsh-terminal-runtime<br/>本地交互式终端"]
+
+        Core --> App
+        Core --> UI
+        Core --> ElectronPlugin
+        Core --> ExecutorPlugin
+        Core --> TerminalPlugin
+        App --> UI
+    end
+
+    Executor["Executor<br/>任务与会话执行"]
+    Codex["Codex<br/>编码 Agent"]
+    Workspace["本地项目<br/>文件与命令"]
+
+    Electron -->|"启动并托管"| Core
+    Electron -->|"启动并监管"| Executor
+    ElectronPlugin <-->|"受限桌面能力"| Electron
+    UI <-->|"用户操作与界面更新"| ExecutorPlugin
+    ExecutorPlugin -->|"创建、追问、审批、取消"| Executor
+    Executor -->|"状态、消息、工具事件、结果"| ExecutorPlugin
+    Executor <-->|"启动、控制与事件"| Codex
+    Codex <-->|"读取、修改与执行"| Workspace
+    TerminalPlugin <-->|"PTY"| Workspace
 ```
+
+DSH 不直接执行编码任务。`dsh-app-wework` 定义产品外壳和扩展点，`dsh-ui-*` 提供具体产品模块，`dsh-electron-host` 桥接受限的 Electron 能力，`dsh-executor-runtime` 在执行过程中与 Executor 双向通信，`dsh-terminal-runtime` 管理本地交互式终端。Executor 是任务执行层，Codex 是由它驱动的具体编码 Agent。
+
+Wework 也可以连接 Wegent Backend 使用共享项目空间、模型和远程执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
 
 ## 快速开始
 
@@ -105,17 +133,17 @@ pnpm --filter wework dev:mac
 
 ## 仓库结构
 
-| 目录                       | 职责                                 |
-| -------------------------- | ------------------------------------ |
+| 目录                       | 职责                                    |
+| -------------------------- | --------------------------------------- |
 | `wework/`                  | Wegent Desktop（Electron、Vite、React） |
-| `executor/`                | 本地与远程的智能体任务执行环境       |
-| `frontend/`                | Wegent 平台 Web 管理界面             |
-| `backend/`                 | REST API 和核心业务逻辑              |
-| `executor_manager/`        | 执行器调度与编排                     |
-| `chat_shell/`              | 对话运行时                           |
-| `knowledge_runtime/`       | 知识检索服务                         |
-| `knowledge_doc_converter/` | 文档解析与转换                       |
-| `shared/`                  | 跨服务共享模块                       |
+| `executor/`                | 本地与远程的智能体任务执行环境          |
+| `frontend/`                | Wegent 平台 Web 管理界面                |
+| `backend/`                 | REST API 和核心业务逻辑                 |
+| `executor_manager/`        | 执行器调度与编排                        |
+| `chat_shell/`              | 对话运行时                              |
+| `knowledge_runtime/`       | 知识检索服务                            |
+| `knowledge_doc_converter/` | 文档解析与转换                          |
+| `shared/`                  | 跨服务共享模块                          |
 
 ## 文档
 
@@ -134,6 +162,7 @@ pnpm --filter wework dev:mac
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [问题反馈](https://github.com/wecode-ai/Wegent/issues)
+- 钉钉社区群：“wework社区交流”，群号 `190890002451`
 - [Discord 社区](https://discord.gg/MVzJzyqEUp)
 - [开源许可证](LICENSE)
 

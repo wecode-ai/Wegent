@@ -20,7 +20,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { ChevronDown, ImageIcon, Info, Video } from 'lucide-react'
+import { ChevronDown, ChevronRight, ImageIcon, Info, Video } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { ModelIcon } from '@/components/icons/ModelIcon'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -90,6 +90,10 @@ export interface ModelSelectorProps {
   initialForceOverride?: boolean
   /** Model category type for filtering and display (default: 'llm') */
   modelCategoryType?: ModelCategoryType
+  /** Render the trigger as an item inside another actions menu. */
+  triggerVariant?: 'default' | 'menu-item'
+  /** Preferred side for the model picker popover. */
+  popoverSide?: 'top' | 'right' | 'bottom' | 'left'
 }
 
 // ============================================================================
@@ -167,6 +171,8 @@ export default function ModelSelector({
   taskModelId,
   initialForceOverride,
   modelCategoryType = 'llm',
+  triggerVariant = 'default',
+  popoverSide,
 }: ModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -358,8 +364,10 @@ export default function ModelSelector({
 
   return (
     <div
-      className="flex items-center min-w-0"
-      style={{ maxWidth: compact ? 'auto' : isMobile ? 200 : 260 }}
+      className={cn('flex min-w-0 items-center', triggerVariant === 'menu-item' && 'w-full')}
+      style={{
+        maxWidth: triggerVariant === 'menu-item' ? 'none' : compact ? 'auto' : isMobile ? 200 : 260,
+      }}
     >
       <Popover open={isOpen} onOpenChange={setIsOpen}>
         <TooltipProvider>
@@ -374,7 +382,10 @@ export default function ModelSelector({
                   disabled={isDisabled}
                   data-testid="model-selector"
                   className={cn(
-                    'flex items-center gap-1 min-w-0 rounded-[24px] pl-2.5 pr-3 py-2.5 h-9',
+                    'flex min-w-0 items-center',
+                    triggerVariant === 'menu-item'
+                      ? 'h-11 w-full gap-2 rounded-md px-3'
+                      : 'h-9 gap-1 rounded-[24px] py-2.5 pl-2.5 pr-3',
                     'transition-colors',
                     modelSelection.isModelRequired
                       ? 'border border-error text-error bg-error/5 hover:bg-error/10'
@@ -385,12 +396,21 @@ export default function ModelSelector({
                   )}
                 >
                   <IconComponent className="h-4 w-4 flex-shrink-0" />
-                  {!compact && (
-                    <span className="truncate text-xs min-w-0">
+                  {(!compact || triggerVariant === 'menu-item') && (
+                    <span
+                      className={cn(
+                        'min-w-0 truncate',
+                        triggerVariant === 'menu-item' ? 'flex-1 text-left text-sm' : 'text-xs'
+                      )}
+                    >
                       {modelSelection.getDisplayText()}
                     </span>
                   )}
-                  <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
+                  {triggerVariant === 'menu-item' ? (
+                    <ChevronRight className="h-4 w-4 flex-shrink-0 opacity-60" />
+                  ) : (
+                    <ChevronDown className="h-2.5 w-2.5 flex-shrink-0 opacity-60" />
+                  )}
                 </button>
               </PopoverTrigger>
             </TooltipTrigger>
@@ -408,6 +428,7 @@ export default function ModelSelector({
             'flex flex-col'
           )}
           align="start"
+          side={popoverSide ?? (triggerVariant === 'menu-item' ? 'right' : undefined)}
           sideOffset={4}
           collisionPadding={8}
           avoidCollisions={true}

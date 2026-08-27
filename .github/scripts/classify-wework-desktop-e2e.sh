@@ -28,8 +28,11 @@ core_segments=(
   executor-stream-recovery
   context-compaction
   split-workbench
+  release-package-startup
+  component-update
   native-window-startup
   native-window-chrome
+  renderer-storage
   tray-lifecycle
   conversation-state
   temporary-chat
@@ -44,6 +47,7 @@ core_segments=(
   browser-toolbar-actions
 )
 plugin_segments=(
+  core-dsh-ui-plugin-composition
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -117,7 +121,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,native-window-startup
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing
@@ -278,6 +282,15 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # DSH UI composition verifies that Wework starts empty and gains each
+    # application, route, settings page, and navigation item from plugins.
+    wework/dsh/app-wework/* | \
+      wework/dsh/ui-*/* | \
+      wework/src/features/dsh-runtime/*)
+      select_target "plugins:core-dsh-ui-plugin-composition"
       return
       ;;
 

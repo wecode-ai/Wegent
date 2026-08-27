@@ -48,6 +48,7 @@ import { installDesktopE2EClipboard } from './clipboard'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1257,6 +1258,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
       return localStorage.getItem(command.value ?? '') ?? ''
+    case 'setLocalStorageItem': {
+      const input = JSON.parse(command.value ?? '{}') as { key?: string; value?: string }
+      if (!input.key) throw new Error('setLocalStorageItem requires a key')
+      localStorage.setItem(input.key, input.value ?? '')
+      return localStorage.getItem(input.key) ?? ''
+    }
+    case 'removeLocalStorageItem':
+      localStorage.removeItem(command.value ?? '')
+      return ''
+    case 'getLocationOrigin':
+      return window.location.origin
+    case 'restartCoreDsh':
+      await flushDesktopLocalStoragePersistence()
+      await invokeDesktopHost('runtime.restartCoreDsh')
+      return ''
     case 'setEmbeddedBrowserLocalStorageItem':
       return (await setEmbeddedBrowserLocalStorageItem(command)) ?? ''
     case 'getEmbeddedBrowserLocalStorageItem':
@@ -1522,6 +1538,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ) {
         return element.value
       }
+      const declaredValue =
+        element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
+      if (declaredValue !== null && declaredValue !== undefined) return declaredValue
       return element.textContent?.trim() ?? ''
     }
     case 'getSelectionOffset': {

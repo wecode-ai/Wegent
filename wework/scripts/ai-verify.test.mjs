@@ -39,6 +39,11 @@ describe('AI_VERIFY_ACTIONS', () => {
       'preview-plugin-import': 'previewPluginImport',
       'import-plugin-package': 'importPluginPackage',
       'set-local-proxy-url': 'setLocalProxyUrl',
+      'set-storage': 'setLocalStorageItem',
+      'get-storage': 'getLocalStorageItem',
+      'remove-storage': 'removeLocalStorageItem',
+      origin: 'getLocationOrigin',
+      'restart-core-dsh': 'restartCoreDsh',
       'terminal-snapshot': 'readLocalTerminalSnapshot',
       reload: 'reloadApp',
       'close-to-tray': 'closeMainWindowToTray',
@@ -411,10 +416,10 @@ describe('resolveHostTarget', () => {
 })
 
 describe('buildSourceRuntimeEnvironment', () => {
-  test('uses the current Node executable without preparing packaged Node resources', async () => {
+  test('lets Electron provide Node without preparing packaged Node resources', async () => {
     const environment = await buildSourceRuntimeEnvironment('darwin', 'arm64')
 
-    expect(environment.WEWORK_NODE_PATH).toBe(process.execPath)
+    expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
     expect(environment.WEWORK_EXECUTOR_PATH).toContain('/debug/wegent-executor')
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
   })

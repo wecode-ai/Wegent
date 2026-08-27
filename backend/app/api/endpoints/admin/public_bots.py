@@ -29,6 +29,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _get_model_category_type(model: Kind) -> str:
+    """Return a model category, preserving the legacy LLM default."""
+    model_json = model.json if isinstance(model.json, dict) else {}
+    spec = model_json.get("spec", {}) if isinstance(model_json, dict) else {}
+    if not isinstance(spec, dict):
+        return "llm"
+    return str(spec.get("modelType") or "llm").lower()
+
+
 def _get_bot_ref_info(
     bot: Kind,
 ) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -132,6 +141,8 @@ def _validate_bot_resource_references(
                     f"Shell '{shell_namespace}/{shell_name}' is not a public resource. Please create it as a public shell first.",
                 )
 
+    primary_model_category = None
+
     # Validate modelRef (optional)
     model_ref = spec.get("modelRef")
     if model_ref:
@@ -156,6 +167,47 @@ def _validate_bot_resource_references(
                     False,
                     f"Model '{model_namespace}/{model_name}' is not a public resource. Please create it as a public model first.",
                 )
+            primary_model_category = _get_model_category_type(model)
+
+    secondary_model_ref = spec.get("secondaryModelRef")
+    if secondary_model_ref:
+        if not isinstance(secondary_model_ref, dict):
+            return (
+                False,
+                "Invalid bot JSON: 'spec.secondaryModelRef' must be an object",
+            )
+        secondary_model_name = secondary_model_ref.get("name")
+        secondary_model_namespace = secondary_model_ref.get("namespace", "default")
+        if secondary_model_name and isinstance(secondary_model_name, str):
+            secondary_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == secondary_model_name,
+                    Kind.namespace == secondary_model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not secondary_model:
+                return (
+                    False,
+                    f"Model '{secondary_model_namespace}/{secondary_model_name}' is not a public resource. Please create it as a public model first.",
+                )
+            if _get_model_category_type(secondary_model) != "llm":
+                return (
+                    False,
+                    "Invalid bot JSON: 'spec.secondaryModelRef' must reference "
+                    "an LLM model",
+                )
+
+    if primary_model_category == "video" and not secondary_model_ref:
+        return (
+            False,
+            "Invalid bot JSON: video Bots require 'spec.secondaryModelRef' "
+            "to reference an LLM model",
+        )
 
     return (True, None)
 
@@ -172,6 +224,15 @@ def _normalize_skill_refs(refs: Optional[dict]) -> dict[str, SkillRefMeta]:
 def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
     """Convert Kind model to PublicBotResponse with expanded Ghost and Model info."""
     ghost_name, shell_name, model_name = _get_bot_ref_info(bot)
+    secondary_model_name = None
+    secondary_model_namespace = None
+    if bot.json and isinstance(bot.json, dict):
+        spec = bot.json.get("spec", {})
+        if isinstance(spec, dict):
+            secondary_ref = spec.get("secondaryModelRef")
+            if isinstance(secondary_ref, dict):
+                secondary_model_name = secondary_ref.get("name")
+                secondary_model_namespace = secondary_ref.get("namespace", "default")
 
     # Initialize expanded fields
     system_prompt = None
@@ -269,6 +330,8 @@ def _bot_to_response(bot: Kind, db: Session) -> PublicBotResponse:
         ghost_name=ghost_name,
         shell_name=shell_name,
         model_name=model_name,
+        secondary_model_name=secondary_model_name,
+        secondary_model_namespace=secondary_model_namespace,
         system_prompt=system_prompt,
         mcp_servers=mcp_servers,
         skills=skills,
@@ -474,6 +537,8 @@ def _build_bot_json_from_form_data(
     ghost_name: str,
     model_ref_name: Optional[str],
     model_ref_namespace: str,
+    secondary_model_name: Optional[str] = None,
+    secondary_model_namespace: str = "default",
 ) -> dict:
     """Build Bot CRD JSON from form data."""
     bot_spec = {
@@ -485,6 +550,11 @@ def _build_bot_json_from_form_data(
         bot_spec["modelRef"] = {
             "name": model_ref_name,
             "namespace": model_ref_namespace,
+        }
+    if secondary_model_name:
+        bot_spec["secondaryModelRef"] = {
+            "name": secondary_model_name,
+            "namespace": secondary_model_namespace,
         }
 
     return {
@@ -618,6 +688,31 @@ async def create_public_bot(
                     model_ref_name = created_model.name
                     model_ref_namespace = created_model.namespace
 
+        secondary_model_name = bot_data.secondary_model_name
+        secondary_model_namespace = bot_data.secondary_model_namespace or "default"
+        if secondary_model_name:
+            secondary_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == secondary_model_name,
+                    Kind.namespace == secondary_model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not secondary_model:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Model '{secondary_model_namespace}/{secondary_model_name}' is not a public resource.",
+                )
+            if _get_model_category_type(secondary_model) != "llm":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The secondary planning model must be an LLM.",
+                )
+
         # Build bot JSON
         bot_json = _build_bot_json_from_form_data(
             bot_data.name,
@@ -627,6 +722,8 @@ async def create_public_bot(
             ghost_name,
             model_ref_name,
             model_ref_namespace,
+            secondary_model_name,
+            secondary_model_namespace,
         )
     else:
         raise HTTPException(
@@ -664,6 +761,7 @@ async def update_public_bot(
     2. Form data mode: Provide shell_name, system_prompt, mcp_servers, skills, agent_config.
        Ghost and Model will be auto-updated as public resources.
     """
+    secondary_model_updated = "secondary_model_name" in bot_data.model_fields_set
     bot = (
         db.query(Kind)
         .filter(Kind.id == bot_id, Kind.user_id == 0, Kind.kind == "Bot")
@@ -717,6 +815,7 @@ async def update_public_bot(
         or bot_data.preload_skills is not None
         or bot_data.preload_skill_refs is not None
         or bot_data.agent_config is not None
+        or secondary_model_updated
         or bot_data.default_knowledge_base_refs is not None
     ):
         # Form data mode - auto-update Ghost and optionally Model
@@ -727,6 +826,7 @@ async def update_public_bot(
         current_ghost_ref = current_spec.get("ghostRef", {})
         current_shell_ref = current_spec.get("shellRef", {})
         current_model_ref = current_spec.get("modelRef")
+        current_secondary_model_ref = current_spec.get("secondaryModelRef")
 
         # Determine shell reference
         shell_name = (
@@ -863,6 +963,41 @@ async def update_public_bot(
                 # Empty agent_config means no model binding
                 model_ref_name = None
 
+        if secondary_model_updated:
+            secondary_model_name = bot_data.secondary_model_name or None
+            secondary_model_namespace = bot_data.secondary_model_namespace or "default"
+        elif isinstance(current_secondary_model_ref, dict):
+            secondary_model_name = current_secondary_model_ref.get("name")
+            secondary_model_namespace = current_secondary_model_ref.get(
+                "namespace", "default"
+            )
+        else:
+            secondary_model_name = None
+            secondary_model_namespace = "default"
+
+        if secondary_model_name:
+            secondary_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == secondary_model_name,
+                    Kind.namespace == secondary_model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not secondary_model:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Model '{secondary_model_namespace}/{secondary_model_name}' is not a public resource.",
+                )
+            if _get_model_category_type(secondary_model) != "llm":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The secondary planning model must be an LLM.",
+                )
+
         # Build updated bot JSON
         bot.json = _build_bot_json_from_form_data(
             new_name,
@@ -872,6 +1007,8 @@ async def update_public_bot(
             ghost_name,
             model_ref_name,
             model_ref_namespace,
+            secondary_model_name,
+            secondary_model_namespace,
         )
         flag_modified(bot, "json")
 

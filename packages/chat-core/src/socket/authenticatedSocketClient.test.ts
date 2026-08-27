@@ -80,6 +80,7 @@ describe('createAuthenticatedSocketClient', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket'],
+        tryAllTransports: true,
         timeout: 20000,
       })
     )
@@ -139,6 +140,7 @@ describe('createAuthenticatedSocketClient', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket'],
+        tryAllTransports: true,
       })
     )
     expect(mockIo.mock.calls[1][1]).not.toHaveProperty('query')

@@ -111,18 +111,29 @@ Matrix submissions use a 10-second timeout. If the composer already displays a s
 
 `e2e:desktop:embedded-browser` runs the embedded-browser Agent operation regression through a scenario module. It uses the real Electron renderer, Executor, Codex app-server, and browser MCP server, opens a local fixture page, and verifies the Electron `WebContentsView` bridge control path. The scenario covers bridge identity lookup, authenticated bridge requests, page open, structured `inspect`, `fill`, `click`, `wait`, `scroll`, `screenshot`, `capabilities`, high-risk action approval, and combined MCP tools such as `open_and_inspect` and `wait_and_inspect`. It also starts a long `waitFor` and then verifies an independent `click` is not blocked, preventing bridge concurrency regressions. When local-file support changes, the scenario also opens a `file://` HTML fixture, Markdown and extensionless text fixtures, and a local folder fixture through the bridge, and verifies that an unpreviewable local file shows a toast instead of entering the download list. Results are written to `embedded-browser-agent-result.json`.
 
+The `renderer-storage` checkpoint writes model, draft, and layout `localStorage`
+fixtures in the real packaged Electron app, flushes the persistence queue, and
+restarts Core DSH. It requires the page origin after restart to differ from the
+original origin before checking that all three values were restored. This makes
+the regression exercise desktop persistence across origins instead of an
+ordinary read within the same renderer process.
+
 The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
-`cloud-project-creation`, `priority-filter`, `telemetry-consent`, `automation-lifecycle`,
-`project-automation`, `project-assignment-notification`, `offline-local-project-space`,
-`plugin-auto-update`, `project-ai-settings`, `model-routing`, `permission-modes`,
-`core-task-flow`, `task-attachments`, `cloud-git-worktree`,
-`cloud-worktree-capability`, `cloud-worktree-create`, `cloud-worktree-queued-cancel`,
-`cloud-worktree-tools`, `cloud-worktree-archive-restore`,
-`cloud-worktree-device-restart`, `context-compaction`, `runtime-task-queue`,
-`codex-notification-isolation`, `split-workbench`, `window-lifecycle`,
+`cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
+`telemetry-consent`, `automation-lifecycle`, `project-automation`,
+`project-assignment-notification`, `offline-local-project-space`,
+`core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
+`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`,
+`task-attachments`, `cloud-git-worktree`, `cloud-worktree-capability`,
+`cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
+`cloud-worktree-archive-restore`, `cloud-worktree-device-restart`,
+`context-compaction`, `runtime-task-queue`, `runtime-terminal-convergence`,
+`executor-stream-recovery`, `running-conversation-history`,
+`codex-notification-isolation`, `split-workbench`, `native-window-startup`,
+`native-window-chrome`, `renderer-storage`, `tray-lifecycle`, `window-lifecycle`,
 `goal-lifecycle`, `supervisor-lifecycle`, `resilience`, `conversation-state`,
 `temporary-chat`, `workspace-attachments`, `rendering-extensions`,
 `change-request-status`, `claude-runtime`, `local-file-preview`, `local-harness`,
@@ -256,6 +267,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
 Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Electron application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+
+Before launching Electron, desktop E2E removes inherited task, IPC, Node, and Harness runtime variables so a development Wework or Codex session cannot leak personal runtime paths into the test application. To select a Core DSH runtime explicitly for focused diagnosis, set `WEWORK_E2E_HARNESS_RUNTIME_ROOT`; the runner validates that directory and passes it to the test application as `WEWORK_HARNESS_RUNTIME_ROOT`. Do not pass `WEWORK_HARNESS_RUNTIME_ROOT` directly to the test command.
 
 On macOS, desktop E2E launches a temporary `.app` bundle in the background through `open -g`. The test-only `WEWORK_E2E_BACKGROUND_WINDOW=1` setting keeps the Electron main window hidden, prohibits application activation, and hides its Dock icon. Background throttling is disabled for the hidden WebView, so DOM control, timers, and snapshots continue to work. After the controller connects, the runner also asserts that the test application is not the current foreground process, preventing focus-stealing regressions. Only the desktop E2E runner injects this variable; normal development and production launches are unchanged.
 

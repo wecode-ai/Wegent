@@ -1,7 +1,6 @@
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
-import { getActiveWorkbenchAppRegistry } from '@/plugin-runtime/apps'
-import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
+import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
 
 function joinBrowserPath(basePath: string | undefined, path: string): string {
   const normalizedBasePath = !basePath || basePath === '/' ? '' : basePath.replace(/\/+$/, '')
@@ -35,11 +34,11 @@ export function replaceTo(path: string) {
 }
 
 export function resolveDesktopAppRoute(app: DesktopAppKey): string {
-  const registry = getActiveWorkbenchAppRegistry()
-  const contribution =
-    registry.resolve(app) ?? CORE_WORKBENCH_APPS.find(candidate => candidate.key === app)
+  const contribution = resolveDshApp(app)
   if (!contribution) return '/'
-  return contribution.mode === 'native' ? contribution.path || '/' : `/app/${contribution.key}`
+  return contribution.mode === 'native'
+    ? contribution.path || '/'
+    : `/app/${encodeURIComponent(contribution.id)}`
 }
 
 export interface RuntimeTaskRoute {

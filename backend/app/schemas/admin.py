@@ -409,6 +409,12 @@ class PublicBotCreate(BaseModel):
         None, description="Precise skill refs for preloaded Ghost skills"
     )
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
+    secondary_model_name: Optional[str] = Field(
+        None, description="Secondary LLM model name for video/image bots"
+    )
+    secondary_model_namespace: Optional[str] = Field(
+        None, description="Namespace for the secondary model"
+    )
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
     )
@@ -443,6 +449,12 @@ class PublicBotUpdate(BaseModel):
         None, description="Precise skill refs for preloaded Ghost skills"
     )
     agent_config: Optional[dict] = Field(None, description="Agent config for Model")
+    secondary_model_name: Optional[str] = Field(
+        None, description="Secondary LLM model name for video/image bots"
+    )
+    secondary_model_namespace: Optional[str] = Field(
+        None, description="Namespace for the secondary model"
+    )
     default_knowledge_base_refs: Optional[List[dict]] = Field(
         None, description="Default knowledge base refs for Ghost"
     )
@@ -466,6 +478,8 @@ class PublicBotResponse(BaseModel):
     ghost_name: Optional[str] = None
     shell_name: Optional[str] = None
     model_name: Optional[str] = None
+    secondary_model_name: Optional[str] = None
+    secondary_model_namespace: Optional[str] = None
     # Expanded Ghost fields for UI convenience
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict] = None

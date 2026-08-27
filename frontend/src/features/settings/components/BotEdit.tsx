@@ -56,7 +56,11 @@ import { filterSelectableShells, shellApis, UnifiedShell } from '@/apis/shells'
 import { fetchUnifiedSkillsList, fetchPublicSkillsList, UnifiedSkill } from '@/apis/skills'
 import { publicResourceApis, PublicBotFormData } from '@/apis/publicResources'
 import { useTranslation } from '@/hooks/useTranslation'
-import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter'
+import {
+  adaptMcpConfigForShell,
+  isMcpCapableShellType,
+  isValidAgentType,
+} from '../utils/mcpTypeAdapter'
 import { buildSkillRefsFromSelection } from '../utils/skillRefResolver'
 import { filterVisibleSkills } from '@/utils/skillVisibility'
 import { shellSupportsPreloadSkills } from './team-edit/simple-team-edit-utils'
@@ -69,6 +73,9 @@ export interface BotFormData {
   name: string
   shell_name: string
   agent_config: Record<string, unknown>
+  model_category_type?: ModelCategoryType
+  secondary_model_name: string | null
+  secondary_model_namespace: string
   system_prompt: string
   mcp_servers: Record<string, unknown>
   default_knowledge_base_refs: KnowledgeBaseDefaultRef[]
@@ -119,6 +126,8 @@ interface BotEditProps {
   groupName?: string
   /** Model category allowed by the owning team's bind mode */
   modelCategoryType?: ModelCategoryType
+  /** Allow a Chat Bot to bind a generation model as its primary model */
+  allowGenerationPrimaryModel?: boolean
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -137,6 +146,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     scope,
     groupName,
     modelCategoryType = 'llm',
+    allowGenerationPrimaryModel = false,
   },
   ref
 ) => {
@@ -153,6 +163,13 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   const [selectedModelNamespace, setSelectedModelNamespace] = useState<string | undefined>(
     undefined
   )
+  const [selectedSecondaryModel, setSelectedSecondaryModel] = useState('')
+  const [selectedSecondaryModelType, setSelectedSecondaryModelType] = useState<
+    ModelTypeEnum | undefined
+  >(undefined)
+  const [selectedSecondaryModelNamespace, setSelectedSecondaryModelNamespace] = useState<
+    string | undefined
+  >(undefined)
   const [selectedProtocol, setSelectedProtocol] = useState('')
   // Whether to restrict available models (allowed_models whitelist)
   const [restrictModels, setRestrictModels] = useState(false)
@@ -207,6 +224,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setSelectedModel('')
     setSelectedModelType(undefined)
     setSelectedModelNamespace(undefined)
+    setSelectedSecondaryModel('')
+    setSelectedSecondaryModelType(undefined)
+    setSelectedSecondaryModelNamespace(undefined)
     setAgentConfig('')
     setAgentConfigError(false)
     setModels([])
@@ -222,19 +242,54 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     () => (isValidAgentType(agentName) ? agentName : undefined),
     [agentName]
   )
+  const primaryModels = useMemo(() => {
+    if (allowGenerationPrimaryModel) {
+      return models.filter(
+        model => model.modelCategoryType === 'llm' || model.modelCategoryType === 'video'
+      )
+    }
+    return models.filter(model => model.modelCategoryType === modelCategoryType)
+  }, [allowGenerationPrimaryModel, modelCategoryType, models])
   const selectedModelObject = useMemo(
     () =>
-      models.find(
+      primaryModels.find(
         model =>
           model.name === selectedModel &&
           model.type === selectedModelType &&
           (model.namespace || 'default') === (selectedModelNamespace || 'default')
       ) ?? null,
-    [models, selectedModel, selectedModelNamespace, selectedModelType]
+    [primaryModels, selectedModel, selectedModelNamespace, selectedModelType]
   )
+  const secondaryModels = useMemo(
+    () => models.filter(model => model.modelCategoryType === 'llm'),
+    [models]
+  )
+  const selectedSecondaryModelObject = useMemo(
+    () =>
+      secondaryModels.find(
+        model =>
+          model.name === selectedSecondaryModel &&
+          model.type === selectedSecondaryModelType &&
+          (model.namespace || 'default') === (selectedSecondaryModelNamespace || 'default')
+      ) ?? null,
+    [
+      secondaryModels,
+      selectedSecondaryModel,
+      selectedSecondaryModelNamespace,
+      selectedSecondaryModelType,
+    ]
+  )
+  const primaryModelIsVideo = selectedModelObject?.modelCategoryType === 'video'
+  const videoPrimaryRequired = modelCategoryType === 'video'
+  const showVideoPrimaryControls = videoPrimaryRequired || primaryModelIsVideo
+  const selectedShellType = useMemo(() => {
+    const selectedShell = shells.find(shell => shell.name === agentName)
+    return selectedShell?.shellType || agentName
+  }, [agentName, shells])
   const selectableAllowedModels = useMemo(
-    () => models.filter(model => !allowedModels.some(allowed => allowed.name === model.name)),
-    [allowedModels, models]
+    () =>
+      primaryModels.filter(model => !allowedModels.some(allowed => allowed.name === model.name)),
+    [allowedModels, primaryModels]
   )
   const modelCascadeLabels: ModelCascadeLabels = useMemo(
     () => ({
@@ -268,8 +323,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         if (mcpConfig.trim()) {
           try {
             const currentMcpConfig = JSON.parse(mcpConfig)
-            if (isValidAgentType(value)) {
-              const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value)
+            if (isMcpCapableShellType(value)) {
+              const adaptedConfig = adaptMcpConfigForShell(currentMcpConfig, value)
               setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
             } else {
               console.warn(`Unknown agent type "${value}", skipping MCP config adaptation`)
@@ -351,12 +406,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Check if current agent supports skills (ClaudeCode and Chat shell types)
   const supportsSkills = useMemo(() => {
-    // Get shell type from the selected shell
-    const selectedShell = shells.find(s => s.name === agentName)
-    const shellType = selectedShell?.shellType || agentName
     // Skills are supported for ClaudeCode and Chat shell types
-    return shellType === 'ClaudeCode' || shellType === 'Chat'
-  }, [agentName, shells])
+    return selectedShellType === 'ClaudeCode' || selectedShellType === 'Chat'
+  }, [selectedShellType])
 
   // Check if current agent supports preload skills
   const supportsPreloadSkills = useMemo(() => {
@@ -412,13 +464,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     fetchSkills()
   }, [supportsSkills, toast, t, filterSkillsByShellType, filterSelectableSkills, scope, groupName])
 
-  // Re-filter available skills when shell type changes
-  useEffect(() => {
-    if (allSkills.length > 0) {
-      setAvailableSkills(filterSkillsByShellType(filterSelectableSkills(allSkills)))
-    }
-  }, [allSkills, filterSkillsByShellType, filterSelectableSkills])
-
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
     if (!agentName) {
@@ -438,7 +483,12 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
         if (scope === 'public') {
           // For public scope, use public resource API
-          modelData = await publicResourceApis.getPublicModels(shellType, modelCategoryType)
+          modelData = await publicResourceApis.getPublicModels(
+            shellType,
+            allowGenerationPrimaryModel || modelCategoryType === 'video'
+              ? undefined
+              : modelCategoryType
+          )
         } else {
           // Use the new unified models API which includes type information
           // Pass scope and groupName to filter models based on current context
@@ -447,10 +497,18 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             false,
             scope,
             groupName,
-            modelCategoryType
+            allowGenerationPrimaryModel || modelCategoryType === 'video'
+              ? undefined
+              : modelCategoryType
           )
           modelData = response.data
         }
+
+        const primaryModelData = allowGenerationPrimaryModel
+          ? modelData.filter(
+              model => model.modelCategoryType === 'llm' || model.modelCategoryType === 'video'
+            )
+          : modelData.filter(model => model.modelCategoryType === modelCategoryType)
 
         setModels(modelData)
 
@@ -469,7 +527,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config)
           // Only set the model if it exists in the loaded models list
           // Match by both name and type if type is specified
-          const foundModel = modelData.find((m: UnifiedModel) => {
+          const foundModel = primaryModelData.find((m: UnifiedModel) => {
             if (savedModelType) {
               return m.name === savedModelName && m.type === savedModelType
             }
@@ -478,11 +536,29 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           if (savedModelName && foundModel) {
             setSelectedModel(savedModelName)
             setSelectedModelType(foundModel.type)
+            setSelectedModelNamespace(foundModel.namespace || 'default')
           } else {
             // Model not found in list, clear selection
             setSelectedModel('')
             setSelectedModelType(undefined)
+            setSelectedModelNamespace(undefined)
           }
+        }
+
+        const secondaryModel = modelData.find(
+          model =>
+            model.modelCategoryType === 'llm' &&
+            model.name === baseBot?.secondary_model_name &&
+            (model.namespace || 'default') === (baseBot?.secondary_model_namespace || 'default')
+        )
+        if (secondaryModel) {
+          setSelectedSecondaryModel(secondaryModel.name)
+          setSelectedSecondaryModelType(secondaryModel.type)
+          setSelectedSecondaryModelNamespace(secondaryModel.namespace || 'default')
+        } else if (baseBot?.secondary_model_name) {
+          setSelectedSecondaryModel('')
+          setSelectedSecondaryModelType(undefined)
+          setSelectedSecondaryModelNamespace(undefined)
         }
         // Note: Don't clear selectedModel here if agent changed,
         // as it's already cleared in the agent select onChange handler
@@ -495,13 +571,27 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         setModels([])
         setSelectedModel('')
         setSelectedModelType(undefined)
+        setSelectedModelNamespace(undefined)
+        setSelectedSecondaryModel('')
+        setSelectedSecondaryModelType(undefined)
+        setSelectedSecondaryModelNamespace(undefined)
       } finally {
         setLoadingModels(false)
       }
     }
 
     fetchModels()
-  }, [agentName, shells, toast, t, baseBot, scope, groupName, modelCategoryType])
+  }, [
+    agentName,
+    shells,
+    toast,
+    t,
+    baseBot,
+    scope,
+    groupName,
+    modelCategoryType,
+    allowGenerationPrimaryModel,
+  ])
 
   // Reset base form when switching editing object
   useEffect(() => {
@@ -516,8 +606,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       const shell = shells.find(s => s.name === shellName)
       const agentType = shell?.shellType
 
-      if (agentType && isValidAgentType(agentType)) {
-        const adaptedConfig = adaptMcpConfigForAgent(baseBot.mcp_servers, agentType)
+      if (agentType && isMcpCapableShellType(agentType)) {
+        const adaptedConfig = adaptMcpConfigForShell(baseBot.mcp_servers, agentType)
         setMcpConfig(JSON.stringify(adaptedConfig, null, 2))
       } else {
         setMcpConfig(JSON.stringify(baseBot.mcp_servers, null, 2))
@@ -530,6 +620,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     setDefaultKnowledgeBaseRefs(baseBot?.default_knowledge_base_refs || [])
     setPreloadSkills(baseBot?.preload_skills || [])
     setSelectedSkillRefs(baseBot?.skill_refs || {})
+    setSelectedSecondaryModel(baseBot?.secondary_model_name || '')
+    setSelectedSecondaryModelType(undefined)
+    setSelectedSecondaryModelNamespace(baseBot?.secondary_model_namespace || undefined)
     setAgentConfigError(false)
 
     if (baseBot?.agent_config) {
@@ -667,6 +760,20 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       }
     }
 
+    if (videoPrimaryRequired && !primaryModelIsVideo) {
+      return {
+        isValid: false,
+        error: t('settings:bot.errors.video_model_required'),
+      }
+    }
+
+    if (primaryModelIsVideo && !selectedSecondaryModel) {
+      return {
+        isValid: false,
+        error: t('settings:bot.errors.secondary_llm_model_required'),
+      }
+    }
+
     return { isValid: true }
   }, [
     botName,
@@ -682,6 +789,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedModel,
     allowedAgents,
     shells,
+    videoPrimaryRequired,
+    primaryModelIsVideo,
+    selectedSecondaryModel,
   ])
 
   // Get bot form data for external use
@@ -712,8 +822,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     let parsedMcpConfig: Record<string, unknown> = {}
     if (!isDifyAgent && mcpConfig.trim()) {
       parsedMcpConfig = JSON.parse(mcpConfig)
-      if (parsedMcpConfig && agentName && isValidAgentType(agentName)) {
-        parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName)
+      if (parsedMcpConfig && agentName && isMcpCapableShellType(agentName)) {
+        parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, agentName)
       }
     }
 
@@ -721,6 +831,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       name: botName.trim(),
       shell_name: agentName.trim(),
       agent_config: parsedAgentConfig,
+      model_category_type: selectedModelObject?.modelCategoryType,
+      secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
+      secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
       system_prompt: isDifyAgent ? '' : prompt.trim() || '',
       mcp_servers: parsedMcpConfig,
       default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -763,6 +876,10 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     selectedModelNamespace,
     restrictModels,
     allowedModels,
+    primaryModelIsVideo,
+    selectedSecondaryModel,
+    selectedSecondaryModelNamespace,
+    selectedModelObject?.modelCategoryType,
   ])
 
   // Save bot and return the bot id
@@ -789,6 +906,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botData.name,
           shell_name: botData.shell_name,
           agent_config: botData.agent_config,
+          secondary_model_name: botData.secondary_model_name,
+          secondary_model_namespace: botData.secondary_model_namespace,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           skills: botData.skills,
@@ -814,6 +933,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botData.name,
           shell_name: botData.shell_name,
           agent_config: botData.agent_config,
+          secondary_model_name: botData.secondary_model_name,
+          secondary_model_namespace: botData.secondary_model_namespace,
           system_prompt: botData.system_prompt,
           mcp_servers: botData.mcp_servers,
           default_knowledge_base_refs: botData.default_knowledge_base_refs,
@@ -922,8 +1043,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         parsedMcpConfig = JSON.parse(mcpConfig)
         // Adapt MCP config types based on selected agent
         if (parsedMcpConfig && agentName) {
-          if (isValidAgentType(agentName)) {
-            parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName)
+          if (isMcpCapableShellType(agentName)) {
+            parsedMcpConfig = adaptMcpConfigForShell(parsedMcpConfig, agentName)
           } else {
             console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`)
           }
@@ -945,6 +1066,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botName.trim(),
           shell_name: agentName.trim(),
           agent_config: parsedAgentConfig as Record<string, unknown>,
+          secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
+          secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
           system_prompt: isDifyAgent ? '' : prompt.trim() || '',
           mcp_servers: parsedMcpConfig ?? {},
           skills: selectedSkills.length > 0 ? selectedSkills : [],
@@ -980,6 +1103,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           name: botName.trim(),
           shell_name: agentName.trim(), // Use shell_name instead of shell_type
           agent_config: parsedAgentConfig as Record<string, unknown>,
+          secondary_model_name: primaryModelIsVideo ? selectedSecondaryModel || null : null,
+          secondary_model_namespace: selectedSecondaryModelNamespace || 'default',
           system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
           mcp_servers: parsedMcpConfig ?? {},
           default_knowledge_base_refs: defaultKnowledgeBaseRefs,
@@ -1166,52 +1291,68 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             <>
               {/* Agent Config - Default Model label row, then selector + switch row */}
               <div className="flex flex-col">
-                {/* Label row */}
-                <div className="flex items-center mb-1">
-                  <label className="block text-lg font-semibold text-text-primary">
-                    {t('common:bot.agent_config')}
-                  </label>
-                  {/* Help Icon */}
-                  <button
-                    type="button"
-                    onClick={() => handleOpenModelDocs()}
-                    className="ml-2 text-text-muted hover:text-primary transition-colors"
-                    title={t('common:bot.view_model_config_guide')}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+                <div className="mb-1">
+                  <div className="flex items-center">
+                    <label className="block text-lg font-semibold text-text-primary">
+                      {showVideoPrimaryControls
+                        ? t('settings:team.simple.core.video_model_label')
+                        : t('common:bot.agent_config')}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenModelDocs()}
+                      className="ml-2 text-text-muted hover:text-primary transition-colors"
+                      title={t('common:bot.view_model_config_guide')}
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </button>
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                  {showVideoPrimaryControls && (
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {t('settings:team.simple.core.video_model_description')}
+                    </p>
+                  )}
                 </div>
-                {/* Model selector + Restrict Models switch on same row */}
                 <div className="flex items-center gap-2">
                   <div className="flex-1">
                     <GroupedModelSelect
-                      models={models}
+                      models={primaryModels}
                       selectedModel={selectedModelObject}
-                      selectedSpecialKey={selectedModelObject ? null : '__none__'}
-                      specialOptions={noModelOption}
+                      selectedSpecialKey={
+                        selectedModelObject || videoPrimaryRequired ? null : '__none__'
+                      }
+                      specialOptions={videoPrimaryRequired ? [] : noModelOption}
                       labels={modelCascadeLabels}
                       onSelectModel={model => {
                         setSelectedModel(model.name)
                         setSelectedModelType(model.type)
                         setSelectedModelNamespace(model.namespace || 'default')
+                        if (model.modelCategoryType !== 'video') {
+                          setSelectedSecondaryModel('')
+                          setSelectedSecondaryModelType(undefined)
+                          setSelectedSecondaryModelNamespace(undefined)
+                        }
                       }}
                       onSelectSpecialOption={() => {
                         setSelectedModel('')
                         setSelectedModelType(undefined)
                         setSelectedModelNamespace(undefined)
+                        setSelectedSecondaryModel('')
+                        setSelectedSecondaryModelType(undefined)
+                        setSelectedSecondaryModelNamespace(undefined)
                       }}
                       placeholder={
                         !agentName
@@ -1333,6 +1474,50 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   </div>
                 )}
               </div>
+
+              {showVideoPrimaryControls && (
+                <div className="flex flex-col">
+                  <div className="mb-1">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('settings:team.simple.core.secondary_llm_model_label')}
+                      <span className="ml-1 text-red-400">*</span>
+                    </label>
+                    <p className="mt-0.5 text-xs text-text-muted">
+                      {t('settings:team.simple.core.secondary_llm_model_description')}
+                    </p>
+                  </div>
+                  <GroupedModelSelect
+                    models={secondaryModels}
+                    selectedModel={selectedSecondaryModelObject}
+                    selectedSpecialKey={null}
+                    specialOptions={[]}
+                    labels={modelCascadeLabels}
+                    onSelectModel={model => {
+                      setSelectedSecondaryModel(model.name)
+                      setSelectedSecondaryModelType(model.type)
+                      setSelectedSecondaryModelNamespace(model.namespace || 'default')
+                    }}
+                    onSelectSpecialOption={() => {
+                      setSelectedSecondaryModel('')
+                      setSelectedSecondaryModelType(undefined)
+                      setSelectedSecondaryModelNamespace(undefined)
+                    }}
+                    placeholder={t('settings:bot.secondary_llm_model_placeholder')}
+                    disabled={loadingModels || !agentName || readOnly}
+                    dataTestId="bot-secondary-model-select"
+                    getModelKey={model =>
+                      `${model.name}:${model.type}:${model.namespace || 'default'}`
+                    }
+                    renderModelBadges={model =>
+                      model.type === 'public' ? (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-text-muted">
+                          {t('common:bot.public_model', '公共')}
+                        </span>
+                      ) : null
+                    }
+                  />
+                </div>
+              )}
 
               {/* Skills Selection - Show for agents that support skills (ClaudeCode, Chat) */}
               {supportsSkills && (

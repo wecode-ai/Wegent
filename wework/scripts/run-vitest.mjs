@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+
 const rawArgs = process.argv.slice(2)
 const requestedArgs = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)))
@@ -56,8 +58,16 @@ function normalizeArgumentPath(argument) {
   return relative(root, resolve(root, argument))
 }
 
+function resolveWindowsScript(command) {
+  if (process.platform !== 'win32' || command.includes('.')) {
+    return command
+  }
+  return `${command}.cmd`
+}
+
 function run(command, args) {
-  const result = spawnSync(command, args, {
+  const resolved = wrapWindowsScriptCommand(resolveWindowsScript(command), args)
+  const result = spawnSync(resolved.command, resolved.args, {
     cwd: root,
     stdio: 'inherit',
   })

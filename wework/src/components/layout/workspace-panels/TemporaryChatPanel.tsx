@@ -38,6 +38,7 @@ import {
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { focusComposerAtEnd } from '@/lib/workbenchComposerFocus'
+import { runtimeGoalCreateInput } from '@/lib/runtime-goal'
 import { createAppliedRuntimeGuidanceMessage } from '@/features/workbench/runtimeGuidanceMessages'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -48,12 +49,14 @@ import type {
   ModelType,
   ProjectWithTasks,
   RuntimeSendRequest,
+  RuntimeGoalCreateInput,
   RuntimeTaskAddress,
 } from '@/types/api'
 import type { RuntimePaneQueuedMessage, WorkbenchMessage } from '@/types/workbench'
 
 export interface RuntimeTaskComposerCreateOptions {
   attachments: Attachment[]
+  initialGoal?: RuntimeGoalCreateInput
   executionModel: {
     modelId?: string
     modelType?: ModelType | null
@@ -81,6 +84,7 @@ interface TemporaryChatPanelProps {
   sendEphemeral?: boolean
   emptyStateText?: string
   placeholder?: string
+  allowInitialGoal?: boolean
   expanded?: boolean
   wideComposer?: boolean
   projectWork?: ProjectWorkControls
@@ -104,6 +108,7 @@ export function TemporaryChatPanel({
   sendEphemeral = true,
   emptyStateText = '临时聊天不会出现在左侧任务列表。',
   placeholder = '要求后续变更',
+  allowInitialGoal = false,
   expanded = false,
   wideComposer = false,
   projectWork,
@@ -164,6 +169,7 @@ export function TemporaryChatPanel({
   const [input, setInput] = useState(initialInput)
   const [error, setError] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
+  const [goalDraftActive, setGoalDraftActive] = useState(false)
   const [queuedMessages, setQueuedMessages] = useState<RuntimePaneQueuedMessage[]>([])
   const [loadingFullTranscript, setLoadingFullTranscript] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -236,7 +242,7 @@ export function TemporaryChatPanel({
           return
         }
         lifecycleStore.syncTranscript(address, transcript, {
-          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
         const nextMessages = completeRuntimeConversationHydration(
           address,
@@ -267,7 +273,7 @@ export function TemporaryChatPanel({
         refresh: true,
       })
       lifecycleStore.syncTranscript(address, transcript, {
-        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
       })
       const nextMessages = completeRuntimeConversationHydration(
         address,
@@ -513,6 +519,13 @@ export function TemporaryChatPanel({
       setInput('')
 
       const currentAttachments = sideChatProjectChat.attachments
+      const initialGoal = goalDraftActive
+        ? runtimeGoalCreateInput({
+            objective: message,
+            status: 'active',
+            tokenBudget: null,
+          })
+        : undefined
       const queuedMessage: RuntimePaneQueuedMessage = {
         id: `queued-side-chat-${Date.now()}-${queuedMessages.length}`,
         content: message,
@@ -557,6 +570,7 @@ export function TemporaryChatPanel({
         targetAddress = createTask
           ? await createTask(message, {
               attachments: currentAttachments,
+              initialGoal,
               executionModel: selectedModelFields,
               optimisticUserMessage,
               onError: handleError,
@@ -588,6 +602,7 @@ export function TemporaryChatPanel({
       if (!address) {
         setMessages(getRuntimeConversationMessages(targetAddress))
         updateAddress(targetAddress)
+        setGoalDraftActive(false)
         sideChatProjectChat.resetAttachments()
         return true
       }
@@ -649,6 +664,7 @@ export function TemporaryChatPanel({
     },
     [
       address,
+      goalDraftActive,
       createTask,
       createTemporaryRuntimeTask,
       currentProject,
@@ -787,6 +803,16 @@ export function TemporaryChatPanel({
             onEditQueuedMessage={editQueuedMessage}
             isStreaming={busy}
             onPause={pause}
+            goalDraftActive={goalDraftActive}
+            onSetGoal={
+              allowInitialGoal && createTask && !address
+                ? () => {
+                    setGoalDraftActive(true)
+                    setError(null)
+                  }
+                : undefined
+            }
+            onCancelGoalDraft={() => setGoalDraftActive(false)}
           />
         </div>
       </div>

@@ -97,6 +97,7 @@ describe('workbench DSH runtime', () => {
       environment: {
         PATH: '/usr/bin',
         WEWORK_NODE_PATH: managedNode,
+        WEWORK_NODE_RUNTIME_KIND: 'electron',
       },
       port: 3080,
       run,
@@ -109,7 +110,7 @@ describe('workbench DSH runtime', () => {
     ])
     expect(run).toHaveBeenCalledWith(
       managedNode,
-      expect.any(Array),
+      expect.arrayContaining(['--expose-internals']),
       expect.objectContaining({
         env: expect.objectContaining({
           PATH: launch.environment.PATH,

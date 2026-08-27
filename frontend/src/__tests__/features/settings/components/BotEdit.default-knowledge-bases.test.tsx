@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import BotEdit from '@/features/settings/components/BotEdit'
@@ -43,6 +43,8 @@ const mockTranslate = (key: string, options?: { count?: number }) => {
     'knowledge:documents_count': `${options?.count ?? 0} documents`,
     'skills.preload_hint': 'Check skills to preload them.',
     'skills.preload_skills_section': 'Preload Skills',
+    'settings:team.simple.core.video_model_label': 'Video model',
+    'settings:team.simple.core.secondary_llm_model_label': 'LLM model',
   }
 
   const normalizedKey = key.startsWith('common:') ? key.replace(/^common:/, '') : key
@@ -203,13 +205,15 @@ const mockedFetchUnifiedSkillsList = fetchUnifiedSkillsList as jest.Mock
 const mockedFetchPublicSkillsList = fetchPublicSkillsList as jest.Mock
 const mockedGetPublicShells = publicResourceApis.getPublicShells as jest.Mock
 const mockedGetPublicModels = publicResourceApis.getPublicModels as jest.Mock
+const mockedUpdatePublicBot = publicResourceApis.updatePublicBot as jest.Mock
 
-function renderBotEdit(
+async function renderBotEdit(
   botOverrides: Partial<Bot> = {},
   props: {
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
     modelCategoryType?: 'llm' | 'image' | 'video'
+    allowGenerationPrimaryModel?: boolean
   } = {}
 ) {
   const bot = {
@@ -236,19 +240,22 @@ function renderBotEdit(
   const onClose = jest.fn()
   const toast = jest.fn()
 
-  render(
-    <BotEdit
-      bots={[bot]}
-      setBots={setBots}
-      editingBotId={7}
-      cloningBot={null}
-      onClose={onClose}
-      toast={toast}
-      scope={props.scope || 'personal'}
-      groupName={props.groupName}
-      modelCategoryType={props.modelCategoryType}
-    />
-  )
+  await act(async () => {
+    render(
+      <BotEdit
+        bots={[bot]}
+        setBots={setBots}
+        editingBotId={7}
+        cloningBot={null}
+        onClose={onClose}
+        toast={toast}
+        scope={props.scope || 'personal'}
+        groupName={props.groupName}
+        modelCategoryType={props.modelCategoryType}
+        allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
+      />
+    )
+  })
 
   return { setBots, onClose, toast }
 }
@@ -263,12 +270,14 @@ describe('BotEdit default knowledge bases', () => {
     mockedFetchPublicSkillsList.mockReset()
     mockedGetPublicShells.mockReset()
     mockedGetPublicModels.mockReset()
+    mockedUpdatePublicBot.mockReset()
 
     mockedGetUnifiedShells.mockResolvedValue({
       data: [{ name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' }],
     })
     mockedGetPublicShells.mockResolvedValue([
       { name: 'ClaudeCode', type: 'public', shellType: 'ClaudeCode' },
+      { name: 'Chat', type: 'public', shellType: 'Chat' },
       { name: 'Dify', type: 'public', shellType: 'Dify' },
     ])
     mockedGetUnifiedModels.mockResolvedValue({
@@ -405,7 +414,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('loads existing bot default knowledge bases into the form', async () => {
-    renderBotEdit()
+    await renderBotEdit()
 
     expect(await screen.findByTestId('default-knowledge-base-chip-101')).toBeInTheDocument()
     expect(screen.getByText('Product Docs')).toBeInTheDocument()
@@ -426,7 +435,7 @@ describe('BotEdit default knowledge bases', () => {
       },
     ])
 
-    renderBotEdit({
+    await renderBotEdit({
       skills: ['interactive-form-question'],
       skill_refs: {
         'interactive-form-question': {
@@ -456,7 +465,7 @@ describe('BotEdit default knowledge bases', () => {
       },
     ])
 
-    renderBotEdit({
+    await renderBotEdit({
       skills: ['repo-reader'],
       skill_refs: {
         'repo-reader': {
@@ -487,22 +496,141 @@ describe('BotEdit default knowledge bases', () => {
       },
     ])
 
-    renderBotEdit({}, { scope: 'public' })
+    await renderBotEdit({}, { scope: 'public' })
 
     expect(await screen.findByTestId('rich-skill-selector')).toBeInTheDocument()
     expect(screen.getByText('隐藏公共技能')).toBeInTheDocument()
   })
 
   test('loads public image models for image-bound teams', async () => {
-    renderBotEdit({}, { scope: 'public', modelCategoryType: 'image' })
+    await renderBotEdit({}, { scope: 'public', modelCategoryType: 'image' })
 
     await waitFor(() => {
       expect(mockedGetPublicModels).toHaveBeenCalledWith('ClaudeCode', 'image')
     })
   })
 
+  test('loads LLM and video models together for video Bot configuration', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'public',
+        modelCategoryType: 'video',
+      }
+    )
+
+    await waitFor(() => {
+      expect(mockedGetPublicModels).toHaveBeenCalledWith('ClaudeCode', undefined)
+    })
+  })
+
+  test('shows the required secondary LLM selector when the Bot primary model is video', async () => {
+    mockedGetPublicModels.mockResolvedValue([
+      {
+        name: 'seedance-video',
+        displayName: 'Seedance Video',
+        type: 'public',
+        namespace: 'default',
+        modelCategoryType: 'video',
+      },
+      {
+        name: 'planning-llm',
+        displayName: 'Planning LLM',
+        type: 'public',
+        namespace: 'default',
+        modelCategoryType: 'llm',
+      },
+    ])
+
+    await renderBotEdit(
+      {
+        shell_name: 'Chat',
+        shell_type: 'Chat',
+        agent_config: {
+          bind_model: 'seedance-video',
+          bind_model_type: 'public',
+          bind_model_namespace: 'default',
+        },
+        secondary_model_name: 'planning-llm',
+        secondary_model_namespace: 'default',
+      },
+      {
+        scope: 'public',
+        modelCategoryType: 'video',
+      }
+    )
+
+    expect(await screen.findByText('Video model')).toBeInTheDocument()
+    expect(screen.getByText('LLM model')).toBeInTheDocument()
+    expect(await screen.findByTestId('bot-secondary-model-select')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('Planning LLM')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdatePublicBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          agent_config: expect.objectContaining({
+            bind_model: 'seedance-video',
+          }),
+          secondary_model_name: 'planning-llm',
+          secondary_model_namespace: 'default',
+        })
+      )
+    })
+  })
+
+  test('rejects a video Bot without a secondary LLM', async () => {
+    mockedGetPublicModels.mockResolvedValue([
+      {
+        name: 'seedance-video',
+        displayName: 'Seedance Video',
+        type: 'public',
+        namespace: 'default',
+        modelCategoryType: 'video',
+      },
+      {
+        name: 'planning-llm',
+        displayName: 'Planning LLM',
+        type: 'public',
+        namespace: 'default',
+        modelCategoryType: 'llm',
+      },
+    ])
+
+    await renderBotEdit(
+      {
+        shell_name: 'Chat',
+        shell_type: 'Chat',
+        agent_config: {
+          bind_model: 'seedance-video',
+          bind_model_type: 'public',
+          bind_model_namespace: 'default',
+        },
+        secondary_model_name: null,
+      },
+      {
+        scope: 'public',
+        modelCategoryType: 'video',
+      }
+    )
+
+    expect(await screen.findByTestId('bot-secondary-model-select')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByTestId('bot-secondary-model-select')).not.toBeDisabled()
+    })
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdatePublicBot).not.toHaveBeenCalled()
+    })
+  })
+
   test('hides knowledge base selector for public Dify bots', async () => {
-    renderBotEdit(
+    await renderBotEdit(
       {
         shell_name: 'Dify',
         shell_type: 'Dify',
@@ -518,7 +646,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('shows only organization knowledge bases for public non-Dify bots', async () => {
-    renderBotEdit({}, { scope: 'public' })
+    await renderBotEdit({}, { scope: 'public' })
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -529,7 +657,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('shows only current group and organization knowledge bases for group bots', async () => {
-    renderBotEdit(
+    await renderBotEdit(
       {
         namespace: 'platform',
         default_knowledge_base_refs: [],
@@ -548,7 +676,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('renders popover-based selector with grouped metadata', async () => {
-    renderBotEdit()
+    await renderBotEdit()
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -574,7 +702,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('allows adding and removing multiple knowledge bases', async () => {
-    renderBotEdit()
+    await renderBotEdit()
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 
@@ -595,7 +723,7 @@ describe('BotEdit default knowledge bases', () => {
   })
 
   test('includes default_knowledge_base_refs in save payload', async () => {
-    renderBotEdit()
+    await renderBotEdit()
 
     fireEvent.click(await screen.findByTestId('default-knowledge-base-trigger'))
 

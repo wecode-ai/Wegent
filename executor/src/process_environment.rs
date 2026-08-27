@@ -54,13 +54,22 @@ pub fn process_env(extra_env: &[(String, String)]) -> HashMap<String, String> {
     let mut values = env::vars().collect::<HashMap<_, _>>();
     values.extend(extra_env.iter().cloned());
     let current_path = values.get("PATH").map(String::as_str).unwrap_or_default();
-    values.insert("PATH".to_owned(), normalized_process_path(current_path));
+    let runtime_bin = values.get("WEWORK_RUNTIME_BIN").map(String::as_str);
+    let extra_paths = values.get("WEGENT_EXTRA_PATHS").map(String::as_str);
+    values.insert(
+        "PATH".to_owned(),
+        normalized_process_path_with_extra(current_path, runtime_bin, extra_paths),
+    );
     values.retain(|key, _| !ignored_process_env_key(key));
     values
 }
 
 pub fn normalized_process_path(current_path: &str) -> String {
-    normalized_process_path_with_extra(current_path, env::var("WEGENT_EXTRA_PATHS").ok().as_deref())
+    normalized_process_path_with_extra(
+        current_path,
+        env::var("WEWORK_RUNTIME_BIN").ok().as_deref(),
+        env::var("WEGENT_EXTRA_PATHS").ok().as_deref(),
+    )
 }
 
 pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, String> {
@@ -88,8 +97,15 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
     }
 }
 
-fn normalized_process_path_with_extra(current_path: &str, extra_paths: Option<&str>) -> String {
+fn normalized_process_path_with_extra(
+    current_path: &str,
+    runtime_bin: Option<&str>,
+    extra_paths: Option<&str>,
+) -> String {
     let mut paths = Vec::new();
+    if let Some(runtime_bin) = runtime_bin {
+        append_path_entries(&mut paths, runtime_bin);
+    }
     append_path_entries(&mut paths, current_path);
     if let Some(extra_paths) = extra_paths {
         append_path_entries(&mut paths, extra_paths);
@@ -323,10 +339,11 @@ fn merged_shell_environment(
         }
     }
     let current_path = merged.get("PATH").map(String::as_str).unwrap_or_default();
+    let runtime_bin = merged.get("WEWORK_RUNTIME_BIN").map(String::as_str);
     let extra_paths = merged.get("WEGENT_EXTRA_PATHS").map(String::as_str);
     merged.insert(
         "PATH".to_string(),
-        normalized_process_path_with_extra(current_path, extra_paths),
+        normalized_process_path_with_extra(current_path, runtime_bin, extra_paths),
     );
     merged
 }
@@ -452,6 +469,10 @@ mod tests {
                 "CODEX_HOME".to_string(),
                 "/isolated/wework/codex".to_string(),
             ),
+            (
+                "WEWORK_RUNTIME_BIN".to_string(),
+                "/isolated/wework/runtime/bin".to_string(),
+            ),
         ]);
         let shell_environment = LoadedShellEnvironment {
             shell: "/bin/zsh".to_string(),
@@ -469,12 +490,14 @@ mod tests {
 
         let merged = merged_shell_environment(process_environment, &shell_environment);
 
-        assert!(merged["PATH"].starts_with("/Users/test/.npm-global/bin:/usr/bin:/bin"));
+        assert!(merged["PATH"]
+            .starts_with("/isolated/wework/runtime/bin:/Users/test/.npm-global/bin:/usr/bin:/bin"));
         assert!(merged["PATH"].contains("/opt/homebrew/bin"));
         assert_eq!(merged["SHELL"], "/bin/zsh");
         assert_eq!(merged["HOME"], "/isolated/wework");
         assert_eq!(merged["DEVICE_ID"], "parent-device");
         assert_eq!(merged["CODEX_HOME"], "/isolated/wework/codex");
+        assert_eq!(merged["WEWORK_RUNTIME_BIN"], "/isolated/wework/runtime/bin");
     }
 
     #[cfg(unix)]
