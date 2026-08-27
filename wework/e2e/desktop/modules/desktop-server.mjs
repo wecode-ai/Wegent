@@ -171,6 +171,8 @@ import {
   PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_RESUME_COMPLETION,
+  PROVIDER_SWITCH_RESUME_PROMPT,
   QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
@@ -3640,13 +3642,14 @@ class DesktopE2EServer {
       return
     }
 
-    assert.ok(
-      JSON.stringify(body).includes(PROVIDER_SWITCH_PROMPT),
-      'The provider-switch request lost the user prompt'
-    )
+    const serialized = JSON.stringify(body)
     this.recordScenarioRequest('provider_switch_retry', modelRequest)
     const promptRequestCount = this.scenarioRequests.get('provider_switch_retry').length
     if (promptRequestCount === 1) {
+      assert.ok(
+        serialized.includes(PROVIDER_SWITCH_PROMPT),
+        'The Luna request lost the user prompt'
+      )
       assert.equal(
         body.model,
         PROVIDER_SWITCH_LUNA_MODEL_ID,
@@ -3661,6 +3664,10 @@ class DesktopE2EServer {
       return
     }
     if (promptRequestCount === 2) {
+      assert.ok(
+        serialized.includes(PROVIDER_SWITCH_PROMPT),
+        'The official retry lost the original user prompt'
+      )
       assert.equal(
         body.model,
         PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
@@ -3670,6 +3677,24 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(PROVIDER_SWITCH_COMPLETION),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+    if (promptRequestCount === 3) {
+      assert.ok(
+        serialized.includes(PROVIDER_SWITCH_RESUME_PROMPT),
+        'The resumed Luna turn lost the follow-up prompt'
+      )
+      assert.equal(
+        body.model,
+        PROVIDER_SWITCH_LUNA_MODEL_ID,
+        `The resumed provider-switch turn was routed to ${String(body.model)} instead of Luna`
+      )
+      const responseId = 'provider-switch-resume-luna-complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(PROVIDER_SWITCH_RESUME_COMPLETION),
         responseCompleted(responseId),
       ])
       return
