@@ -859,6 +859,10 @@
       "saveFailed": "保存失败，请稍后重试"
     }
   },
+  "externalWebContent": {
+    "videoMetadataOnlyTitle": "当前模型不支持视频内容理解",
+    "videoMetadataOnlyDescription": "如需理解视频，请切换到支持视频理解的模型。"
+  },
   "dingtalkDocs": {
     "tabTitle": "钉钉文档",
     "sync": "同步",

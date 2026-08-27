@@ -78,6 +78,7 @@ export function ElectronEmbeddedBrowserView({
     webview.setAttribute('data-wework-browser-label', initialLabelRef.current)
     webview.setAttribute('data-browser-sidebar-conversation-id', 'wework')
     webview.setAttribute('data-browser-sidebar-browser-tab-id', initialLabelRef.current)
+    webview.setAttribute('allowpopups', 'true')
     webview.setAttribute('partition', routePartition(initialLabelRef.current, hostGeneration))
     webview.setAttribute('src', 'about:blank')
     webview.setAttribute('webviewrole', 'tab')

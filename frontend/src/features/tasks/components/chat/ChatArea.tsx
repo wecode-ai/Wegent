@@ -981,13 +981,7 @@ function ChatAreaContent({
     initialSelectedSkills,
   })
 
-  const handleFileSelect = useCallback(
-    async (files: File | File[]) => {
-      await chatState.handleFileSelect(files)
-    },
-    [chatState]
-  )
-
+  const handleFileSelect = chatState.handleFileSelect
   const previousVideoMetadataOnlyRef = useRef(false)
   useEffect(() => {
     const active = hasChatModelVideoAttachment && selectedModelVideoInputSupport === false

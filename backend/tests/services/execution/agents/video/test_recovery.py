@@ -89,8 +89,8 @@ def test_recovery_requeues_async_card_with_existing_video_poller() -> None:
                 "job_id": "https://workflow.example.com/task/1",
                 "query_url": "https://workflow.example.com/task/1",
                 "card_type": "video_director_generation",
-                "preview_title": "视频生成中...",
-                "progress_text": "正在生成",
+                "preview_title": "test-preview-title",
+                "progress_text": "test-progress",
                 "status": "polling",
                 "video_block_id": "card-1",
                 "poll_count": 4,
@@ -125,7 +125,7 @@ def test_recovery_requeues_async_card_with_existing_video_poller() -> None:
     assert dispatch.call_args.kwargs["card_context"] == {
         "query_url": "https://workflow.example.com/task/1",
         "card_type": "video_director_generation",
-        "preview_title": "视频生成中...",
-        "progress_text": "正在生成",
+        "preview_title": "test-preview-title",
+        "progress_text": "test-progress",
     }
     assert dispatch.call_args.kwargs["poll_count"] == 4

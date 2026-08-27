@@ -126,7 +126,7 @@ describe('publicResourceApis', () => {
 
   it('forwards the planning LLM when creating public video bots', async () => {
     const formData: PublicBotFormData = {
-      name: 'minute-video-bot',
+      name: 'test-video-bot',
       namespace: 'default',
       shell_name: 'Chat',
       agent_config: {

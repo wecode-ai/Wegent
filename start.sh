@@ -2315,7 +2315,7 @@ start_services() {
 
     echo -e "${BLUE}Starting services...${NC}"
     if [ "$LOCAL_LOG_FILE_ENABLED" = "true" ]; then
-        echo -e "  Backend logs:   ${GREEN}$BACKEND_LOCAL_LOG_DIR/info.log${NC}"
+        echo -e "  Backend logs:    ${GREEN}$BACKEND_LOCAL_LOG_DIR/info.log${NC}"
         echo -e "  Chat Shell logs: ${GREEN}$CHAT_SHELL_LOCAL_LOG_DIR/info.log${NC}"
     fi
 

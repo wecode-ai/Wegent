@@ -15,16 +15,16 @@ def test_builds_public_skill_generation_protocol() -> None:
             "duration": 60,
             "generation_mode_id": "omni_reference",
             "content": [
-                {"type": "input_image", "file_id": "image-pid"},
-                {"type": "input_video", "file_id": "video-media-id"},
+                {"type": "input_image", "file_id": "test-image-file-id"},
+                {"type": "input_video", "file_id": "test-video-file-id"},
             ],
         }
     ) == {
         "modelName": "Seedance-2.0-Fast",
         "modelDisplayName": "Seedance 2.0 Fast",
         "content": [
-            {"type": "input_image", "file_id": "image-pid"},
-            {"type": "input_video", "file_id": "video-media-id"},
+            {"type": "input_image", "file_id": "test-image-file-id"},
+            {"type": "input_video", "file_id": "test-video-file-id"},
             {
                 "type": "generate_params",
                 "value": {

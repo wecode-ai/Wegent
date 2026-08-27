@@ -166,16 +166,6 @@ interface PendingRuntimeGoalState {
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
-const configuredRuntimeTranscriptPageSize = Number(
-  getDesktopE2ERuntimeConfig().transcriptPageSize ??
-    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
-)
-const RUNTIME_TRANSCRIPT_PAGE_SIZE =
-  import.meta.env.VITE_WEWORK_E2E === 'true' &&
-  Number.isInteger(configuredRuntimeTranscriptPageSize) &&
-  configuredRuntimeTranscriptPageSize > 0
-    ? configuredRuntimeTranscriptPageSize
-    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
@@ -187,6 +177,7 @@ export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
 }: WorkbenchPaneSessionOptions) {
+  const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
     projectChat,
@@ -719,7 +710,7 @@ export function useWorkbenchPaneSession({
     void Promise.resolve()
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
         })
       )
       .then(transcript => {
@@ -735,7 +726,7 @@ export function useWorkbenchPaneSession({
           )
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
-          setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+          setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
           setTurnNavigation(transcript.turnNavigation ?? [])
@@ -788,7 +779,13 @@ export function useWorkbenchPaneSession({
         rebuildingTranscriptIdentityRef.current = null
       }
     }
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, transcriptReloadVersion])
+  }, [
+    dispatchMessages,
+    lifecycleStore,
+    runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
+    transcriptReloadVersion,
+  ])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const reloadRuntimeTranscript = useCallback(() => {
@@ -822,7 +819,7 @@ export function useWorkbenchPaneSession({
 
       void loadRuntimeTranscriptForPaneRef
         .current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         .then(transcript => {
@@ -838,7 +835,7 @@ export function useWorkbenchPaneSession({
           )
           loadedRuntimeTranscriptKeyRef.current = target.key
           setTranscriptFullContent(transcript.fullContent === true)
-          setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+          setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
           setTurnNavigation(transcript.turnNavigation ?? [])
@@ -865,7 +862,7 @@ export function useWorkbenchPaneSession({
           rebuildingTranscriptIdentityRef.current = null
         })
     })
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget])
+  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
@@ -881,7 +878,7 @@ export function useWorkbenchPaneSession({
     setTranscriptLoadingMoreBefore(true)
     try {
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-        limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+        limit: runtimeTranscriptPageSize,
         beforeCursor,
       })
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
@@ -889,7 +886,7 @@ export function useWorkbenchPaneSession({
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
       )
-      setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+      setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
       setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
       setLoadedTranscriptRanges(nextRanges)
       setTurnNavigation(current =>
@@ -911,6 +908,7 @@ export function useWorkbenchPaneSession({
   }, [
     dispatchMessages,
     runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
     transcriptBeforeCursor,
     transcriptFullContent,
     transcriptLoadingMoreBefore,
@@ -929,12 +927,16 @@ export function useWorkbenchPaneSession({
       }
 
       const { address } = runtimeTaskLoadTarget
-      const loadOptions = runtimeTurnNavigationLoadOptions(item, loadedTranscriptRangesRef.current)
+      const loadOptions = runtimeTurnNavigationLoadOptions(
+        item,
+        loadedTranscriptRangesRef.current,
+        runtimeTranscriptPageSize
+      )
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
       const nextHasMoreBefore =
         loadOptions.beforeCursor === undefined
           ? transcriptHasMoreBefore
-          : Boolean(transcript.hasMoreBefore)
+          : runtimeTranscriptHasMoreBefore(transcript)
       const nextBeforeCursor =
         loadOptions.beforeCursor === undefined
           ? transcriptBeforeCursor
@@ -957,6 +959,7 @@ export function useWorkbenchPaneSession({
     [
       dispatchMessages,
       runtimeTaskLoadTarget,
+      runtimeTranscriptPageSize,
       transcriptBeforeCursor,
       transcriptFullContent,
       transcriptHasMoreBefore,
@@ -968,7 +971,7 @@ export function useWorkbenchPaneSession({
       if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
 
       const { address } = runtimeTaskLoadTarget
-      const limit = Math.min(RUNTIME_TRANSCRIPT_PAGE_SIZE, gap.end - gap.start)
+      const limit = Math.min(runtimeTranscriptPageSize, gap.end - gap.start)
       const loadOptions = {
         limit,
         afterCursor: `offset:${gap.start}`,
@@ -987,7 +990,7 @@ export function useWorkbenchPaneSession({
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [dispatchMessages, runtimeTaskLoadTarget, transcriptFullContent]
+    [dispatchMessages, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
   )
 
   const loadFullTranscript = useCallback(async () => {
@@ -1432,7 +1435,7 @@ export function useWorkbenchPaneSession({
           return true
         }
         const transcript = await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         removeRuntimeConversationTurn(currentRuntimeTask, {
@@ -1447,7 +1450,7 @@ export function useWorkbenchPaneSession({
       } catch (error) {
         const transcript = await loadRuntimeTranscriptForPaneRef
           .current(currentRuntimeTask, {
-            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+            limit: runtimeTranscriptPageSize,
             refresh: true,
           })
           .catch(() => null)
@@ -1467,7 +1470,14 @@ export function useWorkbenchPaneSession({
         return false
       }
     },
-    [currentRuntimeTask, editLastUserMessage, getRuntimeModelFields, paneStatus.isBusy, setError]
+    [
+      currentRuntimeTask,
+      editLastUserMessage,
+      getRuntimeModelFields,
+      paneStatus.isBusy,
+      runtimeTranscriptPageSize,
+      setError,
+    ]
   )
 
   const ignoreRequestUserInput = useCallback(
@@ -2735,7 +2745,7 @@ export function useWorkbenchPaneSession({
       rebuildingTranscriptIdentityRef.current = identityKey
       try {
         const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
@@ -2799,6 +2809,7 @@ export function useWorkbenchPaneSession({
     lifecycleStore,
     messages,
     runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
     transcriptLoading,
   ])
 
@@ -2938,6 +2949,21 @@ export function useWorkbenchPaneSession({
     resumeCurrentGoal,
     clearCurrentGoal,
   }
+}
+
+export function resolveRuntimeTranscriptPageSize(
+  configuredPageSize = Number(
+    getDesktopE2ERuntimeConfig().transcriptPageSize ??
+      import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+  )
+): number {
+  return Number.isInteger(configuredPageSize) && configuredPageSize > 0
+    ? configuredPageSize
+    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
+}
+
+export function runtimeTranscriptHasMoreBefore(transcript: RuntimePaneTranscript): boolean {
+  return Boolean(transcript.beforeCursor || transcript.hasMoreBefore)
 }
 
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
@@ -3168,21 +3194,19 @@ function cursorOffset(cursor: string | null | undefined): number | null {
 
 function runtimeTurnNavigationLoadOptions(
   item: RuntimeTurnNavigationItem,
-  loadedRanges: LoadedTranscriptRange[]
+  loadedRanges: LoadedTranscriptRange[],
+  pageSize: number
 ) {
   const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
   const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
   const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
   const pageEnd = Math.max(
     messageIndex + 1,
-    Math.min(
-      nextLoadedRange?.start ?? messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE,
-      messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE
-    )
+    Math.min(nextLoadedRange?.start ?? messageIndex + pageSize, messageIndex + pageSize)
   )
 
   return {
-    limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+    limit: pageSize,
     beforeCursor: `offset:${pageEnd}`,
   }
 }

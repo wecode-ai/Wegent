@@ -6,6 +6,13 @@ sidebar_position: 35
 
 Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个调试版 Wework。为了在多个 worktree、多个 dev app 同时打开时分清窗口来源，Wework 会把父窗口上下文传给 Terminal，再由 `wework/scripts/dev-mac-app.sh` 传给新启动的调试实例。
 
+内置 Terminal 还可能继承正式版用于启动 Node 子进程的
+`ELECTRON_RUN_AS_NODE`、`WEWORK_NODE_PATH` 和 `WEWORK_NODE_RUNTIME_KIND`。
+`dev-mac-app.sh` 在启动调试版 Electron 前会清除这些变量，让源码 checkout
+使用自己准备的 Node launcher，并确保 Electron 以桌面应用模式启动。脚本也会
+先生成 `wework/electron/resources/components.json` 等开发组件资源，再把该
+资源目录显式交给调试版 Electron。
+
 ## Terminal 环境变量
 
 本地内置 Terminal 创建 PTY 时，会注入以下变量：

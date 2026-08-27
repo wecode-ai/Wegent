@@ -10,12 +10,15 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import identityModule from '../electron/scripts/build-identity.cjs'
 
+const { resolveBuildIdentity } = identityModule
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
 const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
+const identity = resolveBuildIdentity()
 
 if (!platform || !arch || !version || !outputDirectory) {
   throw new Error(
@@ -30,7 +33,8 @@ await mkdir(output, { recursive: true })
 
 if (platform === 'macos') {
   const appDirectory = await findDirectory(installerRoot, /^mac(?:-arm64)?$/)
-  const appPath = join(appDirectory, 'WeWork.app')
+  const appName = `${identity.productName}.app`
+  const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
   const dmg = await findFile(
     installerRoot,
@@ -41,7 +45,7 @@ if (platform === 'macos') {
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
-  await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, ['WeWork.app'])
+  await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await Promise.all([cp(dmg, join(output, basename(dmg))), cp(zip, join(output, basename(zip)))])
   await signBridge(bridge)
 } else if (platform === 'windows') {

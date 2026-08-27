@@ -6,6 +6,15 @@ sidebar_position: 35
 
 Wework can launch a debug Wework instance from the built-in Terminal of another running Wework window. To keep multiple worktrees and dev apps distinguishable, Wework passes the parent window context into the Terminal, and `wework/scripts/dev-mac-app.sh` forwards it to the debug instance.
 
+The built-in Terminal can also inherit `ELECTRON_RUN_AS_NODE`,
+`WEWORK_NODE_PATH`, and `WEWORK_NODE_RUNTIME_KIND` from the release app's Node
+launcher. Before starting the debug Electron process, `dev-mac-app.sh` clears
+those variables so the source checkout prepares its own Node launcher and
+Electron starts in desktop application mode. The script also generates
+development component resources such as
+`wework/electron/resources/components.json` and explicitly passes that resource
+root to the debug Electron process.
+
 ## Terminal Environment Variables
 
 When Wework creates a local built-in Terminal PTY, it injects:

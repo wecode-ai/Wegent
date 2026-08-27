@@ -5,6 +5,7 @@ import {
   coreDshDeepLinkLocation,
   injectRuntimeConfig,
   resolveBackendUrl,
+  resolveSocketUrl,
 } from './index.js'
 
 test('normalizes backend URLs without copying an API suffix', () => {
@@ -17,9 +18,20 @@ test('normalizes backend URLs without copying an API suffix', () => {
   assert.equal(resolveBackendUrl({}), null)
 })
 
+test('normalizes configured socket URLs', () => {
+  assert.equal(
+    resolveSocketUrl({
+      WEWORK_SOCKET_URL: 'wss://socket.example.com/',
+    }),
+    'wss://socket.example.com'
+  )
+  assert.equal(resolveSocketUrl({}), null)
+})
+
 test('injects the same-origin DSH application runtime configuration', () => {
   const html = injectRuntimeConfig('<html><head></head><body></body></html>', {
     WEWORK_BACKEND_URL: 'http://127.0.0.1:8000',
+    WEWORK_SOCKET_URL: 'wss://socket.example.com',
     WEWORK_E2E_CONTROL_TOKEN: 'control-token',
     WEWORK_E2E_CONTROL_URL: 'http://127.0.0.1:43111',
     WEWORK_E2E_LOCAL_MODELS_CATALOG_READY: 'false',
@@ -34,6 +46,7 @@ test('injects the same-origin DSH application runtime configuration', () => {
   assert.match(html, new RegExp(`"appBasePath":"${APP_BASE_PATH}"`))
   assert.ok(html.includes('"desktopHost":"electron"'))
   assert.ok(html.includes('"apiBaseUrl":"/wework/api"'))
+  assert.ok(html.includes('"socketBaseUrl":"wss://socket.example.com"'))
   assert.ok(html.includes('"socketPath":"/wework/socket.io"'))
   assert.ok(html.includes('"controlToken":"control-token"'))
   assert.ok(html.includes('"controlUrl":"http://127.0.0.1:43111"'))

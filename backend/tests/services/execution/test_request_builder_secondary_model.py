@@ -45,7 +45,7 @@ def _resolve_model(
     builder = TaskRequestBuilder.__new__(TaskRequestBuilder)
     builder.db = Mock()
     bot = SimpleNamespace(
-        name="minute-video-bot",
+        name="test-video-bot",
         json={"spec": {"agent_config": {}}},
     )
 
