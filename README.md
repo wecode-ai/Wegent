@@ -10,7 +10,7 @@ English | [简体中文](README_zh.md)
 
 Wegent includes a desktop workbench and a self-hostable web platform. Wegent Desktop works with local projects, files, commands, tests, and code changes. Wegent Web provides browser-based agents, knowledge, automation, and administration. Wegent Backend connects these applications to shared project spaces, models, and execution devices.
 
-[Download Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Contributing](CONTRIBUTING.md)
+[Download the latest Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [Documentation](https://wecode-ai.github.io/wegent-docs/) · [Contributing](CONTRIBUTING.md)
 
 ## Wegent Desktop
 
@@ -99,7 +99,7 @@ Wework can also connect to Wegent Backend for shared project spaces, models, and
 
 ### Wegent Desktop
 
-1. [Download Wegent Desktop from Releases](https://github.com/wecode-ai/Wegent/releases) and install it.
+1. [Download the latest Wegent Desktop installer](https://github.com/wecode-ai/Wegent/releases/latest) and install it.
 2. Open the app and add or select a local project.
 3. Create a task and describe the work to perform.
 4. Review the agent activity, command output, and file changes.
