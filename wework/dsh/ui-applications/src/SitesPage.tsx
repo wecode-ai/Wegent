@@ -649,7 +649,6 @@ export function SitesPage() {
           createError={createError}
           createNotice={createNotice}
           smartAppsEnabled={experimentalFeatures.enabled}
-          smartAppsMode={smartAppsView === 'owned' ? 'owned' : 'marketplace'}
           smartAppsContent={
             smartAppsView === 'owned' ? (
               <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />

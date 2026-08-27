@@ -471,10 +471,6 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       await control.command('waitFor', '[data-testid="smart-apps-owned-page"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command('waitFor', 'body', {
-        text: '我的工作台',
-        timeoutMs: uiTimeoutMs,
-      })
       await control.command('click', '[data-testid="smart-apps-created-create"]')
       await control.command('waitFor', '[data-testid="smart-app-development-dialog"]', {
         text: '创建空白工作台',
