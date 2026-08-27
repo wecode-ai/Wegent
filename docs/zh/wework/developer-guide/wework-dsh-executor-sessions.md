@@ -29,9 +29,15 @@ Session，因此并行任务不会合并到同一个事件流。
 投影保留原始用户消息和模型输出。安装并信任插件意味着允许插件按标准 DSH
 Session 契约读取这些内容；Wework 不再为同一数据维护一套匿名摘要扩展点。
 
-Codex 的 `tokenUsage.last` 表示当前 turn 的累计用量，投影后的 usage chunk
-也保持这一语义。需要实时 token 速度的插件应对同一 Session 的相邻
-`outputTokens` 求差分，再除以采样间隔；不能把多个累计值直接相加。
+Codex 的 `tokenUsage.last` 表示最近一次模型调用的用量；同一 Executor turn
+可能包含多次模型调用，因此该值会在调用之间重置。投影层使用 thread 级
+`tokenUsage.total` 计算相邻增量，再把增量累计为当前 DSH turn 的 usage。
+所以投影后的 `outputTokens` 在同一 turn 内单调递增，`assistant/message.usage`
+也使用相同的整轮累计口径。
+
+需要实时 token 速度的插件应对同一 Session、同一 turn 的相邻
+`outputTokens` 求差分，再除以采样间隔；不能把多个累计值直接相加。新 turn
+开始后应重置插件自己的差分基线。
 
 ```js
 export const inject = ["sessions"];
