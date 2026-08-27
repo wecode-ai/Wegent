@@ -171,3 +171,37 @@ def test_new_system_public_agent_is_featured_by_default(
         agent.json.get("spec", {}).get("capability", {}).get("marketplace", {})
     )
     assert "recommendationScore" not in marketplace
+
+
+def test_system_recommendation_score_changes_keep_listing_public(
+    test_client,
+    test_db,
+    test_admin_token,
+    test_token,
+):
+    agent = _resource(
+        test_db,
+        user_id=0,
+        kind="Team",
+        name="system-score-change-agent",
+    )
+
+    raised = test_client.put(
+        f"/api/admin/marketplace-resources/{agent.id}",
+        json={"recommendation_score": 90},
+        headers=_headers(test_admin_token),
+    )
+    reset = test_client.put(
+        f"/api/admin/marketplace-resources/{agent.id}",
+        json={"recommendation_score": 0},
+        headers=_headers(test_admin_token),
+    )
+    detail = test_client.get(
+        f"/api/resource-library/listings/{agent.id}",
+        headers=_headers(test_token),
+    )
+
+    assert raised.status_code == 200
+    assert reset.status_code == 200
+    assert detail.status_code == 200
+    assert detail.json()["id"] == agent.id

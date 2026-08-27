@@ -13,6 +13,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
 from app.stores.tasks import subtask_store, task_access_store
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 
 logger = logging.getLogger(__name__)
@@ -231,7 +232,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 "parent_id": subtask.parent_id,
                 "status": subtask.status.value if subtask.status else None,
                 "progress": subtask.progress,
-                "result": subtask.result,
+                "result": sanitize_client_payload(subtask.result),
                 "error_message": subtask.error_message,
                 "sender_type": subtask.sender_type,  # Already a string value, not enum
                 "sender_user_id": subtask.sender_user_id,

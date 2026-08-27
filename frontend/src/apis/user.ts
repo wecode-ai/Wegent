@@ -95,6 +95,13 @@ function setTokenCookie(token: string, expMs: number | null) {
   }
 }
 
+function hasTokenCookie(token: string): boolean {
+  if (typeof document === 'undefined') return false
+
+  const expectedCookie = `${TOKEN_COOKIE_NAME}=${encodeURIComponent(token)}`
+  return document.cookie.split(';').some(cookie => cookie.trim() === expectedCookie)
+}
+
 /**
  * Remove token cookie
  */
@@ -120,7 +127,15 @@ export function setToken(token: string) {
 
 export function getToken(): string | null {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem(TOKEN_KEY)
+    const token = localStorage.getItem(TOKEN_KEY)
+
+    // Native media requests cannot add the Authorization header used by
+    // apiClient, so restore the cookie for sessions created before cookie sync.
+    if (token && !hasTokenCookie(token)) {
+      setTokenCookie(token, getJwtExp(token))
+    }
+
+    return token
   }
   return null
 }

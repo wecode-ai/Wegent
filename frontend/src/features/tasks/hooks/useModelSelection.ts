@@ -235,6 +235,7 @@ export function useModelSelection({
   // -------------------------------------------------------------------------
   const prevTeamIdRef = useRef<number | null | undefined>(undefined)
   const prevTaskIdRef = useRef<number | null | undefined>(undefined)
+  const prevTaskModelIdRef = useRef<string | null | undefined>(undefined)
   const hasInitializedRef = useRef(false)
   const isRestoringRef = useRef(false)
 
@@ -417,12 +418,14 @@ export function useModelSelection({
       hasInitializedRef.current &&
       prevTaskIdRef.current !== taskId &&
       (typeof prevTaskIdRef.current === 'number' || typeof taskId === 'number')
+    const taskModelChanged = hasInitializedRef.current && prevTaskModelIdRef.current !== taskModelId
 
     prevTeamIdRef.current = currentTeamId
     prevTaskIdRef.current = taskId
+    prevTaskModelIdRef.current = taskModelId
 
     // Case 1: Initial load or team/task changed - restore model
-    if (!hasInitializedRef.current || teamChanged || taskChanged) {
+    if (!hasInitializedRef.current || teamChanged || taskChanged || taskModelChanged) {
       isRestoringRef.current = true
       let restoredModel: Model | null = null
       let restoredForceOverride: boolean | undefined

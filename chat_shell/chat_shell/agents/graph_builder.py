@@ -187,6 +187,18 @@ def _tool_call_count(message: Any) -> int:
     return len(getattr(message, "tool_calls", None) or [])
 
 
+def _has_unexecuted_tool_calls(
+    final_message: BaseMessage | None,
+    last_model_end_tool_calls: int,
+) -> bool:
+    """Return whether the turn ended before its last requested tool executed."""
+    if isinstance(final_message, ToolMessage):
+        return False
+    if isinstance(final_message, AIMessage) and _tool_call_count(final_message) > 0:
+        return True
+    return last_model_end_tool_calls > 0
+
+
 def _count_tool_use_blocks(output: Any) -> int:
     """Count tool_use-style content blocks on a model output message."""
     content = getattr(output, "content", None)
@@ -1182,6 +1194,9 @@ class LangGraphAgentBuilder:
         # All tools = base tools + all skill tools (for execution)
         # This ensures all tools are available for execution when model calls them
         all_tools = base_tools + all_skill_tools
+        executor_tool_names = {
+            tool.name for tool in all_tools if getattr(tool, "name", None)
+        }
 
         llm = self.llm
 
@@ -1200,6 +1215,20 @@ class LangGraphAgentBuilder:
 
             # Combine base tools with available skill tools
             selected_tools = base_tools + available_skill_tools
+            selected_tool_names = {
+                tool.name for tool in selected_tools if getattr(tool, "name", None)
+            }
+            missing_executor_tools = sorted(selected_tool_names - executor_tool_names)
+            if missing_executor_tools:
+                logger.warning(
+                    "[configure_model] Model-bound tools are missing from the "
+                    "LangGraph executor registry: missing=%s loaded_skills=%s "
+                    "model_tool_count=%d executor_tool_count=%d",
+                    missing_executor_tools,
+                    sorted(load_skill_tool.get_loaded_skills()),
+                    len(selected_tool_names),
+                    len(executor_tool_names),
+                )
 
             logger.debug(
                 "[configure_model] Selected %d tools: base=%d, skill=%d, loaded_skills=%s",
@@ -1986,9 +2015,7 @@ class LangGraphAgentBuilder:
             )
             termination_reason = "normal_completion"
             termination_log = logger.info
-            if final_tool_calls > 0 or (
-                last_model_end_tool_calls > 0 and final_tool_calls == 0
-            ):
+            if _has_unexecuted_tool_calls(final_message, last_model_end_tool_calls):
                 termination_reason = "completed_with_unexecuted_tool_calls"
                 termination_log = logger.warning
 

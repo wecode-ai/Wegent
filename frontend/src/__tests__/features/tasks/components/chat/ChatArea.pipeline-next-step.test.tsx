@@ -44,6 +44,9 @@ const mockSelectedTaskDetail = {
   requested_skills: [],
 }
 
+let mockChatAreaTeam = mockSelectedTeam
+let mockChatAreaSelectedModel: Record<string, unknown> | null = null
+let mockChatAreaAttachments: Array<Record<string, unknown>> = []
 let mockTaskMessages = new Map<string, unknown>()
 
 const mockStageInfo = {
@@ -118,13 +121,13 @@ jest.mock('@/features/tasks/hooks/useChatStatusIndicator', () => ({
 
 jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
   useChatAreaState: () => ({
-    selectedTeam: mockSelectedTeam,
+    selectedTeam: mockChatAreaTeam,
     handleTeamChange: jest.fn(),
     findDefaultTeamForMode: jest.fn(),
     defaultTeam: null,
     restoreDefaultTeam: jest.fn(),
     isUsingDefaultTeam: false,
-    selectedModel: null,
+    selectedModel: mockChatAreaSelectedModel,
     setSelectedModel: jest.fn(),
     forceOverride: false,
     setForceOverride: jest.fn(),
@@ -148,7 +151,11 @@ jest.mock('@/features/tasks/components/chat/useChatAreaState', () => ({
     externalApiParams: {},
     handleExternalApiParamsChange: jest.fn(),
     handleAppModeChange: jest.fn(),
-    attachmentState: { attachments: [], uploadingFiles: new Map(), errors: new Map() },
+    attachmentState: {
+      attachments: mockChatAreaAttachments,
+      uploadingFiles: new Map(),
+      errors: new Map(),
+    },
     resetAttachment: jest.fn(),
     isAttachmentReadyToSend: true,
     shouldHideToolbarStatus: false,
@@ -382,9 +389,75 @@ function setCompletedPipelineMessages() {
 describe('ChatArea pipeline next-step dialog', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockChatAreaTeam = mockSelectedTeam
+    mockChatAreaSelectedModel = null
+    mockChatAreaAttachments = []
     ;(mockSelectedTeam.bots[0] as { contextPassing: string }).contextPassing = 'previous_bot'
     mockSendMessage.mockResolvedValue(42)
     setCompletedPipelineMessages()
+  })
+
+  it('keeps the input inside the chat pane in split view', () => {
+    render(
+      <ChatArea teams={[mockSelectedTeam]} isTeamsLoading={false} taskType="chat" isSplitViewOpen />
+    )
+
+    const splitInput = screen.getByTestId('chat-split-input')
+    const inputSpacing = splitInput.firstElementChild?.firstElementChild
+
+    expect(splitInput).toBeInTheDocument()
+    expect(inputSpacing).toHaveClass('pb-3', 'pt-[41px]')
+    expect(screen.queryByTestId('chat-floating-input')).not.toBeInTheDocument()
+  })
+
+  it('does not show a chat-model video warning for a mode-spec video workflow', () => {
+    mockChatAreaTeam = {
+      ...mockSelectedTeam,
+      mode_spec: {
+        allowedModelCategories: ['video'],
+      },
+    } as unknown as Team
+    mockChatAreaSelectedModel = {
+      name: 'planner-llm',
+      config: {
+        modelCapabilities: {
+          supportsVideo: false,
+        },
+      },
+    }
+    mockChatAreaAttachments = [
+      {
+        id: 100,
+        mime_type: 'video/mp4',
+        file_extension: '.mp4',
+      },
+    ]
+
+    render(<ChatArea teams={[mockChatAreaTeam]} isTeamsLoading={false} taskType="chat" />)
+
+    expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('keeps the metadata-only warning for ordinary chat video attachments', async () => {
+    mockChatAreaSelectedModel = {
+      name: 'planner-llm',
+      config: {
+        modelCapabilities: {
+          supportsVideo: false,
+        },
+      },
+    }
+    mockChatAreaAttachments = [
+      {
+        id: 100,
+        mime_type: 'video/mp4',
+        file_extension: '.mp4',
+      },
+    ]
+
+    render(<ChatArea teams={[mockSelectedTeam]} isTeamsLoading={false} taskType="chat" />)
+
+    await waitFor(() => expect(mockToast).toHaveBeenCalledTimes(1))
   })
 
   it('consumes an Artifact prompt once through the normal send handler', async () => {

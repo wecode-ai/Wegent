@@ -86,6 +86,7 @@ from app.services.chat.trigger import (
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.task_fork_history import task_fork_history_resolver
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 from shared.telemetry.context import (
     set_request_context,
@@ -104,6 +105,8 @@ def _get_retry_generate_params(user_subtask: Subtask) -> Optional[GenerateParams
     video_config = result.get("video_config")
     if isinstance(video_config, dict):
         return GenerateParams(
+            model=video_config.get("model"),
+            model_display_name=video_config.get("model_display_name"),
             resolution=video_config.get("resolution"),
             ratio=video_config.get("ratio"),
             duration=video_config.get("duration"),
@@ -879,8 +882,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "resolution": payload.generate_params.resolution,
                     "ratio": payload.generate_params.ratio,
                     "duration": payload.generate_params.duration,
+                    "model": payload.generate_params.model,
+                    "model_display_name": payload.generate_params.model_display_name,
                     "generation_mode_id": payload.generate_params.generation_mode_id,
                     "size": payload.generate_params.size,
+                    "model": payload.generate_params.model,
                 }
 
             execution_workspace = None
@@ -1548,7 +1554,28 @@ class ChatNamespace(socketio.AsyncNamespace):
         except Exception as e:
             from sqlalchemy.exc import SQLAlchemyError
 
+            from shared.utils.error_classifier import (
+                classify_error,
+                format_error_message,
+            )
+
             logger.error(f"[WS] chat:retry exception: {e}", exc_info=True)
+            try:
+                await _finalize_failed_ai_trigger(
+                    task_id=payload.task_id,
+                    assistant_subtask_id=dispatch_args_or_error["assistant_subtask"].id,
+                    error_message=format_error_message(e),
+                    error_code=classify_error(e),
+                )
+            except Exception as finalize_error:
+                logger.error(
+                    "[WS] chat:retry failed to persist trigger error: "
+                    "task_id=%s, subtask_id=%s, error=%s",
+                    payload.task_id,
+                    dispatch_args_or_error["assistant_subtask"].id,
+                    finalize_error,
+                    exc_info=True,
+                )
             if isinstance(e, SQLAlchemyError):
                 return {"error": "Database error occurred"}
             return {"error": f"Internal server error: {str(e)}"}
@@ -1988,7 +2015,7 @@ def _fetch_subtasks_for_task_join(
                     "message_id": st.message_id,
                     "role": st.role.value,
                     "prompt": extract_display_prompt(st.prompt),
-                    "result": st.result,
+                    "result": sanitize_client_payload(st.result),
                     "status": st.status.value,
                     "progress": st.progress,
                     "created_at": (

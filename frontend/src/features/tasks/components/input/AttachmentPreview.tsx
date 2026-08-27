@@ -21,13 +21,11 @@ import {
   ZoomOut,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import {
   formatFileSize,
   getFileIcon,
   downloadAttachment,
-  createAttachmentDownloadUrl,
-  getAttachmentDownloadUrl,
+  getAttachmentPlayback,
   isImageExtension,
   isAudioExtension,
   isHtmlExtension,
@@ -36,7 +34,9 @@ import {
 import type { Attachment } from '@/types/api'
 import { useAttachmentImage } from '@/hooks/useAttachmentImage'
 import { FilePreviewDialog } from '@/components/common/FilePreview'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import VideoPlayer from '../message/VideoPlayer'
 
 interface AttachmentPreviewProps {
   /** Attachment data */
@@ -206,13 +206,13 @@ export default function AttachmentPreview({
 }: AttachmentPreviewProps) {
   const { t } = useTranslation('common')
   const [showLightbox, setShowLightbox] = useState(false)
-  const [showPreviewDialog, setShowPreviewDialog] = useState(false)
   const [showVideoDialog, setShowVideoDialog] = useState(false)
+  const [showPreviewDialog, setShowPreviewDialog] = useState(false)
   const [isAudioPlaying, setIsAudioPlaying] = useState(false)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [mediaCoverUrl, setMediaCoverUrl] = useState<string | null>(null)
   const [mediaLoading, setMediaLoading] = useState(false)
   const [mediaError, setMediaError] = useState(false)
-  const videoPreviewRef = useRef<HTMLVideoElement>(null)
   const audioRef = useRef<HTMLAudioElement>(null)
 
   const handleDownload = useCallback(async () => {
@@ -245,8 +245,8 @@ export default function AttachmentPreview({
   const isVideo = isVideoExtension(attachment.file_extension)
   const isAudio = isAudioExtension(attachment.file_extension)
 
-  // Images use a Blob URL; video and audio use a tokenized URL so browsers can
-  // request byte ranges without downloading the complete file first.
+  // Images use a Blob URL. Video and audio attachments resolve a fresh playback
+  // URL so browsers can request byte ranges without downloading the complete file.
   const {
     blobUrl: imageUrl,
     isLoading: imageLoading,
@@ -254,18 +254,20 @@ export default function AttachmentPreview({
   } = useAttachmentImage(attachment.id, isImage, shareToken)
 
   useEffect(() => {
-    if (!isVideo && !isAudio) return
+    if (!isAudio && !isVideo) return
 
     let active = true
     setMediaLoading(true)
     setMediaError(false)
+    setMediaCoverUrl(null)
 
     const resolveUrl = async () => {
       try {
-        const url = shareToken
-          ? getAttachmentDownloadUrl(attachment.id, shareToken)
-          : await createAttachmentDownloadUrl(attachment.id)
-        if (active) setMediaUrl(url)
+        const playback = await getAttachmentPlayback(attachment.id, shareToken)
+        if (active) {
+          setMediaUrl(playback.playback_url)
+          setMediaCoverUrl(playback.cover_url || attachment.cover_url || null)
+        }
       } catch (error) {
         console.error('Failed to resolve attachment media URL:', error)
         if (active) setMediaError(true)
@@ -278,7 +280,7 @@ export default function AttachmentPreview({
     return () => {
       active = false
     }
-  }, [attachment.id, isAudio, isVideo, shareToken])
+  }, [attachment.cover_url, attachment.id, isAudio, isVideo, shareToken])
 
   const lightbox =
     showLightbox && typeof document !== 'undefined'
@@ -299,7 +301,7 @@ export default function AttachmentPreview({
     if (imageLoading) {
       if (compact) {
         return (
-          <div className="inline-flex items-center justify-center h-12 w-12 rounded-md border border-border bg-muted">
+          <div className="inline-flex h-14 w-14 items-center justify-center rounded-lg border border-border bg-muted">
             <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
           </div>
         )
@@ -316,14 +318,19 @@ export default function AttachmentPreview({
       if (compact) {
         return (
           <>
-            <div
-              className="inline-block cursor-pointer rounded-md overflow-hidden border border-border hover:border-primary transition-colors"
+            <button
+              type="button"
+              className="relative h-14 w-14 flex-none cursor-pointer overflow-hidden rounded-lg border border-border bg-muted transition-colors hover:border-primary"
               onClick={handleImageClick}
               title={attachment.filename}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={imageUrl} alt={attachment.filename} className="h-12 w-12 object-cover" />
-            </div>
+              <img
+                src={imageUrl}
+                alt={attachment.filename}
+                className="h-full w-full object-cover"
+              />
+            </button>
             {lightbox}
           </>
         )
@@ -376,72 +383,82 @@ export default function AttachmentPreview({
     }
   }
 
-  // Protected media is loaded through an authenticated attachment URL.
   if (isVideo) {
     if (mediaLoading) {
       return (
-        <div className="flex h-16 w-16 items-center justify-center rounded-md border border-border bg-black">
+        <div
+          className={`flex items-center justify-center border border-border bg-black ${
+            compact ? 'h-14 w-14 rounded-lg' : 'aspect-video w-40 rounded-md'
+          }`}
+        >
           <Loader2 className="h-4 w-4 animate-spin text-white/70" />
         </div>
       )
     }
 
-    return (
-      <>
-        <button
-          type="button"
-          data-testid={`sent-video-attachment-${attachment.id}`}
-          onClick={() => mediaUrl && setShowVideoDialog(true)}
-          onMouseEnter={() => {
-            void videoPreviewRef.current?.play().catch(() => undefined)
-          }}
-          onMouseLeave={() => {
-            videoPreviewRef.current?.pause()
-          }}
-          className="group relative h-16 w-16 shrink-0 overflow-hidden rounded-md border border-border bg-black text-white transition-transform hover:z-10 hover:scale-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          title={attachment.filename}
-        >
-          {mediaUrl && !mediaError ? (
+    if (compact && mediaUrl && !mediaError) {
+      const previewUrl = mediaCoverUrl || mediaUrl.includes('#') ? mediaUrl : `${mediaUrl}#t=0.001`
+
+      return (
+        <>
+          <button
+            type="button"
+            data-testid={`sent-video-card-${attachment.id}`}
+            aria-label={attachment.filename}
+            onClick={() => setShowVideoDialog(true)}
+            className="group relative h-14 w-14 flex-none cursor-pointer overflow-hidden rounded-lg border border-border bg-black focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          >
             <video
-              ref={videoPreviewRef}
-              src={mediaUrl}
+              src={previewUrl}
+              poster={mediaCoverUrl ?? undefined}
+              data-testid={`sent-video-attachment-${attachment.id}`}
+              className="h-full w-full object-cover"
               muted
               playsInline
               preload="metadata"
-              onLoadedData={event => {
-                if (event.currentTarget.currentTime === 0) {
-                  event.currentTarget.currentTime = 0.01
-                }
-              }}
-              className="h-full w-full object-cover"
+              onError={() => setMediaError(true)}
             />
-          ) : (
-            <Video className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2" />
-          )}
-          <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
-            <Play className="h-5 w-5 fill-white" />
-          </span>
-          <span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 py-0.5 text-[10px]">
-            {attachment.filename}
-          </span>
-        </button>
+            <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20">
+              <Play className="h-5 w-5 fill-white text-white drop-shadow" />
+            </span>
+          </button>
 
-        <Dialog open={showVideoDialog} onOpenChange={setShowVideoDialog}>
-          <DialogContent className="w-[calc(100vw-32px)] max-w-4xl overflow-hidden border-0 bg-black p-0">
-            <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
-            <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
-            {mediaUrl && (
-              <video
-                data-testid={`sent-video-dialog-${attachment.id}`}
-                src={mediaUrl}
-                controls
-                autoPlay
-                playsInline
-                className="max-h-[80vh] w-full bg-black object-contain"
+          <Dialog open={showVideoDialog} onOpenChange={setShowVideoDialog}>
+            <DialogContent className="w-fit max-w-[calc(100vw-32px)] overflow-hidden border-0 bg-black p-0 sm:max-w-4xl">
+              <DialogTitle className="sr-only">{attachment.filename}</DialogTitle>
+              <DialogDescription className="sr-only">{attachment.filename}</DialogDescription>
+              <VideoPlayer
+                videoUrl={mediaUrl}
+                coverUrl={mediaCoverUrl ?? undefined}
+                className="max-h-[80vh] max-w-none rounded-none"
+                videoClassName="max-h-[80vh] w-auto max-w-full object-contain"
+                videoTestId={`sent-video-dialog-${attachment.id}`}
               />
-            )}
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+        </>
+      )
+    }
+
+    return (
+      <>
+        {mediaUrl && !mediaError ? (
+          <VideoPlayer
+            videoUrl={mediaUrl}
+            coverUrl={mediaCoverUrl ?? undefined}
+            className="w-40 max-w-none border border-border"
+            videoTestId={`sent-video-attachment-${attachment.id}`}
+          />
+        ) : (
+          <div
+            className={`flex items-center justify-center border border-border bg-muted ${
+              compact ? 'h-14 w-14 rounded-lg' : 'h-16 w-16 rounded-md'
+            }`}
+            aria-label={attachment.filename}
+          >
+            <Video className="h-5 w-5 text-primary" />
+          </div>
+        )}
       </>
     )
   }
