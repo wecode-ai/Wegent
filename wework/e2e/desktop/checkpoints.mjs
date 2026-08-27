@@ -15,6 +15,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-ai-settings',
   'model-routing',
   'permission-modes',
+  'task-status-sync',
   'core-task-flow',
   'task-attachments',
   'cloud-git-worktree',

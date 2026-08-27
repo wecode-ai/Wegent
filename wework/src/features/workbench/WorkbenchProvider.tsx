@@ -36,7 +36,7 @@ import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
-import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
+import { subscribeProjectSpaceTaskBindingChanged } from '@/features/todo/projectSpaceSelection'
 import {
   getComposerApps,
   publishComposerApps,
@@ -84,6 +84,11 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
+import {
+  projectTaskTrackingApi,
+  reconcileProjectTaskTrackingStatus,
+  runtimeTaskTrackingStatus,
+} from './projectTaskTracking'
 import {
   buildTrialTemplatePrompt,
   consumePluginTrial,
@@ -151,7 +156,6 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
@@ -196,6 +200,7 @@ export function WorkbenchProvider({
   prewarmComposerApps = true,
   publishDebugSnapshots = true,
   syncCoreDshModels = false,
+  syncProjectTaskTracking = true,
   syncRemoteProjects = true,
   syncRuntimeTaskLifecycle = true,
 }: WorkbenchProviderProps) {
@@ -1907,34 +1912,45 @@ export function WorkbenchProvider({
   const syncProjectTaskExecutionStatus = useStableEvent(
     (address: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) => {
       const trackedAddress = lifecycleStore.getTask(address)?.address ?? address
-      const trackingApi = projectTaskTrackingApi(resolvedServices, trackedAddress)
-      if (!trackingApi) return
       const key = runtimeConversationKey(trackedAddress)
       if (trackingStatusSignaturesRef.current.get(key) === executionStatus) return
       trackingStatusSignaturesRef.current.set(key, executionStatus)
-      void trackingApi
-        .updateTaskTrackingStatus(trackedAddress, executionStatus)
-        .then(result => {
-          if (result === null) {
-            if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
-              trackingStatusSignaturesRef.current.delete(key)
-            }
-            return
-          }
-          publishProjectSpaceTaskContextChanged(trackedAddress)
+      void reconcileProjectTaskTrackingStatus(
+        resolvedServices,
+        trackedAddress,
+        executionStatus
+      ).catch(error => {
+        if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
+          trackingStatusSignaturesRef.current.delete(key)
+        }
+        console.warn('[Wework] Failed to synchronize project task execution status', {
+          address: trackedAddress,
+          executionStatus,
+          error,
         })
-        .catch(error => {
-          if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
-            trackingStatusSignaturesRef.current.delete(key)
-          }
-          console.warn('[Wework] Failed to synchronize project task execution status', {
-            address: trackedAddress,
-            executionStatus,
-            error,
-          })
-        })
+      })
     }
   )
+  useEffect(() => {
+    if (!syncProjectTaskTracking) return
+    for (const lifecycle of lifecycleSnapshot.tasks.values()) {
+      const executionStatus = runtimeTaskTrackingStatus(lifecycle)
+      if (executionStatus) {
+        syncProjectTaskExecutionStatus(lifecycle.address, executionStatus)
+      }
+    }
+  }, [lifecycleSnapshot, syncProjectTaskExecutionStatus, syncProjectTaskTracking])
+  useEffect(() => {
+    if (!syncProjectTaskTracking) return
+    return subscribeProjectSpaceTaskBindingChanged(address => {
+      const lifecycle = lifecycleStore.getTask(address)
+      if (!lifecycle) return
+      const executionStatus = runtimeTaskTrackingStatus(lifecycle)
+      if (!executionStatus) return
+      trackingStatusSignaturesRef.current.delete(runtimeConversationKey(address))
+      syncProjectTaskExecutionStatus(address, executionStatus)
+    })
+  }, [lifecycleStore, syncProjectTaskExecutionStatus, syncProjectTaskTracking])
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -1960,7 +1976,6 @@ export function WorkbenchProvider({
           onAssistantStart: (address, turnId) => {
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
-            syncProjectTaskExecutionStatus(address, 'running')
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1971,7 +1986,6 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            syncProjectTaskExecutionStatus(address, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -2020,7 +2034,6 @@ export function WorkbenchProvider({
       lifecycleStore,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
-      syncProjectTaskExecutionStatus,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
