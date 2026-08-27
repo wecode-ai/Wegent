@@ -799,6 +799,32 @@ describe('DocumentUpload dingtalk source', () => {
     expect(screen.queryByTestId('dingtalk-node-unsupported-folder-1')).not.toBeInTheDocument()
   })
 
+  it('hides empty folder arrows but keeps zero-importable folders with children expandable', async () => {
+    mockGetDocs.mockResolvedValue({
+      nodes: [
+        folderNode('empty', 'Empty'),
+        folderNode('parent', 'Parent', [folderNode('empty-child', 'Empty child')]),
+        folderNode('files', 'Files', [
+          makeNode({ dingtalk_node_id: 'unsupported', node_type: 'file' }),
+        ]),
+      ],
+      total_count: 5,
+    })
+    await openDingtalkMode()
+    expect(screen.queryByTestId('dingtalk-folder-navigate-empty')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-name-empty').previousElementSibling).toHaveClass(
+      'h-11',
+      'w-11',
+      'shrink-0'
+    )
+    expect(screen.getByTestId('dingtalk-node-select-empty')).toBeDisabled()
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-parent'))
+    expect(screen.getByTestId('dingtalk-node-name-empty-child')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-folder-navigate-empty-child')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('dingtalk-folder-navigate-files'))
+    expect(screen.getByTestId('dingtalk-node-unsupported-unsupported')).toBeInTheDocument()
+  })
+
   it('shows stable folder document totals across expansion, selection, and search', async () => {
     await openDingtalkMode()
     const total = screen.getByTestId('dingtalk-folder-document-count-folder-1')

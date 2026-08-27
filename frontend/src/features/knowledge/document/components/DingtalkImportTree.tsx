@@ -175,7 +175,7 @@ function ImportTreeNode({
           className="pointer-events-none absolute bottom-0 right-0 h-px bg-border"
           style={{ left: depth * 16 + 44 }}
         />
-        {folder || hasChildren ? (
+        {hasChildren ? (
           <button
             type="button"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-muted focus-visible:outline-primary"
