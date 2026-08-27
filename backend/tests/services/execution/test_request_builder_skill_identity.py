@@ -64,7 +64,7 @@ def test_build_generates_skill_identity_token(test_db, mocker):
     assert result.skill_identity_token == "skill-jwt"
     assert result.executor_name == "executor-1"
     assert result.executor_namespace == "default"
-    assert result.backend_url == "http://backend.example:8000"
+    assert result.backend_url == settings.BACKEND_INTERNAL_URL
     assert result.git_auth_transport == "encrypted_request_token"
 
 
