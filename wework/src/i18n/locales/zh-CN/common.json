@@ -3964,6 +3964,7 @@
     "full_screen": "全屏查看",
     "run_failed": "任务运行失败",
     "attachment_upload_failed": "附件上传失败",
+    "attachment_download_failed": "附件下载失败",
     "attachment_remove_failed": "附件移除失败",
     "uploading": "上传中…",
     "running": "运行中…",
