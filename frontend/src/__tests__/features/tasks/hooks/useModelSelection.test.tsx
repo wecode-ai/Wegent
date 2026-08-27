@@ -12,6 +12,7 @@ import {
   type TeamWithBotDetails,
 } from '@/features/tasks/hooks/useModelSelection'
 import {
+  getAllowedModelsFromConfig,
   getModelFromConfig,
   getModelNamespaceFromConfig,
   getModelTypeFromConfig,
@@ -167,6 +168,7 @@ describe('useModelSelection', () => {
     ;(getModelFromConfig as jest.Mock).mockReturnValue(null)
     ;(getModelTypeFromConfig as jest.Mock).mockReturnValue(undefined)
     ;(getModelNamespaceFromConfig as jest.Mock).mockReturnValue(undefined)
+    ;(getAllowedModelsFromConfig as jest.Mock).mockReturnValue([])
     ;(getGlobalModelPreference as jest.Mock).mockReturnValue(null)
     ;(getCompatibleProviderFromAgentType as jest.Mock).mockReturnValue(null)
   })
@@ -398,6 +400,70 @@ describe('useModelSelection', () => {
     })
     expect(result.current.showDefaultOption).toBe(false)
     expect(result.current.isModelRequired).toBe(false)
+  })
+
+  it('filters video models using the selected team whitelist', async () => {
+    const allowedVideoModel: Model = {
+      name: 'seedance-2-0',
+      displayName: 'Seedance 2.0',
+      provider: 'volcengine',
+      modelId: 'doubao-seedance-2-0-260128',
+      type: 'public',
+    }
+    const blockedVideoModel: Model = {
+      name: 'seedance-2-5',
+      displayName: 'Seedance 2.5',
+      provider: 'volcengine',
+      modelId: 'doubao-seedance-2-5-260628',
+      type: 'public',
+    }
+    const restrictedTeam: TeamWithBotDetails = {
+      ...mockTeam,
+      bots: [
+        {
+          bot_id: 1,
+          bot_prompt: '',
+          bot: {
+            agent_config: {
+              bind_model: allowedVideoModel.name,
+              allowed_models: [
+                {
+                  name: allowedVideoModel.name,
+                  type: allowedVideoModel.type,
+                  namespace: 'default',
+                },
+              ],
+            },
+          },
+        },
+      ],
+    }
+    ;(getAllowedModelsFromConfig as jest.Mock).mockReturnValue([
+      {
+        name: allowedVideoModel.name,
+        type: allowedVideoModel.type,
+        namespace: 'default',
+      },
+    ])
+    const modelLoad = mockDeferredModelsLoad([allowedVideoModel, blockedVideoModel])
+
+    const { result } = renderHook(() =>
+      useModelSelection({
+        teamId: restrictedTeam.id,
+        taskId: null,
+        selectedTeam: restrictedTeam,
+        modelCategoryType: 'video',
+      })
+    )
+
+    await modelLoad.resolve()
+
+    await waitFor(() => {
+      expect(result.current.filteredModels).toEqual([expect.objectContaining(allowedVideoModel)])
+    })
+    expect(result.current.filteredModels).not.toContainEqual(
+      expect.objectContaining(blockedVideoModel)
+    )
   })
 
   it('uses the configured model type when restoring an advanced bot preset model', async () => {
