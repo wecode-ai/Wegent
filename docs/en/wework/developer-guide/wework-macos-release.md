@@ -82,11 +82,12 @@ six components use independent
 `components-<channel>-<platform>-<arch>.json` manifests.
 
 Component archives are named by their archive SHA-256 and stored as immutable
-assets in the `wework-updater` Release. A release uploads only hashes that are
-not already present remotely. Unchanged Core DSH, core plugins, bundled
-personal plugins, Executor, Codex, and DWS assets are reused. Every publication
-Release contains complete installers and its component manifests, but does not
-duplicate these component archives; `wework-updater` stores them centrally.
+assets. Repository-built Wework core plugin/UI, bundled plugin, and Executor
+archives live in their corresponding version Release. External Core DSH,
+Codex, and DWS archives live centrally in `wework-updater` for reuse across
+versions. Every publication Release contains complete installers and its
+component manifests, and uploads only archive hashes that are not already
+available at the appropriate location.
 
 The version boundary follows whether an artifact must remain atomically
 compatible with the Electron host:
@@ -106,11 +107,12 @@ requires a new Host capability, native module, or incompatible data format
 automatically becomes a full application release.
 
 The Wework UI, core plugins, bundled personal plugins, and Executor share one
-`wework-<sourceSha>` runtime version and switch atomically through the same
-component manifest. They remain separate content-addressed archives only as a
-transport optimization, so clients download the files that actually changed;
-the split does not make Executor an independently released product. Codex and
-DWS retain their own product versions.
+`wework-<sourceSha12>` runtime version, where `sourceSha12` is the first 12
+hexadecimal characters of the source commit, and switch atomically through the
+same component manifest. They remain separate content-addressed archives only
+as a transport optimization, so clients download the files that actually
+changed; the split does not make Executor an independently released product.
+Codex and DWS retain their own product versions.
 
 The release workflow automatically compares the source commit recorded by the
 previous component manifest. If only managed components changed, the Electron
@@ -122,19 +124,21 @@ default to a full update.
 
 Every publication creates an immutable Release containing complete installers
 with the newest components. Full updates use a `wework-v<appVersion>` tag;
-component updates use `wework-v<appVersion>-runtime.<sourceSha>` without
-advancing the Electron `appVersion`. The newest stable publication is marked as
-the GitHub `latest` Release. New users download a complete installer from that
-Release, while every historical Release also remains independently installable.
+component updates use `wework-v<appVersion>-runtime.<sourceSha12>`, where
+`sourceSha12` is the first 12 hexadecimal characters of the source commit,
+without advancing the Electron `appVersion`. The newest stable publication is
+marked as the GitHub `latest` Release. New users download a complete installer
+from that Release, while every historical Release also remains independently
+installable.
 
-Wework UI, core plugin, bundled plugin, and Executor archives built from this
-repository are uploaded to their corresponding version Release. Core DSH,
-Codex, DWS, and other external or non-repository binary dependencies use
-content-addressed archives stored centrally in `wework-updater` for reuse
-across versions. Rolling component manifests are also published there, but it
-is no longer the first-time installer download entry point. Existing users
-therefore download only components that actually changed and do not redownload
-Electron and Chromium for a component-only change.
+Repository-built Wework core plugin/UI, bundled plugin, and Executor archives
+are uploaded to their corresponding version Release. External Core DSH, Codex,
+DWS, and other non-repository binary dependencies use content-addressed
+archives stored centrally in `wework-updater` for reuse across versions.
+Rolling component manifests are also published there, but it is no longer the
+first-time installer download entry point. Existing users therefore download
+only components that actually changed and do not redownload Electron and
+Chromium for a component-only change.
 
 The client accepts only a component manifest that exactly matches the running
 Electron application version, channel, platform, and architecture. It verifies

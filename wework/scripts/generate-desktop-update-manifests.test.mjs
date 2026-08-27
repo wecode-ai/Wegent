@@ -112,6 +112,27 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   )
 })
 
+test('rejects an invalid release source SHA', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-source-sha-'))
+  temporaryDirectories.push(root)
+  const notes = resolve(root, 'notes.md')
+  await writeFile(notes, '## Changes\n')
+
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      root,
+      resolve(root, 'output'),
+      '1.2.3',
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'not-a-source-sha',
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
+})
+
 function run(args) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, args, { stdio: 'inherit' })

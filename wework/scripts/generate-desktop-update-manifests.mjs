@@ -34,6 +34,9 @@ if (
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
 }
+if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
+}
 
 const assets = resolve(assetsDirectory)
 const output = resolve(outputDirectory)
