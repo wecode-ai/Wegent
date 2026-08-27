@@ -618,7 +618,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         'The inactive Smart app preview reclaimed the native browser after reloading'
       )
       await captureScreenshot(control, 'harness-apps-03b2-preview-task-scoped.png', 'body')
-      await control.command('click', developmentTaskTabTestId)
+      await control.command('click', `[data-testid="${developmentTaskTabTestId}"]`)
       await control.command(
         'waitFor',
         `[data-testid="${developmentTaskTabTestId}"][aria-selected="true"]`,
