@@ -328,6 +328,26 @@ def _combine_text_contents(
     ]
 
 
+def _model_supports_image_input(
+    model_config: Optional[dict[str, Any]],
+) -> bool:
+    """Return whether the selected model accepts image input blocks."""
+    config = model_config or {}
+    if config.get("modelType") == "image":
+        image_config = config.get("imageConfig") or {}
+        capabilities = image_config.get("capabilities") or {}
+        max_reference_images = capabilities.get("max_reference_images")
+        if max_reference_images is None:
+            max_reference_images = image_config.get("max_reference_images")
+        return (
+            capabilities.get("supports_image_input") is not False
+            and max_reference_images != 0
+        )
+
+    model_capabilities = config.get("modelCapabilities") or {}
+    return model_capabilities.get("supportsImage") is True
+
+
 def _process_attachment_context(
     db: Session,
     context: SubtaskContext,
@@ -370,8 +390,7 @@ def _process_attachment_context(
 
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
-        model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-        supports_image = model_capabilities.get("supportsImage") is True
+        supports_image = _model_supports_image_input(model_config)
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
@@ -426,6 +445,13 @@ def _process_attachment_context(
         image_content["image_base64"] = context.image_base64
         image_contents.append(image_content)
         text_contents.append(f"[Attachment {idx}]\n{image_header}")
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        logger.info(
+            "Added image input context: id=%s filename=%s source=%s",
+            attachment_id,
+            filename,
+            type_data.get("source") or "user_upload",
+        )
     elif context_service.is_video_context(context):
         # Video attachment - use shared helper for video processing
         # Check model capabilities first
@@ -704,23 +730,7 @@ def _validate_attachment_ownership(
             detail=f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
         )
 
-    ordinary_attachment_ids = [
-        context.id
-        for context in valid_contexts
-        if not _is_quick_launch_preset_attachment(context)
-    ]
-    if ordinary_attachment_ids and len(ordinary_attachment_ids) < len(valid_ids):
-        return _order_attachment_ids(attachment_ids, set(ordinary_attachment_ids))
-
     return _order_attachment_ids(attachment_ids, set(valid_ids))
-
-
-def _is_quick_launch_preset_attachment(context: SubtaskContext) -> bool:
-    """Return whether an attachment was copied from a quick launch preset."""
-    return (
-        isinstance(context.type_data, dict)
-        and context.type_data.get("source") == "quick_launch_preset"
-    )
 
 
 def _order_attachment_ids(
@@ -1560,8 +1570,7 @@ async def prepare_contexts_for_chat(
     all_external_web_content_images = build_external_web_content_images(
         external_web_content_contexts
     )
-    model_capabilities = (model_config or {}).get("modelCapabilities") or {}
-    supports_image = model_capabilities.get("supportsImage") is True
+    supports_image = _model_supports_image_input(model_config)
     external_web_content_images = (
         all_external_web_content_images if supports_image else []
     )
