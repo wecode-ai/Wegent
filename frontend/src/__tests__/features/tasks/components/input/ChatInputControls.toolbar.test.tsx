@@ -17,16 +17,19 @@ const mockModelSelector = jest.fn(
     modelCategoryType = 'llm',
     compact,
     triggerVariant,
+    selectedTeam: modelTeam,
   }: {
     modelCategoryType?: string
     compact?: boolean
     triggerVariant?: string
+    selectedTeam?: Team | null
   }) => (
     <div
       data-testid="model-selector"
       data-model-category={modelCategoryType}
       data-compact={compact ? 'true' : 'false'}
       data-trigger-variant={triggerVariant ?? 'default'}
+      data-team-id={modelTeam?.id}
     />
   )
 )
@@ -93,8 +96,12 @@ jest.mock('@/components/ui/tooltip', () => ({
 
 jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
   __esModule: true,
-  default: (props: { modelCategoryType?: string; compact?: boolean; triggerVariant?: string }) =>
-    mockModelSelector(props),
+  default: (props: {
+    modelCategoryType?: string
+    compact?: boolean
+    triggerVariant?: string
+    selectedTeam?: Team | null
+  }) => mockModelSelector(props),
 }))
 
 jest.mock('@/features/tasks/components/selector/UnifiedRepositorySelector', () => ({
@@ -355,6 +362,10 @@ describe('ChatInputControls toolbar actions', () => {
         .getAllByTestId('model-selector')
         .map(selector => selector.getAttribute('data-model-category'))
     ).toEqual(['video'])
+    expect(screen.getByTestId('model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(workflowTeam.id)
+    )
     expect(screen.getByTestId('video-generation-mode-selector')).toBeInTheDocument()
     expect(screen.getByTestId('video-settings-popover')).toHaveAttribute(
       'data-show-duration',
@@ -410,6 +421,10 @@ describe('ChatInputControls toolbar actions', () => {
     expect(screen.getByTestId('model-selector')).toHaveAttribute(
       'data-trigger-variant',
       'menu-item'
+    )
+    expect(screen.getByTestId('model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(workflowTeam.id)
     )
     expect(screen.getByTestId('video-generation-mode-selector')).toHaveAttribute(
       'data-trigger-variant',

@@ -512,7 +512,7 @@ export function ChatInputControls({
           setSelectedModel={model => model && onVideoModelChange(model)}
           forceOverride={false}
           setForceOverride={() => {}}
-          selectedTeam={null}
+          selectedTeam={selectedTeam}
           disabled={isStreaming}
           isLoading={isVideoModelsLoading}
           modelCategoryType="video"
@@ -589,7 +589,7 @@ export function ChatInputControls({
                 setSelectedModel={model => model && onVideoModelChange(model)}
                 forceOverride={false}
                 setForceOverride={() => {}}
-                selectedTeam={null}
+                selectedTeam={selectedTeam}
                 disabled={isStreaming}
                 isLoading={isVideoModelsLoading}
                 modelCategoryType="video"
@@ -648,7 +648,7 @@ export function ChatInputControls({
                 setSelectedModel={model => model && onImageModelChange(model)}
                 forceOverride={false}
                 setForceOverride={() => {}}
-                selectedTeam={null}
+                selectedTeam={selectedTeam}
                 disabled={isStreaming}
                 isLoading={isImageModelsLoading}
                 modelCategoryType="image"
