@@ -55,6 +55,38 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 兼容旧 Tauri updater 的桥接产物签名；Electron 后续升级使用 YAML 清单中的
 SHA-512 校验。
 
+## 初始包与组件更新
+
+初始 Electron 安装包必须包含一套可离线启动的完整运行环境：
+
+- Electron；其内置 Node 同时供 Electron 主进程、Core DSH、插件子进程和
+  Codex skill 脚本使用；
+- Core DSH；
+- Wework 核心 DSH 插件；
+- Executor；
+- Codex。
+
+`components.json` 记录应用版本、发布通道、每个组件的版本、资源路径和内容
+SHA-256。Electron 应用本身仍通过 `electron-updater` 升级；其余四个组件使用
+`components-<channel>-<platform>-<arch>.json` 独立升级。
+
+组件压缩包以压缩包 SHA-256 命名，并作为不可变资产存放在
+`wework-updater` Release。发布新版本时只上传远端尚不存在的哈希资产；未变化的
+Core DSH、核心插件、Executor 或 Codex 直接复用，正式版本 Release 不再重复
+携带这些组件包。每次发布只覆盖很小的滚动组件清单。
+
+客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
+下载后先校验压缩包大小与 SHA-256，再解压并校验组件内容 SHA-256。组件先写入
+用户数据目录的内容寻址存储并标记为 `pending`，下次启动时通过一个原子状态文件
+整体切换。工作台和 Core DSH 完成启动后才确认新组件；如果启动失败或进程在确认前
+退出，下次启动自动回滚到上一组组件。打包内资源始终保留为最终兜底。
+
+Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
+入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
+Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex skill 中
+显式执行的 `node script.ts` 或 `#!/usr/bin/env node` 都使用与当前 Electron
+版本绑定的 Node。
+
 ## Bundled sidecars 与资源
 
 构建前必须准备 Codex 和 DWS：
@@ -100,6 +132,7 @@ pnpm --filter wework ai:verify start
 构建命令。桌面资源变化应修改 `wework/resources/` 或 Electron 打包脚本，不要在
 workflow 中复制另一份资源列表。
 
-滚动通道只有在 Electron YAML 和三平台旧 Tauri JSON 清单全部存在时，才可因版本
-未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是不完整的更高版本，
-工作流必须失败，避免用旧版本覆盖。
+滚动通道只有在 Electron YAML、三平台旧 Tauri JSON 和四个构建目标的组件清单全部
+存在时，才可因版本未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是
+不完整的更高版本，工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在
+对应内容哈希尚不存在时上传。

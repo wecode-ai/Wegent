@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs'
-import { readFile, stat } from 'node:fs/promises'
+import { createReadStream, readFileSync, statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
@@ -11,6 +11,7 @@ export const inject = ['webServer']
 export const APP_BASE_PATH = '/wework/app'
 const API_PROXY_PATH = '/wework/api'
 const SOCKET_PROXY_PATH = '/wework/socket.io'
+const DEEP_LINK_PARAMETER = '__wework_route'
 const configuredWebRoot = process.env.WEWORK_APP_WEB_ROOT?.trim()
 const webRoot = configuredWebRoot
   ? resolve(configuredWebRoot)
@@ -37,6 +38,29 @@ const MIME_TYPES = {
 
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
+  const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
+  const developmentReload = injectDevelopmentReload('', process.env, fileBuildId(indexPath))
+  ctx.on('webserver/index-inject', table => {
+    table.push(
+      {
+        kind: 'html',
+        placement: 'head',
+        html: assets.head,
+      },
+      {
+        kind: 'html',
+        placement: 'body',
+        html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
+      }
+    )
+    if (developmentReload) {
+      table.push({
+        kind: 'html',
+        placement: 'body',
+        html: developmentReload,
+      })
+    }
+  })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   if (!backendUrl) return
 
@@ -70,10 +94,22 @@ export async function serveWeworkApp(req, res) {
     res.end()
     return
   }
-  const pathname = decodeURIComponent(
-    new URL(req.url ?? APP_BASE_PATH, 'http://localhost').pathname
-  )
+  const requestUrl = new URL(req.url ?? APP_BASE_PATH, 'http://localhost')
+  const pathname = decodeURIComponent(requestUrl.pathname)
   const relativePath = pathname.slice(APP_BASE_PATH.length).replace(/^\/+/, '')
+  if (relativePath === 'runtime-config.js') {
+    const body = runtimeConfigScript(
+      process.env,
+      desktopWindowLabel(req.headers['x-wework-window-label'])
+    )
+    res.writeHead(200, {
+      'content-type': MIME_TYPES['.js'],
+      'cache-control': 'no-store',
+      'content-length': Buffer.byteLength(body),
+    })
+    res.end(req.method === 'HEAD' ? undefined : body)
+    return
+  }
   const target = resolve(normalize(join(webRoot, relativePath)))
   if (target !== webRoot && !target.startsWith(`${webRoot}${sep}`)) {
     res.writeHead(403)
@@ -92,25 +128,19 @@ export async function serveWeworkApp(req, res) {
   }
 
   if (asset === indexPath) {
-    const hotReload = process.env.WEWORK_APP_HOT_RELOAD === '1'
-    const metadata = hotReload ? await stat(indexPath, { bigint: true }) : null
-    const buildId = metadata ? `${metadata.mtimeNs}:${metadata.size}` : ''
-    const body = injectDevelopmentReload(
-      injectRuntimeConfig(
-        await readFile(indexPath, 'utf8'),
-        process.env,
-        desktopWindowLabel(req.headers['x-wework-window-label'])
-      ),
-      process.env,
-      buildId
-    )
-    res.writeHead(200, {
-      'content-type': MIME_TYPES['.html'],
+    if (req.method === 'HEAD' && process.env.WEWORK_APP_HOT_RELOAD === '1') {
+      res.writeHead(200, {
+        'cache-control': 'no-store',
+        'x-wework-app-build-id': fileBuildId(indexPath),
+      })
+      res.end()
+      return
+    }
+    res.writeHead(302, {
       'cache-control': 'no-store',
-      'content-length': Buffer.byteLength(body),
-      ...(hotReload ? { 'x-wework-app-build-id': buildId } : {}),
+      location: coreDshDeepLinkLocation(requestUrl),
     })
-    res.end(req.method === 'HEAD' ? undefined : body)
+    res.end()
     return
   }
 
@@ -127,15 +157,37 @@ export async function serveWeworkApp(req, res) {
   createReadStream(asset).pipe(res)
 }
 
+export function coreDshDeepLinkLocation(value) {
+  const requestUrl = value instanceof URL ? value : new URL(value, 'http://localhost')
+  const location = new URL('/', 'http://localhost')
+  location.searchParams.set(
+    DEEP_LINK_PARAMETER,
+    `${requestUrl.pathname}${requestUrl.search}${requestUrl.hash}`
+  )
+  return `${location.pathname}${location.search}`
+}
+
 export function injectDevelopmentReload(html, environment, buildId) {
   if (environment.WEWORK_APP_HOT_RELOAD !== '1') return html
   const script = `<script>(()=>{const current=${escapeJsonForHtml(
     buildId
-  )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(window.location.href,{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
+  )};let checking=false;setInterval(async()=>{if(checking)return;checking=true;try{const response=await fetch(${JSON.stringify(
+    `${APP_BASE_PATH}/`
+  )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
+function fileBuildId(path) {
+  const metadata = statSync(path, { bigint: true })
+  return `${metadata.mtimeNs}:${metadata.size}`
+}
+
 export function injectRuntimeConfig(html, environment = process.env, windowLabel = 'main') {
+  const script = `<script>${runtimeConfigScript(environment, windowLabel)}</script>`
+  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+}
+
+export function runtimeConfigScript(environment = process.env, windowLabel = 'main') {
   const backendUrl = resolveBackendUrl(environment)
   const runtimeConfig = {
     appBasePath: APP_BASE_PATH,
@@ -185,10 +237,31 @@ export function injectRuntimeConfig(html, environment = process.env, windowLabel
       'VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS'
     ),
   })
-  const script = `<script>window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
+  return `${restoreDeepLinkScript()}window.__WEWORK_RUNTIME_CONFIG__=${escapeJsonForHtml(
     runtimeConfig
-  )};window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__=${escapeJsonForHtml(desktopE2EConfig)}</script>`
-  return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+  )};window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__=${escapeJsonForHtml(desktopE2EConfig)}`
+}
+
+function restoreDeepLinkScript() {
+  return `(()=>{const value=new URLSearchParams(window.location.search).get(${JSON.stringify(
+    DEEP_LINK_PARAMETER
+  )});if(!value)return;try{const target=new URL(value,window.location.origin);const base=${JSON.stringify(
+    APP_BASE_PATH
+  )};if(target.origin===window.location.origin&&(target.pathname===base||target.pathname.startsWith(base+'/'))){window.history.replaceState(window.history.state,'',target.pathname+target.search+target.hash)}}catch{}})();`
+}
+
+export function weworkIndexAssets(html) {
+  const head = html.match(/<head(?:\s[^>]*)?>([\s\S]*?)<\/head>/i)?.[1] ?? ''
+  const tags =
+    head.match(
+      /<(?:script)\b[^>]*type=["']module["'][^>]*><\/script>|<link\b[^>]*rel=["'](?:modulepreload|stylesheet)["'][^>]*>/gi
+    ) ?? []
+  if (tags.length === 0) {
+    throw new Error('Wework application index contains no module or stylesheet assets')
+  }
+  return {
+    head: tags.join(''),
+  }
 }
 
 function environmentBoolean(environment, ...keys) {

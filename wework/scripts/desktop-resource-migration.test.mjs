@@ -15,7 +15,6 @@ const scripts = [
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
-  'scripts/prepare-execution-runtime.mjs',
   'scripts/prepare-harness-runtime.mjs',
 ]
 
@@ -81,8 +80,19 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
-    expect(source).toContain("run(pnpmCommand, ['prepare:execution-runtime', '--materialize']")
+    expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+  })
+
+  test('does not include a separate Node runtime in desktop packages', async () => {
+    const [packageApp, builderConfig] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+    ])
+
+    expect(packageApp).not.toContain("resources', 'node-runtime")
+    expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
   test('launches the release builder through the Windows command interpreter', async () => {
@@ -90,12 +100,6 @@ describe('desktop resource migration', () => {
 
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
-  })
-
-  test('signs the packaged Node runtime with the configured macOS keychain', async () => {
-    const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
-
-    expect(source).toContain("identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH")
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -143,7 +147,6 @@ describe('desktop resource migration', () => {
   test.each([
     'resources/icons/icon.icns',
     'resources/icons/icon.ico',
-    'resources/bundled-execution-runtimes/node.json',
     'resources/bundled-harness-runtime/.resource-placeholder',
     'resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json',
     'resources/bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',

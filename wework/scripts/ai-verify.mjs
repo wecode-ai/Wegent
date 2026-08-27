@@ -368,7 +368,6 @@ export async function buildSourceRuntimeEnvironment(
       platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
     ),
     WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
-    WEWORK_NODE_PATH: process.execPath,
   }
 }
 

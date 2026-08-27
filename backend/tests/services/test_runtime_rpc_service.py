@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-def _runtime_route(*, runtime_features=None):
+def _runtime_route(*, runtime_features=None, device_type=None):
     from app.schemas.device import DeviceType
     from app.services.device.runtime_route import RuntimeRoute
 
@@ -15,7 +15,7 @@ def _runtime_route(*, runtime_features=None):
         logical_device_id="device-1",
         runtime_device_id="runtime-device-1",
         runtime_instance_id="runtime-instance-1",
-        device_type=DeviceType.CLOUD,
+        device_type=device_type or DeviceType.CLOUD,
         socket_id="socket-1",
         online_info={
             "socket_id": "socket-1",
@@ -92,6 +92,182 @@ def _socketio_with_call(call: AsyncMock, *, connected: bool = True):
             "manager": _SocketManager(connected=connected),
         },
     )()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_applies_account_proxy_to_remote_model_configs(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_remote_runtime_proxy_url",
+        lambda user_id: (
+            "socks5://proxy.internal:7890"
+            if user_id == 7
+            else pytest.fail("unexpected user")
+        ),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "runtime": "codex",
+            "executionRequest": {
+                "model_config": {
+                    "proxy": {"url": "http://127.0.0.1:7897"},
+                    "runtime_config": {
+                        "codex": {
+                            "use_user_config": True,
+                            "configured": True,
+                        }
+                    },
+                }
+            },
+            "friendlyTitleExecutionRequest": {"model_config": {}},
+            "initialSupervisor": {"modelConfig": {}},
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    for model_config in (
+        emitted["executionRequest"]["model_config"],
+        emitted["friendlyTitleExecutionRequest"]["model_config"],
+        emitted["initialSupervisor"]["modelConfig"],
+    ):
+        assert model_config["proxy"] == {"url": "socks5://proxy.internal:7890"}
+        assert model_config["runtime_config"]["codex"]["use_proxy"] is True
+        assert model_config["runtime_config"]["codex"]["proxy_configured"] is True
+    assert (
+        emitted["executionRequest"]["model_config"]["runtime_config"]["codex"][
+            "use_user_config"
+        ]
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_removes_client_proxy_without_account_proxy(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(module, "_load_remote_runtime_proxy_url", lambda _user_id: "")
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.send",
+        payload={
+            "executionRequest": {
+                "model_config": {
+                    "proxy": {"url": "http://127.0.0.1:7897"},
+                    "proxy_url": "http://127.0.0.1:7897",
+                }
+            }
+        },
+    )
+
+    model_config = sio_call.await_args.args[1]["payload"]["executionRequest"][
+        "model_config"
+    ]
+    assert "proxy" not in model_config
+    assert "proxy_url" not in model_config
+    assert model_config["runtime_config"]["codex"] == {
+        "use_proxy": False,
+        "proxy_configured": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_applies_account_proxy_to_automation_payloads(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_remote_runtime_proxy_url",
+        lambda _user_id: "http://proxy.internal:7890",
+    )
+    sio_call = AsyncMock(return_value={"automation": {"id": "automation-1"}})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.automations.create",
+        payload={
+            "automation": {
+                "taskPayload": {"executionRequest": {"model_config": {}}},
+                "continuationPayload": {"executionRequest": {"model_config": {}}},
+            }
+        },
+    )
+
+    automation = sio_call.await_args.args[1]["payload"]["automation"]
+    for model_config in (
+        automation["taskPayload"]["executionRequest"]["model_config"],
+        automation["continuationPayload"]["executionRequest"]["model_config"],
+    ):
+        assert model_config["proxy"] == {"url": "http://proxy.internal:7890"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_preserves_local_device_proxy(monkeypatch):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.LOCAL)),
+    )
+    load_proxy = AsyncMock()
+    monkeypatch.setattr(module, "_load_remote_runtime_proxy_url", load_proxy)
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.send",
+        payload={
+            "executionRequest": {
+                "model_config": {
+                    "proxy": {"url": "http://127.0.0.1:7897"},
+                }
+            }
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    assert emitted["executionRequest"]["model_config"]["proxy"] == {
+        "url": "http://127.0.0.1:7897"
+    }
+    load_proxy.assert_not_called()
 
 
 @pytest.mark.asyncio

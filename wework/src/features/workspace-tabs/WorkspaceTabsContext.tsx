@@ -17,6 +17,7 @@ import {
   type WorkspaceTabLabels,
 } from './workspaceTabs'
 import { WorkspaceTabsContext, type WorkspaceTabsContextValue } from './workspaceTabsContextValue'
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
 interface PersistedWorkspaceTabs {
   activeTabId: string
@@ -131,6 +132,13 @@ function replaceTabRoute(tab: WorkspaceTab) {
   const browserPath = toBrowserPath(workspaceTabRoute(tab))
   window.history.replaceState({}, '', browserPath)
   window.dispatchEvent(new PopStateEvent('popstate'))
+}
+
+function sessionRestorableTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
+  return tabs.filter(tab => {
+    const pathname = tab.contentRoute.split('?', 1)[0]
+    return resolveDshRoute(pathname)?.restorePolicy !== 'none'
+  })
 }
 
 function workspaceTabsReducer(
@@ -354,9 +362,12 @@ export function WorkspaceTabsProvider({
   useEffect(() => {
     if (!restoreSessionTabs) return
     try {
+      const tabs = sessionRestorableTabs(state.tabs)
       const persisted: PersistedWorkspaceTabs = {
-        activeTabId: state.activeTabId,
-        tabs: state.tabs,
+        activeTabId: tabs.some(tab => tab.id === state.activeTabId)
+          ? state.activeTabId
+          : (tabs[0]?.id ?? ''),
+        tabs,
       }
       persistWorkspaceTabs(storageScope, persisted.tabs, persisted.activeTabId)
     } catch {

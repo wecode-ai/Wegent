@@ -1,13 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo } from 'react'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import type {
   WeworkWorkspaceScope,
   WeworkWorkspaceSidebarTab,
   WeworkWorkspaceSidebarTabDescriptor,
-} from './rightWorkspaceSidebarRegistry'
-import {
-  rightWorkspaceBetterSidebar,
-  rightWorkspaceExtensionContext,
-} from './rightWorkspaceSidebarRegistry'
+} from './rightWorkspaceDshSidebar'
 
 interface DshSidebarExtensionPanelProps {
   descriptor: WeworkWorkspaceSidebarTabDescriptor
@@ -22,48 +20,22 @@ export function DshSidebarExtensionPanel({
   tab,
   visible,
 }: DshSidebarExtensionPanelProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const mountedRef = useRef<ReturnType<NonNullable<typeof descriptor.mount>> | null>(null)
   const props = useMemo(
     () => ({
-      ctx: rightWorkspaceExtensionContext,
-      store: rightWorkspaceBetterSidebar,
       scope,
       tab,
       visible,
     }),
     [scope, tab, visible]
   )
-  const propsRef = useRef(props)
-
-  useEffect(() => {
-    propsRef.current = props
-  }, [props])
-
-  useEffect(() => {
-    const container = containerRef.current
-    if (!container || !descriptor.mount || !visible) return
-    const mounted = descriptor.mount(container, propsRef.current)
-    mountedRef.current = mounted
-    return () => {
-      mountedRef.current = null
-      mounted.dispose()
-    }
-  }, [descriptor, visible])
-
-  useEffect(() => {
-    mountedRef.current?.update(props)
-  }, [props])
-
-  if (!descriptor.mount && descriptor.component) {
-    return descriptor.component(props)
-  }
-
   return (
-    <div
-      ref={containerRef}
+    <DshSlotSurface
       className="flex min-h-0 flex-1 flex-col"
-      data-testid={`dsh-sidebar-extension-surface-${descriptor.id}`}
+      enabled={visible}
+      entryId={descriptor.id}
+      props={props}
+      slot={WEWORK_DSH_SLOTS.workspaceSidebarTab}
+      testId={`dsh-sidebar-extension-surface-${descriptor.id}`}
     />
   )
 }

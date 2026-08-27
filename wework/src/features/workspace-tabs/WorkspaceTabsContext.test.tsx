@@ -12,10 +12,10 @@ const labels = {
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
-    plugins: '插件',
-    sites: '站点',
-    automations: '已安排',
-    cloud: '云端工作',
+    '/plugins': '插件',
+    '/sites': '站点',
+    '/automations': '已安排',
+    '/cloud-work': '云端工作',
   },
 }
 
@@ -360,6 +360,35 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(screen.getByTestId('active-tab-title')).not.toHaveTextContent('旧标签')
     expect(localStorage.getItem('wework.workspaceTabs.v3:context-test')).toContain('old-tab')
+  })
+
+  test('does not persist a plugin route whose contribution disables session restoration', () => {
+    const defaultRuntime = window.__WEWORK_DSH_UI__
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot =>
+        slot === 'wework.route'
+          ? [
+              {
+                id: 'transient.route',
+                path: '/transient-route',
+                restorePolicy: 'none',
+                telemetryFeature: 'apps',
+              },
+            ]
+          : (defaultRuntime?.getEntries(slot) ?? []),
+      subscribe: defaultRuntime?.subscribe ?? (() => () => {}),
+      attach: defaultRuntime?.attach ?? (() => ({ update: () => {}, dispose: () => {} })),
+    }
+
+    render(<RoutingHarness />)
+    act(() => navigateTo('/transient-route'))
+
+    const persisted = JSON.parse(
+      localStorage.getItem('wework.workspaceTabs.v3:context-test') ?? 'null'
+    ) as { tabs?: Array<{ contentRoute?: string }> } | null
+    expect(persisted?.tabs?.some(tab => tab.contentRoute === '/transient-route')).toBe(false)
+
+    window.__WEWORK_DSH_UI__ = defaultRuntime
   })
 
   test('selects and updates an existing board tab for a concrete project task', () => {

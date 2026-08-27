@@ -30,8 +30,6 @@ Environment:
                             %LOCALAPPDATA%\wegent\wework-dev.
   WEWORK_HARNESS_RUNTIME_CACHE_ROOT
                             Harness runtime asset and dev materialization root.
-  WEWORK_EXECUTION_RUNTIME_CACHE_ROOT
-                            Node runtime asset and dev materialization root.
   CARGO_TARGET_DIR          Explicit Cargo target directory. Overrides auto cache.
   WEGENT_CARGO_TARGET_ROOT  Root containing shared Cargo targets.
   WEGENT_DISABLE_SHARED_CARGO_TARGET
@@ -314,20 +312,10 @@ $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_CACHE_R
 } else {
   Join-Path $DEV_CACHE_ROOT 'harness-runtime'
 }
-$env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT = if ($env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT) {
-  $env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT.TrimEnd('\')
-} else {
-  Join-Path $DEV_CACHE_ROOT 'execution-runtime'
-}
 $env:WEWORK_HARNESS_RUNTIME_ROOT = if ($env:WEWORK_HARNESS_RUNTIME_ROOT) {
   $env:WEWORK_HARNESS_RUNTIME_ROOT
 } else {
   Join-Path $env:WEWORK_HARNESS_RUNTIME_CACHE_ROOT 'harness-runtime-dev'
-}
-$env:WEWORK_NODE_PATH = if ($env:WEWORK_NODE_PATH) {
-  $env:WEWORK_NODE_PATH
-} else {
-  Join-Path $env:WEWORK_EXECUTION_RUNTIME_CACHE_ROOT 'execution-runtime-node-dev\bin\node.exe'
 }
 
 if ($env:WEWORK_DEV_CODEX_BINARY) {
@@ -359,7 +347,6 @@ function Print-Configuration {
   Write-Host "  RUSTC_WRAPPER=$env:RUSTC_WRAPPER"
   Write-Host "  WEGENT_EXECUTOR_HOME=$env:WEGENT_EXECUTOR_HOME"
   Write-Host "  WEWORK_HARNESS_RUNTIME_ROOT=$env:WEWORK_HARNESS_RUNTIME_ROOT"
-  Write-Host "  WEWORK_NODE_PATH=$env:WEWORK_NODE_PATH"
   Write-Host "  CODEX_BINARY_PATH=$env:CODEX_BINARY_PATH"
   Write-Host "  DWS_BINARY_PATH=$env:DWS_BINARY_PATH"
 }
@@ -398,7 +385,6 @@ try {
     }
     $env:WEWORK_DWS_TARGET = $WINDOWS_TARGET
     $prepareJobs += Start-PrepareStep 'dws' 'pnpm run prepare:dws'
-    $prepareJobs += Start-PrepareStep 'execution-runtime' 'pnpm run prepare:execution-runtime -- --materialize'
     $prepareJobs += Start-PrepareStep 'harness-runtime' 'pnpm run prepare:harness-runtime -- --materialize'
     foreach ($job in $prepareJobs) {
       Wait-PrepareStep $job
@@ -419,10 +405,6 @@ try {
     if (-not (Test-Path $env:DWS_BINARY_PATH)) {
       Fail "Error: DWS binary is not available: $env:DWS_BINARY_PATH"
     }
-    if (-not (Test-Path $env:WEWORK_NODE_PATH)) {
-      Fail "Error: Node runtime is not available: $env:WEWORK_NODE_PATH"
-    }
-
     if ($ELECTRON_ARGS.Count -gt 0) {
       pnpm --dir electron dev -- $ELECTRON_ARGS
     } else {

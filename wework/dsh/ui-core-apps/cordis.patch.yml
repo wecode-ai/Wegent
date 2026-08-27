@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-core-apps
+      name: '@wegent/dsh-ui-core-apps'

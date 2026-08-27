@@ -25,10 +25,10 @@ const labels = {
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
-    plugins: '插件',
-    sites: '站点',
-    automations: '已安排',
-    cloud: '云端工作',
+    '/plugins': '插件',
+    '/sites': '站点',
+    '/automations': '已安排',
+    '/cloud-work': '云端工作',
   },
 }
 
@@ -68,6 +68,7 @@ describe('WorkspaceTabStrip', () => {
     listHarnessApps.mockReset()
     listHarnessApps.mockResolvedValue([])
     window.history.replaceState({}, '', '/')
+    delete window.__WEWORK_DSH_UI__
   })
 
   test('opens project spaces as a real tab and switches between tabs', async () => {
@@ -155,10 +156,7 @@ describe('WorkspaceTabStrip', () => {
 
     expect(window.location.pathname).toBe('/sites')
     expect(new URLSearchParams(window.location.search).get('app_type')).toBe('smart_app')
-    expect(screen.getByRole('tab', { name: '工作台/站点/小程序' })).toHaveAttribute(
-      'aria-selected',
-      'true'
-    )
+    expect(screen.getByRole('tab', { name: '应用' })).toHaveAttribute('aria-selected', 'true')
   })
 
   test('opens an installed Smart app directly from the top tab add menu', async () => {
@@ -178,6 +176,26 @@ describe('WorkspaceTabStrip', () => {
 
     expect(window.location.pathname).toBe('/app/harness-research')
     expect(screen.getByRole('tab', { name: '研究工作台' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  test('opens a native DSH workspace slot from the top tab add menu', async () => {
+    const descriptors = [{ id: 'dashboard', label: 'DSH Dashboard', order: 1 }]
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.tab' ? descriptors : []),
+      subscribe: () => () => undefined,
+      attach: vi.fn(),
+    }
+    const user = userEvent.setup()
+    renderStrip()
+
+    await user.click(screen.getByTestId('workspace-tab-add'))
+    await user.click(screen.getByTestId('workspace-tab-add-dsh-dashboard'))
+
+    expect(window.location.pathname).toBe('/dsh/workspace/dashboard')
+    expect(screen.getByRole('tab', { name: 'DSH Dashboard' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
   })
 
   test('keeps Smart apps in the top tab add menu with its experimental badge', async () => {
