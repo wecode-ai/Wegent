@@ -94,7 +94,7 @@ const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
     ? `${APPEND_MARKER}: later streamed content is now visible in the response.`
     : `Later streaming paragraph ${index + 1}: this content arrives after the user pauses automatic following.`
 )
-const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue.\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
+const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue. 中文流式内容不得重复。\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
 const APPENDED_TEXT = `\n\n${APPENDED_PARAGRAPHS.join('\n\n')}`
 const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}\n\nCOMPLETE`
 
@@ -631,6 +631,58 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText, timeoutMs
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`The streaming task row did not appear for ${expectedText}`)
+}
+
+async function retainSecondTaskWorkspace(control, timeoutMs) {
+  const activeTabId = await control.command(
+    'getAttribute',
+    '[data-workspace-tab-content][aria-hidden="false"]',
+    { value: 'data-workspace-tab-content' }
+  )
+  assert.ok(activeTabId, 'The active task workspace tab identity was not observable')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', { timeoutMs })
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  const startedAt = Date.now()
+  let secondTabId = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    secondTabId = await control.command(
+      'getAttribute',
+      '[data-workspace-tab-content][aria-hidden="false"]',
+      { value: 'data-workspace-tab-content' }
+    )
+    if (secondTabId && secondTabId !== activeTabId) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(
+    secondTabId && secondTabId !== activeTabId,
+    'The second task workspace tab was not created'
+  )
+  const secondWorkbenchSelector =
+    `[data-workspace-tab-content="${secondTabId}"] ` + '[data-testid="desktop-workbench-main"]'
+  await control.command('waitFor', secondWorkbenchSelector, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${secondWorkbenchSelector} [data-testid="chat-message-input"]`,
+    {
+      timeoutMs,
+    }
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-workspace-tab-content="${activeTabId}"] ${COMPOSER_SELECTOR}`,
+    { timeoutMs }
+  )
+  assert.ok(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-workspace-tab-content] [data-testid="desktop-workbench-surface"]'
+      )
+    ) >= 2,
+    'The inactive task workspace provider was not retained for the streaming regression'
+  )
 }
 
 export function createDesktopScenario({
@@ -1347,6 +1399,7 @@ export function createDesktopScenario({
         })
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       }
+      await retainSecondTaskWorkspace(control, uiTimeoutMs)
       await capture(control, 'streaming-text-11-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
@@ -1434,6 +1487,11 @@ export function createDesktopScenario({
       assert.ok(
         streamingSnapshot.testIds.includes('process-text-block'),
         'The phase-less streaming response was not rendered as process content'
+      )
+      assert.equal(
+        (await control.command('getText', PROCESS_TEXT_SELECTOR)).replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        'The streaming process text duplicated or dropped response deltas'
       )
       assert.ok(
         !streamingSnapshot.text.includes(APPEND_MARKER),

@@ -55,6 +55,7 @@ export function createRuntimeChatStream(deps: RuntimeChatStreamDeps) {
       })
     }
     const subscriptionEntries = Array.from(subscriptions)
+    logRuntimeChatStreamNativeEvent(event, subscriptionEntries)
     if (shouldLogRuntimeChatStreamEvent(event.event)) {
       const matchedSubscriptionCount = subscriptionEntries.filter(([, subscription]) =>
         isLocalExecutorEventInScope(event, subscription.handlers.scope)
@@ -522,9 +523,12 @@ function logRuntimeChatStreamEvent(
   if (!isRuntimeChatStreamDebugEnabled()) return
   const payload = asRecord(event.payload)
   const data = asRecord(payload.data)
+  const updates = asRecord(data.updates)
+  const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
   console.info('[Wework] Runtime chat stream event', {
     subscriptionId,
     activeSubscriptions: activeRuntimeChatStreamSubscriptions,
+    sequence: event.sequence,
     event: event.event,
     mapped: isMappedResponseApiEvent(event.event),
     eventCount,
@@ -534,7 +538,50 @@ function logRuntimeChatStreamEvent(
     deviceId: stringField(payload, 'deviceId'),
     deltaLength: typeof data.delta === 'string' ? data.delta.length : undefined,
     offset: typeof data.offset === 'number' ? data.offset : undefined,
+    blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    contentDeltaLength: contentDelta?.length,
+    contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
   })
+}
+
+function logRuntimeChatStreamNativeEvent(
+  event: LocalExecutorEvent,
+  subscriptions: Array<
+    [
+      number,
+      {
+        handlers: ChatStreamHandlers
+      },
+    ]
+  >
+): void {
+  if (!isRuntimeChatStreamDebugEnabled()) return
+  const payload = asRecord(event.payload)
+  const data = asRecord(payload.data)
+  const updates = asRecord(data.updates)
+  const contentDelta = stringField(updates, 'contentDelta') ?? stringField(updates, 'content_delta')
+  console.info('[Wework] Runtime chat stream native event', {
+    sequence: event.sequence,
+    event: event.event,
+    taskId: stringField(payload, 'taskId'),
+    subtaskId: stringField(payload, 'subtaskId'),
+    deviceId: stringField(payload, 'deviceId'),
+    blockId: stringField(data, 'blockId') ?? stringField(data, 'block_id'),
+    contentDeltaLength: contentDelta?.length,
+    contentDeltaFingerprint: contentDelta ? textFingerprint(contentDelta) : undefined,
+    matchingSubscriptionIds: subscriptions
+      .filter(([, subscription]) => isLocalExecutorEventInScope(event, subscription.handlers.scope))
+      .map(([subscriptionId]) => subscriptionId),
+  })
+}
+
+function textFingerprint(value: string): string {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
 function isLocalExecutorEventInScope(

@@ -124,7 +124,6 @@ import {
   settleRuntimeConversationSubagents,
   settleRuntimeConversationGuidance,
 } from './runtimeConversationCache'
-import { createRuntimeConversationStreamHandlers } from './runtimePaneMessages'
 import {
   applyModelContextWindowOverride,
   findModelForSelection,
@@ -162,6 +161,7 @@ import { useWorkbenchTelemetry } from './useWorkbenchTelemetry'
 import { useAiGenerationTelemetry } from './useAiGenerationTelemetry'
 import { normalizeAiModelId } from '@/telemetry/modelCatalog'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
+import { registerRuntimeConversationStream } from './runtimeConversationStreamCoordinator'
 
 export type { WorkbenchServices } from './workbenchServices'
 
@@ -319,7 +319,7 @@ export function WorkbenchProvider({
   const isOptionsLocked = Boolean(state.currentRuntimeTask)
   useLayoutEffect(() => {
     lifecycleStore.syncRuntimeWork(state.runtimeWork)
-  }, [lifecycleStore, state.runtimeWork, syncRuntimeTaskLifecycle])
+  }, [lifecycleStore, state.runtimeWork])
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
@@ -1952,14 +1952,14 @@ export function WorkbenchProvider({
 
   useEffect(
     () =>
-      resolvedServices.chatStream.subscribe(
-        createRuntimeConversationStreamHandlers({
+      registerRuntimeConversationStream(
+        resolvedServices.chatStream,
+        {
           onMessageAction: applyCanonicalRuntimeAction,
           onGuidanceApplied: settleCanonicalRuntimeGuidance,
           onAssistantStart: (address, turnId) => {
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
-            lifecycleStore.turnStarted(address, turnId)
             syncProjectTaskExecutionStatus(address, 'running')
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
@@ -1971,7 +1971,6 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            lifecycleStore.turnSettled(address, turnId, outcome)
             syncProjectTaskExecutionStatus(address, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,
@@ -2012,7 +2011,8 @@ export function WorkbenchProvider({
           },
           onRuntimePlanUpdated: setRuntimeConversationTaskPlan,
           onRuntimeTransportReplaced: publishRuntimeTransportReplaced,
-        })
+        },
+        syncRuntimeTaskLifecycle
       ),
     [
       aiGenerationTelemetry,
@@ -2025,6 +2025,7 @@ export function WorkbenchProvider({
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,
       syncRuntimeTaskTitle,
+      syncRuntimeTaskLifecycle,
       updateCanonicalRuntimeContextUsage,
       updateLocalRuntimeTaskSnapshot,
       updateLocalRuntimeTaskSupervisor,

@@ -25,7 +25,6 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
-    LoopItemExecutionDeviceClaim,
     LoopItemExecutionDispatchFailed,
     LoopItemExecutionDispatchIntent,
     LoopItemExecutionDispatchUnknown,
@@ -333,72 +332,6 @@ def claim_execution(
                 assigner_filter=values.assigner_user_id,
             )
     return _claimed_execution_view(db, row) if row else None
-
-
-@claim_router.post(
-    "/loop-item-executions/claim-my-next",
-    response_model=Optional[LoopItemExecutionView],
-)
-def claim_my_next_execution(
-    values: LoopItemExecutionDeviceClaim,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Optional[LoopItemExecutionView]:
-    """Device-scoped claim used by the creator's local App puller.
-
-    Finds the next queued local run for any robot bound to the caller's device
-    and returns it with a just-in-time runtime request. Runtime heartbeat
-    capacity and the atomic CAS keep multiple routes from over-claiming.
-    """
-
-    capacity = get_runtime_capacity_sync(
-        db,
-        owner_user_id=current_user.id,
-        device_id=values.execution_device_id,
-    )
-    if capacity is None:
-        return None
-    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
-    with distributed_lock.acquire_context(
-        f"robot_exec_owner:{current_user.id}", expire_seconds=30
-    ) as owner_acquired:
-        if not owner_acquired:
-            return None
-        with distributed_lock.acquire_context(
-            lock_key, expire_seconds=30
-        ) as device_acquired:
-            if not device_acquired:
-                return None
-            row = loop_item_execution_service.claim_next_for_device(
-                db,
-                execution_device_id=values.execution_device_id,
-                environment="local",
-                runtime_instance_id=capacity.runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
-                lease_seconds=values.lease_seconds,
-                owner_user_id=current_user.id,
-            )
-            if row is None:
-                row = loop_item_execution_service.claim_next_unbound_local(
-                    db,
-                    owner_user_id=current_user.id,
-                    execution_device_id=values.execution_device_id,
-                    runtime_instance_id=capacity.runtime_instance_id,
-                    device_capacity=capacity.limit,
-                    runtime_active=capacity.active,
-                    runtime_active_task_ids=capacity.active_task_ids,
-                    lease_seconds=values.lease_seconds,
-                )
-    if row is None:
-        return None
-    if row.executor_owner_user_id != current_user.id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Claimed Wework execution belongs to another user",
-        )
-    return _claimed_execution_view(db, row)
 
 
 def _claimed_execution_view(

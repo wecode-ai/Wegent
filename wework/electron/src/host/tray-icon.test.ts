@@ -30,7 +30,6 @@ describe('tray icon', () => {
     const images: NativeImageFactory = {
       createFromPath: vi.fn(() => source),
       createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
-      createFromDataURL: vi.fn(),
     }
 
     expect(createTrayIcon(images, '/icons/128x128.png', null, 'darwin')).toBe(template)
@@ -53,38 +52,30 @@ describe('tray icon', () => {
     expect(template.setTemplateImage).toHaveBeenCalledWith(true)
   })
 
-  test('renders two usage lines into the macOS template image', () => {
+  test('renders two usage lines directly into the macOS template bitmap', () => {
     const bitmap = Buffer.alloc(36 * 36 * 4, 255)
     const resized = image({ toBitmap: vi.fn(() => bitmap) })
     const source = image({ resize: vi.fn(() => resized) })
-    const baseIcon = image()
-    const rendered = image({
-      getSize: vi.fn(() => ({ width: 167, height: 36 })),
-      toBitmap: vi.fn(() => Buffer.alloc(167 * 36 * 4)),
-    })
+    const baseIcon = image({ toBitmap: vi.fn(() => bitmap) })
     const template = image()
-    const createFromDataURL = vi.fn(() => rendered)
     const images: NativeImageFactory = {
       createFromPath: vi.fn(() => source),
       createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
-      createFromDataURL,
     }
 
     expect(createTrayIcon(images, '/icons/128x128.png', 'Codex  79%\nAIGC 845.21', 'darwin')).toBe(
       template
     )
-    const svg = Buffer.from(
-      createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
-      'base64'
-    ).toString()
-    expect(svg).toContain('font-size="18"')
-    expect(svg).toContain('>Codex  79%</text>')
-    expect(svg).toContain('>AIGC 845.21</text>')
-    expect(images.createFromBitmap).toHaveBeenLastCalledWith(expect.any(Buffer), {
-      width: 167,
-      height: 36,
-      scaleFactor: 2,
-    })
+    const [renderedBitmap, options] = vi.mocked(images.createFromBitmap).mock.calls[1]
+    expect(options.height).toBe(36)
+    expect(options.scaleFactor).toBe(2)
+    expect(options.width).toBeGreaterThan(36)
+    expect(
+      renderedBitmap.some(
+        (value, offset) =>
+          offset % 4 === 3 && Math.floor(offset / 4) % options.width >= 36 && value > 0
+      )
+    ).toBe(true)
     expect(template.setTemplateImage).toHaveBeenCalledWith(true)
   })
 
@@ -92,17 +83,13 @@ describe('tray icon', () => {
     const bitmap = Buffer.alloc(36 * 36 * 4, 255)
     const resized = image({ toBitmap: vi.fn(() => bitmap) })
     const source = image({ resize: vi.fn(() => resized) })
-    const baseIcon = image()
-    const rendered = image({
-      getSize: vi.fn(() => ({ width: 46, height: 36 })),
-      toBitmap: vi.fn(() => Buffer.alloc(46 * 36 * 4)),
-    })
     const template = image()
-    const createFromDataURL = vi.fn(() => rendered)
     const images: NativeImageFactory = {
       createFromPath: vi.fn(() => source),
-      createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
-      createFromDataURL,
+      createFromBitmap: vi
+        .fn()
+        .mockReturnValueOnce(image({ toBitmap: vi.fn(() => bitmap) }))
+        .mockReturnValueOnce(template),
     }
 
     createTrayIcon(images, '/icons/128x128.png', null, 'darwin', {
@@ -110,30 +97,24 @@ describe('tray icon', () => {
       showRunningStatus: true,
     })
 
-    const svg = Buffer.from(
-      createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
-      'base64'
-    ).toString()
-    expect(svg).toContain('<rect x="42" y="18" width="4" height="15"')
-    expect(svg).toContain('M41 2h6v32h-6z')
-    expect(svg.indexOf('<image')).toBeLessThan(svg.indexOf('M41 2h6v32h-6z'))
+    const [renderedBitmap, options] = vi.mocked(images.createFromBitmap).mock.calls[1]
+    const meterX = 42
+    const alphaAt = (x: number, y: number) => renderedBitmap[(y * options.width + x) * 4 + 3]
+    expect(alphaAt(meterX, 2)).toBe(120)
+    expect(alphaAt(meterX + 1, 18)).toBe(235)
   })
 
   test('fills the running task meter at four or more tasks', () => {
     const bitmap = Buffer.alloc(36 * 36 * 4, 255)
     const resized = image({ toBitmap: vi.fn(() => bitmap) })
     const source = image({ resize: vi.fn(() => resized) })
-    const baseIcon = image()
-    const rendered = image({
-      getSize: vi.fn(() => ({ width: 50, height: 36 })),
-      toBitmap: vi.fn(() => Buffer.alloc(50 * 36 * 4)),
-    })
     const template = image()
-    const createFromDataURL = vi.fn(() => rendered)
     const images: NativeImageFactory = {
       createFromPath: vi.fn(() => source),
-      createFromBitmap: vi.fn().mockReturnValueOnce(baseIcon).mockReturnValueOnce(template),
-      createFromDataURL,
+      createFromBitmap: vi
+        .fn()
+        .mockReturnValueOnce(image({ toBitmap: vi.fn(() => bitmap) }))
+        .mockReturnValueOnce(template),
     }
 
     createTrayIcon(images, '/icons/128x128.png', null, 'darwin', {
@@ -141,11 +122,10 @@ describe('tray icon', () => {
       showRunningStatus: true,
     })
 
-    const svg = Buffer.from(
-      createFromDataURL.mock.calls[0][0].replace('data:image/svg+xml;base64,', ''),
-      'base64'
-    ).toString()
-    expect(svg).toContain('<rect x="42" y="3" width="4" height="30"')
+    const [renderedBitmap, options] = vi.mocked(images.createFromBitmap).mock.calls[1]
+    const alphaAt = (x: number, y: number) => renderedBitmap[(y * options.width + x) * 4 + 3]
+    expect(alphaAt(41, 3)).toBe(120)
+    expect(alphaAt(42, 3)).toBe(235)
   })
 
   test('keeps the application icon unchanged outside macOS', () => {
@@ -153,7 +133,6 @@ describe('tray icon', () => {
     const images: NativeImageFactory = {
       createFromPath: vi.fn(() => source),
       createFromBitmap: vi.fn(),
-      createFromDataURL: vi.fn(),
     }
 
     expect(

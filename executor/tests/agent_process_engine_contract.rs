@@ -101,6 +101,7 @@ async fn agent_process_engine_does_not_inject_project_space_mcp_into_claude_runs
         &format!(
             r#"#!/bin/sh
 printf '%s\n' "$@" > "{}"
+cat >/dev/null
 printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text":"done"}}]}}}}'
 "#,
             args_file.display()

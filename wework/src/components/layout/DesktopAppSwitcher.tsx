@@ -14,8 +14,9 @@ import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnect
 import { useTranslation } from '@/hooks/useTranslation'
 import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
 import { cn } from '@/lib/utils'
-import { type WorkbenchAppContribution, useActiveWorkbenchApps } from '@/plugin-runtime/apps'
-import { CORE_WORKBENCH_APPS } from '@/plugin-runtime/core-apps-data'
+import type { WeworkDshApp } from '@/features/dsh-runtime/dshApps'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 
 export type DesktopAppKey = string
 
@@ -124,23 +125,21 @@ export function DesktopAppSwitcher({
   const [displayedKey, setDisplayedKey] = useState<DesktopAppKey>(activeApp)
   const [rollingLabel, setRollingLabel] = useState<RollingLabel | null>(null)
   const [menuBlurred, setMenuBlurred] = useState(false)
-  const registeredApps = useActiveWorkbenchApps()
+  const registeredApps = useDshSlotEntries<WeworkDshApp>(WEWORK_DSH_SLOTS.app)
 
   const options = useMemo<AppOption[]>(() => {
-    const apps: readonly WorkbenchAppContribution[] =
-      registeredApps.length > 0 ? registeredApps : CORE_WORKBENCH_APPS
-    return apps
+    return registeredApps
       .filter(app => !app.hiddenInSwitcher)
       .map(app => ({
-        key: app.key,
-        label: t(app.labelKey, app.label),
-        description: t(app.descriptionKey, app.description),
+        key: app.id,
+        label: t(app.labelKey ?? app.id, app.label),
+        description: t(app.descriptionKey ?? `${app.id}.description`, app.description ?? ''),
         availabilityLabel:
           app.requiresCloud && !cloudConnection?.isConnected
             ? t('workbench.app_wegent_requires_cloud', '连接云端后可用')
             : undefined,
         disabled:
-          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.key,
+          Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.id,
       }))
   }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
   const displayedAppKey = rollingLabel ? displayedKey : activeApp

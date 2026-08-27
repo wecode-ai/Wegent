@@ -1795,16 +1795,13 @@ fn ensure_safe_root(root: &Path) -> Result<(), String> {
 
 fn ensure_managed_path(path: &Path, roots: &[String]) -> Result<(), String> {
     ensure_concrete_absolute_path(path, "Worktree path")?;
-    let normalized = normalized_path_key(path);
     let matching_root = roots.iter().find_map(|root| {
-        let root = Path::new(root);
-        if ensure_safe_root(root).is_err() {
+        let root_path = Path::new(root);
+        if ensure_safe_root(root_path).is_err() {
             return None;
         }
-        let normalized_root = normalized_path_key(root);
-        (normalized.starts_with(&format!("{normalized_root}/"))
-            && normalized[normalized_root.len() + 1..].split('/').count() == 2)
-            .then_some(root)
+        let relative = path.strip_prefix(root_path).ok()?;
+        (relative.components().count() == 2).then_some(root_path)
     });
     let Some(matching_root) = matching_root else {
         return Err("Worktree path is outside managed roots".to_owned());
@@ -1935,7 +1932,13 @@ fn home_dir() -> PathBuf {
 }
 
 fn normalized_path_key(path: &Path) -> String {
-    path.to_string_lossy().trim_end_matches('/').to_owned()
+    let value = path.to_string_lossy();
+    let value = if cfg!(windows) {
+        value.replace('\\', "/")
+    } else {
+        value.into_owned()
+    };
+    value.trim_end_matches('/').to_owned()
 }
 
 fn same_path(left: &str, right: &str) -> bool {
@@ -2104,6 +2107,31 @@ mod tests {
         assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id/repo"), &roots).is_ok());
         assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id"), &roots).is_err());
         assert!(ensure_managed_path(Path::new("/tmp/outside/id/repo"), &roots).is_err());
+    }
+
+    #[test]
+    fn normalized_path_key_unifies_separators() {
+        if cfg!(windows) {
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\task-1\repository")),
+                "C:/wegent/worktrees/task-1/repository"
+            );
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\")),
+                "C:/wegent/worktrees"
+            );
+        } else {
+            // On POSIX, backslash is a literal filename character and must not
+            // be conflated with the path separator.
+            assert_eq!(
+                normalized_path_key(Path::new(r"/tmp/wegent-worktrees/task-1\repository")),
+                r"/tmp/wegent-worktrees/task-1\repository"
+            );
+        }
+        assert_eq!(
+            normalized_path_key(Path::new("/tmp/wegent-worktrees/task-1/repository/")),
+            "/tmp/wegent-worktrees/task-1/repository"
+        );
     }
 
     #[test]

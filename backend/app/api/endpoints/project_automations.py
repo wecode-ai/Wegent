@@ -16,7 +16,6 @@ from fastapi import (
     Header,
     HTTPException,
     Request,
-    Response,
     status,
 )
 from sqlalchemy.orm import Session
@@ -34,10 +33,13 @@ from app.schemas.base_role import BaseRole
 from app.schemas.delivery import LoopItemResponse
 from app.schemas.project_automation import (
     ProjectAutomationCreate,
+    ProjectAutomationDeleteView,
     ProjectAutomationManagerAssign,
     ProjectAutomationRunView,
     ProjectAutomationUpdate,
     ProjectAutomationView,
+    ProjectAutomationWorkflowMigration,
+    ProjectAutomationWorkflowMigrationView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -217,6 +219,25 @@ def list_automations(
 
 
 @router.post(
+    "/{project_id}/automations/migrate-workflow",
+    response_model=ProjectAutomationWorkflowMigrationView,
+    status_code=status.HTTP_201_CREATED,
+)
+def migrate_workflow_automation(
+    project_id: str,
+    values: ProjectAutomationWorkflowMigration,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ProjectAutomationWorkflowMigrationView:
+    return project_automation_service.migrate_workflow(
+        db,
+        project_id,
+        current_user.id,
+        values,
+    )
+
+
+@router.post(
     "/{project_id}/automations",
     response_model=ProjectAutomationView,
     status_code=status.HTTP_201_CREATED,
@@ -245,15 +266,22 @@ def update_automation(
     )
 
 
-@router.delete("/{project_id}/automations/{automation_id}", status_code=204)
+@router.delete(
+    "/{project_id}/automations/{automation_id}",
+    response_model=ProjectAutomationDeleteView,
+)
 def delete_automation(
     project_id: str,
     automation_id: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
-) -> Response:
-    project_automation_service.delete(db, project_id, automation_id, current_user.id)
-    return Response(status_code=204)
+) -> ProjectAutomationDeleteView:
+    return project_automation_service.delete(
+        db,
+        project_id,
+        automation_id,
+        current_user.id,
+    )
 
 
 @router.post(

@@ -31,6 +31,7 @@ import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
 import { PreferencesStore } from './host/preferences-store.js'
+import { RendererStorageStore } from './host/renderer-storage-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -68,6 +69,8 @@ import {
   scheduleTemporaryImageCleanup,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
+import { ComponentUpdateManager } from './runtime/component-update-manager.js'
+import { prepareEmbeddedNodeEnvironment } from './runtime/embedded-node-runtime.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
@@ -113,6 +116,7 @@ let dockVisible = true
 let preferences: PreferencesStore | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
+let componentUpdates: ComponentUpdateManager | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 let pendingTrayActions: TrayAction[] = []
@@ -864,6 +868,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
+  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -890,7 +895,9 @@ async function configureDesktopRuntime(): Promise<void> {
         app.isPackaged && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
           ? async () => {
               const paths = packagedHarnessRuntimePaths()
-              await materializeBundledRuntimes(paths.resources, paths.cache, ['workbench'])
+              const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
+              if (!resources) throw new Error('DSH runtime resources are unavailable')
+              await materializeBundledRuntimes(resources, paths.cache, ['workbench'])
             }
           : undefined,
     })
@@ -909,6 +916,7 @@ async function configureDesktopRuntime(): Promise<void> {
         () => rendererHealth.snapshot(),
         () => smartApps,
         preferences,
+        rendererStorage,
         embeddedBrowser,
         {
           coreDshPlugins: () => desktopRuntime,
@@ -1054,9 +1062,24 @@ function startDesktopRuntime(): Promise<void> {
     await desktopRuntime?.start()
     trayNativeStatus?.start()
     await loadPrimaryDshView()
+    await componentUpdates?.confirmStartup()
     runtimePhase = 'ready'
+    void componentUpdates
+      ?.stageAvailableUpdate()
+      .then(staged => {
+        if (staged) console.log('[components] update staged for the next application restart')
+      })
+      .catch(error => {
+        console.error('[components] update check failed', error)
+      })
   })()
-    .catch(error => {
+    .catch(async error => {
+      if (await componentUpdates?.rollbackStartup()) {
+        console.error('[components] startup failed after activation; rolling back and relaunching')
+        app.relaunch()
+        app.exit(1)
+        return
+      }
       runtimePhase = 'failed'
       runtimeError = error instanceof Error ? error.message : String(error)
       console.error('[runtime] startup failed', error)
@@ -1108,6 +1131,13 @@ if (hasSingleInstanceLock) {
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  componentUpdates ??= new ComponentUpdateManager({
+    resourcesRoot,
+    dataDirectory: app.getPath('userData'),
+    updateBaseUrl,
+    currentAppVersion: app.getVersion(),
+  })
+  const components = await componentUpdates.prepareStartup()
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',
@@ -1119,23 +1149,20 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
     : app.isPackaged
-      ? await materializeBundledRuntimes(
-          packagedHarnessRuntimePaths().resources,
-          packagedHarnessRuntimePaths().cache,
-          ['core']
-        )
+      ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
+          'core',
+        ])
       : developmentRuntimeRoot
-  const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
-  const packagedExecutor = join(resourcesRoot, 'bin', executorName)
-  const nodeName = process.platform === 'win32' ? 'node.exe' : 'node'
-  const packagedNode = join(resourcesRoot, 'node-runtime', 'bin', nodeName)
-  const nodePath =
-    process.env.WEWORK_NODE_PATH?.trim() ||
-    (existsSync(packagedNode) ? packagedNode : process.execPath)
+  const embeddedNodeEnvironment = await prepareEmbeddedNodeEnvironment({
+    electronExecutable: process.execPath,
+    dataDirectory: app.getPath('userData'),
+    environment: process.env,
+  })
   return {
-    ...process.env,
+    ...embeddedNodeEnvironment,
     WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-    WEWORK_NODE_PATH: nodePath,
+    WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+    WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
     WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
       resourcesRoot,
       'bundled-plugins',
@@ -1143,16 +1170,17 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     ),
     ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
       ? {}
-      : existsSync(packagedExecutor)
-        ? { WEWORK_EXECUTOR_PATH: packagedExecutor }
+      : existsSync(components.executor)
+        ? { WEWORK_EXECUTOR_PATH: components.executor }
         : {}),
-    ...(nodePath === process.execPath ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+    ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+      ? {}
+      : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
   }
 }
 
-function packagedHarnessRuntimePaths(): { resources: string; cache: string } {
+function packagedHarnessRuntimePaths(): { cache: string } {
   return {
-    resources: join(process.resourcesPath, 'harness-runtime'),
     cache: join(app.getPath('userData'), 'managed-runtimes', 'dsh'),
   }
 }

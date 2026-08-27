@@ -971,12 +971,6 @@ export function DesktopWorkbenchLayout({
       onCreatePermanentWorktree={createPermanentWorktree}
       onSelectStandaloneDevice={selectStandaloneDevice}
       onGetRemoteDeviceStartupCommand={onGetRemoteDeviceStartupCommand}
-      onOpenPlugins={() => {
-        navigateTo('/plugins')
-      }}
-      onOpenAutomation={() => {
-        navigateTo('/automations')
-      }}
       onRefreshDevices={onRefreshDevices}
       onOpenStandaloneFolderProject={(mode, intent = 'project') => {
         void openStandaloneFolderProject(mode, intent)

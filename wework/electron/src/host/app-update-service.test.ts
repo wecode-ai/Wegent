@@ -144,4 +144,26 @@ describe('AppUpdateService', () => {
     await expect(appUpdate.check('stable')).resolves.toBeNull()
     await expect(appUpdate.download()).rejects.toThrow('No pending Wework update')
   })
+
+  test('treats a missing channel manifest as no available update', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates.mockRejectedValue(
+      Object.assign(new Error('Cannot find channel "latest-mac.yml" update info'), {
+        code: 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND',
+      })
+    )
+
+    await expect(service(updater).check('stable')).resolves.toBeNull()
+  })
+
+  test('preserves other update check failures', async () => {
+    const updater = new FakeUpdater()
+    updater.checkForUpdates.mockRejectedValue(
+      Object.assign(new Error('GitHub is unavailable'), {
+        code: 'HTTP_ERROR_503',
+      })
+    )
+
+    await expect(service(updater).check('stable')).rejects.toThrow('GitHub is unavailable')
+  })
 })

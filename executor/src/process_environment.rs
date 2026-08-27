@@ -324,11 +324,24 @@ fn merged_shell_environment(
     }
     let current_path = merged.get("PATH").map(String::as_str).unwrap_or_default();
     let extra_paths = merged.get("WEGENT_EXTRA_PATHS").map(String::as_str);
+    let normalized_path = normalized_process_path_with_extra(current_path, extra_paths);
+    let managed_node_bin = merged.get("WEWORK_NODE_BIN").map(String::as_str);
     merged.insert(
         "PATH".to_string(),
-        normalized_process_path_with_extra(current_path, extra_paths),
+        prepend_path(managed_node_bin, &normalized_path),
     );
     merged
+}
+
+fn prepend_path(entry: Option<&str>, current_path: &str) -> String {
+    let Some(entry) = entry.map(str::trim).filter(|entry| !entry.is_empty()) else {
+        return current_path.to_string();
+    };
+    let mut paths = vec![PathBuf::from(entry)];
+    append_path_entries(&mut paths, current_path);
+    env::join_paths(paths)
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|_| current_path.to_string())
 }
 
 #[cfg(unix)]
@@ -449,6 +462,10 @@ mod tests {
             ("HOME".to_string(), "/isolated/wework".to_string()),
             ("DEVICE_ID".to_string(), "parent-device".to_string()),
             (
+                "WEWORK_NODE_BIN".to_string(),
+                "/isolated/wework/electron-node/bin".to_string(),
+            ),
+            (
                 "CODEX_HOME".to_string(),
                 "/isolated/wework/codex".to_string(),
             ),
@@ -469,7 +486,9 @@ mod tests {
 
         let merged = merged_shell_environment(process_environment, &shell_environment);
 
-        assert!(merged["PATH"].starts_with("/Users/test/.npm-global/bin:/usr/bin:/bin"));
+        assert!(merged["PATH"].starts_with(
+            "/isolated/wework/electron-node/bin:/Users/test/.npm-global/bin:/usr/bin:/bin"
+        ));
         assert!(merged["PATH"].contains("/opt/homebrew/bin"));
         assert_eq!(merged["SHELL"], "/bin/zsh");
         assert_eq!(merged["HOME"], "/isolated/wework");

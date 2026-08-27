@@ -55,7 +55,9 @@ import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
-import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -79,9 +81,9 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
-import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
+import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneFolderProjectDialog,
@@ -100,7 +102,7 @@ import {
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   isEditableShortcutTarget,
@@ -261,10 +263,6 @@ interface DesktopSidebarProps {
   ) => Promise<void> | void
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
-  onOpenPlugins: () => void
-  onOpenCloudWork?: () => void
-  onOpenSites?: () => void
-  onOpenAutomation?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -404,6 +402,11 @@ interface ArchiveConversationsConfirmDialogProps {
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const EMPTY_RUNTIME_TASK_KEYS: ReadonlySet<string> = new Set()
 const EMPTY_SPLIT_GROUP_MEMBERSHIPS: Readonly<Record<string, WorkbenchSplitGroupMembership>> = {}
+const DSH_SIDEBAR_NAVIGATION_ICONS = {
+  'alarm-clock': AlarmClock,
+  applications: Grid3X3,
+  plug: Plug,
+} as const
 const PROJECT_APPEARANCE_COLORS = [
   'blue',
   'green',
@@ -425,7 +428,7 @@ const PROJECT_APPEARANCE_COLOR_VALUES: Record<string, string> = {
   yellow: '#eab308',
 }
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 function normalizeSidebarWorkspacePath(path: string): string {
@@ -492,7 +495,7 @@ function standaloneRuntimeProjectWork(
         id: null,
         projectId: null,
         deviceId: resolvedDeviceId,
-        deviceName: device ? getStandaloneDeviceLabel(device) : resolvedDeviceId,
+        deviceName: device ? getStandaloneDeviceLabel(device) || null : null,
         deviceStatus,
         available: deviceStatus === 'online' || deviceStatus === 'busy',
         workspacePath: normalizedWorkspacePath,
@@ -690,7 +693,14 @@ function getSidebarDeviceState(
   if (!deviceId) return null
 
   const device =
-    devices.find(item => item.device_id === deviceId) ??
+    devices.find(item =>
+      [
+        item.device_id,
+        item.app_device_id,
+        item.socket_device_id,
+        ...(item.runtime_routes ?? []).map(route => route.device_id),
+      ].includes(deviceId)
+    ) ??
     (deviceId === 'local-device'
       ? (devices.find(item => item.device_type === 'local' && item.status === 'online') ??
         devices.find(item => item.device_type === 'local') ??
@@ -708,13 +718,7 @@ function isSidebarDeviceOnline(deviceState: SidebarDeviceState | null): boolean 
 }
 
 function getSidebarDeviceName(deviceState: SidebarDeviceState): string {
-  return deviceState.device?.name || deviceState.deviceId
-}
-
-function getDeviceNetworkLabel(device?: DeviceInfo): string | null {
-  const runtimeTransferHost = getDisplayableNetworkHost(device?.runtime_transfer_host)
-  if (runtimeTransferHost) return runtimeTransferHost
-  return getDisplayableNetworkHost(device?.client_ip)
+  return deviceState.device?.name.trim() || ''
 }
 
 function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
@@ -728,28 +732,13 @@ function hasCloudRuntimeRoute(device?: DeviceInfo): boolean {
 function getDeviceRouteLabel(deviceState: SidebarDeviceState): string {
   const deviceName = deviceState.device?.name?.trim()
   if (deviceName) return deviceName
-  return getDeviceNetworkLabel(deviceState.device) || deviceState.deviceId
+  return ''
 }
 
 function getDeviceRouteTitle(deviceState: SidebarDeviceState): string {
   const routes = deviceState.device?.runtime_routes
   if (!routes?.length) return getDeviceRouteLabel(deviceState)
   return routes.map(route => `${route.kind}: ${route.device_id}`).join('\n')
-}
-
-function getDisplayableNetworkHost(value?: string | null): string | null {
-  if (!value) return null
-  return extractNetworkHost(value.trim()) || null
-}
-
-function extractNetworkHost(value: string): string {
-  const bracketMatch = value.match(/^\[([^\]]+)\](?::\d+)?$/)
-  if (bracketMatch?.[1]) return bracketMatch[1]
-  const colonParts = value.split(':')
-  if (colonParts.length === 2 && /^\d+$/.test(colonParts[1])) {
-    return colonParts[0]
-  }
-  return value
 }
 
 function getRuntimeProjectDeviceState(
@@ -761,7 +750,7 @@ function getRuntimeProjectDeviceState(
   const resolvedDevice = getSidebarDeviceState(workspace.deviceId, devices)
   if (resolvedDevice?.device) return resolvedDevice
   return {
-    deviceId: workspace.deviceName || workspace.remoteHostId || workspace.deviceId,
+    deviceId: workspace.deviceId,
     status: (workspace.deviceStatus ??
       resolvedDevice?.status ??
       'unavailable') as SidebarDeviceStatus,
@@ -891,6 +880,8 @@ function getRuntimePriorityTaskKey(
 
 function getProjectHoverSources(
   runtimeProjectWork: RuntimeProjectWork | undefined,
+  devices: DeviceInfo[],
+  localDeviceLabel: string,
   finderWorkspacePath: string | null,
   openFinder: (path: string) => void,
   openFinderLabel: (path: string) => string
@@ -899,16 +890,27 @@ function getProjectHoverSources(
   const sources: ProjectHoverSource[] = []
   const seen = new Set<string>()
   const add = (source: ProjectHoverSource) => {
-    const key = `${source.kind}\0${source.value}`
+    const key = `${source.kind}\0${source.value}\0${source.detail ?? ''}`
     if (!source.value || seen.has(key)) return
     seen.add(key)
     sources.push(source)
   }
 
   for (const workspace of workspaces) {
-    if (workspace.workspaceSource === 'remote' || workspace.remoteHostId) {
-      const host = workspace.remoteHostId || workspace.deviceName || workspace.deviceId
-      add({ id: `host:${host}`, kind: 'host', value: host })
+    const device = getSidebarDeviceState(workspace.deviceId, devices)?.device
+    const deviceName =
+      device?.device_type === 'local'
+        ? localDeviceLabel
+        : device?.name?.trim() || workspace.deviceName?.trim()
+    const deviceId =
+      workspace.remoteHostId?.trim() || device?.device_id?.trim() || workspace.deviceId.trim()
+    if (deviceName && deviceName !== workspace.deviceId) {
+      add({
+        id: `host:${workspace.deviceId}`,
+        kind: 'host',
+        value: deviceName,
+        detail: deviceId && deviceId !== deviceName ? deviceId : undefined,
+      })
     }
   }
 
@@ -1394,6 +1396,7 @@ function getDeviceUnavailableActionTitle(
 
 function RuntimeTaskRow({
   workspace,
+  devices,
   task,
   projectName,
   selected,
@@ -1415,6 +1418,7 @@ function RuntimeTaskRow({
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
+  devices: DeviceInfo[]
   task: RuntimeTaskSummary
   projectName?: string | null
   selected: boolean
@@ -1467,9 +1471,13 @@ function RuntimeTaskRow({
   const repositoryLabel = getRuntimeTaskRepositoryLabel(workspace, task)
   const branchLabel = getRuntimeTaskBranch(task)
   const taskWorkspacePath = task.workspacePath || workspace.workspacePath
+  const taskDevice = getSidebarDeviceState(workspace.deviceId, devices)?.device
   const hostLabel =
-    workspace.remoteHostId ||
-    (workspace.workspaceSource === 'remote' ? workspace.deviceName || workspace.deviceId : null)
+    taskDevice?.device_type === 'local'
+      ? t('todo.workflow_execution_local_device', '本机')
+      : taskDevice?.name?.trim() || workspace.deviceName?.trim() || null
+  const hostId =
+    workspace.remoteHostId?.trim() || taskDevice?.device_id?.trim() || workspace.deviceId.trim()
   const deviceColor = getRuntimeWorkspaceDeviceColor(workspace)
   const disabled = !workspace.available || !onOpenRuntimeTask
   const splitGroupLabel = splitGroup
@@ -1692,6 +1700,7 @@ function RuntimeTaskRow({
             branchLabel={branchLabel}
             workspacePath={taskWorkspacePath ? shortenSidebarHomePath(taskWorkspacePath) : null}
             hostLabel={hostLabel}
+            hostId={hostId && hostId !== hostLabel ? hostId : null}
             updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt) : null}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
           />
@@ -2482,6 +2491,8 @@ function ProjectItem({
     : undefined
   const projectHoverSources = getProjectHoverSources(
     runtimeProjectWork,
+    devices,
+    t('todo.workflow_execution_local_device', '本机'),
     finderWorkspacePath,
     path => {
       void openLocalWorkspace({ opener: 'file-manager', path })
@@ -2872,6 +2883,7 @@ function ProjectItem({
                   renderItem={({ workspace, task }) => (
                     <RuntimeTaskRow
                       workspace={workspace}
+                      devices={devices}
                       task={task}
                       projectName={runtimeProjectWork?.project.name ?? project.name}
                       selected={
@@ -3023,10 +3035,6 @@ export function DesktopSidebar({
   onToggleRuntimeTaskNotification,
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
-  onOpenPlugins,
-  onOpenCloudWork,
-  onOpenSites,
-  onOpenAutomation,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -3077,13 +3085,22 @@ export function DesktopSidebar({
   const sidebarWidth = sidebarWidthProp ?? internalResizable.sidebarWidth
   const resizing = resizingProp ?? internalResizable.resizing
   const handleResizeStart = onResizeStartProp ?? internalResizable.handleResizeStart
-  const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const platform = getPlatform()
   const usesOverlayTitlebar = false
   const isWindowsDesktop = isElectronRuntime() && platform === 'win'
   const appUpdate = useOptionalAppUpdate()
   const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const registeredSidebarNavigation = useDshSlotEntries<WeworkDshSidebarNavigationItem>(
+    WEWORK_DSH_SLOTS.sidebarNavigation
+  )
+  const sidebarNavigation = useMemo(
+    () =>
+      [...registeredSidebarNavigation]
+        .filter(item => !item.experimental || experimentalFeaturesEnabled)
+        .sort((left, right) => (left.order ?? 100) - (right.order ?? 100)),
+    [experimentalFeaturesEnabled, registeredSidebarNavigation]
+  )
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -4011,55 +4028,49 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              <DesktopSidebarNavItem
-                icon={AlarmClock}
-                label={t('workbench.automation', '已安排')}
-                testId="automation-button"
-                selected={activeItem === 'automation'}
-                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-              />
-              {SHOW_PLUGINS_NAVIGATION && (
-                <DesktopSidebarNavItem
-                  icon={Plug}
-                  label={t('workbench.plugins', '插件')}
-                  testId="plugins-button"
-                  selected={activeItem === 'plugins'}
-                  onClick={onOpenPlugins}
-                  onPointerEnter={() => {
-                    if (!isDesktopRuntime()) return
-                    void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
-                      module => module.prefetchPluginsWorkspace()
-                    )
-                  }}
-                />
-              )}
-              {experimentalFeaturesEnabled && (
-                <DesktopSidebarNavItem
-                  icon={Grid3X3}
-                  label={t('workbench.sites', '应用')}
-                  testId="sites-button"
-                  selected={activeItem === 'sites'}
-                  onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-                />
-              )}
-              {showCloudConnectionEntry && (
-                <CloudConnectionSidebarButton
-                  devices={devices}
-                  cloudWorkStatus={cloudWorkStatus}
-                  selected={activeItem === 'cloud-work'}
-                  onOpenCloudWork={onOpenCloudWork ?? (() => navigateTo('/cloud-work'))}
-                  onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
-                  onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
-                  onAddDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
+              {sidebarNavigation.map(item => {
+                if (item.surface === 'module') {
+                  return (
+                    <DshSidebarNavigationSurface
+                      key={item.id}
+                      item={item}
+                      devices={devices}
+                      cloudWorkStatus={cloudWorkStatus}
+                      selected={activeItem === (item.activeItem ?? item.id)}
+                      onNavigate={navigateTo}
+                      onOpenSettings={settingsPage =>
+                        onOpenSettings({
+                          settingsPage: settingsPage as OpenSettingsOptions['settingsPage'],
+                        })
+                      }
+                      onSelectStandaloneDevice={onSelectStandaloneDevice}
+                      onAddRemoteDevice={() => {
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('remote', 'add-device')
+                        } else {
+                          setStandaloneRemoteDialogIntent('add-device')
+                          setStandaloneWorkspaceDialogMode('remote')
+                        }
+                      }}
+                    />
+                  )
+                }
+
+                const Icon = DSH_SIDEBAR_NAVIGATION_ICONS[item.icon ?? 'applications'] ?? Grid3X3
+                return (
+                  <DesktopSidebarNavItem
+                    key={item.id}
+                    icon={Icon}
+                    label={t(item.labelKey ?? item.id, item.label)}
+                    testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
+                    selected={activeItem === (item.activeItem ?? item.id)}
+                    onClick={() => navigateTo(item.path)}
+                    onPointerEnter={
+                      item.prefetch ? () => prefetchDshSidebarNavigation(item) : undefined
                     }
-                  }}
-                />
-              )}
+                  />
+                )
+              })}
             </nav>
             {priorityFilterActive ? (
               <DesktopSidebarPrioritySection
@@ -4080,6 +4091,7 @@ export function DesktopSidebar({
                 renderTaskItem={item => (
                   <RuntimeTaskRow
                     workspace={item.workspace}
+                    devices={devices}
                     task={item.task}
                     projectName={item.projectName}
                     selected={
@@ -4168,6 +4180,7 @@ export function DesktopSidebar({
                         renderItem={({ workspace, task, projectWork }) => (
                           <RuntimeTaskRow
                             workspace={workspace}
+                            devices={devices}
                             task={task}
                             projectName={projectWork?.project.name}
                             selected={
@@ -4652,6 +4665,7 @@ export function DesktopSidebar({
                           renderItem={({ workspace, task }) => (
                             <RuntimeTaskRow
                               workspace={workspace}
+                              devices={devices}
                               task={task}
                               projectName={null}
                               selected={

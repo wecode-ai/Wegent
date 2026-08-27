@@ -431,6 +431,7 @@ export function createRuntimeTaskStreamHandlers(
         status: payload.status ?? null,
         hasContent: payload.content !== undefined,
         hasContentDelta: payload.contentDelta !== undefined,
+        contentDeltaLength: payload.contentDelta?.length,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
         hasToolOutputDelta: payload.toolOutputDelta !== undefined,

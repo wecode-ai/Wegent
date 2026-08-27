@@ -17,6 +17,14 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 - 云端登录 token、过期时间、云端用户和连接时间。
 - 当前状态：未连接、连接中、已连接、过期或错误。
 
+打包的 Electron 桌面端会把 renderer 的完整 `localStorage` 镜像到应用
+`userData` 目录中的 `renderer-local-storage.json`，并在前端初始化其他服务之前恢复。
+因此 Core DSH 重启后即使随机端口变化导致页面 origin 改变，云端连接、本地模型、
+未发送草稿、布局和其他使用 `localStorage` 的界面偏好仍会保留。主进程串行处理变更，
+通过原子替换写入文件，并在 Unix 系统上使用 `0600` 权限。用户主动断开连接、删除配置
+或清空对应状态时，同样会同步删除持久化副本；不使用 Electron host 的网页版不经过
+这层桌面镜像。
+
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
 桌面端授权窗默认尺寸为 `1000 × 640`，最小尺寸为 `960 × 620`，以完整容纳没有响应式布局的企业登录页。窗口完成定位前保持隐藏，显示后置顶于普通窗口，并在 Wework 主窗口移动或显示器缩放比例变化时重新定位。位置以 Wework 当前显示器的可用区域为边界；macOS 直接使用 AppKit 的统一逻辑桌面坐标，因此在 Retina 与非 Retina 显示器之间移动时不会因物理像素和逻辑像素换算而漂移到屏幕外。
@@ -148,6 +156,8 @@ Codex Responses 兼容模型可能通过 executor 内置的 `codex responses pro
 它不会返回明文内容。Wework 也不会默认上传本机认证文件。只有用户在已连接云端的“模型”页面显式上传或从在线设备导入后，认证内容才进入服务端加密存储和设备同步流程。
 
 Wework 的 Codex 剩余额度展示以本机 Codex 账号为准。Electron 主进程通过受认证的本地 executor IPC 调用 `runtime.codex.rate_limits.read`，读取 Codex app-server 的 `account/rateLimits/read` 快照，并展示 5 小时和 7 天窗口的剩余百分比。主进程还通过 `runtime.tasks.list` 统计运行中的本地任务，并通过 `executor.backend.quota` 使用 executor 已持有的云端连接读取云端额度；认证令牌不会暴露给主进程。系统托盘每 60 秒刷新一次，并在任务开始或结束时立即刷新，因此主窗口关闭到托盘后仍能持续更新任务数和额度。
+
+macOS 托盘需要同时显示 Logo、运行状态和最多两行额度文字。Electron 主进程应直接合成 RGBA template 位图，再交给原生托盘显示；不要依赖 `nativeImage` 对 SVG 文本或 Data URL 的栅格化，因为该路径可能只保留文字宽度而丢失实际字形像素。
 
 ## 断开连接
 

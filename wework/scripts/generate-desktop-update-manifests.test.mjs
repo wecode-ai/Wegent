@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { spawn } from 'node:child_process'
 
 const temporaryDirectories = []
 
@@ -28,6 +29,35 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     `WeWork_${version}_macos_x64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
+  }
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+    ['linux', 'x64'],
+  ]) {
+    const archive = `${platform}-${arch}-core-dsh`
+    const archiveSha256 = createHash('sha256').update(archive).digest('hex')
+    const assetName = `WeworkComponent_coreDsh_${archiveSha256}_${platform}_${arch}.tar.gz`
+    await writeFile(resolve(assets, assetName), archive)
+    await writeFile(
+      resolve(assets, `components-${platform}-${arch}.json`),
+      JSON.stringify({
+        schemaVersion: 1,
+        appVersion: version,
+        platform,
+        arch,
+        components: {
+          coreDsh: {
+            version: '0.1.1-rc.2',
+            contentSha256: 'a'.repeat(64),
+            archiveSha256,
+            assetName,
+            entryPath: '.',
+          },
+        },
+      })
+    )
   }
   for (const name of [
     `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
@@ -60,6 +90,16 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     signature: `signature-WeWork_${version}_macos_arm64.app.tar.gz.sig`,
     url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_macos_arm64.app.tar.gz`,
   })
+  const components = JSON.parse(
+    await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
+  )
+  expect(components.components.coreDsh).toMatchObject({
+    version: '0.1.1-rc.2',
+    contentSha256: 'a'.repeat(64),
+    archiveBytes: 'macos-arm64-core-dsh'.length,
+    downloadUrl: `https://github.com/wecode-ai/Wegent/releases/download/wework-updater/WeworkComponent_coreDsh_${createHash('sha256').update('macos-arm64-core-dsh').digest('hex')}_macos_arm64.tar.gz`,
+  })
+  expect(components.components.coreDsh.archiveSha256).toMatch(/^[0-9a-f]{64}$/)
 })
 
 function run(args) {

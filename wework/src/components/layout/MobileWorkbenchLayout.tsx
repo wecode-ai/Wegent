@@ -5,6 +5,9 @@ import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -120,6 +123,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     workspaceFileApi,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
+  const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
+  const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -294,7 +299,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           setSettingsOpen(false)
           navigateTo('/')
         }}
-        onOpenPlugins={() => navigateTo('/plugins')}
+        onOpenPlugins={
+          openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined
+        }
       />
     )
   }

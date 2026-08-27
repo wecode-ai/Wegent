@@ -3,6 +3,7 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promi
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import * as tar from 'tar'
+import { embeddedNodeArguments } from './embedded-node-runtime.js'
 import {
   selectBundledDshRuntimeMatching,
   type BundledDshRuntime,
@@ -118,14 +119,14 @@ export async function prepareWorkbenchDshLaunch(
   }
   return {
     command: nodeCommand,
-    args: [
+    args: embeddedNodeArguments(environment, [
       runtime.entry,
       '--profile',
       options.manifest.entry.profile,
       '--no-open',
       '--port',
       String(options.port),
-    ],
+    ]),
     cwd: runtime.root,
     dshHome,
     environment,

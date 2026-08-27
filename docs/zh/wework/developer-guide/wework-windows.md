@@ -22,9 +22,17 @@ pnpm --dir wework/electron install --frozen-lockfile
 pnpm --filter wework dev:windows
 ```
 
-该命令使用 `wework/electron` 主进程加载 Wework renderer。Electron 通过子进程
-stdin/stdout 与 Executor sidecar 交换 JSONL，不依赖 Unix Domain Socket 或固定
-TCP 端口。
+该命令由 `wework/scripts/dev-windows-app.ps1` 驱动（对应 macOS 的
+`dev-mac-app.sh`）：自动准备 Electron 资源（图标、内置插件）、Codex/DWS
+二进制、Node 运行时与 Harness 运行时（含核心 DSH），编译 Executor，然后启动
+`wework/electron` 主进程加载 Wework renderer。Electron 通过子进程 stdin/stdout
+与 Executor sidecar 交换 JSONL，不依赖 Unix Domain Socket 或固定 TCP 端口。
+
+运行时与 Executor 构建缓存默认放在 `%LOCALAPPDATA%\wegent\`（可用
+`WEWORK_DEV_CACHE_ROOT`、`WEGENT_CARGO_TARGET_ROOT` 覆盖），首次准备较慢，
+之后为增量。可用 `-- --executor-isolation` 使用临时 Executor Home，或用
+`WEWORK_DRY_RUN=1` 只打印启动配置。若下载卡住，先设置
+`HTTP_PROXY`/`HTTPS_PROXY` 环境变量。
 
 ## 构建
 

@@ -161,13 +161,22 @@ describe('bundled plugin resources', () => {
 
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
+    expect(builderConfig).toContain("appId: 'io.wecode.wework'")
+    expect(builderConfig).toContain("productName: 'WeWork'")
     expect(builderConfig).toContain("executableName: 'wework'")
     expect(workflow).toMatch(
       /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )
+    expect(workflow).toContain('security list-keychains -d user -s')
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
+    expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
+    expect(workflow).toContain('Reusing immutable component asset')
+    expect(workflow).toContain('components-${channel}-linux-x64.json')
+    expect(workflow).toMatch(
+      /gh release upload wework-updater "\$component_asset"\s+echo "\$component_name"/
+    )
     expect(workflow).toMatch(
       /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
     )

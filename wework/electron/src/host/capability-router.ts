@@ -66,6 +66,8 @@ export const HOST_CAPABILITIES = [
   'notification.show',
   'preferences.get',
   'preferences.update',
+  'rendererStorage.initialize',
+  'rendererStorage.update',
   'plugins.authorizeCapability',
   'plugins.list',
   'plugins.request',

@@ -42,6 +42,7 @@ import {
   type WorkspaceTabsContextValue,
 } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import {
+  RuntimeTaskLifecycleStreamCoordinator,
   RuntimeTaskLifecycleStore,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -606,6 +607,71 @@ function renderWorkbench(children: React.ReactNode, services = createWorkbenchSe
   return render(
     <CloudConnectionContext.Provider value={cloudConnectionValue}>
       <WorkbenchProvider user={{ id: 1, user_name: 'alice', email: 'a@b.c' }} services={services}>
+        <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
+      </WorkbenchProvider>
+    </CloudConnectionContext.Provider>
+  )
+}
+
+function renderWorkbenchWithLifecycleCoordinator(
+  children: React.ReactNode,
+  services = createWorkbenchServices()
+) {
+  const cloudConnectionValue: CloudConnectionContextValue = {
+    ...DISCONNECTED_STATE,
+    isConnected: false,
+    serviceKey: 'test-disconnected',
+    connectWithAuthorization: vi.fn(),
+    refreshUser: vi.fn(),
+    disconnect: vi.fn(),
+  }
+  const lifecycleStore = new RuntimeTaskLifecycleStore('test')
+  const subscribers = new Set<ChatStreamHandlers>()
+  let unsubscribeUpstream: (() => void) | null = null
+  const dispatcher = new Proxy<ChatStreamHandlers>(
+    {},
+    {
+      get: (_, property) => {
+        if (property === 'scope') return undefined
+        return (payload: unknown) => {
+          for (const handlers of subscribers) {
+            const callback = handlers[property as keyof ChatStreamHandlers]
+            if (typeof callback === 'function') {
+              ;(callback as (value: unknown) => void)(payload)
+            }
+          }
+        }
+      },
+    }
+  )
+  const coordinatedServices: WorkbenchServices = {
+    ...services,
+    chatStream: {
+      ...services.chatStream,
+      subscribe: handlers => {
+        subscribers.add(handlers)
+        unsubscribeUpstream ??= services.chatStream.subscribe(dispatcher)
+        return () => {
+          subscribers.delete(handlers)
+          if (subscribers.size === 0) {
+            unsubscribeUpstream?.()
+            unsubscribeUpstream = null
+          }
+        }
+      },
+    },
+  }
+  return render(
+    <CloudConnectionContext.Provider value={cloudConnectionValue}>
+      <RuntimeTaskLifecycleStreamCoordinator
+        services={coordinatedServices}
+        store={lifecycleStore}
+      />
+      <WorkbenchProvider
+        lifecycleStore={lifecycleStore}
+        user={{ id: 1, user_name: 'alice', email: 'a@b.c' }}
+        services={coordinatedServices}
+      >
         <WorkbenchProbeSessionProvider>{children}</WorkbenchProbeSessionProvider>
       </WorkbenchProvider>
     </CloudConnectionContext.Provider>
@@ -2617,7 +2683,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('automation-task-options')).toHaveTextContent('none')
   })
 
-  test('prevents a retained inactive provider from overwriting shared lifecycle state', async () => {
+  test('does not let workbench providers own shared turn lifecycle events', async () => {
     const lifecycleStore = new RuntimeTaskLifecycleStore('test')
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
@@ -2710,17 +2776,15 @@ describe('WorkbenchProvider runtime tasks', () => {
       </WorkbenchProvider>
     )
 
-    await waitFor(() =>
-      expect(
-        lifecycleStore.getTask({
-          deviceId: 'device-1',
-          taskId: 'shared-task',
-        })
-      ).not.toBeNull()
-    )
+    expect(
+      lifecycleStore.getTask({
+        deviceId: 'device-1',
+        taskId: 'shared-task',
+      })
+    ).toBeNull()
     expect(
       subscribe.mock.calls.filter(([handlers]) => hasRuntimeStreamHandler(handlers))
-    ).toHaveLength(runtimeSubscriptionCount)
+    ).toHaveLength(runtimeSubscriptionCount + 1)
 
     act(() => {
       streamHandlers.onChatStart?.({
@@ -2734,8 +2798,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       lifecycleStore.getTask({
         deviceId: 'device-1',
         taskId: 'shared-task',
-      })?.turn.id
-    ).toBe('owned-turn')
+      })
+    ).toBeNull()
   })
 
   test('keeps the runtime event subscription across connected user preference updates', async () => {
@@ -8776,7 +8840,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('mutation-project-order')).toHaveTextContent(/^$/)
     )
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
 
@@ -8930,7 +8994,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(runtimeWorkApi.removeRuntimeWorkspace).not.toHaveBeenCalled()
     expect(runtimeWorkApi.listRuntimeWork.mock.calls.length).toBeGreaterThan(1)
     expect(
-      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.1') ?? '{}')
+      JSON.parse(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.1') ?? '{}')
         .runtimeWork.projects
     ).toEqual([])
   })
@@ -12107,7 +12171,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -12170,7 +12234,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(<FollowUpProbe />, services)
+    renderWorkbenchWithLifecycleCoordinator(<FollowUpProbe />, services)
 
     await userEvent.click(await screen.findByText('open follow-up runtime a'))
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
@@ -12225,7 +12289,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(<RuntimeOpenProbe />, services)
+    renderWorkbenchWithLifecycleCoordinator(<RuntimeOpenProbe />, services)
 
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
@@ -13062,7 +13126,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
+    renderWorkbenchWithLifecycleCoordinator(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
     await waitFor(() =>
       expect(screen.getByTestId('top-level-runtime-stream-lifecycle')).toHaveTextContent(
@@ -13721,7 +13785,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -13753,7 +13817,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
-        subtaskId: 'provider-turn-101',
+        subtaskId: '101',
         deviceId: 'device-1',
         result: { value: 'done' },
       })
@@ -14337,7 +14401,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -14684,7 +14748,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -14818,7 +14882,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -15421,7 +15485,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -15860,7 +15924,8 @@ describe('WorkbenchProvider runtime tasks', () => {
       error: 'no active turn to guide',
       code: 'no_active_turn',
     })
-    let executorRunning = true
+    const executorRunning = true
+    let turnRunning = true
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockImplementation(() =>
         Promise.resolve(
@@ -15895,20 +15960,24 @@ describe('WorkbenchProvider runtime tasks', () => {
           })
         )
       ),
-      getRuntimeTranscript: vi.fn().mockResolvedValue({
-        taskId: 'runtime-a',
-        workspacePath: '/workspace/project-alpha',
-        runtime: 'claude_code',
-        messages: [
-          { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
-          {
-            id: 'runtime-a:assistant:1',
-            role: 'assistant',
-            content: 'working',
-            status: 'streaming',
-          },
-        ],
-      }),
+      getRuntimeTranscript: vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          taskId: 'runtime-a',
+          workspacePath: '/workspace/project-alpha',
+          runtime: 'claude_code',
+          running: turnRunning,
+          messages: [
+            { id: 'runtime-a:user:1', role: 'user', content: 'first message' },
+            {
+              id: 'runtime-a:assistant:1',
+              role: 'assistant',
+              content: turnRunning ? 'working' : 'done',
+              status: turnRunning ? 'streaming' : 'done',
+              subtaskId: '101',
+            },
+          ],
+        })
+      ),
       sendRuntimeMessage,
       guideRuntimeTask,
     })
@@ -15919,7 +15988,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(
+    renderWorkbenchWithLifecycleCoordinator(
       <>
         <RuntimeOpenProbe />
         <FollowUpProbe />
@@ -15943,6 +16012,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(screen.getByText('send follow-up'))
     expect(screen.getByTestId('queued-messages')).toHaveTextContent('queued:继续修')
 
+    turnRunning = false
     await act(async () => {
       streamHandlers.onChatDone?.({
         taskId: 'runtime-a',
@@ -15951,9 +16021,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         result: { value: 'done' },
       })
     })
-    expect(sendRuntimeMessage).not.toHaveBeenCalled()
-    executorRunning = false
-    await userEvent.click(screen.getByText('refresh work lists'))
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(1))
     await waitFor(() =>
       expect(screen.getByTestId('queued-messages')).toHaveTextContent('failed:继续修')

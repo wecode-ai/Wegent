@@ -1,9 +1,8 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
 
-const disposers = new Map<string, () => void>()
+const runningApps = new Map<string, HarnessAppInstallation>()
 
 export function harnessAppKey(installationId: string): string {
   return `harness-${installationId}`
@@ -16,24 +15,25 @@ export function harnessAppRoute(installationId: string): string {
 export function registerHarnessAppTab(installation: HarnessAppInstallation): string {
   const key = harnessAppKey(installation.id)
   if (!installation.webUrl) throw new Error('Harness app is not running')
-  disposers.get(installation.id)?.()
-  const dispose = getWorkbenchPluginRuntime().apps.register({
-    key,
-    mode: 'iframe',
-    url: installation.webUrl,
-    hidden: true,
-    labelKey: `harness-app.${installation.id}.label`,
-    label: installation.manifest.displayName,
-    descriptionKey: `harness-app.${installation.id}.description`,
-    description: installation.manifest.description,
-  })
-  disposers.set(installation.id, dispose)
+  runningApps.set(installation.id, installation)
   return key
 }
 
 export function unregisterHarnessAppTab(installationId: string): void {
-  disposers.get(installationId)?.()
-  disposers.delete(installationId)
+  runningApps.delete(installationId)
+}
+
+export function resolveRunningHarnessApp(
+  key: string
+): { key: string; title: string; url: string } | null {
+  if (!key.startsWith('harness-')) return null
+  const installation = runningApps.get(key.slice('harness-'.length))
+  if (!installation?.webUrl) return null
+  return {
+    key,
+    title: installation.manifest.displayName,
+    url: installation.webUrl,
+  }
 }
 
 export function openHarnessAppTab(

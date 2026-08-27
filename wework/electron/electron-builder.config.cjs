@@ -16,8 +16,10 @@ module.exports = {
   asarUnpack: ['**/*.node'],
   extraResources: [
     { from: 'resources/harness-runtime', to: 'harness-runtime' },
-    { from: 'resources/node-runtime', to: 'node-runtime' },
     { from: 'resources/bin', to: 'bin' },
+    { from: 'resources/codex', to: 'codex' },
+    { from: 'resources/wework-core-plugins', to: 'wework-core-plugins' },
+    { from: 'resources/components.json', to: 'components.json' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: '../resources/icons', to: 'icons' },
   ],

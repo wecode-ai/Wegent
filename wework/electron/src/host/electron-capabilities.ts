@@ -21,6 +21,7 @@ import {
 import type { RendererHealthSnapshot } from './renderer-health.js'
 import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
+import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
@@ -122,6 +123,7 @@ export function createElectronCapabilityRouter(
   rendererHealth: () => RendererHealthSnapshot,
   smartApps: () => SmartAppManager | null,
   preferences: PreferencesStore,
+  rendererStorage: RendererStorageStore,
   browser: EmbeddedBrowserManager,
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
@@ -473,6 +475,7 @@ export function createElectronCapabilityRouter(
     }
     return updated
   })
+  registerRendererStorageCapabilities(router, rendererStorage)
   router.register('rendererHealth.getState', () => rendererHealth())
   registerCoreDshPluginCapabilities(router, desktopServices)
   router.register('runtime.restartCoreDsh', () => {
@@ -650,6 +653,22 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).activate(installationId)
   })
   return router
+}
+
+export function registerRendererStorageCapabilities(
+  router: HostCapabilityRouter,
+  rendererStorage: RendererStorageStore
+): void {
+  router.register('rendererStorage.initialize', params =>
+    rendererStorage.initialize(stringRecordParam(params, 'entries'))
+  )
+  router.register('rendererStorage.update', async params => {
+    await rendererStorage.update({
+      clear: requiredBooleanParam(params, 'clear'),
+      changes: nullableStringRecordParam(params, 'changes'),
+    })
+    return { persisted: true }
+  })
 }
 
 export function registerAppUpdateCapabilities(
@@ -958,6 +977,27 @@ function booleanParam(params: Record<string, unknown>, key: string): boolean | u
   if (value === undefined) return undefined
   if (typeof value !== 'boolean') invalidParam(key)
   return value
+}
+
+function stringRecordParam(params: Record<string, unknown>, key: string): Record<string, string> {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  if (Object.values(record).some(entry => typeof entry !== 'string')) invalidParam(key)
+  return { ...record } as Record<string, string>
+}
+
+function nullableStringRecordParam(
+  params: Record<string, unknown>,
+  key: string
+): Record<string, string | null> {
+  const value = params[key]
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidParam(key)
+  const record = value as Record<string, unknown>
+  if (Object.values(record).some(entry => entry !== null && typeof entry !== 'string')) {
+    invalidParam(key)
+  }
+  return { ...record } as Record<string, string | null>
 }
 
 function integerParam(params: Record<string, unknown>, key: string): number | undefined {

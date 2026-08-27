@@ -2,6 +2,7 @@ import { createServer } from 'node:net'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import { prepareCoreDshLaunch } from './core-dsh-runtime.js'
 import { resolveDesktopDeviceId } from './desktop-device-id.js'
+import { resolveDesktopDeviceName } from './desktop-device-name.js'
 import { CoreDshPluginManager, type CoreDshPlugin } from './core-dsh-plugin-manager.js'
 import { DshRuntime } from './dsh-runtime.js'
 import { ManagedExecutorRuntime, managedExecutorHome } from './managed-executor-runtime.js'
@@ -11,7 +12,7 @@ import {
   type WorkbenchRuntimeSnapshot,
 } from './workbench-runtime.js'
 
-const CORE_APP_PATH = '/wework/app/'
+const CORE_APP_PATH = '/'
 
 export interface DesktopRuntimeOptions {
   environment: NodeJS.ProcessEnv
@@ -38,6 +39,7 @@ export class DesktopRuntime {
   private executor: ManagedExecutorRuntime | null = null
   private coreDsh: DshRuntime | null = null
   private coreDshPlugins: CoreDshPluginManager | null = null
+  private coreDshPort: number | null = null
   private readonly workbench = new WorkbenchRuntimeManager()
   private started = false
 
@@ -152,6 +154,9 @@ export class DesktopRuntime {
       dataDirectory: this.options.dataDirectory,
       executorHome: managedExecutorHome(this.options),
     })
+    const deviceName = await resolveDesktopDeviceName({
+      environment: this.options.environment,
+    })
     this.executor = new ManagedExecutorRuntime({
       command: executorPath,
       args: jsonArrayEnvironment(this.options.environment, 'WEWORK_EXECUTOR_ARGS_JSON'),
@@ -159,6 +164,7 @@ export class DesktopRuntime {
       dataDirectory: this.options.dataDirectory,
       logDirectory: this.options.logDirectory,
       deviceId,
+      deviceName,
       onEvent: this.options.onExecutorEvent,
     })
     await this.executor.start()
@@ -168,7 +174,7 @@ export class DesktopRuntime {
     const externalDshUrl = this.options.environment.WEWORK_CORE_DSH_URL?.trim()
     const dshCommand = this.options.environment.WEWORK_CORE_DSH_COMMAND?.trim()
     const managedRoot = this.options.environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
-    const port = externalDshUrl ? null : await freePort()
+    const port = externalDshUrl ? null : await freePort(this.coreDshPort)
     const dshUrl = externalDshUrl || `http://127.0.0.1:${port as number}`
     let command = dshCommand
     let args = jsonArrayEnvironment(this.options.environment, 'WEWORK_CORE_DSH_ARGS_JSON')
@@ -195,7 +201,7 @@ export class DesktopRuntime {
       this.coreDshPlugins = new CoreDshPluginManager({
         dshHome: launch.dshHome,
         runtimeRoot: launch.cwd,
-        dshEntry: launch.args[0],
+        dshEntry: launch.entry,
         nodeCommand: launch.command,
         environment: launch.environment,
       })
@@ -225,6 +231,7 @@ export class DesktopRuntime {
     this.coreDsh = runtime
     try {
       await runtime.start()
+      this.coreDshPort = port
     } catch (error) {
       if (this.coreDsh === runtime) this.coreDsh = null
       this.coreDshPlugins = null
@@ -241,7 +248,7 @@ export class DesktopRuntime {
   }
 }
 
-function freePort(): Promise<number> {
+function freePort(excludedPort: number | null = null): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
     server.once('error', reject)
@@ -253,8 +260,13 @@ function freePort(): Promise<number> {
         return
       }
       server.close(error => {
-        if (error) reject(error)
-        else resolve(address.port)
+        if (error) {
+          reject(error)
+        } else if (address.port === excludedPort) {
+          void freePort(excludedPort).then(resolve, reject)
+        } else {
+          resolve(address.port)
+        }
       })
     })
   })

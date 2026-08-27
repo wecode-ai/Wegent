@@ -269,7 +269,8 @@ export function DeviceGitSyncSection({
                 </option>
                 {eligibleDevices.map(device => (
                   <option key={device.device_id} value={device.device_id}>
-                    {device.name || device.device_id} · {device.device_type}
+                    {device.name?.trim() || t('workbench.environment_device_unknown', '未知设备')} ·{' '}
+                    {device.device_type}
                   </option>
                 ))}
               </select>

@@ -48,7 +48,7 @@ function isRemoteProjectDevice(device: DeviceInfo): boolean {
 }
 
 function getStandaloneDeviceLabel(device: DeviceInfo): string {
-  return device.name || device.device_id
+  return device.name?.trim() || ''
 }
 
 function extractNetworkHost(value?: string | null): string | null {
@@ -72,7 +72,7 @@ function getRemoteDeviceNetworkLabel(device: DeviceInfo): string | null {
 }
 
 function getRemoteDeviceLabel(device: DeviceInfo): string {
-  return getRemoteDeviceNetworkLabel(device) ?? getStandaloneDeviceLabel(device)
+  return getStandaloneDeviceLabel(device)
 }
 
 function getRemoteDeviceOptionLabel(

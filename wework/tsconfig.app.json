@@ -28,6 +28,6 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "wecode"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+  "include": ["src", "wecode", "dsh/*/src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "dsh/**/*.test.ts", "dsh/**/*.test.tsx"]
 }
