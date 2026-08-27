@@ -25,6 +25,7 @@ use crate::{
         skill_download::skill_download_concurrency,
     },
     attachments::{process_prompt, AttachmentPromptProcessor, AttachmentRecord},
+    http_client::client_for_url,
     logging::{log_executor_event, push_error_fields, task_fields},
     process::CommandSpec,
     protocol::ExecutionRequest,
@@ -901,7 +902,8 @@ async fn deploy_skills(
         )
     })?;
 
-    let client = reqwest::Client::new();
+    let client = client_for_url(api_base_url)
+        .map_err(|error| format!("failed to create skill download HTTP client: {error}"))?;
     let results = stream::iter(plan.skills.iter().cloned())
         .map(|skill| {
             let client = &client;

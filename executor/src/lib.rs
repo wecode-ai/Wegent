@@ -16,6 +16,7 @@ pub mod emitter;
 pub mod envd;
 pub mod heartbeat;
 pub mod hooks;
+mod http_client;
 pub mod image_preprocessor;
 pub mod local;
 pub mod logging;

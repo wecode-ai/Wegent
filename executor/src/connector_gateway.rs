@@ -15,6 +15,8 @@ use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::http_client::client_for_url;
+
 const CONFIG_DIR: &str = "connector-runtime";
 const CONFIG_FILE: &str = "authorization.json";
 
@@ -58,7 +60,12 @@ impl ConnectorGatewayConfig {
             self.api_base_url,
             path.trim_start_matches('/')
         );
-        let client = reqwest::Client::new();
+        let client = client_for_url(&url).map_err(|error| {
+            ConnectorGatewayError::new(
+                "connector_gateway_unavailable",
+                format!("Failed to configure Wegent connector gateway client: {error}"),
+            )
+        })?;
         let mut request = client
             .request(method, &url)
             .bearer_auth(&self.connector_token)

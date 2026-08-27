@@ -20,6 +20,7 @@ use tokio::{
 
 use crate::{
     config::device::{ConnectionConfig, DeviceConfig},
+    http_client::client_for_url,
     local::app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
@@ -223,7 +224,8 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
                 "{}/api/quota/claude/quota",
                 connection.backend_url.trim_end_matches('/')
             );
-            let response = reqwest::Client::new()
+            let response = client_for_url(&endpoint)
+                .map_err(|error| AppIpcError::new("backend_quota_unavailable", error.to_string()))?
                 .get(endpoint)
                 .bearer_auth(&connection.auth_token)
                 .timeout(Duration::from_secs(10))
