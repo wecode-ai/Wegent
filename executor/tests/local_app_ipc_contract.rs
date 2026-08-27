@@ -1397,6 +1397,72 @@ impl DeviceCommandHandler for JsonCaptureCommandHandler {
 }
 
 #[tokio::test]
+async fn app_ipc_does_not_spawn_git_for_plain_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-plain-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], false);
+    assert_eq!(
+        response["result"]["error"],
+        "Workspace is not a Git repository"
+    );
+    assert!(seen_request.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn app_ipc_routes_git_inspection_for_repository_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-repository-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv, ["git", "branch", "--show-current"]);
+}
+
+#[tokio::test]
 async fn app_ipc_accepts_gitdir_with_configured_worktree_as_worktree_source() {
     let root = unique_dir("gitdir-worktree-source");
     let source_worktree = root.join("source");
