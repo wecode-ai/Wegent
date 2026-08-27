@@ -158,9 +158,16 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
       'utf8'
     )
+    const packageAssetsScript = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/prepare-package-assets.mjs'),
+      'utf8'
+    )
 
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
+    expect(packageAssetsScript).toMatch(
+      /WEWORK_SOURCE_SHA\?\.trim\(\)\s*\|\|\s*process\.env\.GITHUB_SHA\?\.trim\(\)/
+    )
     expect(builderConfig).toContain('appId: identity.identifier')
     expect(builderConfig).toContain('productName: identity.productName')
     expect(builderConfig).toContain('executableName: identity.executableName')

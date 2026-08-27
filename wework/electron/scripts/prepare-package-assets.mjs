@@ -97,6 +97,7 @@ const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.js
 const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
 const sourceSha =
   process.env.WEWORK_SOURCE_SHA?.trim() ||
+  process.env.GITHUB_SHA?.trim() ||
   (await capture('git', ['rev-parse', 'HEAD'], repositoryRoot)).trim()
 if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
   throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
