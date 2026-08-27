@@ -401,6 +401,9 @@ async function verifyWorkspaceIssueCreation(control) {
   })
 
   const projectName = 'Workspace Issue E2E'
+  const issueDescription =
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
+  const twoLineIssueDescription = '考虑为wegent模型设计增加opencode提供商（zen/go/free）'
   await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
   await control.command('waitFor', '[data-testid="cloud-project-name"]', {
     visible: true,
@@ -519,7 +522,7 @@ async function verifyWorkspaceIssueCreation(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    value: issueDescription,
   })
   await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
     text: '草稿已自动保存',
@@ -541,7 +544,7 @@ async function verifyWorkspaceIssueCreation(control) {
   await waitForControlValueIncludes(
     control,
     '[data-testid="workspace-issue-description"]',
-    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    issueDescription,
     'Fullscreen Issue content did not survive closing and reopening'
   )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
@@ -553,10 +556,112 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const [issueTitleMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`
+    )
+  )
+  const [issueDescriptionMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${boardContentSelector} .task-detail-workspace-description`
+    )
+  )
+  assert.ok(
+    issueTitleMetrics.clientHeight >= issueTitleMetrics.scrollHeight - 1,
+    `The Issue sidebar title clipped wrapped content: ${JSON.stringify(issueTitleMetrics)}`
+  )
+  assert.ok(
+    issueTitleMetrics.bottom <= issueDescriptionMetrics.top,
+    `The Issue sidebar title overlapped the description: ${JSON.stringify({
+      title: issueTitleMetrics,
+      description: issueDescriptionMetrics,
+    })}`
+  )
+  const collapsedDescriptionSelector = `${boardContentSelector} .task-detail-desc.is-collapsed`
+  await waitForAttribute(
+    control,
+    collapsedDescriptionSelector,
+    'data-overflowing',
+    'true',
+    'The collapsed Issue description did not expose its overflow treatment'
+  )
+  const [collapsedDescriptionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-editor`)
+  )
+  const collapsedDescriptionBlocks = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-block-outer`)
+  )
+  const lastCollapsedDescriptionBlock = collapsedDescriptionBlocks.at(-1)
+  const descriptionLineHeight = Number.parseFloat(
+    await control.command('getComputedStyleValue', `${collapsedDescriptionSelector} .bn-editor`, {
+      value: 'line-height',
+    })
+  )
+  assert.ok(
+    collapsedDescriptionMetrics.clientHeight >= descriptionLineHeight * 2,
+    `The collapsed Issue description clipped its second line: ${JSON.stringify({
+      metrics: collapsedDescriptionMetrics,
+      lineHeight: descriptionLineHeight,
+    })}`
+  )
+  assert.ok(
+    lastCollapsedDescriptionBlock &&
+      lastCollapsedDescriptionBlock.bottom > collapsedDescriptionMetrics.bottom + 1,
+    `The overflow regression fixture did not exceed the collapsed description: ${JSON.stringify({
+      editor: collapsedDescriptionMetrics,
+      lastBlock: lastCollapsedDescriptionBlock,
+    })}`
+  )
   await captureVerificationScreenshot(
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
+  )
+  await control.command(
+    'fill',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      value: twoLineIssueDescription,
+    }
+  )
+  await waitForAttribute(
+    control,
+    collapsedDescriptionSelector,
+    'data-overflowing',
+    'false',
+    'A fully visible two-line Issue description still exposed its overflow treatment'
+  )
+  const [twoLineDescriptionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-editor`)
+  )
+  const [twoLineDescriptionParagraphMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} p`)
+  )
+  const twoLineDescriptionBlocks = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-block-outer`)
+  )
+  const lastTwoLineDescriptionBlock = twoLineDescriptionBlocks.at(-1)
+  const twoLineDescriptionLineHeight = Number.parseFloat(
+    await control.command('getComputedStyleValue', `${collapsedDescriptionSelector} p`, {
+      value: 'line-height',
+    })
+  )
+  assert.ok(
+    twoLineDescriptionParagraphMetrics.height >= twoLineDescriptionLineHeight * 2 - 1,
+    `The two-line regression fixture did not wrap to two lines: ${JSON.stringify({
+      paragraph: twoLineDescriptionParagraphMetrics,
+      lineHeight: twoLineDescriptionLineHeight,
+    })}`
+  )
+  assert.ok(
+    lastTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock.bottom <= twoLineDescriptionMetrics.bottom + 1,
+    `The collapsed Issue description clipped a fully visible second line: ${JSON.stringify({
+      editor: twoLineDescriptionMetrics,
+      lastBlock: lastTwoLineDescriptionBlock,
+    })}`
   )
   const issueStatusSelector = `${boardContentSelector} [data-testid="cloud-todo-detail-status"]`
   await control.command('select', issueStatusSelector, { value: 'pending' })
