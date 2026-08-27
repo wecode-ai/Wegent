@@ -2046,6 +2046,77 @@ async fn runtime_tasks_auto_approve_mcp_tool_calls_with_full_access() {
 }
 
 #[tokio::test]
+async fn runtime_tasks_auto_approve_legacy_mcp_tool_prompts_with_full_access() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-mcp-tool-prompt-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-mcp-tool-prompt-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-mcp-tool-prompt-log", "jsonl");
+    let fake_codex = write_fake_codex_mcp_tool_request_user_input(&log_path);
+    let (event_tx, mut events) = broadcast::channel(32);
+    let handler = RuntimeWorkRpcHandler::with_event_sender(
+        "device-1",
+        fake_codex.display().to_string(),
+        event_tx,
+    );
+
+    let created = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "local-task-mcp-tool-prompt",
+                "workspacePath": "/tmp/project",
+                "message": "read the current board item",
+                "executionRequest": {
+                    "task_id": 3004,
+                    "subtask_id": 4004,
+                    "prompt": "read the current board item",
+                    "project_workspace_path": "/tmp/project",
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("create should be accepted");
+    assert_eq!(created["accepted"], true);
+
+    wait_until_task_idle(&handler, "local-task-mcp-tool-prompt").await;
+    wait_for_json_call(&log_path, |call| {
+        call["id"] == 99
+            && call["result"]["answers"]["mcp_tool_call_approval_call-board"]["answers"][0]
+                == "Allow"
+    })
+    .await;
+
+    let mut runtime_events = Vec::new();
+    while let Ok(event) = events.try_recv() {
+        runtime_events.push(event);
+    }
+    assert!(
+        find_runtime_event(&runtime_events, "response.block.created", |event| {
+            let block = &event["payload"]["data"]["block"];
+            block["tool_name"] == "request_user_input" && block["render_payload"]["requestId"] == 99
+        })
+        .is_none(),
+        "full access should not surface legacy MCP tool approval as request_user_input"
+    );
+}
+
+#[tokio::test]
 async fn runtime_tasks_interrupt_and_send_unblocks_pending_request_user_input() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(
@@ -4073,6 +4144,15 @@ fn write_fake_codex_mcp_tool_approval(log_path: &Path) -> PathBuf {
         log_path,
         "fake-codex-mcp-tool-approval",
         r#"{"id":99,"method":"mcpServer/elicitation/request","params":{"threadId":"thread-input","turnId":"turn-input","serverName":"GitHub","mode":"form","message":"Allow GitHub to enable pull request auto-merge?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session"]}}}"#,
+        0,
+    )
+}
+
+fn write_fake_codex_mcp_tool_request_user_input(log_path: &Path) -> PathBuf {
+    write_fake_codex_interaction(
+        log_path,
+        "fake-codex-mcp-tool-request-user-input",
+        r#"{"id":99,"method":"item/tool/requestUserInput","params":{"threadId":"thread-input","turnId":"turn-input","itemId":"call-board","questions":[{"id":"mcp_tool_call_approval_call-board","header":"Approve app tool call?","question":"Allow the wework_space MCP server to run tool \"get_board_item\"?","options":[{"label":"Allow","description":"Run the tool and continue."},{"label":"Allow for this session","description":"Run the tool and remember this choice for this session."},{"label":"Cancel","description":"Cancel this tool call."}]}],"autoResolutionMs":null}}"#,
         0,
     )
 }

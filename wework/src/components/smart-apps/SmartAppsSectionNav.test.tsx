@@ -46,5 +46,6 @@ describe('SmartAppsSectionNav', () => {
     expect(screen.getByTestId('smart-apps-section-owned')).toHaveTextContent('我的')
     expect(screen.queryByText('已安装')).not.toBeInTheDocument()
     expect(screen.getAllByRole('button')).toHaveLength(2)
+    expect(screen.getByTestId('smart-apps-section-nav')).toHaveClass('md:h-9', 'md:w-[168px]')
   })
 })

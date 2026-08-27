@@ -34,7 +34,7 @@ Wework 内置浏览器均在最终 Electron 打包产物中完成验证。
   `wework/electron/release/WeWork-darwin-arm64/WeWork.app`
 - `ai:verify` 会话：
   `test-results/ai-verify/2026-08-23T20-27-15-096Z-75951`
-- 插件：`github:ChenRuoT/dsh-sidebar-qa`，版本 `0.4.0`
+- 插件：任意符合 DSH manifest 规范的原生 UI 插件
 - 浏览器验证页：Example Domain
 
 ## 截图链

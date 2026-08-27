@@ -61,6 +61,48 @@ Formal releases require the platform signing credentials plus
 key signs only the bridge artifacts consumed by legacy clients. Subsequent
 Electron updates use the SHA-512 values in the YAML manifests.
 
+## Initial package and component updates
+
+The initial Electron installer contains a complete runtime that can start
+offline:
+
+- Electron, whose embedded Node runtime is shared by the Electron main
+  process, Core DSH, plugin subprocesses, and Codex skill scripts;
+- Core DSH;
+- Wework core DSH plugins;
+- Executor;
+- Codex.
+
+`components.json` records the application version, release channel, and each
+component's version, resource path, and content SHA-256. The Electron
+application itself continues to update through `electron-updater`; the other
+four components use independent
+`components-<channel>-<platform>-<arch>.json` manifests.
+
+Component archives are named by their archive SHA-256 and stored as immutable
+assets in the `wework-updater` Release. A release uploads only hashes that are
+not already present remotely. Unchanged Core DSH, core plugins, Executor, and
+Codex assets are reused, and formal version Releases no longer duplicate
+those component archives. Each release only replaces the small rolling
+component manifests.
+
+The client accepts only a component manifest that exactly matches the running
+Electron application version, channel, platform, and architecture. It verifies
+the archive size and SHA-256 before extraction, then verifies the extracted
+component content SHA-256. Downloads enter a content-addressed store under the
+user data directory as `pending` and the complete component set switches
+through one atomic state file on the next startup. Wework confirms the new set
+only after the workbench and Core DSH start successfully. A failed startup, or
+a process exit before confirmation, rolls back to the previous set on the next
+launch. Packaged resources remain the final fallback.
+
+Wework no longer packages or downloads a second Node runtime. At startup it
+creates a lightweight `node` entry under the user data directory, prepends it
+to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
+Electron, and sets `ELECTRON_RUN_AS_NODE=1`. Core DSH and Codex skills therefore
+use Electron's version-bound Node for both explicit `node script.ts` commands
+and `#!/usr/bin/env node` entry points.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:
@@ -111,6 +153,8 @@ build command. Desktop resource changes belong in `wework/resources/` or the
 Electron packaging scripts, not in a duplicated workflow resource list.
 
 A rolling channel may skip an equal-version upload only when both Electron YAML
-manifests and all three legacy Tauri JSON manifests exist. The workflow repairs
-an incomplete equal version and fails for an incomplete newer version instead
-of overwriting it with an older release.
+manifests, all three legacy Tauri JSON manifests, and component manifests for
+all four build targets exist. The workflow repairs an incomplete equal version
+and fails for an incomplete newer version instead of overwriting it with an
+older release. Component archives are never overwritten and are uploaded only
+when their content-addressed asset name is absent.

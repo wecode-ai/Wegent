@@ -60,6 +60,19 @@ fn process_env_merges_user_extra_paths_before_standard_developer_directories() {
 }
 
 #[test]
+fn process_env_keeps_the_wework_runtime_bin_first() {
+    let _lock = env_lock();
+    let _path = EnvGuard::set("PATH", "/usr/bin:/runtime/bin:/bin");
+    let _runtime = EnvGuard::set("WEWORK_RUNTIME_BIN", "/runtime/bin");
+
+    let env = process_env(&[]);
+    let path = env.get("PATH").expect("PATH should be present");
+
+    assert!(path.starts_with("/runtime/bin:/usr/bin:/bin"));
+    assert_eq!(path.matches("/runtime/bin").count(), 1);
+}
+
+#[test]
 fn process_env_normalizes_explicit_path_overrides() {
     let _lock = env_lock();
     let _path = EnvGuard::set("PATH", "/usr/bin:/bin");

@@ -1,8 +1,10 @@
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
 import { LocalEndpointEventStream } from './local-endpoint-event-stream.js'
+import { ExecutorSessionProjector } from './session-projector.js'
+import { ExecutorSessionProjectionStream } from './session-projection-stream.js'
 
 export const name = 'wework-executor-runtime'
-export const inject = ['webServer']
+export const inject = ['webServer', 'sessions']
 
 const BASE_PATH = '/wework/executor/v1'
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
@@ -11,6 +13,16 @@ export async function apply(ctx) {
   const client = ExecutorRuntimeClient.fromEnvironment()
   await client.start()
   ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
+  const projector = new ExecutorSessionProjector(ctx.sessions)
+  const projectionStream = new ExecutorSessionProjectionStream(projector, {
+    onError: error => {
+      console.error('[wework-executor-runtime] DSH session projection failed', error)
+    },
+  })
+  ctx.effect(() => {
+    projectionStream.start()
+    return () => projectionStream.stop()
+  }, 'wework-executor-runtime: session projection')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))

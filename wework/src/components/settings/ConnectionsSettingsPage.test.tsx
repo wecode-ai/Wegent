@@ -14,6 +14,7 @@ import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/l
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -207,7 +208,8 @@ describe('ConnectionsSettingsPage', () => {
     importRuntimeAuthJson: vi.fn(),
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
     localStorage.clear()

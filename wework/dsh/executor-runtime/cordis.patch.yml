@@ -3,3 +3,4 @@
       name: '@wegent/dsh-executor-runtime'
       inject:
         - webServer
+        - sessions

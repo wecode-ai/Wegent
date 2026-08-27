@@ -454,7 +454,7 @@ const CanvasAutoFit = memo(function CanvasAutoFit({ outerNodeCount }) {
     }
     previousOuterNodeCount.current = outerNodeCount
     const frame = window.requestAnimationFrame(() => {
-      void fitView({ duration: 240, padding: CANVAS_FIT_PADDING })
+      void fitView({ duration: 0, padding: CANVAS_FIT_PADDING })
     })
     return () => window.cancelAnimationFrame(frame)
   }, [fitView, outerNodeCount])

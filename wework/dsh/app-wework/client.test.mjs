@@ -4,348 +4,315 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 async function loadClient() {
-  let factory
-  const surface = {
-    childNodes: [],
-    dataset: {},
-    style: {},
-    tagName: 'DIV',
-    setAttribute() {},
-    replaceChildren() {
-      this.childNodes = []
-    },
-  }
-  const document = {
-    body: {
-      children: [],
-      style: {},
-      append(node) {
-        this.children.push(node)
-        if (node === surface) document.surfaceAttached = true
-      },
-    },
-    documentElement: { style: {} },
-    getElementById() {
-      return { style: {} }
-    },
-    querySelector() {
-      return document.surfaceAttached ? surface : null
-    },
-    createElement() {
-      return surface
-    },
-    surface,
-    surfaceAttached: false,
-  }
-  const window = {
-    __WEWORK_DSH_EXTENSION_FRAME_HOST__: {
-      show() {},
-      hide() {},
-    },
-    __ModuleLoader__: {
-      load(entry) {
-        factory = entry.factory
-      },
-    },
-  }
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')
-  vm.runInNewContext(source, {
-    document,
-    HTMLElement: Object,
-    MutationObserver: class {
-      observe() {}
-      disconnect() {}
+  let registration
+  const listeners = new Map()
+  const hostWindow = {
+    __ModuleLoader__: {
+      load(value) {
+        registration = value
+      },
     },
-    queueMicrotask,
-    structuredClone,
-    window,
-  })
-  assert.equal(typeof factory, 'function')
-  const client = factory(specifier => {
-    if (specifier === 'react') {
-      class Component {
-        constructor(props) {
-          this.props = props
-          this.state = {}
-        }
-      }
-      return {
-        Component,
-        createElement(type, props, ...children) {
-          return { type, props: { ...props, children } }
-        },
-        useCallback() {},
-        useEffect() {},
-        useMemo() {},
-        useState() {},
-      }
-    }
-    if (specifier === 'react-dom/client') {
-      return {
-        createRoot(container) {
-          return {
-            render(element) {
-              container.element = element
-              container.childNodes = [element]
-            },
-            unmount() {
-              container.unmounted = true
-            },
-          }
-        },
-      }
-    }
-    throw new Error(`Unexpected module: ${specifier}`)
-  })
-  client.__testDocument = document
-  return client
-}
-
-function storage(value = null) {
-  let current = value
-  return {
-    getItem() {
-      return current
+    addEventListener(name, listener) {
+      listeners.set(name, listener)
     },
-    setItem(_key, next) {
-      current = next
-    },
-    value() {
-      return current
+    removeEventListener(name, listener) {
+      if (listeners.get(name) === listener) listeners.delete(name)
     },
   }
+  vm.runInNewContext(source, {
+    Error,
+    Object,
+    Promise,
+    String,
+    Symbol,
+    console,
+    window: hostWindow,
+  })
+  assert.ok(registration)
+
+  const effects = []
+  const refs = []
+  const exports = registration.factory(specifier => {
+    if (specifier === 'react-dom') {
+      return {
+        createPortal(node, container, key) {
+          return { node, container, key }
+        },
+      }
+    }
+    if (specifier !== 'react') throw new Error(`Unexpected module: ${specifier}`)
+    return {
+      Fragment: Symbol('Fragment'),
+      createElement(type, props, ...children) {
+        return { type, props: { ...props, children } }
+      },
+      useEffect(effect) {
+        effects.push(effect)
+      },
+      useRef(value) {
+        const ref = { current: value }
+        refs.push(ref)
+        return ref
+      },
+      useState(value) {
+        return [value, () => {}]
+      },
+    }
+  })
+  return { effects, exports, hostWindow, listeners, refs }
 }
 
-test('registers three immutable fixed tabs in one client plugin', async () => {
+test('registers Wework as the DSH root application', async () => {
   const client = await loadClient()
+  let registration
+  const context = {
+    provide(name, value) {
+      this[name] = value
+    },
+    slots: {
+      register(options, component) {
+        registration = { options, component }
+      },
+    },
+  }
+
+  assert.deepEqual(Array.from(client.exports.inject), ['slots'])
+  client.exports.apply(context)
+  assert.equal(registration.options.name, 'root')
+  assert.equal(registration.options.priority, -100)
+  assert.equal(
+    JSON.stringify(registration.options.children),
+    JSON.stringify({
+      'wework.action': { kind: 'list', scope: 'root' },
+      'wework.app': { kind: 'list', scope: 'root' },
+      'wework.route': { kind: 'list', scope: 'root' },
+      'wework.settings.page': { kind: 'list', scope: 'root' },
+      'wework.sidebar.navigation': { kind: 'list', scope: 'root' },
+      'wework.shell.after': { kind: 'list', scope: 'root' },
+      'wework.shell.before': { kind: 'list', scope: 'root' },
+      'wework.shell.overlay': { kind: 'list', scope: 'root' },
+      'wework.workspace.sidebar.tab': { kind: 'list', scope: 'root' },
+      'wework.workspace.tab': { kind: 'list', scope: 'root' },
+    })
+  )
+  assert.equal(typeof registration.component, 'function')
+})
+
+test('projects native DSH sidebar slot entries into Wework containers', async () => {
+  const client = await loadClient()
+  let registration
+  const context = {
+    provide(name, value) {
+      this[name] = value
+    },
+    slots: {
+      register(options, component) {
+        registration = { options, component }
+      },
+      entriesOfSlot() {
+        const component = () => null
+        component.wework = { icon: 'search', placement: 'secondary' }
+        return [
+          {
+            component,
+            options: { id: 'inspector', label: 'Inspector', order: 20 },
+          },
+        ]
+      },
+      subscribe() {
+        return () => {}
+      },
+    },
+  }
+  client.exports.apply(context)
+  const renderCalls = []
+  const Root = registration.component
+  Root({
+    renderSlot(name, props, options) {
+      renderCalls.push({ name, props, options })
+      return { name, props, options }
+    },
+  })
+  const cleanup = client.effects[0]()
   assert.deepEqual(
-    Array.from(client.FIXED_TABS, tab => [tab.id, tab.appKind, tab.fixed]),
+    JSON.parse(
+      JSON.stringify(client.hostWindow.__WEWORK_DSH_UI__.getEntries('wework.workspace.sidebar.tab'))
+    ),
     [
-      ['wework:tasks', 'tasks', true],
-      ['wework:project-space', 'project-space', true],
-      ['wework:agents', 'agents', true],
+      {
+        icon: 'search',
+        placement: 'secondary',
+        id: 'inspector',
+        label: 'Inspector',
+        order: 20,
+      },
     ]
   )
-  const state = client.defaultState()
-  assert.equal(client.closeDynamicTab(state, 'wework:tasks'), state)
-  assert.equal(client.tabsOf(state).length, 3)
-})
 
-test('publishes Wework extensions independently from the application renderer', async () => {
-  const client = await loadClient()
-  const effects = []
-  const provided = []
-  client.apply({
-    effect(factory, label) {
-      effects.push(label)
-      if (label !== 'wework-app: styles') factory()
-    },
-    provide(name, service) {
-      provided.push({ name, service })
-      return () => {}
-    },
-  })
-  assert.deepEqual(effects, ['wework-app: extension bridge cleanup', 'wework-app: styles'])
-  assert.deepEqual(Array.from(client.inject), [
-    'weworkDesktop',
-    'sessions',
-    'connection',
-    'workspaces',
-  ])
-  assert.equal(provided[0].name, 'wework')
-  assert.equal(provided[0].service.protocol, 'wework.host.v1')
-  assert.equal(provided[0].service.extensions.protocol, 'wework.extensions.v1')
-  assert.deepEqual(Array.from(provided[0].service.extensions.extensionPoints), [
+  const container = {}
+  const props = { visible: true }
+  const mounted = client.hostWindow.__WEWORK_DSH_UI__.attach(
     'wework.workspace.sidebar.tab',
-  ])
-  assert.equal('sidebar' in provided[0].service.extensions, false)
-  assert.equal(provided[1].name, 'betterSidebar')
-  assert.equal(provided[1].service.version, '0.15.2-wework.1')
+    'inspector',
+    container,
+    props
+  )
+  const projected = Root({
+    renderSlot(name, owner, options) {
+      renderCalls.push({ name, props: owner, options })
+      return { name, owner, options }
+    },
+  })
+  const portal = projected.props.children[1]
+  assert.equal(portal.container, container)
+  assert.equal(
+    JSON.stringify(renderCalls.at(-1)),
+    JSON.stringify({
+      name: 'wework.workspace.sidebar.tab',
+      props,
+      options: { only: 'inspector' },
+    })
+  )
+
+  mounted.dispose()
+  cleanup()
 })
 
-test('queues better-sidebar registrations and reattaches them to the Wework host', async () => {
+test('registers Wework descriptors on standard DSH slot components', async () => {
   const client = await loadClient()
-  const bridge = client.createBetterSidebarBridge({ sessions: { marker: 'real-context' } })
+  const registrations = []
+  const ctx = {
+    provide(name, value) {
+      this[name] = value
+    },
+    slots: {
+      register(options, component) {
+        registrations.push({ options, component })
+        return () => {}
+      },
+    },
+  }
+  const Component = () => null
   const descriptor = {
-    id: 'qa:ask',
-    title: 'Ask',
-    component(props) {
-      return { type: 'qa-component', props }
+    id: 'quality-dashboard',
+    label: 'Quality dashboard',
+    order: 20,
+    path: '/quality',
+    telemetryFeature: 'quality',
+  }
+
+  client.exports.apply(ctx)
+  ctx.wework.ui.register(ctx, 'wework.workspace.tab', descriptor, Component)
+
+  assert.equal(registrations.length, 2)
+  assert.equal(
+    JSON.stringify(registrations[1].options),
+    JSON.stringify({
+      name: 'wework.workspace.tab',
+      id: 'quality-dashboard',
+      label: 'Quality dashboard',
+      order: 20,
+    })
+  )
+  assert.equal(registrations[1].component, Component)
+  assert.equal(JSON.stringify(Component.wework), JSON.stringify(descriptor))
+  assert.equal(Object.isFrozen(Component.wework), true)
+})
+
+test('projects native DSH workspace tab entries into Wework surfaces', async () => {
+  const client = await loadClient()
+  let registration
+  const context = {
+    provide(name, value) {
+      this[name] = value
+    },
+    slots: {
+      register(options, component) {
+        registration = { options, component }
+      },
+      entriesOfSlot(name) {
+        return name === 'wework.workspace.tab'
+          ? [{ options: { id: 'dashboard', label: 'Dashboard', order: 5 } }]
+          : []
+      },
+      subscribe() {
+        return () => {}
+      },
     },
   }
-  const dispose = bridge.service.registerTab(descriptor)
-  const firstRegistered = []
-  const firstDisposed = []
-  const firstHost = {
-    register(extensionPoint, value) {
-      assert.equal(extensionPoint, 'wework.workspace.sidebar.tab')
-      firstRegistered.push(value)
-      return () => firstDisposed.push(value.id)
+  client.exports.apply(context)
+  const Root = registration.component
+  Root({ renderSlot: () => null })
+  const cleanup = client.effects[0]()
+  assert.equal(
+    JSON.stringify(client.hostWindow.__WEWORK_DSH_UI__.getEntries('wework.workspace.tab')),
+    JSON.stringify([{ id: 'dashboard', label: 'Dashboard', order: 5 }])
+  )
+
+  const container = {}
+  const props = { visible: true, tab: { id: 'workspace-1' } }
+  client.hostWindow.__WEWORK_DSH_UI__.attach('wework.workspace.tab', 'dashboard', container, props)
+  const rendered = Root({
+    renderSlot(name, owner, options) {
+      return { name, owner, options }
+    },
+  })
+  const portal = rendered.props.children[1]
+  assert.equal(portal.container, container)
+  assert.equal(portal.node.name, 'wework.workspace.tab')
+  assert.equal(portal.node.owner, props)
+  assert.equal(portal.node.options.only, 'dashboard')
+  cleanup()
+})
+
+test('mounts the Wework bundle with the active DSH context', async () => {
+  const client = await loadClient()
+  const context = { slots: {} }
+  const disposeCalls = []
+  const container = {}
+  client.hostWindow.__WEWORK_APP_RUNTIME__ = {
+    async mount(target, receivedContext) {
+      assert.equal(target, container)
+      assert.equal(receivedContext, context)
+      return () => disposeCalls.push('disposed')
     },
   }
-  const firstSidebarHost = {
-    subscribeState() {
+
+  context.slots.entriesOfSlot = () => []
+  context.slots.subscribe = () => () => {}
+  const Root = client.exports.createWeworkRoot(context, client.hostWindow)
+  const element = Root({ renderSlot: () => null })
+  const appRoot = element.props.children[0]
+  assert.equal(appRoot.props['data-testid'], 'wework-dsh-root')
+  appRoot.props.ref.current = container
+  const cleanup = client.effects[0]()
+  await Promise.resolve()
+  cleanup()
+  assert.deepEqual(disposeCalls, ['disposed'])
+})
+
+test('waits for the Wework application bundle when it loads after DSH plugins', async () => {
+  const client = await loadClient()
+  const context = { slots: {} }
+  const container = {}
+  let mounted = false
+  context.slots.entriesOfSlot = () => []
+  context.slots.subscribe = () => () => {}
+  const Root = client.exports.createWeworkRoot(context, client.hostWindow)
+  const element = Root({ renderSlot: () => null })
+  element.props.children[0].props.ref.current = container
+  const cleanup = client.effects[0]()
+
+  assert.equal(client.listeners.has(client.exports.APP_RUNTIME_READY_EVENT), true)
+  client.hostWindow.__WEWORK_APP_RUNTIME__ = {
+    async mount() {
+      mounted = true
       return () => {}
     },
   }
-  bridge.attachHost(firstHost, firstSidebarHost)
-  assert.equal(firstRegistered[0].id, descriptor.id)
-  assert.equal(firstRegistered[0].component, undefined)
-  assert.equal(typeof firstRegistered[0].mount, 'function')
-  const container = { dataset: {} }
-  const mounted = firstRegistered[0].mount(container, {
-    ctx: {},
-    store: {},
-    scope: { sessionId: 'session-1' },
-    tab: { id: 'tab-1', type: descriptor.id, title: 'Ask' },
-    visible: true,
-  })
-  const renderedChild = client.__testDocument.surface.element.props.children[0]
-  assert.equal(renderedChild.type, descriptor.component)
-  assert.equal(renderedChild.props.ctx.sessions.marker, 'real-context')
-  assert.equal(renderedChild.props.store.getSnapshot().state.panelOpen, true)
-  mounted.dispose()
-  assert.equal(client.__testDocument.surface.unmounted, true)
-
-  const secondRegistered = []
-  bridge.attachHost(
-    {
-      register(extensionPoint, value) {
-        assert.equal(extensionPoint, 'wework.workspace.sidebar.tab')
-        secondRegistered.push(value)
-        return () => {}
-      },
-    },
-    {
-      subscribeState() {
-        return () => {}
-      },
-    }
-  )
-  assert.deepEqual(firstDisposed, ['qa:ask'])
-  assert.equal(secondRegistered[0].id, descriptor.id)
-  assert.equal(bridge.context.sessions.marker, 'real-context')
-
-  dispose()
-  assert.equal(bridge.service.getTabs().length, 0)
-})
-
-test('restores active route and valid smart app bindings without execution state', async () => {
-  const client = await loadClient()
-  const now = new Date('2026-08-22T00:00:00.000Z')
-  const opened = client.openSmartApp(
-    client.defaultState(),
-    { appId: 'review', title: '评审', route: '/smart-apps/review' },
-    now
-  )
-  const persisted = storage()
-  client.persistState(persisted, opened)
-  const restored = client.restoreState(persisted)
-  assert.equal(restored.activeTabId, 'smart-app:review')
-  assert.deepEqual(
-    {
-      appKind: restored.dynamicTabs[0].binding.appKind,
-      route: restored.dynamicTabs[0].binding.route,
-      lastOpenedAt: restored.dynamicTabs[0].binding.lastOpenedAt,
-    },
-    {
-      appKind: 'smart-app',
-      route: '/smart-apps/review',
-      lastOpenedAt: now.toISOString(),
-    }
-  )
-  assert.equal('executionCommand' in restored.dynamicTabs[0].binding, false)
-})
-
-test('limits dynamic tabs and removes an uninstalled app', async () => {
-  const client = await loadClient()
-  let state = client.defaultState()
-  for (let index = 0; index < client.MAX_DYNAMIC_TABS; index += 1) {
-    state = client.openSmartApp(state, { appId: String(index) })
-  }
-  assert.throws(() => client.openSmartApp(state, { appId: 'overflow' }), /At most 20 dynamic tabs/)
-  const removed = client.removeSmartApp(state, '0')
-  assert.equal(
-    removed.dynamicTabs.some(tab => tab.id === 'smart-app:0'),
-    false
-  )
-})
-
-test('drops corrupted and duplicate persisted bindings', async () => {
-  const client = await loadClient()
-  const value = JSON.stringify({
-    version: 1,
-    activeTabId: 'missing',
-    dynamicTabs: [
-      {
-        id: 'smart-app:valid',
-        title: 'Valid',
-        binding: {
-          version: 1,
-          tabId: 'smart-app:valid',
-          appKind: 'smart-app',
-          route: '/valid',
-          lastOpenedAt: '2026-08-22T00:00:00.000Z',
-        },
-      },
-      {
-        id: 'smart-app:valid',
-        title: 'Duplicate',
-        binding: {
-          version: 1,
-          tabId: 'smart-app:valid',
-          appKind: 'smart-app',
-          route: '/duplicate',
-          lastOpenedAt: '2026-08-22T00:00:00.000Z',
-        },
-      },
-      {
-        id: 'wework:tasks',
-        title: 'Invalid fixed shadow',
-        binding: {
-          version: 1,
-          tabId: 'wework:tasks',
-          appKind: 'smart-app',
-          route: '/invalid',
-          lastOpenedAt: 'invalid',
-        },
-      },
-    ],
-  })
-  const restored = client.restoreState(storage(value))
-  assert.equal(restored.activeTabId, 'wework:tasks')
-  assert.equal(Array.from(restored.dynamicTabs, tab => tab.title).join(','), 'Valid')
-})
-
-test('allows only one writer tab for a Codex thread and releases the lease on close', async () => {
-  const client = await loadClient()
-  let state = client.openSmartApp(client.defaultState(), {
-    appId: 'thread-primary',
-    codexThreadId: 'thread-1',
-  })
-  state = client.openSmartApp(state, {
-    appId: 'thread-secondary',
-    codexThreadId: 'thread-1',
-  })
-
-  const primary = client.claimThreadWrite(state, 'smart-app:thread-primary')
-  assert.equal(primary.writable, true)
-  const denied = client.claimThreadWrite(primary.state, 'smart-app:thread-secondary')
-  assert.deepEqual(
-    {
-      writable: denied.writable,
-      ownerTabId: denied.ownerTabId,
-      reason: denied.reason,
-    },
-    {
-      writable: false,
-      ownerTabId: 'smart-app:thread-primary',
-      reason: 'thread_write_leased',
-    }
-  )
-
-  const closed = client.closeDynamicTab(primary.state, 'smart-app:thread-primary')
-  const secondary = client.claimThreadWrite(closed, 'smart-app:thread-secondary')
-  assert.equal(secondary.writable, true)
-  assert.equal(secondary.ownerTabId, 'smart-app:thread-secondary')
+  client.listeners.get(client.exports.APP_RUNTIME_READY_EVENT)()
+  await Promise.resolve()
+  assert.equal(mounted, true)
+  cleanup()
 })

@@ -1,19 +1,45 @@
 # Wework DSH App
 
-`@wegent/dsh-app-wework` is Wework's first-party modular monolith product
-plugin.
+`@wegent/dsh-app-wework` is Wework's DSH UI host. Wework no longer runs a
+separate frontend plugin runtime; Core DSH owns plugin discovery, dependencies,
+lifecycle, and UI registration.
 
-The current version registers three non-closable fixed tabs in one DSH client
-context:
+The host declares these standard extension points:
 
-- Tasks
-- Project spaces
-- Agents
+- `wework.app`
+- `wework.route`
+- `wework.settings.page`
+- `wework.shell.before` / `wework.shell.after` / `wework.shell.overlay`
+- `wework.workspace.tab`
+- `wework.workspace.sidebar.tab`
 
-The Smart Workbench and its dynamic tabs are managed by the same plugin. Fixed
-tabs, dynamic tabs, the active route, `WorkbenchBinding`, and the Codex thread
-write lease are persisted in storage owned by the DSH page. Restoring this
-state never replays a task or turn.
+Wework itself runs as a composition of DSH plugins including `ui-core-apps`,
+`ui-core-settings`, `ui-plugin-center`, `ui-applications`, `ui-automations`,
+and `ui-cloud-work`. Third-party plugins inject the same extension points with
+`ctx.slots.inject(...)` and the host-provided `wework` service:
+
+```js
+const inject = ['slots', 'wework']
+
+ctx.slots.inject('wework.workspace.tab', () =>
+  ctx.wework.ui.register(
+    ctx,
+    'wework.workspace.tab',
+    {
+      id: 'quality-dashboard',
+      label: 'Quality dashboard',
+      order: 20,
+    },
+    QualityDashboard
+  )
+)
+```
+
+`wework` is the Wework host service, with UI extension APIs under
+`ctx.wework.ui`. DSH slots retain only generic identity and ordering options.
+The API attaches the Wework descriptor to the standard DSH component and calls
+`ctx.slots.register(...)`; discovery, rendering, and disposal remain owned by
+DSH, with no secondary registry.
 
 Electron hosts one primary DSH `WebContentsView`. Host features such as the
 Wework built-in browser, file pickers, native windows, and system menus remain

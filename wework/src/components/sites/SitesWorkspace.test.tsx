@@ -127,7 +127,10 @@ describe('SitesWorkspace', () => {
     render(<SitesWorkspace api={api} onCreate={onCreate} />)
 
     expect(await screen.findByTestId('sites-unavailable-state')).toHaveTextContent(
-      '应用功能尚未推出'
+      '站点功能尚未推出'
+    )
+    expect(screen.getByTestId('sites-unavailable-state')).toHaveTextContent(
+      '功能开放后，你可以在这里创建、管理并发布站点。'
     )
     expect(screen.queryByTestId('sites-refresh-button')).not.toBeInTheDocument()
     await userEvent.click(screen.getByTestId('sites-create-button'))
@@ -137,8 +140,28 @@ describe('SitesWorkspace', () => {
       expect.objectContaining({ pluginName: 'wegent-sites', marketplaceName: 'wegent' })
     )
     expect(screen.getByTestId('sites-search-input')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-context-toolbar')).toHaveClass('md:h-9')
+    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
     expect(screen.queryByTestId('sites-retry-button')).not.toBeInTheDocument()
     expect(screen.queryByText('网络')).not.toBeInTheDocument()
+  })
+
+  test('uses the matching unavailable state for Mini Programs without shifting the shell', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=web')
+    const api = createApi()
+    vi.mocked(api.listSites).mockRejectedValue(
+      new ApiError('Applications are not available yet', 503, 'sites_not_available')
+    )
+
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+
+    expect(await screen.findByText('站点功能尚未推出')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
+
+    expect(await screen.findByText('小程序功能尚未推出')).toBeInTheDocument()
+    expect(screen.getByText('功能开放后，你可以在这里创建、管理并发布小程序。')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
+    expect(screen.getByTestId('applications-context-toolbar')).toHaveClass('md:h-9')
   })
 
   test('loads the current user sites and opens the default internal URL', async () => {
@@ -362,6 +385,7 @@ describe('SitesWorkspace', () => {
     )
 
     expect(await screen.findByText('产品发布页')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
     expect(screen.getByTestId('applications-tab-smart-app')).toHaveAttribute(
       'aria-selected',
       'false'
@@ -390,7 +414,7 @@ describe('SitesWorkspace', () => {
     expect(api.listSites).not.toHaveBeenCalled()
   })
 
-  test('uses the My workbench heading for the owned Smart apps view', async () => {
+  test('shows the owned Smart apps heading', async () => {
     window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
 
     render(
@@ -404,6 +428,7 @@ describe('SitesWorkspace', () => {
 
     expect(await screen.findByRole('heading', { name: '我的工作台' })).toBeInTheDocument()
     expect(screen.getByText('管理你创建、导入和安装的智能应用。')).toBeInTheDocument()
+    expect(screen.getByTestId('applications-content')).toHaveClass('max-w-[1120px]')
   })
 
   test('invokes the Mini Program entry from the create menu', async () => {

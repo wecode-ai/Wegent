@@ -13,12 +13,7 @@ export interface WorkspaceTabLabels {
   board: string
   agent: string
   auxiliary: string
-  auxiliaryRoutes: {
-    plugins: string
-    sites: string
-    automations: string
-    cloud: string
-  }
+  auxiliaryRoutes: Readonly<Record<string, string>>
 }
 
 const WORKSPACE_TAB_PARAM = 'workspaceTab'
@@ -78,11 +73,7 @@ export function workspaceTabTitle(
   const searchIndex = contentRoute.indexOf('?')
   const pathname = searchIndex >= 0 ? contentRoute.slice(0, searchIndex) : contentRoute
   if (kind !== 'auxiliary') return labels[kind]
-  if (pathname === '/plugins') return labels.auxiliaryRoutes.plugins
-  if (pathname === '/sites') return labels.auxiliaryRoutes.sites
-  if (pathname === '/automations') return labels.auxiliaryRoutes.automations
-  if (pathname === '/cloud-work') return labels.auxiliaryRoutes.cloud
-  return labels.auxiliary
+  return labels.auxiliaryRoutes[pathname] ?? labels.auxiliary
 }
 
 export function createWorkspaceTab(

@@ -1,16 +1,43 @@
 # Wework DSH App
 
-`@wegent/dsh-app-wework` 是 Wework 的第一方模块化单体产品插件。
+`@wegent/dsh-app-wework` 是 Wework 的 DSH UI 宿主插件。Wework 不再运行独立的
+前端插件系统；插件发现、依赖、生命周期和 UI 注册统一由 Core DSH 管理。
 
-当前版本在同一个 DSH client context 中注册三个不可关闭的固定 Tab：
+宿主声明以下标准扩展点：
 
-- 任务
-- 项目空间
-- 智能体
+- `wework.app`
+- `wework.route`
+- `wework.settings.page`
+- `wework.shell.before` / `wework.shell.after` / `wework.shell.overlay`
+- `wework.workspace.tab`
+- `wework.workspace.sidebar.tab`
 
-智能工作台及其动态 Tab 也由同一插件管理。固定 Tab、动态 Tab、active route、
-`WorkbenchBinding` 和 Codex thread 写 lease 持久化在 DSH 页面所属的本地存储中，
-不会触发任务或 turn 重放。
+Wework 自身按 `ui-core-apps`、`ui-core-settings`、`ui-plugin-center`、
+`ui-applications`、`ui-automations` 和 `ui-cloud-work` 等 DSH 插件组合运行。
+第三方插件通过 `ctx.slots.inject(...)` 与宿主提供的 `wework` service
+注入同一批扩展点：
+
+```js
+const inject = ['slots', 'wework']
+
+ctx.slots.inject('wework.workspace.tab', () =>
+  ctx.wework.ui.register(
+    ctx,
+    'wework.workspace.tab',
+    {
+      id: 'quality-dashboard',
+      label: '质量看板',
+      order: 20,
+    },
+    QualityDashboard
+  )
+)
+```
+
+`wework` 是 Wework 的宿主 service，UI 扩展 API 位于 `ctx.wework.ui`。DSH Slot
+只保留通用的身份与排序 options；该 API 将 Wework 描述附着到
+标准 DSH component，再调用 `ctx.slots.register(...)`；插件发现、渲染与释放仍完全
+由 DSH 管理，不存在第二套注册表。
 
 Electron 只承载一个主 DSH `WebContentsView`。Wework 内置浏览器、文件选择器、
 原生窗口和系统菜单等宿主能力继续由 Electron 实现；本插件后续只通过受限

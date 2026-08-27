@@ -82,15 +82,14 @@ import {
   attachRightWorkspaceSidebarController,
   encodeRightWorkspaceExtensionTabId,
   isRightWorkspaceExtensionTab,
-  invokeWeworkWorkspaceSidebarLifecycle,
-  rightWorkspaceBetterSidebar,
+  rightWorkspaceDshSidebar,
   titleOfWeworkWorkspaceSidebarTab,
   type WeworkWorkspaceSidebarOpenTabSeed,
   type WeworkWorkspaceScope,
   type WeworkWorkspaceSidebarSnapshot,
   type RightWorkspaceExtensionTab,
   type RightWorkspaceExtensionTabState,
-} from './workspace-panels/rightWorkspaceSidebarRegistry'
+} from './workspace-panels/rightWorkspaceDshSidebar'
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
@@ -2774,23 +2773,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [rightWorkspaceExtensionCwd, rightWorkspaceExtensionSessionId]
   )
   const openRightWorkspaceExtensionTab = useCallback(
-    (seed: WeworkWorkspaceSidebarOpenTabSeed, scope = rightWorkspaceExtensionScope) => {
-      const descriptor = rightWorkspaceBetterSidebar.getTab(seed.type)
+    (seed: WeworkWorkspaceSidebarOpenTabSeed) => {
+      const descriptor = rightWorkspaceDshSidebar.getTab(seed.type)
       if (!descriptor) return
 
       const currentTabs = Object.values(rightPanelExtensionTabsRef.current).filter(
         (state): state is RightWorkspaceExtensionTabState => Boolean(state)
       )
-      const sidebarState = {
-        panelOpen: rightPanelOpen,
-        tabs: currentTabs.map(state => state.tab),
-        activeTabId: isRightWorkspaceExtensionTab(rightPanelView)
-          ? (rightPanelExtensionTabsRef.current[rightPanelView]?.tab.id ?? null)
-          : null,
-      }
-      const created = descriptor.createTab?.(sidebarState)
-      if (descriptor.createTab && !created) return
-      const tab = created?.tab ?? {
+      const tab = {
         id: seed.id ?? descriptor.id,
         type: descriptor.id,
         title: seed.title ?? titleOfWeworkWorkspaceSidebarTab(descriptor),
@@ -2798,16 +2788,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         ...(seed.diff !== undefined ? { diff: seed.diff } : {}),
         ...(seed.meta !== undefined ? { meta: seed.meta } : {}),
       }
-      const dedupeKey = descriptor.dedupeKey ?? (descriptor.single ? item => item.type : undefined)
-      const existing = currentTabs.find(candidate => {
-        if (candidate.tab.id === tab.id) return true
-        if (!dedupeKey) return false
-        const nextKey = dedupeKey(tab)
-        return nextKey !== undefined && dedupeKey(candidate.tab) === nextKey
-      })
+      const existing = currentTabs.find(candidate => candidate.tab.id === tab.id)
       if (existing) {
         openRightPanelTab(existing.internalId)
-        invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', existing.tab, scope)
         return
       }
 
@@ -2817,9 +2800,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         [internalId]: { internalId, tab },
       }))
       openRightPanelTab(internalId)
-      invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onOpen', tab, scope)
     },
-    [openRightPanelTab, rightPanelOpen, rightPanelView, rightWorkspaceExtensionScope]
+    [openRightPanelTab]
   )
   const currentWorkItemGuideProject =
     boundCloudProject ?? pendingCloudProject ?? defaultProject ?? defaultWorkItemPreviewProject
@@ -3392,9 +3374,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const extensionState = isRightWorkspaceExtensionTab(tab)
       ? rightPanelExtensionTabsRef.current[tab]
       : undefined
-    const extensionDescriptor = extensionState
-      ? rightWorkspaceBetterSidebar.getTab(extensionState.tab.type)
-      : undefined
     const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
     if (
       browserState?.hasActiveDownload &&
@@ -3453,14 +3432,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         delete next[tab as RightWorkspaceExtensionTab]
         return next
       })
-      if (extensionDescriptor) {
-        invokeWeworkWorkspaceSidebarLifecycle(
-          extensionDescriptor,
-          'onClose',
-          extensionState.tab,
-          rightWorkspaceExtensionScope
-        )
-      }
     }
     setRightPanelTabs(current => {
       const currentTabs = current.includes(tab) ? current : [...current, tab]
@@ -3495,16 +3466,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           )
           if (state) closeRightPanelTabFromExtension(state.internalId)
         },
-        activateTab: (tabId, scope = rightWorkspaceExtensionScope) => {
+        activateTab: tabId => {
           const state = Object.values(rightPanelExtensionTabsRef.current).find(
             candidate => candidate?.tab.id === tabId
           )
           if (!state) return
           openRightPanelTab(state.internalId)
-          const descriptor = rightWorkspaceBetterSidebar.getTab(state.tab.type)
-          if (descriptor) {
-            invokeWeworkWorkspaceSidebarLifecycle(descriptor, 'onActivate', state.tab, scope)
-          }
         },
         updateTab: (tabId, patch) => {
           setRightPanelExtensionTabs(current => {
