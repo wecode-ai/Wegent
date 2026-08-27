@@ -206,8 +206,8 @@ async def test_dispatch_skips_recovery_for_chat_shell():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_does_not_scan_historical_deleted_subtasks():
-    """Dispatch should only recover when the current subtask is marked deleted."""
+async def test_dispatch_reuses_executor_when_pod_is_alive():
+    """Dispatch should keep using the current executor while its pod is alive."""
     dispatcher = ExecutionDispatcher()
     request = ExecutionRequest(
         task_id=1385,
@@ -234,8 +234,8 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
     recovery_service.recover = AsyncMock()
 
     target = ExecutionTarget(
-        mode=CommunicationMode.HTTP_CALLBACK,
-        url="http://executor-manager/executor-manager",
+        mode=CommunicationMode.WEBSOCKET,
+        url="ws://executor-manager/executor-manager",
     )
 
     with (
@@ -253,6 +253,150 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
             "app.services.execution.dispatcher.subtask_store.get_by_id",
             return_value=subtask,
         ) as get_subtask_mock,
+        patch(
+            "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+            return_value=True,
+        ) as executor_alive_mock,
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    recovery_service.recover.assert_not_awaited()
+    get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
+    executor_alive_mock.assert_called_once_with("active-executor", "default")
+    db.query.assert_not_called()
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recovers_when_executor_pod_is_missing():
+    """Web chat should recover through the common path when its pod is missing."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="missing-executor",
+        executor_namespace="wb-plat-ide",
+    )
+    emitter = AsyncMock()
+    subtask = MagicMock(spec=Subtask)
+    subtask.id = request.subtask_id
+    subtask.executor_deleted_at = False
+    subtask.executor_name = request.executor_name
+    subtask.executor_namespace = request.executor_namespace
+    task = MagicMock(spec=TaskResource)
+    task.id = request.task_id
+    task.kind = "Task"
+    db = MagicMock()
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock(
+        return_value={
+            "executor_name": "replacement-executor",
+            "executor_namespace": "wb-plat-ide",
+        }
+    )
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        url="ws://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.update_fields"
+        ) as update_fields_mock,
+        patch(
+            "app.services.execution.dispatcher.task_store.get_by_id",
+            return_value=task,
+        ),
+        patch(
+            "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+            return_value=False,
+        ),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, emitter=emitter)
+
+    assert update_fields_mock.call_args_list[0].kwargs == {
+        "subtask": subtask,
+        "executor_deleted_at": True,
+    }
+    recovery_service.recover.assert_awaited_once_with(
+        db=db,
+        subtask=subtask,
+        task=task,
+        request=request,
+    )
+    assert request.executor_name == "replacement-executor"
+    assert request.executor_namespace == "wb-plat-ide"
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_treats_executor_liveness_error_as_alive():
+    """An inconclusive liveness check must not trigger a replacement pod."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="existing-executor",
+        executor_namespace="wb-plat-ide",
+    )
+    emitter = AsyncMock()
+    subtask = MagicMock(spec=Subtask)
+    subtask.executor_deleted_at = False
+    subtask.executor_name = request.executor_name
+    subtask.executor_namespace = request.executor_namespace
+    db = MagicMock()
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock()
+    target = ExecutionTarget(
+        mode=CommunicationMode.HTTP_CALLBACK,
+        url="http://executor-manager/executor-manager",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+            side_effect=RuntimeError("timeout"),
+        ),
         patch.object(dispatcher.router, "route", return_value=target),
         patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
         patch.object(
@@ -262,8 +406,60 @@ async def test_dispatch_does_not_scan_historical_deleted_subtasks():
         await dispatcher.dispatch(request, emitter=emitter)
 
     recovery_service.recover.assert_not_awaited()
-    get_subtask_mock.assert_called_once_with(db, subtask_id=request.subtask_id)
-    db.query.assert_not_called()
+    dispatch_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skips_executor_liveness_check_for_device_executor():
+    """Device executors are not backed by executor-manager pods."""
+    dispatcher = ExecutionDispatcher()
+    request = ExecutionRequest(
+        task_id=1385,
+        subtask_id=1861,
+        message_id=3,
+        user={"id": 7, "name": "user7"},
+        user_id=7,
+        user_name="user7",
+        bot=[{"shell_type": "ClaudeCode"}],
+        executor_name="device-macbook",
+    )
+    emitter = AsyncMock()
+    subtask = MagicMock(spec=Subtask)
+    subtask.executor_deleted_at = False
+    subtask.executor_name = request.executor_name
+    subtask.executor_namespace = ""
+    db = MagicMock()
+    recovery_service = MagicMock()
+    recovery_service.recover = AsyncMock()
+    target = ExecutionTarget(
+        mode=CommunicationMode.WEBSOCKET,
+        url="ws://device",
+    )
+
+    with (
+        patch(
+            "app.services.execution.dispatcher.SessionLocal",
+            return_value=db,
+        ),
+        patch(
+            "app.services.execution.dispatcher.recovery_service",
+            recovery_service,
+        ),
+        patch(
+            "app.services.execution.dispatcher.subtask_store.get_by_id",
+            return_value=subtask,
+        ),
+        patch(
+            "app.services.remote_workspace_service.remote_workspace_service.executor_alive",
+            side_effect=AssertionError("device executor must not be checked"),
+        ),
+        patch.object(dispatcher.router, "route", return_value=target),
+        patch.object(dispatcher, "_update_subtask_to_running", AsyncMock()),
+        patch.object(dispatcher, "_dispatch_websocket", AsyncMock()) as dispatch_mock,
+    ):
+        await dispatcher.dispatch(request, device_id="macbook", emitter=emitter)
+
+    recovery_service.recover.assert_not_awaited()
     dispatch_mock.assert_awaited_once()
 
 
