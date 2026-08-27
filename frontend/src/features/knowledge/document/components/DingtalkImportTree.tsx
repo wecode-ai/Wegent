@@ -22,18 +22,18 @@ import type { DingtalkDocNode } from '@/types/dingtalk-doc'
 import type { ExternalDocumentImportStatuses } from '@/apis/knowledge'
 import type { DocumentIndexStatus } from '@/types/knowledge'
 
-const FILE_ICONS = new Map<string, typeof FileText>([
-  ['adoc', FileText],
-  ['docx', FileText],
-  ['pdf', FileText],
-  ['txt', FileText],
-  ['md', FileText],
-  ['able', Database],
-  ['axls', FileSpreadsheet],
-  ['xlsx', FileSpreadsheet],
-  ['csv', FileSpreadsheet],
-  ['appt', Presentation],
-  ['pptx', Presentation],
+const FILE_ICONS = new Map<string, { icon: typeof FileText; className: string }>([
+  ['adoc', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
+  ['docx', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
+  ['pdf', { icon: FileText, className: 'text-error' }],
+  ['txt', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
+  ['md', { icon: FileText, className: 'text-blue-600 dark:text-blue-400' }],
+  ['able', { icon: Database, className: 'text-primary' }],
+  ['axls', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
+  ['xlsx', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
+  ['csv', { icon: FileSpreadsheet, className: 'text-green-600 dark:text-green-400' }],
+  ['appt', { icon: Presentation, className: 'text-orange-600 dark:text-orange-400' }],
+  ['pptx', { icon: Presentation, className: 'text-orange-600 dark:text-orange-400' }],
 ])
 
 const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
@@ -149,11 +149,8 @@ function ImportTreeNode({
   const open = expandedKeys.has(key) || searching
   const visible = filterImportTree([node], query)[0]
   if (!visible) return null
-  const Icon = folder
-    ? open
-      ? FolderOpen
-      : Folder
-    : (FILE_ICONS.get(node.extension ?? '') ?? File)
+  const fileIcon = FILE_ICONS.get(node.extension ?? '')
+  const Icon = folder ? (open ? FolderOpen : Folder) : (fileIcon?.icon ?? File)
   const selectDisabled = disabled || !ids.length || (folder && searching)
   return (
     <>
@@ -199,7 +196,12 @@ function ImportTreeNode({
           }
           data-testid={`dingtalk-node-name-${node.dingtalk_node_id}`}
         >
-          <Icon className="h-4 w-4 shrink-0 text-text-muted" />
+          <Icon
+            className={cn(
+              'h-4 w-4 shrink-0',
+              folder ? 'text-text-secondary' : (fileIcon?.className ?? 'text-text-muted')
+            )}
+          />
           <span className="truncate">{node.name}</span>
           {folder && (
             <span

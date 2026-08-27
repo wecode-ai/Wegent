@@ -216,13 +216,14 @@ async function openDingtalkMode(
 }
 
 describe('DocumentUpload dingtalk source', () => {
-  it('shows format icons independently of import eligibility', async () => {
+  it('shows colored format icons independently of import eligibility', async () => {
     const formats = [
-      ['adoc', 'lucide-file-text'],
-      ['able', 'lucide-database'],
-      ['axls', 'lucide-file-spreadsheet'],
-      ['pptx', 'lucide-presentation'],
-      ['unknown', 'lucide-file'],
+      ['adoc', 'lucide-file-text', 'text-blue-600', 'dark:text-blue-400'],
+      ['able', 'lucide-database', 'text-primary'],
+      ['axls', 'lucide-file-spreadsheet', 'text-green-600', 'dark:text-green-400'],
+      ['pptx', 'lucide-presentation', 'text-orange-600', 'dark:text-orange-400'],
+      ['pdf', 'lucide-file-text', 'text-error'],
+      ['unknown', 'lucide-file', 'text-text-muted'],
     ]
     mockGetDocs.mockResolvedValue({
       nodes: formats.map(([extension]) =>
@@ -231,10 +232,10 @@ describe('DocumentUpload dingtalk source', () => {
       total_count: formats.length,
     })
     await openDingtalkMode()
-    for (const [extension, iconClass] of formats) {
+    for (const [extension, ...iconClasses] of formats) {
       expect(
         screen.getByTestId(`dingtalk-node-name-${extension}`).querySelector('svg')
-      ).toHaveClass(iconClass)
+      ).toHaveClass(...iconClasses)
     }
     expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
   })
