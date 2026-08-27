@@ -49,6 +49,16 @@ export class ExecutorSessionProjector {
       return
     }
 
+    if (event === 'response.block.created') {
+      this.appendBlockCreated(state, subtaskId, recordField(payload, 'data'))
+      return
+    }
+
+    if (event === 'response.block.updated') {
+      this.appendBlockUpdated(state, subtaskId, recordField(payload, 'data'))
+      return
+    }
+
     if (event === 'thread/tokenUsage/updated' || event === 'thread.tokenUsage.updated') {
       const runtimeUsage = recordField(recordField(payload, 'data'), 'tokenUsage')
       const totalUsage = tokenUsage(recordField(runtimeUsage, 'total'))
@@ -91,6 +101,7 @@ export class ExecutorSessionProjector {
       reasoningStarted: false,
       usage: null,
       sourceUsage: null,
+      blocks: new Map(),
       sourceEventSeqs: [],
       generatedUserMessageIds: new Set(),
     }
@@ -110,6 +121,7 @@ export class ExecutorSessionProjector {
     state.textStarted = false
     state.reasoningStarted = false
     state.usage = null
+    state.blocks.clear()
     state.sourceEventSeqs = []
     state.session.append('turn/start', { turn: state.turn })
     state.session.append('step/start', { turn: state.turn, step: 1 })
@@ -164,6 +176,36 @@ export class ExecutorSessionProjector {
       },
     })
     state.sourceEventSeqs.push(appended.seq)
+  }
+
+  appendBlockCreated(state, subtaskId, data) {
+    const block = recordField(data, 'block')
+    const id = stringField(block, 'id')
+    const kind = projectedBlockKind(block)
+    if (!id || !kind) return
+    const content = stringField(block, 'content') ?? ''
+    state.blocks.set(id, { kind, content })
+    if (content) this.appendDelta(state, subtaskId, kind, content)
+  }
+
+  appendBlockUpdated(state, subtaskId, data) {
+    const id = stringField(data, 'block_id') ?? stringField(data, 'blockId')
+    if (!id) return
+    const tracked = state.blocks.get(id)
+    if (!tracked) return
+    const updates = recordField(data, 'updates')
+    const delta = stringField(updates, 'content_delta') ?? stringField(updates, 'contentDelta')
+    if (delta) {
+      tracked.content += delta
+      this.appendDelta(state, subtaskId, tracked.kind, delta)
+      return
+    }
+    const content = stringField(updates, 'content')
+    if (!content || content === tracked.content) return
+    if (!content.startsWith(tracked.content)) return
+    const suffix = content.slice(tracked.content.length)
+    tracked.content = content
+    if (suffix) this.appendDelta(state, subtaskId, tracked.kind, suffix)
   }
 
   finishTurn(state, subtaskId, event, data) {
@@ -318,6 +360,13 @@ function responseUsage(data) {
       recordField(usage, 'output_tokens_details').reasoning_tokens ??
       recordField(usage, 'outputTokensDetails').reasoningTokens,
   })
+}
+
+function projectedBlockKind(block) {
+  const processKind = stringField(block, 'process_kind') ?? stringField(block, 'processKind')
+  if (processKind === 'assistant_message') return 'text'
+  if (processKind === 'reasoning') return 'reasoning'
+  return null
 }
 
 function responseText(data) {
