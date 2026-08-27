@@ -268,9 +268,12 @@ if [ ! -s "$WEWORK_APP_WATCH_READY_FILE" ]; then
   exit 1
 fi
 
-# The parent Wework terminal may use Electron as its embedded Node runtime.
-# The desktop process itself must always start in Electron app mode.
+# The parent Wework terminal may expose the release app's Electron-backed Node
+# runtime. A source checkout must create its own Node launcher, while the
+# desktop process itself must always start in Electron app mode.
 unset ELECTRON_RUN_AS_NODE
+unset WEWORK_NODE_PATH
+unset WEWORK_NODE_RUNTIME_KIND
 if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
   pnpm --dir electron dev -- "${ELECTRON_ARGS[@]}"
 else

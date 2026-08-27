@@ -26,8 +26,12 @@ describe('dev-mac-app', () => {
     expect(source).not.toContain('pnpm run prepare:harness-runtime -- --materialize')
 
     const electronNodeReset = source.indexOf('unset ELECTRON_RUN_AS_NODE')
+    const inheritedNodePathReset = source.indexOf('unset WEWORK_NODE_PATH')
+    const inheritedNodeKindReset = source.indexOf('unset WEWORK_NODE_RUNTIME_KIND')
     const electronLaunch = source.indexOf('pnpm --dir electron dev')
     expect(electronNodeReset).toBeGreaterThan(-1)
-    expect(electronNodeReset).toBeLessThan(electronLaunch)
+    expect(inheritedNodePathReset).toBeGreaterThan(electronNodeReset)
+    expect(inheritedNodeKindReset).toBeGreaterThan(inheritedNodePathReset)
+    expect(inheritedNodeKindReset).toBeLessThan(electronLaunch)
   })
 })
