@@ -61,7 +61,7 @@ The default project space belongs to the local project's settings and is stored 
 
 ## Issue details and execution tasks
 
-Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
+Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
 
 Selecting **New task** in the issue detail opens the task conversation sidebar on the right. Describe the work in the composer and send it to create and link the execution task. Wework keeps this input step even when the issue is already **Pending** and never starts an empty task directly.
 
