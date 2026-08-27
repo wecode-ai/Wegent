@@ -105,6 +105,8 @@ coverage/
 .wegent/
 .wegentrc
 .worktrees/
+.codex-commit-scope-*/
+.pnpm-store/
 
 # PyInstaller
 *.spec
