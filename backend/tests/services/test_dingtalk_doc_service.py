@@ -235,7 +235,7 @@ class TestSyncNodesToDb:
             parent_node_id="",
             node_type="doc",
             workspace_id="",
-            content_type="",
+            content_type="ALIDOC",
             content_updated_at=now,
             is_active=True,
             last_synced_at=now,
@@ -262,7 +262,9 @@ class TestSyncNodesToDb:
             {
                 "nodeId": "abc123abc123abc123abc123abc12304",
                 "name": "Keep This",
-                "nodeType": "doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
                 "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]
@@ -369,7 +371,13 @@ class TestSyncNodesToDb:
         nodes = [
             {"nodeId": "a" * 32, "name": "Folder", "nodeType": "folder"},
             {"nodeId": "b" * 32, "name": "File", "nodeType": "file"},
-            {"nodeId": "c" * 32, "name": "Doc", "nodeType": "doc"},
+            {
+                "nodeId": "c" * 32,
+                "name": "Doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+            },
             {"nodeId": "d" * 32, "name": "Other", "nodeType": "other"},
         ]
 
@@ -401,8 +409,8 @@ class TestSyncNodesToDb:
             .filter(DingtalkSyncedNode.dingtalk_node_id == "d" * 32)
             .first()
         )
-        # Unknown types default to "doc"
-        assert other.node_type == "doc"
+        # Unknown formats must not become importable documents.
+        assert other.node_type == "file"
 
     def test_no_change_counts_as_neither_added_nor_updated(
         self, test_db: Session, test_user: User
@@ -420,7 +428,7 @@ class TestSyncNodesToDb:
             parent_node_id="",
             node_type="doc",
             workspace_id="",
-            content_type="",
+            content_type="ALIDOC",
             content_updated_at=now,
             is_active=True,
             last_synced_at=now,
@@ -434,7 +442,9 @@ class TestSyncNodesToDb:
             {
                 "nodeId": dingtalk_node_id,
                 "name": "Stable Doc",
-                "nodeType": "doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
                 "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]

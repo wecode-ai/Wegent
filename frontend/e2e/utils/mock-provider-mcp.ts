@@ -26,6 +26,9 @@ export const EXTERNAL_IMPORT_NODES = {
   product: 'imp-product',
   api: 'imp-api',
   archive: 'imp-archive',
+  sheet: 'imp-sheet',
+  table: 'imp-table',
+  pdf: 'imp-pdf',
 } as const
 
 export const EXTERNAL_IMPORT_MARKERS = {
@@ -341,6 +344,18 @@ function listNodes(args: Record<string, unknown>): Record<string, unknown> {
   if (folderId === EXTERNAL_IMPORT_NODES.folderRoot) {
     return {
       items: visibleNodes([
+        ...[
+          [EXTERNAL_IMPORT_NODES.sheet, 'E2E_在线表格', 'axls', 'ALIDOC'],
+          [EXTERNAL_IMPORT_NODES.table, 'E2E_AI表格', 'able', 'ALIDOC'],
+          [EXTERNAL_IMPORT_NODES.pdf, 'E2E_文件.pdf', 'pdf', 'FILE'],
+        ].map(([nodeId, name, extension, contentType]) => ({
+          nodeId,
+          name,
+          nodeType: 'file',
+          contentType,
+          extension,
+          parentId: EXTERNAL_IMPORT_NODES.folderRoot,
+        })),
         node(
           EXTERNAL_IMPORT_NODES.subFolder,
           'E2E_归档',
@@ -410,9 +425,12 @@ function documentInfo(nodeId: string) {
   return document
     ? {
         result: {
+          success: true,
           nodeId,
           name: state.documentNames[nodeId] || document.name,
+          nodeType: 'file',
           contentType: 'ALIDOC',
+          extension: 'adoc',
           url: `https://alidocs.dingtalk.com/i/nodes/${nodeId}`,
         },
         isError: false,
@@ -433,7 +451,7 @@ function documentContent(nodeId: string) {
     return { result: { code: 'not_found', message: `Unknown document ${nodeId}` }, isError: true }
   }
   const content = state.documentContents[nodeId] ?? document.content
-  return { result: { nodeId, content }, isError: false }
+  return { result: { success: true, nodeId, markdown: content }, isError: false }
 }
 
 function renameDocument(nodeId: string, args: Record<string, unknown>) {
@@ -458,10 +476,11 @@ function node(
   return {
     nodeId,
     name: state.documentNames[nodeId] || name,
-    nodeType,
+    nodeType: nodeType === 'doc' ? 'file' : 'folder',
     parentId,
     workspaceId,
     contentType: nodeType === 'doc' ? 'ALIDOC' : '',
+    extension: nodeType === 'doc' ? 'adoc' : null,
     url: `https://alidocs.dingtalk.com/i/nodes/${nodeId}`,
     updateTime: '2026-08-11T00:00:00Z',
   }

@@ -13,6 +13,7 @@ the import state machine instead of duplicating it.
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.user import User
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +160,7 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             "url": node.doc_url,
         }
 
+    @trace_async(tracer_name="knowledge.external_import")
     async def fetch_content(
         self,
         db: Session,
@@ -189,6 +192,8 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
 
     async def _fetch_document_markdown(self, mcp_url: str, node_id: str) -> str:
         """Call the docs MCP get_document_content tool and return its Markdown."""
+        from app.services.dingtalk_doc_service import DingTalkDocService
+
         try:
             from mcp import ClientSession
             from mcp.client.streamable_http import streamablehttp_client
@@ -212,26 +217,49 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                 ),
             ) as session:
                 await session.initialize()
+                info = self._parse_mcp_response(
+                    await session.call_tool("get_document_info", {"nodeId": node_id}),
+                    "get_document_info",
+                )
+                if not DingTalkDocService.is_online_document(info):
+                    raise ExternalDocumentFetchError(
+                        "Only DingTalk online text documents (adoc) can be imported"
+                    )
                 result = await session.call_tool(
-                    "get_document_content", {"nodeId": node_id}
+                    "get_document_content", {"nodeId": node_id, "format": "markdown"}
                 )
 
+        payload = self._parse_mcp_response(result, "get_document_content")
+        markdown = payload.get("markdown")
+        if not isinstance(markdown, str) or not markdown.strip():
+            raise ExternalDocumentFetchError(
+                "DingTalk document content is empty or unreadable"
+            )
+        return markdown
+
+    @staticmethod
+    def _parse_mcp_response(result: Any, tool_name: str) -> dict[str, Any]:
+        """Decode the official JSON envelope without importing error text."""
         if getattr(result, "isError", False):
             raise ExternalDocumentFetchError(
-                "DingTalk MCP returned an error for get_document_content"
+                f"DingTalk MCP returned an error for {tool_name}"
             )
-
         texts = [
             getattr(item, "text", "")
             for item in getattr(result, "content", None) or []
             if getattr(item, "type", None) == "text"
         ]
-        markdown = "\n".join(text for text in texts if text).strip()
-        if not markdown:
+        try:
+            payload = json.loads("\n".join(texts))
+        except (ValueError, TypeError) as exc:
             raise ExternalDocumentFetchError(
-                "DingTalk document content is empty or unreadable"
+                f"DingTalk MCP returned invalid JSON for {tool_name}"
+            ) from exc
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            raise ExternalDocumentFetchError(
+                f"DingTalk MCP returned an unsuccessful response for {tool_name}"
             )
-        return markdown
+        return payload
 
 
 _EXTERNAL_DOCUMENT_PROVIDERS: dict[str, ExternalDocumentProvider] = {}

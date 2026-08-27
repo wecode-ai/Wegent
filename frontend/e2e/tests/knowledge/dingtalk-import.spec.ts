@@ -85,9 +85,20 @@ test.describe('External DingTalk document import', () => {
     await runScenario(request, 'single', async context => {
       await openKnowledgeBase(page, context.knowledgeBaseId)
 
-      await importThroughDialog(page, [EXTERNAL_IMPORT_NODES.product], {
-        sourceFolderPath: [EXTERNAL_IMPORT_NODES.folderRoot],
-      })
+      await page.getByTestId('upload-documents-button').click()
+      await page.getByTestId('dingtalk-source-button').click()
+      await page.getByTestId(`dingtalk-folder-navigate-${EXTERNAL_IMPORT_NODES.folderRoot}`).click()
+      for (const nodeId of [
+        EXTERNAL_IMPORT_NODES.sheet,
+        EXTERNAL_IMPORT_NODES.table,
+        EXTERNAL_IMPORT_NODES.pdf,
+      ]) {
+        await expect(page.getByTestId(`dingtalk-node-unsupported-${nodeId}`)).toBeVisible()
+        await expect(page.getByTestId(`dingtalk-node-select-${nodeId}`)).toHaveCount(0)
+      }
+      await page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.product}`).click()
+      await page.getByTestId('dingtalk-import-submit').click()
+      await expect(page.getByTestId('dingtalk-import-result')).toBeVisible({ timeout: 30_000 })
       await page.getByTestId('dingtalk-import-done').click()
 
       const document = await waitForDocument(
@@ -101,6 +112,18 @@ test.describe('External DingTalk document import', () => {
 
       const chunks = await getDocumentChunks(request, context.token, document.id)
       expect(chunks).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      const indexedContent = (JSON.parse(chunks) as Array<{ content?: string }>)
+        .map(chunk => chunk.content ?? '')
+        .join('\n')
+      expect(indexedContent).toContain(EXTERNAL_IMPORT_MARKERS.productV1)
+      expect(indexedContent).not.toContain('"markdown"')
+      expect(indexedContent).not.toContain('"success"')
+
+      const calls = (await getMcpCalls(request)).filter(
+        call => call.arguments.nodeId === EXTERNAL_IMPORT_NODES.product
+      )
+      expect(calls.map(call => call.name)).toEqual(['get_document_info', 'get_document_content'])
+      expect(calls[1].arguments.format).toBe('markdown')
 
       // The imported document is visible in the real document list.
       await page.reload({ waitUntil: 'domcontentloaded' })

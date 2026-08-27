@@ -64,6 +64,19 @@ class DingTalkDocService:
         return DingTalkDocService.get_user_dingtalk_mcp_url(user) is not None
 
     @staticmethod
+    def is_online_document(node: dict[str, Any]) -> bool:
+        """Identify online text documents, not other ALIDOC formats."""
+        content_type = node.get("contentType")
+        extension = node.get("extension")
+        return (
+            str(node.get("nodeType", "")).strip().lower() != "folder"
+            and isinstance(content_type, str)
+            and content_type.strip().upper() == "ALIDOC"
+            and isinstance(extension, str)
+            and extension.strip().lower() == "adoc"
+        )
+
+    @staticmethod
     async def sync_dingtalk_docs(user: User, db: Session) -> dict[str, Any]:
         """Sync DingTalk document nodes from the user's MCP server.
 
@@ -408,15 +421,15 @@ class DingTalkDocService:
                 continue
 
             name = node_data.get("name", node_data.get("title", "Untitled"))
-            node_type_raw = node_data.get("nodeType", "doc")
+            node_type_raw = str(node_data.get("nodeType", "")).strip().lower()
 
-            # Map node type
+            # Provider file nodes include both online documents and other formats.
             if node_type_raw == "folder":
                 node_type = "folder"
-            elif node_type_raw == "file":
-                node_type = "file"
-            else:
+            elif DingTalkDocService.is_online_document(node_data):
                 node_type = "doc"
+            else:
+                node_type = "file"
 
             # Build document URL
             doc_url = node_data.get("url", "")

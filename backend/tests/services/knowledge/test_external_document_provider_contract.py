@@ -11,6 +11,7 @@ the suite and implements the small fixture hooks below; it inherits the whole
 contract coverage instead of rewriting it. DingTalk is the reference adapter.
 """
 
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
@@ -269,9 +270,19 @@ class TestDingTalkProviderContract(ProviderContractSuite):
 
             async def call_tool(self, name, arguments):
                 observed["call"] = (name, arguments)
+                payload = (
+                    {
+                        "success": True,
+                        "nodeType": "file",
+                        "contentType": "ALIDOC",
+                        "extension": "adoc",
+                    }
+                    if name == "get_document_info"
+                    else {"success": True, "markdown": "# Imported"}
+                )
                 return SimpleNamespace(
                     isError=False,
-                    content=[SimpleNamespace(type="text", text="# Imported")],
+                    content=[SimpleNamespace(type="text", text=json.dumps(payload))],
                 )
 
         monkeypatch.setattr(streamable_http, "streamablehttp_client", fake_transport)
@@ -289,4 +300,7 @@ class TestDingTalkProviderContract(ProviderContractSuite):
             "sse_read_timeout": 180,
         }
         assert observed["session"] == ("read-stream", "write-stream", 180.0)
-        assert observed["call"] == ("get_document_content", {"nodeId": "node-1"})
+        assert observed["call"] == (
+            "get_document_content",
+            {"nodeId": "node-1", "format": "markdown"},
+        )

@@ -585,10 +585,10 @@
       "dingtalk": {
         "entry": "DingTalk Document",
         "title": "Import a DingTalk Document",
-        "hint": "Browse or search DingTalk documents and pick documents or folders to import. Folders expand to their importable documents on submit; at most 50 documents.",
+        "hint": "Only DingTalk online text documents (adoc) are supported. Select documents or folders to import; folders include only supported documents, up to 50 per import.",
         "loading": "Loading DingTalk documents...",
         "notConfigured": "DingTalk Docs is not configured yet. Configure it in Settings first.",
-        "empty": "No importable DingTalk documents yet. Sync them on the DingTalk documents page first.",
+        "empty": "No importable DingTalk documents yet. Click Refresh to load the latest directory.",
         "loadFailed": "Failed to load DingTalk documents. Please try again later",
         "addFailed": "Failed to import the DingTalk document. Please try again",
         "submitButton": "Import",
