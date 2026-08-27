@@ -35,6 +35,7 @@ import { listGroups } from '@/apis/groups'
 import { fetchBotsList } from '@/features/settings/services/bots'
 import type { BaseRole } from '@/types/base-role'
 import { RemoteWorkspaceEntry } from '@/features/tasks/components/remote-workspace'
+import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useIsDesktop } from '@/features/layout/hooks/useMediaQuery'
 import { getRuntimeConfigSync } from '@/lib/runtime-config'
 import { getFirstSearchParam, getSearchParam } from '@/lib/search-params'
@@ -197,6 +198,7 @@ export function ChatPageDesktop() {
 
   // Workbench state for code tasks opened inside chat.
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(false)
+  const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
 
   // Search dialog state (controlled from page level for global shortcut support)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
@@ -315,6 +317,17 @@ export function ChatPageDesktop() {
       setIsWorkbenchOpen(true)
     }
   }, [hasOpenTask, isCodeTaskOpen])
+
+  useEffect(() => {
+    if (!rightPanelRequest) return
+    setIsWorkbenchOpen(false)
+    setIsCollapsed(true)
+    localStorage.setItem('task-sidebar-collapsed', 'true')
+  }, [rightPanelRequest])
+
+  useEffect(() => {
+    closeRightPanel()
+  }, [closeRightPanel, taskId])
 
   // Calculate open links from task detail for code task toolbar.
   const openLinks = useMemo(() => {
@@ -464,11 +477,18 @@ export function ChatPageDesktop() {
             />
           )}
         </TopNavigation>
-        <div className="flex flex-1 min-h-0">
+        <div className="relative flex flex-1 min-h-0">
           <div
-            className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
+            className="flex min-h-0 flex-col transition-all duration-300 ease-in-out"
+            data-testid="chat-page-main-pane"
             style={{
-              width: hasOpenTask && isCodeTaskOpen && isWorkbenchOpen ? '60%' : '100%',
+              width: rightPanelRequest
+                ? '400px'
+                : hasOpenTask && isCodeTaskOpen && isWorkbenchOpen
+                  ? '60%'
+                  : '100%',
+              maxWidth: rightPanelRequest ? '400px' : undefined,
+              flexShrink: 0,
             }}
           >
             <ChatArea
@@ -482,11 +502,12 @@ export function ChatPageDesktop() {
               onRefreshTeams={handleRefreshTeams}
               onGenerateModeChange={isGenerationMode ? handleGenerateModeChange : undefined}
               disabledReason={disabledReason}
+              isSplitViewOpen={Boolean(rightPanelRequest)}
               extension={{ teamEdit: teamEditExtension }}
             />
           </div>
 
-          {hasOpenTask && isCodeTaskOpen && (
+          {hasOpenTask && isCodeTaskOpen && !rightPanelRequest && (
             <Workbench
               isOpen={isWorkbenchOpen}
               onClose={() => setIsWorkbenchOpen(false)}
@@ -504,6 +525,26 @@ export function ChatPageDesktop() {
               app={selectedTaskDetail?.app}
               taskStatus={selectedTaskDetail?.status}
             />
+          )}
+
+          {rightPanelRequest && (
+            <>
+              <div
+                className="pointer-events-none absolute inset-y-0 w-px bg-border"
+                style={{ left: '400px' }}
+              />
+              <div
+                className="h-full min-w-0 flex-1 overflow-hidden bg-surface"
+                data-task-right-panel
+                data-testid="task-right-panel-container"
+              >
+                <TaskRightPanelRenderer
+                  request={rightPanelRequest}
+                  onClose={closeRightPanel}
+                  embedded
+                />
+              </div>
+            </>
           )}
         </div>
       </div>

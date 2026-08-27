@@ -41,12 +41,15 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_initiate_shutdown(self, shutdown_manager):
         """Test initiating shutdown."""
+        from app.core.local_shutdown import is_local_shutdown
+
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
             await shutdown_manager.initiate_shutdown()
 
             assert shutdown_manager.is_shutting_down is True
+            assert is_local_shutdown() is True
             assert shutdown_manager.shutdown_duration > 0
 
     @pytest.mark.asyncio
@@ -181,6 +184,8 @@ class TestShutdownManager:
     @pytest.mark.asyncio
     async def test_reset(self, shutdown_manager):
         """Test resetting shutdown manager state."""
+        from app.core.local_shutdown import is_local_shutdown
+
         with patch("app.core.cache.cache_manager") as mock_cache:
             mock_cache.set = AsyncMock(return_value=True)
 
@@ -192,6 +197,7 @@ class TestShutdownManager:
             assert shutdown_manager.is_shutting_down is False
             assert shutdown_manager.get_active_stream_count() == 0
             assert shutdown_manager.shutdown_duration == 0.0
+            assert is_local_shutdown() is False
 
 
 class TestShutdownIntegration:

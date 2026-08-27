@@ -98,6 +98,15 @@
     "reconnecting": "Reconnecting... (attempt {{count}})",
     "reconnected": "Reconnected"
   },
+  "cards": {
+    "video_director": {
+      "title": "Video generation",
+      "completed": "Video generated",
+      "processing": "Creating your video",
+      "failed": "Video generation failed",
+      "view_detail": "View details"
+    }
+  },
   "messages": {
     "assistant": "AI Assistant",
     "system": "System",
@@ -723,6 +732,7 @@
       "adaptive": "Adaptive"
     },
     "generating": "Generating video...",
+    "loading": "Loading video...",
     "preparing": "Preparing...",
     "progress": "Progress: {{progress}}%",
     "completed": "Video generation completed",
@@ -734,6 +744,14 @@
     "duration_section": "Duration",
     "duration_auto": "Auto",
     "resolution_section": "Resolution"
+  },
+  "asyncCards": {
+    "loading": "Loading card...",
+    "pleaseWait": "Please wait while the task is processed",
+    "failed": "The asynchronous task failed",
+    "videoTitle": "Creative video",
+    "viewDetails": "View details",
+    "panelDescription": "Review the current result and continue to the next video stage"
   },
   "image": {
     "title": "Image Generation",
@@ -812,6 +830,10 @@
       "invalidContent": "The title or content is invalid. Check it and try again.",
       "saveFailed": "Failed to save. Try again later."
     }
+  },
+  "externalWebContent": {
+    "videoMetadataOnlyTitle": "The current model does not support video understanding",
+    "videoMetadataOnlyDescription": "To understand the video, switch to a video-understanding model."
   },
   "dingtalkDocs": {
     "tabTitle": "DingTalk Docs",

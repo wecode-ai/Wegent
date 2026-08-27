@@ -19,6 +19,7 @@ from app.schemas.kind import Bot, Model, Retriever, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService, TaskResourceBaseService
 from app.stores.tasks import subtask_store, task_store
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from shared.utils.crypto import decrypt_api_key, encrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
@@ -537,7 +538,7 @@ class TaskKindService(TaskResourceBaseService):
                         "executor_name": subtask.executor_name,
                         "status": subtask.status,
                         "progress": subtask.progress,
-                        "result": subtask.result,
+                        "result": sanitize_client_payload(subtask.result),
                         "errorMessage": subtask.error_message,
                         "messageId": subtask.message_id,
                         "parentId": subtask.parent_id,

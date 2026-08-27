@@ -753,9 +753,12 @@ async def create_task_and_subtasks(
     # Persist user-selected generation parameters for display and retry.
     video_config = None
     image_config = None
-    if params.task_type == "video" and params.generate_params:
+    if params.generate_params and (
+        params.task_type == "video" or params.generate_params.get("model")
+    ):
         video_config = {
-            "model": params.model_id,
+            "model": params.generate_params.get("model") or params.model_id,
+            "model_display_name": params.generate_params.get("model_display_name"),
             "resolution": params.generate_params.get("resolution"),
             "ratio": params.generate_params.get("ratio"),
             "duration": params.generate_params.get("duration"),

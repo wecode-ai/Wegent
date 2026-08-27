@@ -11,7 +11,7 @@ use std::{
     process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -215,6 +215,7 @@ pub(crate) struct WorktreeManager {
     execution_owner_id: String,
     persistent_storage_verified: bool,
     mutation_lock: Arc<Mutex<()>>,
+    worktree_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
 }
 
 impl WorktreeManager {
@@ -272,7 +273,23 @@ impl WorktreeManager {
             execution_owner_id: Uuid::new_v4().to_string(),
             persistent_storage_verified,
             mutation_lock: Arc::new(Mutex::new(())),
+            worktree_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn worktree_lock(&self, path: &Path) -> Result<Arc<Mutex<()>>, String> {
+        let key = normalized_path_key(path);
+        let mut locks = self
+            .worktree_locks
+            .lock()
+            .map_err(|_| "Worktree operation locks are unavailable".to_owned())?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return Ok(lock);
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        Ok(lock)
     }
 
     pub fn settings(&self) -> WorktreeSettings {
@@ -379,6 +396,10 @@ impl WorktreeManager {
         execution_lease: Option<WorktreeExecutionLease>,
         expected_execution: Option<(&str, u64)>,
     ) -> Result<bool, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree execution lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -448,7 +469,15 @@ impl WorktreeManager {
         git_ref: Option<&str>,
         permanent: bool,
     ) -> Result<ManagedWorktree, String> {
-        self.prepare_with_path(source_path, worktree_id, git_ref, permanent, None, None)
+        let plan = self.plan(source_path, worktree_id, git_ref)?;
+        self.prepare_with_path(
+            source_path,
+            worktree_id,
+            git_ref,
+            permanent,
+            Some(&plan.path),
+            Some(&plan.repo_root_fingerprint),
+        )
     }
 
     pub fn prepare_at(
@@ -498,20 +527,24 @@ impl WorktreeManager {
         expected_repo_root_fingerprint: Option<&str>,
     ) -> Result<ManagedWorktree, String> {
         self.ensure_persistent_storage_verified()?;
+        let planned_path = planned_path.ok_or_else(|| {
+            "worktree_target_conflict: Planned worktree path is required".to_owned()
+        })?;
+        let worktree_lock = self.worktree_lock(planned_path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         validate_worktree_id(worktree_id)?;
         let mut state = self.load();
-        let root = match planned_path {
-            Some(path) => path
-                .parent()
-                .and_then(Path::parent)
-                .map(Path::to_path_buf)
-                .ok_or_else(|| format!("Invalid planned worktree path {}", path.display()))?,
-            None => PathBuf::from(&state.settings.resolved_worktree_root),
-        };
+        let root = planned_path
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("Invalid planned worktree path {}", planned_path.display()))?;
         let preflight = worktree_preflight(source_path, git_ref, &root);
         let repository = validated_repository_from_preflight(&preflight)?;
         if expected_repo_root_fingerprint
@@ -531,7 +564,7 @@ impl WorktreeManager {
             .to_owned();
         ensure_safe_root(&root)?;
         let expected_path = root.join(worktree_id).join(&repository_name);
-        let path = planned_path.unwrap_or(&expected_path);
+        let path = planned_path;
         if path != expected_path {
             return Err(worktree_target_conflict(format!(
                 "Planned worktree path {} does not match task {worktree_id}",
@@ -677,43 +710,69 @@ impl WorktreeManager {
     }
 
     pub fn delete(&self, path: &Path, preserve_snapshot: bool) -> Result<ManagedWorktree, String> {
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
-        let mut state = self.load();
-        discover_worktrees(&mut state, &self.device_id);
-        ensure_managed_path(path, &state.known_roots)?;
-        let key = normalized_path_key(path);
-        let mut record = state
-            .records
-            .remove(&key)
-            .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        if path.exists() {
-            validate_record_worktree_identity(&record, path)?;
-        }
-        if path.exists() && preserve_snapshot {
-            let snapshot =
-                snapshot_worktree(path, self.state_path.parent().unwrap_or(Path::new(".")))?;
-            record.snapshot_ref = Some(snapshot.reference);
-            record.snapshot_commit = Some(snapshot.commit);
-            record.snapshot_at = Some(now_ms());
-            record.git_common_dir = Some(snapshot.git_common_dir);
-        }
-        if path.exists() {
-            remove_git_worktree(path)?;
-        }
-        if !preserve_snapshot {
-            if let (Some(git_common_dir), Some(reference)) = (
-                record.git_common_dir.as_deref(),
-                record.snapshot_ref.as_deref(),
-            ) {
-                delete_snapshot_ref(Path::new(git_common_dir), reference)?;
+        let snapshot_dir = self
+            .state_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        self.delete_with_operation(path, preserve_snapshot, |record| {
+            if path.exists() && preserve_snapshot {
+                let snapshot = snapshot_worktree(path, &snapshot_dir)?;
+                record.snapshot_ref = Some(snapshot.reference);
+                record.snapshot_commit = Some(snapshot.commit);
+                record.snapshot_at = Some(now_ms());
+                record.git_common_dir = Some(snapshot.git_common_dir);
             }
-            record.snapshot_ref = None;
-            record.snapshot_commit = None;
-            record.snapshot_at = None;
-        }
+            if path.exists() {
+                remove_git_worktree(path)?;
+            }
+            if !preserve_snapshot {
+                if let (Some(git_common_dir), Some(reference)) = (
+                    record.git_common_dir.as_deref(),
+                    record.snapshot_ref.as_deref(),
+                ) {
+                    delete_snapshot_ref(Path::new(git_common_dir), reference)?;
+                }
+                record.snapshot_ref = None;
+                record.snapshot_commit = None;
+                record.snapshot_at = None;
+            }
+            Ok(())
+        })
+    }
+
+    fn delete_with_operation(
+        &self,
+        path: &Path,
+        preserve_snapshot: bool,
+        operation: impl FnOnce(&mut ManagedWorktree) -> Result<(), String>,
+    ) -> Result<ManagedWorktree, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
+        let key = normalized_path_key(path);
+        let mut record = {
+            let _guard = self
+                .mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+            let mut state = self.load();
+            discover_worktrees(&mut state, &self.device_id);
+            ensure_managed_path(path, &state.known_roots)?;
+            let record = state
+                .records
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| "Managed worktree was not found".to_owned())?;
+            if path.exists() {
+                validate_record_worktree_identity(&record, path)?;
+            }
+            record
+        };
+
+        operation(&mut record)?;
+
         record.state = if preserve_snapshot && record.snapshot_ref.is_some() {
             STATE_RESTORABLE
         } else {
@@ -722,10 +781,30 @@ impl WorktreeManager {
         .to_owned();
         record.updated_at = now_ms();
         record.last_error = None;
-        if preserve_snapshot {
-            state.records.insert(key, record.clone());
+        {
+            let _guard = self
+                .mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+            let mut state = self.load();
+            discover_worktrees(&mut state, &self.device_id);
+            if let Some(current) = state.records.get(&key) {
+                if current.worktree_id != record.worktree_id
+                    || !same_path(&current.path, &record.path)
+                {
+                    return Err(worktree_target_conflict(format!(
+                        "Managed worktree {} changed while deletion was in progress",
+                        path.display()
+                    )));
+                }
+            }
+            if preserve_snapshot {
+                state.records.insert(key, record.clone());
+            } else {
+                state.records.remove(&key);
+            }
+            self.save(&state)?;
         }
-        self.save(&state)?;
         remove_empty_worktree_container(path)?;
         Ok(record)
     }
@@ -735,6 +814,10 @@ impl WorktreeManager {
         path: &Path,
         worktree_id: &str,
     ) -> Result<Option<ManagedWorktree>, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -798,6 +881,10 @@ impl WorktreeManager {
     }
 
     pub fn restore(&self, path: &Path) -> Result<ManagedWorktree, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -844,6 +931,10 @@ impl WorktreeManager {
     }
 
     pub fn forget_if_known(&self, path: &Path) -> Result<bool, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -2031,7 +2122,14 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
 
     use super::*;
     use serde_json::Value;
@@ -2668,6 +2766,72 @@ mod tests {
             fs::read_to_string(path.join("untracked.txt")).unwrap(),
             "new\n"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleting_one_worktree_does_not_block_execution_on_another() {
+        let root = test_directory("wegent-worktree-delete-concurrency-test");
+        let source = root.join("source");
+        initialize_repository(&source);
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(root.join("managed").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let deleting = manager
+            .prepare(&source, "task-deleting", None, false)
+            .unwrap();
+        let executing = manager
+            .prepare(&source, "task-executing", None, false)
+            .unwrap();
+        let deleting_path = PathBuf::from(&deleting.path);
+        let executing_path = PathBuf::from(&executing.path);
+        let (delete_started_tx, delete_started_rx) = mpsc::channel();
+        let (release_delete_tx, release_delete_rx) = mpsc::channel();
+        let deleting_manager = manager.clone();
+        let deleting_path_for_thread = deleting_path.clone();
+        let delete_thread = thread::spawn(move || {
+            deleting_manager.delete_with_operation(&deleting_path_for_thread, true, |_record| {
+                delete_started_tx.send(()).unwrap();
+                release_delete_rx.recv().unwrap();
+                Err("delete interrupted by test".to_owned())
+            })
+        });
+        delete_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("deletion must reach the slow operation");
+
+        let (execution_tx, execution_rx) = mpsc::channel();
+        let executing_manager = manager.clone();
+        let executing_path_for_thread = executing_path.clone();
+        let execution_thread = thread::spawn(move || {
+            execution_tx
+                .send(executing_manager.begin_execution(
+                    &executing_path_for_thread,
+                    "task-executing",
+                    1,
+                ))
+                .unwrap();
+        });
+        let execution_result = execution_rx.recv_timeout(Duration::from_secs(5));
+        release_delete_tx.send(()).unwrap();
+        assert_eq!(
+            delete_thread.join().unwrap().unwrap_err(),
+            "delete interrupted by test"
+        );
+        execution_thread.join().unwrap();
+        execution_result
+            .expect("execution lease on another worktree must not wait for deletion")
+            .unwrap();
+
+        assert!(manager
+            .finish_execution(&executing_path, "task-executing", 1)
+            .unwrap());
+        manager.delete(&deleting_path, false).unwrap();
+        manager.delete(&executing_path, false).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 

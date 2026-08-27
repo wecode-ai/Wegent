@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
@@ -943,6 +943,9 @@ describe('ProjectAutomationView', () => {
     fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
     fireEvent.click(screen.getByTestId('open-current-automation-runs'))
     expect(await screen.findByTestId('current-run-run-refresh')).toHaveTextContent('排队中')
+    await act(async () => {
+      await Promise.resolve()
+    })
 
     vi.mocked(projectAutomationApi.listRuns).mockResolvedValue([
       {
@@ -952,12 +955,13 @@ describe('ProjectAutomationView', () => {
       },
     ])
     visibilityState.mockReturnValue('visible')
-    document.dispatchEvent(new Event('visibilitychange'))
+    fireEvent(document, new Event('visibilitychange'))
 
     try {
-      await waitFor(() =>
+      await waitFor(() => {
+        expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(2)
         expect(screen.getByTestId('current-run-run-refresh')).toHaveTextContent('成功')
-      )
+      })
     } finally {
       visibilityState.mockRestore()
     }

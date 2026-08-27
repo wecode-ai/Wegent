@@ -34,6 +34,7 @@ import {
 } from '../../subscription/SubscriptionPreviewCard'
 import { blockToToolPair } from './utils/blockToToolPair'
 import { resolveGeneratedImageDisplayLayout } from '@/features/tasks/utils/imageDisplaySize'
+import { CardRenderer } from '@/features/cards/CardRenderer'
 // Import to register prompt optimization block renderer
 import '@/features/prompt-optimization/block-renderer'
 
@@ -129,6 +130,8 @@ interface MixedContentViewProps {
     formattedMessage: string,
     answer: InteractiveFormAnswerPayload
   ) => void
+  /** Send a follow-up message from an interactive card button. */
+  onCardChatButtonClick?: (message: string) => void | Promise<void>
   /** Optional override for the running processing indicator text */
   processingMessage?: string
 }
@@ -213,6 +216,7 @@ const MixedContentView = memo(function MixedContentView({
   subtaskId,
   currentMessageIndex,
   onAskUserSubmit,
+  onCardChatButtonClick,
   processingMessage,
 }: MixedContentViewProps) {
   const { t } = useTranslation('chat')
@@ -246,6 +250,22 @@ const MixedContentView = memo(function MixedContentView({
       )
       const mapped = nestedBlocks
         .map(block => {
+          const featureRenderer = blockRendererRegistry.findRenderer(block)
+          if (featureRenderer && block.type !== 'tool') {
+            return {
+              type: 'custom' as const,
+              blockId: block.id,
+              render: () =>
+                featureRenderer.render({
+                  block,
+                  isLastBlock: false,
+                  taskId,
+                  subtaskId,
+                  currentMessageIndex,
+                  onSendMessage: onCardChatButtonClick,
+                }),
+            }
+          }
           if (block.type === 'text') {
             // CRITICAL FIX: When page refreshes during streaming, block.content may be empty
             // but the actual content is in the `content` prop (from cached_content).
@@ -312,6 +332,12 @@ const MixedContentView = memo(function MixedContentView({
               data: block as unknown as SubscriptionPreviewBlock,
               blockId: block.id,
               status: block.status,
+            }
+          } else if (block.type === 'card') {
+            return {
+              type: 'card' as const,
+              data: block,
+              blockId: block.id,
             }
           } else if (block.type === 'guidance') {
             return {
@@ -410,7 +436,15 @@ const MixedContentView = memo(function MixedContentView({
               return {
                 type: 'custom' as const,
                 blockId: block.id,
-                render: () => customRenderer.render({ block, isLastBlock: false }),
+                render: () =>
+                  customRenderer.render({
+                    block,
+                    isLastBlock: false,
+                    taskId,
+                    subtaskId,
+                    currentMessageIndex,
+                    onSendMessage: onCardChatButtonClick,
+                  }),
               }
             }
             return {
@@ -544,7 +578,16 @@ const MixedContentView = memo(function MixedContentView({
     }
 
     return items
-  }, [blocks, thinking, content, toolMap, taskId, subtaskId])
+  }, [
+    blocks,
+    thinking,
+    content,
+    toolMap,
+    taskId,
+    subtaskId,
+    currentMessageIndex,
+    onCardChatButtonClick,
+  ])
 
   // Check if we should show "Processing..." indicator
   const shouldShowProcessing = useMemo(() => {
@@ -656,6 +699,7 @@ const MixedContentView = memo(function MixedContentView({
                 coverUrl={item.coverUrl ?? undefined}
                 duration={item.duration ?? undefined}
                 attachmentId={item.attachmentId ?? undefined}
+                useMessageDisplaySize
                 isPlaceholder={item.isPlaceholder}
                 progress={item.progress}
               />
@@ -719,6 +763,16 @@ const MixedContentView = memo(function MixedContentView({
             <div key={item.blockId} className="pb-4">
               <SubscriptionPreviewCard data={item.data} />
             </div>
+          )
+        } else if (item.type === 'card') {
+          return (
+            <CardRenderer
+              key={item.blockId}
+              block={item.data}
+              taskId={taskId}
+              subtaskId={subtaskId}
+              onChatButtonClick={onCardChatButtonClick}
+            />
           )
         } else if (item.type === 'guidance') {
           return <GuidanceBlock key={item.blockId} block={item.data} />

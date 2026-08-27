@@ -742,6 +742,7 @@ describe('DesktopWorkbenchLayout', () => {
     harnessAppMocks.start.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
     harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
@@ -10706,6 +10707,86 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'task-scoped-workbench',
+      manifest: {
+        name: 'task-scoped-workbench',
+        displayName: '任务内工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'task-scoped-workbench',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/task-scoped-workbench',
+      sha256: 'c'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43125/',
+    }
+    const start = createDeferred<typeof running>()
+    harnessAppMocks.list.mockResolvedValue([installed])
+    harnessAppMocks.start.mockImplementation(() => start.promise)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('smart-app-development-preview-starting')).toBeInTheDocument()
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).queryByTestId(
+        'smart-app-development-preview'
+      )
+    ).not.toBeInTheDocument()
+
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
+    await act(async () => {
+      start.resolve(running)
+      await start.promise
+    })
+    await waitFor(() => expect(harnessAppTabMocks.register).toHaveBeenCalledWith(running))
+    expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).not.toHaveBeenCalled()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+          'right-workspace-browser-tab-1'
+        )
+      ).toHaveTextContent(installed.manifest.displayName)
+    )
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+        'right-workspace-browser-tab-1-close-button'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-reload')).toBeEnabled()
   })
 
   test('closes the Smart app browser and runtime when the development tab is disposed', async () => {

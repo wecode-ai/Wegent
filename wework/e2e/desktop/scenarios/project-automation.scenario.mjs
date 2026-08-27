@@ -2842,6 +2842,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await waitForValue(
+        async () => JSON.parse(await control.command('snapshot', projectChatPanel)),
+        snapshot =>
+          !snapshot.testIds.includes('thinking-indicator') &&
+          !snapshot.testIds.includes('message-assistant-waiting') &&
+          !snapshot.testIds.includes('pause-response-button'),
+        'Project chat remained in the thinking state after the runtime task completed',
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'project-chat-model-routing.png')
       await control.command(
         'click',

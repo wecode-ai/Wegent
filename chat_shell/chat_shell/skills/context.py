@@ -40,8 +40,8 @@ class SkillToolContext:
     ws_emitter: Any  # WebSocket emitter
     skill_config: dict[str, Any] = field(default_factory=dict)
     user_name: str = ""
-    auth_token: str = ""  # JWT token for API authentication
-    skill_identity_token: str = ""  # JWT token for skill identity verification
+    auth_token: str = field(default="", repr=False)
+    skill_identity_token: str = field(default="", repr=False)
     load_skill_tool: Any = None
 
     def get_config(self, key: str, default: Any = None) -> Any:
