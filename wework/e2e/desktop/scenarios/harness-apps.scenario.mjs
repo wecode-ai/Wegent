@@ -68,6 +68,33 @@ async function waitForElementCount(control, selector, expected, timeoutMs, messa
   throw new Error(message)
 }
 
+async function waitForEmbeddedBrowserVisibility(
+  control,
+  label,
+  expectedVisible,
+  timeoutMs,
+  message
+) {
+  const startedAt = Date.now()
+  let lastState = null
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      lastState = JSON.parse(
+        await control.command('getEmbeddedBrowserPageState', 'body', {
+          value: label,
+        })
+      )
+      if (lastState.visible === expectedVisible && lastState.url && lastState.isLoading === false) {
+        return lastState
+      }
+    } catch {
+      // Reloading temporarily removes the native browser before opening its replacement.
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}: ${JSON.stringify(lastState)}`)
+}
+
 async function waitForManifestPlugin(manifestPath, pluginSpec, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
@@ -524,10 +551,77 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         blankWorkbenchSnapshot.workbench?.standaloneWorkspacePath,
         join(resultDir, CREATED_INSTALLATION_ID)
       )
+      const developmentTaskTabTestId = await control.command(
+        'getAttribute',
+        '[data-tab-kind="task"][aria-selected="true"]',
+        { value: 'data-testid' }
+      )
+      assert.ok(
+        developmentTaskTabTestId,
+        'Smart app development preview did not expose its owning task tab'
+      )
+      const developmentTaskTabId = developmentTaskTabTestId.replace('workspace-tab-select-', '')
+      const developmentPreviewSelector =
+        `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
+        '[data-testid="smart-app-development-preview"]'
+      const developmentBrowserLabel = await control.command(
+        'getAttribute',
+        `${developmentPreviewSelector} [data-embedded-browser-label]`,
+        { value: 'data-embedded-browser-label' }
+      )
+      assert.ok(
+        developmentBrowserLabel,
+        'Smart app development preview did not expose its native browser label'
+      )
       await captureScreenshot(control, 'harness-apps-03b-builder-chat.png', 'body')
       await control.command(
         'clickWhenEnabled',
         '[data-testid="smart-app-development-preview-reload"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command('click', '[data-testid="workspace-tab-add"]')
+      await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="workspace-tab-add-task"]')
+      const secondTaskStartedAt = Date.now()
+      let secondTaskTabTestId = ''
+      while (Date.now() - secondTaskStartedAt < uiTimeoutMs) {
+        secondTaskTabTestId = await control.command(
+          'getAttribute',
+          '[data-tab-kind="task"][aria-selected="true"]',
+          { value: 'data-testid' }
+        )
+        if (secondTaskTabTestId && secondTaskTabTestId !== developmentTaskTabTestId) break
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      assert.ok(
+        secondTaskTabTestId && secondTaskTabTestId !== developmentTaskTabTestId,
+        'Opening another task did not make the Smart app development task inactive'
+      )
+      const secondTaskTabId = secondTaskTabTestId.replace('workspace-tab-select-', '')
+      await waitForElementCount(
+        control,
+        `[data-testid="workspace-tab-content-${secondTaskTabId}"] ` +
+          '[data-testid="smart-app-development-preview"]',
+        0,
+        uiTimeoutMs,
+        'The new task rendered the inactive Smart app development preview'
+      )
+      await waitForEmbeddedBrowserVisibility(
+        control,
+        developmentBrowserLabel,
+        false,
+        120_000,
+        'The inactive Smart app preview reclaimed the native browser after reloading'
+      )
+      await captureScreenshot(control, 'harness-apps-03b2-preview-task-scoped.png', 'body')
+      await control.command('click', developmentTaskTabTestId)
+      await control.command(
+        'waitFor',
+        `[data-testid="${developmentTaskTabTestId}"][aria-selected="true"]`,
         {
           timeoutMs: uiTimeoutMs,
         }
@@ -537,6 +631,40 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         stableMs: 500,
         timeoutMs: 120_000,
       })
+      await waitForEmbeddedBrowserVisibility(
+        control,
+        developmentBrowserLabel,
+        true,
+        uiTimeoutMs,
+        'Returning to the Smart app development task did not restore its native browser'
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
+          '[data-testid^="right-workspace-browser-tab-"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      await control.command(
+        'waitFor',
+        `[data-testid="workspace-tab-content-${developmentTaskTabId}"] ` +
+          '[data-testid^="right-workspace-browser-tab-"][data-testid$="-close-button"]',
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
+      for (const action of ['add-plugins', 'refresh', 'reload']) {
+        await control.command(
+          'waitFor',
+          `[data-testid="smart-app-development-preview-${action}"]`,
+          {
+            enabled: true,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+      }
+      await control.command('click', `[data-testid="workspace-tab-close-${secondTaskTabId}"]`)
       await captureScreenshot(control, 'harness-apps-03b2-dsh-reloaded.png', 'body')
       await control.command(
         'clickWhenEnabled',

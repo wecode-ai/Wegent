@@ -101,6 +101,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
 
     expect(manager.has('workspace-browser')).toBe(true)
     expect(manager.state('workspace-browser').url).toBe('https://example.test/')
+    expect(manager.state('workspace-browser').visible).toBe(true)
 
     finishNavigation?.()
     await expect(opening).resolves.toMatchObject({

@@ -1162,6 +1162,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return invokeDesktopHost<string>('e2e.captureWorkspaceWindow')
     case 'captureEmbeddedBrowser':
       return captureEmbeddedBrowserWhenReady(command)
+    case 'getEmbeddedBrowserPageState':
+      return JSON.stringify(
+        await invokeDesktopHost('browser.pageState', {
+          label: command.value,
+        })
+      )
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
