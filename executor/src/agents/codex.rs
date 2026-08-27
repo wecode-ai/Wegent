@@ -56,9 +56,8 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEWORK_EXECUTOR_SIDECAR",
 ];
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
-const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
+    "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
@@ -3751,11 +3750,11 @@ fn global_mcp_config_overrides() -> Vec<String> {
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let bridge_addr = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
+    let bridge_runtime_file = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
-    let bridge_url = format!("http://{bridge_addr}");
+        .map(PathBuf::from)
+        .unwrap_or_else(|| executor_home().join("runtime/embedded-browser-bridge.json"));
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3815,9 +3814,9 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
-                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
+                WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV
             ]),
-            toml_value(&bridge_url)
+            toml_value(&bridge_runtime_file.display().to_string())
         ),
     ];
 
@@ -3833,21 +3832,6 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             toml_value(&label)
         ));
     }
-    if let Ok(token) = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV) {
-        if !token.trim().is_empty() {
-            overrides.push(format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_BROWSER_MCP_SERVER_NAME,
-                    "env",
-                    "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"
-                ]),
-                toml_value(token.trim())
-            ));
-        }
-    }
-
     overrides
 }
 
