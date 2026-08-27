@@ -3967,6 +3967,7 @@
     "full_screen": "Full screen",
     "run_failed": "Failed to run task",
     "attachment_upload_failed": "Failed to upload attachment",
+    "attachment_download_failed": "Failed to download attachment",
     "attachment_remove_failed": "Failed to remove attachment",
     "uploading": "Uploading…",
     "running": "Running…",
