@@ -64,7 +64,7 @@ import type {
   RuntimeTaskCreateRequest,
   RuntimeTurnNavigationItem,
 } from '@/types/api'
-import { resolveDesktopE2ETranscriptPageSize } from '@/e2e/runtime-config'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
   GuidanceWorkbenchMessage,
   RuntimePaneQueuedMessage,
@@ -166,6 +166,16 @@ interface PendingRuntimeGoalState {
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
+const configuredRuntimeTranscriptPageSize = Number(
+  getDesktopE2ERuntimeConfig().transcriptPageSize ??
+    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+)
+const RUNTIME_TRANSCRIPT_PAGE_SIZE =
+  import.meta.env.VITE_WEWORK_E2E === 'true' &&
+  Number.isInteger(configuredRuntimeTranscriptPageSize) &&
+  configuredRuntimeTranscriptPageSize > 0
+    ? configuredRuntimeTranscriptPageSize
+    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
@@ -709,7 +719,7 @@ export function useWorkbenchPaneSession({
     void Promise.resolve()
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: runtimeTranscriptPageSize(),
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
         })
       )
       .then(transcript => {
@@ -812,7 +822,7 @@ export function useWorkbenchPaneSession({
 
       void loadRuntimeTranscriptForPaneRef
         .current(address, {
-          limit: runtimeTranscriptPageSize(),
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
           refresh: true,
         })
         .then(transcript => {
@@ -871,7 +881,7 @@ export function useWorkbenchPaneSession({
     setTranscriptLoadingMoreBefore(true)
     try {
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-        limit: runtimeTranscriptPageSize(),
+        limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
         beforeCursor,
       })
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
@@ -958,7 +968,7 @@ export function useWorkbenchPaneSession({
       if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
 
       const { address } = runtimeTaskLoadTarget
-      const limit = Math.min(runtimeTranscriptPageSize(), gap.end - gap.start)
+      const limit = Math.min(RUNTIME_TRANSCRIPT_PAGE_SIZE, gap.end - gap.start)
       const loadOptions = {
         limit,
         afterCursor: `offset:${gap.start}`,
@@ -1422,7 +1432,7 @@ export function useWorkbenchPaneSession({
           return true
         }
         const transcript = await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
-          limit: runtimeTranscriptPageSize(),
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
           refresh: true,
         })
         removeRuntimeConversationTurn(currentRuntimeTask, {
@@ -1437,7 +1447,7 @@ export function useWorkbenchPaneSession({
       } catch (error) {
         const transcript = await loadRuntimeTranscriptForPaneRef
           .current(currentRuntimeTask, {
-            limit: runtimeTranscriptPageSize(),
+            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
             refresh: true,
           })
           .catch(() => null)
@@ -2725,7 +2735,7 @@ export function useWorkbenchPaneSession({
       rebuildingTranscriptIdentityRef.current = identityKey
       try {
         const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: runtimeTranscriptPageSize(),
+          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
           refresh: true,
         })
         if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
@@ -3160,29 +3170,21 @@ function runtimeTurnNavigationLoadOptions(
   item: RuntimeTurnNavigationItem,
   loadedRanges: LoadedTranscriptRange[]
 ) {
-  const pageSize = runtimeTranscriptPageSize()
   const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
   const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
   const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
   const pageEnd = Math.max(
     messageIndex + 1,
-    Math.min(nextLoadedRange?.start ?? messageIndex + pageSize, messageIndex + pageSize)
+    Math.min(
+      nextLoadedRange?.start ?? messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE,
+      messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE
+    )
   )
 
   return {
-    limit: pageSize,
+    limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
     beforeCursor: `offset:${pageEnd}`,
   }
-}
-
-function runtimeTranscriptPageSize(): number {
-  if (import.meta.env.VITE_WEWORK_E2E !== 'true') {
-    return DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
-  }
-  return resolveDesktopE2ETranscriptPageSize(
-    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE,
-    DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
-  )
 }
 
 function hasUnsettledRuntimePaneState(messages: WorkbenchMessage[]): boolean {
