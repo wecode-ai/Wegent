@@ -431,6 +431,83 @@ fn mcp_tool_call_elicitation_can_be_auto_approved() {
 }
 
 #[test]
+fn mcp_tool_call_request_user_input_can_be_auto_approved() {
+    let message = json!({
+        "id": 75,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-input",
+            "turnId": "turn-input",
+            "itemId": "call-1",
+            "questions": [{
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the wework_space MCP server to run tool \"get_board_item\"?",
+                "options": [
+                    {"label": "Allow", "description": "Run the tool and continue."},
+                    {
+                        "label": "Allow for this session",
+                        "description": "Run the tool and remember this choice for this session."
+                    },
+                    {"label": "Cancel", "description": "Cancel this tool call."}
+                ]
+            }],
+            "autoResolutionMs": Value::Null
+        }
+    });
+
+    assert!(is_mcp_tool_call_approval_request(&message));
+    assert_eq!(
+        mcp_tool_call_request_user_input_response(message_params(&message)),
+        Some(json!({
+            "answers": {
+                "mcp_tool_call_approval_call-1": {
+                    "answers": ["Allow"]
+                }
+            }
+        }))
+    );
+}
+
+#[test]
+fn ordinary_request_user_input_is_not_treated_as_mcp_tool_approval() {
+    for questions in [
+        json!([{
+            "id": "goal",
+            "header": "工作目标",
+            "question": "你希望我接下来问你哪些问题？"
+        }]),
+        json!([{
+            "id": "mcp_tool_call_approval_",
+            "header": "Approve app tool call?",
+            "question": "Missing call id"
+        }]),
+        json!([
+            {
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the tool?"
+            },
+            {
+                "id": "follow-up",
+                "header": "Follow up",
+                "question": "Choose a scope"
+            }
+        ]),
+    ] {
+        let message = json!({
+            "id": 76,
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "questions": questions
+            }
+        });
+        assert!(!is_mcp_tool_call_approval_request(&message));
+        assert!(mcp_tool_call_request_user_input_response(message_params(&message)).is_none());
+    }
+}
+
+#[test]
 fn mcp_business_form_is_not_treated_as_tool_call_approval() {
     let params = json!({
         "serverName": "wegent-sites",
