@@ -272,8 +272,9 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     snapshot =>
       snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
       snapshot.pane?.status?.taskExecution?.running === true &&
-      snapshot.pane?.status?.isBusy === true,
-    'The active turn did not remain authoritative after receiving stale transcript running state'
+      snapshot.pane?.status?.isBusy === true &&
+      snapshot.pane?.status?.canSendQueuedMessage === false,
+    'The active response did not remain authoritative after receiving stale transcript running state'
   )
   assert.equal(
     staleTranscriptDebugSnapshot.pane?.status?.taskExecution?.running,

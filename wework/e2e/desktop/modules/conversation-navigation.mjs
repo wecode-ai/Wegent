@@ -886,22 +886,24 @@ async function reopenCurrentTurnNavigationTask(
     )
   }
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
-    await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
     const expectedMessageCount = expectedConversationTurnCount * 2
-    const paginationStartedAt = Date.now()
-    let paginatedSnapshot
-    while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-      if (
-        paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
-        paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
-      ) {
-        break
+    let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (paginatedSnapshot.pane?.messageSummary.total !== expectedMessageCount) {
+      await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+      const paginationStartedAt = Date.now()
+      while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+        paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        if (
+          paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
+          paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+        ) {
+          break
+        }
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
     assert.equal(
       paginatedSnapshot?.pane?.messageSummary.total,
