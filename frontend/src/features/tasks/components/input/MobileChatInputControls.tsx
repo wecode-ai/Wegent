@@ -15,7 +15,7 @@ import React, {
 } from 'react'
 import { CircleStop, Hand, Plus } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
-import ModelSelector, { type Model } from '../selector/ModelSelector'
+import type { Model } from '../selector/ModelSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
 import VideoSettingsPopover from '../selector/VideoSettingsPopover'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
@@ -612,12 +612,12 @@ export function MobileChatInputControls({
         )}
         {isVideoMode && onVideoModelChange && (
           <div className="flex-1 min-w-0 overflow-hidden">
-            <ModelSelector
+            <MobileModelSelector
               selectedModel={selectedVideoModel ?? null}
               setSelectedModel={model => model && onVideoModelChange(model)}
               forceOverride={false}
               setForceOverride={() => {}}
-              selectedTeam={null}
+              selectedTeam={selectedTeam}
               disabled={isStreaming}
               isLoading={isVideoModelsLoading}
               modelCategoryType="video"
