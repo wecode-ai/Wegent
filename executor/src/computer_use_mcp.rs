@@ -164,6 +164,14 @@ fn mcp_tool_result(result: Value) -> Value {
     response
 }
 
+fn result_response(id: Value, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
+}
+
 #[cfg(test)]
 mod tests {
     use super::mcp_tool_result;
@@ -189,12 +197,4 @@ mod tests {
         assert_eq!(result["structuredContent"], json!({ "value": 42 }));
         assert_eq!(result["isError"], false);
     }
-}
-
-fn result_response(id: Value, result: Value) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result })
-}
-
-fn error_response(id: Value, code: i64, message: impl Into<String>) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message.into() } })
 }
