@@ -148,15 +148,10 @@ export interface ResolvedWorkspacePathTransfer {
 
 export async function resolveDataTransferWorkspacePaths(
   dataTransfer: DataTransfer,
-  source: 'clipboard' | 'drop',
-  workspaceSource?: string | null
+  source: 'clipboard' | 'drop'
 ): Promise<ResolvedWorkspacePathTransfer> {
   const files = Array.from(dataTransfer.files)
-  if (
-    !isDesktopRuntime() ||
-    workspaceSource === 'remote' ||
-    (files.length > 0 && files.every(isWorkspaceImageFile))
-  ) {
+  if (!isDesktopRuntime() || (files.length > 0 && files.every(isWorkspaceImageFile))) {
     return { attachmentFiles: files, referenceEntries: [] }
   }
 
@@ -172,7 +167,7 @@ export async function resolveDataTransferWorkspacePaths(
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)
     return {
-      attachmentFiles: files.filter(isWorkspaceImageFile),
+      attachmentFiles: files,
       referenceEntries: [],
     }
   }

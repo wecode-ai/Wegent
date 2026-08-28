@@ -30,7 +30,9 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('next/dynamic', () => () => {
-  const MockDynamicComponent = () => <div data-testid="dynamic-component" />
+  const MockDynamicComponent = ({ source }: { source?: string }) => (
+    <div data-testid="dynamic-component">{source}</div>
+  )
   MockDynamicComponent.displayName = 'MockDynamicComponent'
   return MockDynamicComponent
 })
@@ -197,7 +199,135 @@ describe('DocumentDetailDialog permissions', () => {
   })
 })
 
+describe('DocumentDetailDialog external source info', () => {
+  const externalMeta = {
+    provider: 'dingtalk',
+    resource_id: 'node-1',
+    title: 'Spec Doc',
+    url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+    status: 'accessible',
+    last_success_at: '2026-08-26T10:00:00Z',
+  }
+  const externalDocument: KnowledgeDocument = {
+    ...baseDocument,
+    source_type: 'external',
+    external_provider: 'dingtalk',
+    source_config: { external: externalMeta },
+  }
+
+  it('shows provider, source link, last import time and accessibility', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={externalDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    const info = screen.getByTestId('external-source-info')
+    expect(info).toHaveTextContent('dingtalk')
+    expect(info).toHaveTextContent('Spec Doc')
+    expect(info).toHaveTextContent('document.document.externalSource.lastImportedAt')
+    const link = screen.getByTestId('external-source-link')
+    expect(link).toHaveAttribute('href', 'https://alidocs.dingtalk.com/i/nodes/node-1')
+    expect(link).toHaveClass('min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0')
+    // An accessible source never renders the inaccessible badge.
+    expect(screen.queryByTestId('external-source-inaccessible')).not.toBeInTheDocument()
+  })
+
+  it('marks an inaccessible source while keeping the snapshot metadata', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: {
+            external: {
+              ...externalMeta,
+              status: 'inaccessible',
+              last_error: 'node not found',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
+  })
+
+  it('hides the source info for regular documents', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { ...externalMeta, provider: 123 },
+    { ...externalMeta, title: null },
+    { ...externalMeta, url: { unsafe: true } },
+  ])('hides invalid external source metadata', invalidExternalMeta => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: { external: invalidExternalMeta },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+})
+
 describe('DocumentDetailDialog processing errors', () => {
+  it('shows stored external content alongside an indexing failure', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...baseDocument,
+          attachment_id: 641,
+          source_type: 'external',
+          is_active: false,
+          index_status: 'failed',
+          processing_error: {
+            stage: 'indexing',
+            code: 'indexing_failed',
+            message: 'Indexing failed.',
+            retryable: true,
+            generation: 2,
+            occurred_at: '2026-08-27T04:00:47Z',
+          },
+        }}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByText('plain text content')).toBeInTheDocument()
+    expect(screen.getByTestId('document-processing-error-detail-11')).toBeInTheDocument()
+    expect(
+      screen.getByText('knowledge:document.document.processingError.codes.indexingFailed')
+    ).toBeInTheDocument()
+  })
+
   it('renders the localized message for a known public error code', () => {
     const failedDocument: KnowledgeDocument = {
       ...baseDocument,

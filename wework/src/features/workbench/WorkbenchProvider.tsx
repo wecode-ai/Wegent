@@ -894,6 +894,7 @@ export function WorkbenchProvider({
     persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
+    fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,

@@ -1008,6 +1008,7 @@ describe('App plugins route', () => {
     }
     localStorage.clear()
     sessionStorage.clear()
+    delete window.weworkElectronCloudCredentials
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     Object.defineProperty(navigator, 'userAgent', {
@@ -1113,12 +1114,23 @@ describe('App plugins route', () => {
         apiBaseUrl: 'http://127.0.0.1:9100/api',
         socketBaseUrl: 'http://127.0.0.1:9100',
         socketPath: '/socket.io',
-        token: 'cloud-secret',
-        tokenExpiresAt: null,
         user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
         connectedAt: '2026-07-15T00:00:00.000Z',
       })
     )
+    window.weworkElectronCloudCredentials = {
+      getDevicePublicKey: vi.fn(),
+      claimAuthorization: vi.fn(),
+      refreshAccessToken: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          accessToken: 'cloud-secret',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+        },
+      }),
+      clear: vi.fn(),
+    }
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/users/me')) {
