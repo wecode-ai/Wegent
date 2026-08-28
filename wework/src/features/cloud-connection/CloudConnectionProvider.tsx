@@ -357,6 +357,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
   const refreshGenerationRef = useRef(0)
+  const disconnectRequestedRef = useRef(false)
 
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
@@ -364,6 +365,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     if (snapshot.status !== 'disconnected') return
     void getAppPreferences()
       .then(preferences => {
+        if (disconnectRequestedRef.current) return
         const stored = normalizeStoredCloudConnection(preferences.cloudConnection)
         if (!stored) return
         saveStoredCloudConnection(stored)
@@ -413,6 +415,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       openAuthorizationUrl?: OpenCloudAuthorizationUrl,
       socketBaseUrlOverride?: string
     ): Promise<User> => {
+      disconnectRequestedRef.current = false
       let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
       setSnapshot(current => ({
         ...current,
@@ -491,6 +494,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     [applyConnectedSnapshot]
   )
   const refreshUser = useCallback((): Promise<User | null> => {
+    if (disconnectRequestedRef.current) return Promise.resolve(null)
     if (refreshPromiseRef.current) return refreshPromiseRef.current
     if (!snapshot.apiBaseUrl) return Promise.resolve(null)
     const refreshGeneration = refreshGenerationRef.current
@@ -554,6 +558,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [snapshot.apiBaseUrl, snapshot.backendUrl, snapshot.socketBaseUrl, snapshot.socketPath])
 
   const disconnect = useCallback(() => {
+    disconnectRequestedRef.current = true
     refreshGenerationRef.current += 1
     refreshPromiseRef.current = null
     clearStoredCloudConnection()

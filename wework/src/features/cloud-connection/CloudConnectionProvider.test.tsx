@@ -83,6 +83,13 @@ function CloudSocketProbe() {
       <button type="button" data-testid="disconnect-cloud-button" onClick={cloud.disconnect}>
         disconnect
       </button>
+      <button
+        type="button"
+        data-testid="refresh-cloud-button"
+        onClick={() => void cloud.refreshUser()}
+      >
+        refresh
+      </button>
     </>
   )
 }
@@ -356,6 +363,32 @@ describe('CloudConnectionProvider', () => {
       expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
     )
     expect(httpMocks.get).not.toHaveBeenCalled()
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
+  it('does not let a stale refresh callback reconnect after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    saveStoredCloudConnection(storedConnection)
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+    await userEvent.click(screen.getByTestId('refresh-cloud-button'))
+
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
     expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
   })
 
