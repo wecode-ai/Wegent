@@ -52,6 +52,7 @@ export interface ElectronDesktopServices {
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
   coreDshPlugins: () => CoreDshPluginService | null
+  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
 export interface CoreDshPluginService {
@@ -482,7 +483,10 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    const updated = await preferences.update(patch as Record<string, unknown>)
+    const preferencePatch = patch as Record<string, unknown>
+    const updated = desktopServices.updatePreferences
+      ? await desktopServices.updatePreferences(preferencePatch)
+      : await preferences.update(preferencePatch)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
