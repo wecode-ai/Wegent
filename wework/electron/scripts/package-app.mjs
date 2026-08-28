@@ -88,6 +88,7 @@ const applications = await packager({
     join(electronRoot, 'resources', 'codex'),
     join(electronRoot, 'resources', 'wework-core-plugins'),
     join(electronRoot, 'resources', 'components.json'),
+    join(electronRoot, 'resources', 'app-update.yml'),
     join(electronRoot, 'resources', 'bundled-plugins'),
     join(electronRoot, 'resources', 'bundled-hooks'),
     join(sharedResourcesRoot, 'licenses'),

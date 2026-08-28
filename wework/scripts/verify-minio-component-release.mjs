@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 
-import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
+import { desktopComponentIds, sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
 
-const [baseUrlInput, version, channel, platform, arch] = process.argv.slice(2)
+const [releaseBaseUrlInput, sharedBaseUrlInput, version, channel, platform, arch] =
+  process.argv.slice(2)
 
-if (!baseUrlInput || !version || !channel || !platform || !arch) {
+if (!releaseBaseUrlInput || !sharedBaseUrlInput || !version || !channel || !platform || !arch) {
   throw new Error(
-    'Usage: verify-minio-component-release.mjs <base-url> <version> <stable|beta> <platform> <arch>'
+    'Usage: verify-minio-component-release.mjs <release-base-url> <shared-component-base-url> <version> <stable|beta> <platform> <arch>'
   )
 }
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
 }
 
-const baseUrl = new URL(`${baseUrlInput.replace(/\/+$/, '')}/`)
-const manifestUrl = new URL(`components-${channel}-${platform}-${arch}.json`, baseUrl)
+const releaseBaseUrl = normalizedBaseUrl(releaseBaseUrlInput)
+const sharedBaseUrl = normalizedBaseUrl(sharedBaseUrlInput)
+const sharedComponentIds = new Set(sharedDesktopComponentIds)
+const manifestUrl = new URL(`components-${channel}-${platform}-${arch}.json`, releaseBaseUrl)
 const response = await fetch(manifestUrl, { cache: 'no-store' })
 if (!response.ok) {
   throw new Error(`Component manifest is not publicly readable: HTTP ${response.status}`)
@@ -43,8 +46,12 @@ for (const id of desktopComponentIds) {
     throw new Error(`Published component entry is invalid: ${id}`)
   }
   const downloadUrl = new URL(component.downloadUrl)
-  if (downloadUrl.origin !== baseUrl.origin || !downloadUrl.pathname.startsWith(baseUrl.pathname)) {
-    throw new Error(`Published component URL is outside the MinIO release prefix: ${id}`)
+  const expectedBaseUrl = sharedComponentIds.has(id) ? sharedBaseUrl : releaseBaseUrl
+  if (
+    downloadUrl.origin !== expectedBaseUrl.origin ||
+    !downloadUrl.pathname.startsWith(expectedBaseUrl.pathname)
+  ) {
+    throw new Error(`Published component URL is outside its MinIO storage prefix: ${id}`)
   }
   const archive = await fetch(downloadUrl, { method: 'HEAD', cache: 'no-store' })
   if (!archive.ok) {
@@ -57,3 +64,7 @@ for (const id of desktopComponentIds) {
 }
 
 console.log(`Verified MinIO component release: ${version} ${channel} ${platform}-${arch}`)
+
+function normalizedBaseUrl(input) {
+  return new URL(`${input.replace(/\/+$/, '')}/`)
+}

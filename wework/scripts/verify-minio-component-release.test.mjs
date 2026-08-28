@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 
 import { describe, expect, test } from 'vitest'
 
-import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
+import { desktopComponentIds, sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
 
 const scriptsRoot = dirname(fileURLToPath(import.meta.url))
 const verifierPath = resolve(scriptsRoot, 'verify-minio-component-release.mjs')
@@ -31,11 +31,37 @@ describe('MinIO component release verification', () => {
     expect(result.code).toBe(1)
     expect(result.stderr).toContain('Published component manifest is incompatible')
   })
+
+  test('rejects a shared component stored under the app release prefix', async () => {
+    const result = await runVerifier(desktopComponentIds, {
+      misroutedComponent: 'coreDsh',
+    })
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(
+      'Published component URL is outside its MinIO storage prefix: coreDsh'
+    )
+  })
+
+  test('rejects an app-specific component stored under the shared prefix', async () => {
+    const result = await runVerifier(desktopComponentIds, {
+      misroutedComponent: 'executor',
+    })
+
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(
+      'Published component URL is outside its MinIO storage prefix: executor'
+    )
+  })
 })
 
-async function runVerifier(componentIds) {
+async function runVerifier(componentIds, options = {}) {
+  const sharedComponentIds = new Set(sharedDesktopComponentIds)
   const archives = new Map(
-    componentIds.map(id => [`/releases/${id}.tar.gz`, Buffer.from(`archive-${id}`)])
+    componentIds.map(id => [
+      `/${sharedComponentIds.has(id) ? 'components' : 'releases'}/${id}.tar.gz`,
+      Buffer.from(`archive-${id}`),
+    ])
   )
   let manifest
   const server = createServer((request, response) => {
@@ -65,6 +91,7 @@ async function runVerifier(componentIds) {
       throw new Error('Verifier test server did not expose a TCP address')
     }
     const baseUrl = `http://127.0.0.1:${address.port}/releases`
+    const sharedBaseUrl = `http://127.0.0.1:${address.port}/components`
     manifest = {
       schemaVersion: 1,
       appVersion: '1.2.3',
@@ -73,11 +100,18 @@ async function runVerifier(componentIds) {
       arch: 'arm64',
       components: Object.fromEntries(
         componentIds.map(id => {
-          const archive = archives.get(`/releases/${id}.tar.gz`)
+          const expectedPrefix = sharedComponentIds.has(id) ? 'components' : 'releases'
+          const actualPrefix =
+            options.misroutedComponent === id
+              ? expectedPrefix === 'components'
+                ? 'releases'
+                : 'components'
+              : expectedPrefix
+          const archive = archives.get(`/${expectedPrefix}/${id}.tar.gz`)
           return [
             id,
             {
-              downloadUrl: `${baseUrl}/${id}.tar.gz`,
+              downloadUrl: `http://127.0.0.1:${address.port}/${actualPrefix}/${id}.tar.gz`,
               archiveBytes: archive.length,
               archiveSha256: 'a'.repeat(64),
             },
@@ -89,6 +123,7 @@ async function runVerifier(componentIds) {
     return await runProcess(process.execPath, [
       verifierPath,
       baseUrl,
+      sharedBaseUrl,
       '1.2.3',
       'stable',
       'macos',

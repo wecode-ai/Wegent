@@ -37,6 +37,7 @@ if (!(await stat(electronBuilderCli).catch(() => null))?.isFile()) {
 }
 
 await verifyApplicationIdentity(appPath)
+await verifyApplicationResources(appPath)
 await run('xcrun', ['stapler', 'validate', appPath], electronRoot)
 await run(
   nodeRuntime,
@@ -77,6 +78,13 @@ async function verifyApplicationIdentity(path) {
   }
   if (version.trim() !== expectedVersion) {
     throw new Error(`Prebuilt application version does not match ${expectedVersion}`)
+  }
+}
+
+async function verifyApplicationResources(path) {
+  const updateConfiguration = join(path, 'Contents', 'Resources', 'app-update.yml')
+  if (!(await stat(updateConfiguration).catch(() => null))?.isFile()) {
+    throw new Error(`Prebuilt application updater configuration is missing: ${updateConfiguration}`)
   }
 }
 

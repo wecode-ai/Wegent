@@ -1,14 +1,15 @@
 const path = require('node:path')
 
+const { resolveAppUpdateConfiguration } = require('./scripts/app-update-config.cjs')
 const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
 const { resolveReleaseVersion } = require('./scripts/release-version.cjs')
 
-const updateBaseUrl =
-  process.env.WEWORK_UPDATE_BASE_URL ||
-  'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const packageMetadata = require('./package.json')
+const appUpdateConfiguration = resolveAppUpdateConfiguration(packageMetadata.name)
+const updateBaseUrl = appUpdateConfiguration.url
 const electronMirror = process.env.WEWORK_ELECTRON_MIRROR?.trim()
 const identity = resolveBuildIdentity()
-const releaseVersion = resolveReleaseVersion(require('./package.json').version)
+const releaseVersion = resolveReleaseVersion(packageMetadata.version)
 const packagePrebuiltMacosRelease =
   process.env.WEWORK_PREPACKAGED_MACOS_RELEASE?.trim().toLowerCase() === 'true'
 const skipMacosNotarization =
@@ -52,6 +53,7 @@ module.exports = {
     { from: 'resources/codex', to: 'codex' },
     { from: 'resources/wework-core-plugins', to: 'wework-core-plugins' },
     { from: 'resources/components.json', to: 'components.json' },
+    { from: 'resources/app-update.yml', to: 'app-update.yml' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
     { from: '../resources/licenses', to: 'licenses' },

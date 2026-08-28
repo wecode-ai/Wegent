@@ -6,6 +6,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
+import { sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
+
 const [
   assetsDirectory,
   outputDirectory,
@@ -50,7 +52,7 @@ const sharedComponentBaseUrl = (
   process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
-const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
+const sharedComponentIds = new Set(sharedDesktopComponentIds)
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
