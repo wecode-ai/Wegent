@@ -226,7 +226,7 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
 
-主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
+主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 

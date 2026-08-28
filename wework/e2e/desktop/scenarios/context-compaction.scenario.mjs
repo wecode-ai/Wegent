@@ -108,6 +108,20 @@ async function waitForDisabled(control, selector, timeoutMs) {
   throw new Error(`Timed out waiting for ${selector} to become disabled`)
 }
 
+async function waitForRuntimePaneIdle(control, timeoutMs) {
+  const startedAt = Date.now()
+  let lastStatus = null
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    lastStatus = snapshot.pane?.status ?? null
+    if (lastStatus?.isBusy === false) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `The runtime turn did not settle before compaction: ${JSON.stringify(lastStatus)}`
+  )
+}
+
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   let compactionRequests = 0
@@ -200,6 +214,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('waitFor', '[data-testid="context-usage-button"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await waitForRuntimePaneIdle(control, uiTimeoutMs)
       await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
 
       await control.command('click', '[data-testid="context-usage-button"]')
