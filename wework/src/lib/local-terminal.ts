@@ -295,20 +295,6 @@ export async function resolveLocalHarnessPluginRoots(
   )
 }
 
-export async function updateLocalHarnessSessionTitle(
-  sessionId: string,
-  title: string
-): Promise<void> {
-  if (!isLocalHarnessAvailable()) return
-  const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-  if (!normalized) return
-  updateElectronHarnessSessions(sessions =>
-    sessions.map(session =>
-      session.session_id === sessionId ? { ...session, title: normalized } : session
-    )
-  )
-}
-
 export async function getLocalTerminalSnapshot(sessionId: string): Promise<LocalTerminalSnapshot> {
   return requestDshTerminal<LocalTerminalSnapshot>('terminal.snapshot', {
     session_id: sessionId,

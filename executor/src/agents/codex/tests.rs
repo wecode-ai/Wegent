@@ -7,6 +7,14 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn windows_router_auth_script_succeeds_after_reading_from_nul() {
+    assert_eq!(
+        windows_codex_router_auth_script(),
+        "<nul set /p =wework-local-router & exit /b 0"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();

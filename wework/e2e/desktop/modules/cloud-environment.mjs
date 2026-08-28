@@ -77,13 +77,14 @@ async function startRedisServer(
   logPath,
   { reserveRedisPort = reservePort, spawnRedis = spawn } = {}
 ) {
+  const redisServerBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim() || 'redis-server'
   for (let attempt = 1; attempt <= REDIS_START_ATTEMPTS; attempt += 1) {
     const port = await reserveRedisPort()
     const existingLog = await readFile(logPath, 'utf8').catch(() => '')
     const fromOffset = existingLog.length
     await appendFile(logPath, `Redis start attempt ${attempt} on port ${port}\n`)
     const redis = spawnRedis(
-      'redis-server',
+      redisServerBinary,
       ['--port', String(port), '--save', '', '--appendonly', 'no'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )

@@ -3312,7 +3312,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The linked absolute file opened from the wrong workspace target'
       )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
@@ -3480,7 +3480,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The linked absolute file path was lost after switching conversations'
       )
       await control.command('click', rightBrowserTabSelector)
