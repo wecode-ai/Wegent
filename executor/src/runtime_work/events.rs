@@ -39,17 +39,28 @@ use super::{
 
 const MAX_TOOL_OUTPUT_DELTA_BYTES: usize = 64 * 1024;
 const MAX_TOOL_OUTPUT_BUFFER_BYTES: usize = 512 * 1024;
+const JAVASCRIPT_MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+const RUNTIME_EVENT_SEQUENCES_PER_MILLISECOND: u64 = 1_000;
 static LAST_RUNTIME_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 fn next_runtime_event_sequence() -> u64 {
     let wall_clock = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos()
-        .min(u128::from(u64::MAX)) as u64;
+        .as_millis()
+        .saturating_mul(u128::from(RUNTIME_EVENT_SEQUENCES_PER_MILLISECOND));
+    assert!(
+        wall_clock <= u128::from(JAVASCRIPT_MAX_SAFE_INTEGER),
+        "runtime event sequence exceeded the JavaScript safe integer range"
+    );
+    let wall_clock = wall_clock as u64;
     let mut previous = LAST_RUNTIME_EVENT_SEQUENCE.load(Ordering::Relaxed);
     loop {
         let next = wall_clock.max(previous.saturating_add(1));
+        assert!(
+            next <= JAVASCRIPT_MAX_SAFE_INTEGER,
+            "runtime event sequence exceeded the JavaScript safe integer range"
+        );
         match LAST_RUNTIME_EVENT_SEQUENCE.compare_exchange_weak(
             previous,
             next,
@@ -2187,6 +2198,16 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn runtime_event_sequences_are_strictly_increasing_javascript_safe_integers() {
+        let first = next_runtime_event_sequence();
+        let second = next_runtime_event_sequence();
+
+        assert!(first <= JAVASCRIPT_MAX_SAFE_INTEGER);
+        assert!(second <= JAVASCRIPT_MAX_SAFE_INTEGER);
+        assert!(second > first);
+    }
 
     #[test]
     fn terminal_content_update_does_not_repeat_streamed_content() {

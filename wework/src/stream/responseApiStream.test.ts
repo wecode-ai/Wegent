@@ -2,6 +2,62 @@ import { describe, expect, test, vi } from 'vitest'
 import { createResponseApiStreamState, emitResponseApiEvent } from './responseApiStream'
 
 describe('emitResponseApiEvent', () => {
+  test('preserves safe monotonic event sequences on lifecycle events', () => {
+    const onChatStart = vi.fn()
+    const onChatDone = vi.fn()
+    const state = createResponseApiStreamState()
+
+    emitResponseApiEvent(
+      { onChatStart },
+      'response.created',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        eventSeq: 1_787_299_200_000_001,
+        data: {},
+      },
+      state
+    )
+    emitResponseApiEvent(
+      { onChatDone },
+      'response.completed',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        eventSeq: 1_787_299_200_000_002,
+        data: {},
+      },
+      state
+    )
+
+    expect(onChatStart).toHaveBeenCalledWith(
+      expect.objectContaining({ eventSeq: 1_787_299_200_000_001 })
+    )
+    expect(onChatDone).toHaveBeenCalledWith(
+      expect.objectContaining({ eventSeq: 1_787_299_200_000_002 })
+    )
+  })
+
+  test('drops unsafe event sequences instead of comparing rounded values', () => {
+    const onChatDone = vi.fn()
+
+    emitResponseApiEvent(
+      { onChatDone },
+      'response.completed',
+      {
+        taskId: 'task-1',
+        subtaskId: 'turn-1',
+        eventSeq: Number.MAX_SAFE_INTEGER + 1,
+        data: {},
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onChatDone).toHaveBeenCalledWith(
+      expect.not.objectContaining({ eventSeq: expect.anything() })
+    )
+  })
+
   test('preserves a snake-case client user message id when a Codex turn starts', () => {
     const onChatStart = vi.fn()
 

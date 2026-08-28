@@ -22,11 +22,12 @@ export function reduceRuntimeTaskLifecycle(
       const snapshotConfirmsAutonomousTurn =
         isRuntimeTaskConfirmedActive(event.task) && state.turnOutcome === null
       const snapshotRevivesSettledTaskWithoutIntent =
-        Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
+        (state.turnOutcome !== null ||
+          (Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
+            state.goalStatus !== null)) &&
+        state.expectedExecutorRunning === false &&
         isRuntimeTaskConfirmedActive(event.task) &&
-        state.goalStatus !== null &&
-        state.goalStatus !== 'active' &&
-        state.expectedExecutorRunning !== true
+        state.goalStatus !== 'active'
       if (snapshotRevivesSettledTaskWithoutIntent) {
         return state
       }
@@ -61,7 +62,9 @@ export function reduceRuntimeTaskLifecycle(
         goalStatus: event.task.goalStatus === undefined ? state.goalStatus : event.task.goalStatus,
         continuable: event.task.continuable !== false,
         expectedExecutorRunning:
-          snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,
+          snapshotRunning !== null && event.task.optimistic !== true
+            ? snapshotRunning
+            : expectedRunning,
       }
     }
 
@@ -142,8 +145,13 @@ export function reduceRuntimeTaskLifecycle(
       }
 
     case 'turn_started':
+      if (isStaleLifecycleEvent(state, event.eventSeq)) return state
+      if (event.turnId && state.turnPhase === 'idle' && event.turnId === state.lastTerminalTurnId) {
+        return state
+      }
       return {
         ...state,
+        lastEventSeq: event.eventSeq ?? state.lastEventSeq,
         executionPhase: 'running',
         turnPhase: 'streaming',
         turnOutcome: null,
@@ -153,15 +161,20 @@ export function reduceRuntimeTaskLifecycle(
       }
 
     case 'turn_settled': {
+      if (isStaleLifecycleEvent(state, event.eventSeq)) return state
       if (event.turnId && state.activeTurnId && event.turnId !== state.activeTurnId) {
         return state
       }
+      const goalContinues = state.goalStatus === 'active'
       return {
         ...state,
+        lastEventSeq: event.eventSeq ?? state.lastEventSeq,
+        lastTerminalTurnId: event.turnId ?? state.activeTurnId ?? state.lastTerminalTurnId,
+        executionPhase: goalContinues ? state.executionPhase : 'idle',
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
-        expectedExecutorRunning: null,
+        expectedExecutorRunning: goalContinues ? null : false,
       }
     }
 
@@ -198,6 +211,13 @@ export function reduceRuntimeTaskLifecycle(
     case 'marked_unread':
       return state.unread ? state : { ...state, unread: true }
   }
+}
+
+function isStaleLifecycleEvent(
+  state: RuntimeTaskLifecycleState,
+  eventSeq: number | undefined
+): boolean {
+  return eventSeq !== undefined && state.lastEventSeq !== null && eventSeq <= state.lastEventSeq
 }
 
 function isQueuedTaskStatus(status: string | null | undefined): boolean {

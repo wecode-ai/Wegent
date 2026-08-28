@@ -103,6 +103,14 @@ function optionalFiniteNumberField(
   return undefined
 }
 
+function optionalSafeIntegerField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  const value = optionalFiniteNumberField(record, ...keys)
+  return value !== undefined && Number.isSafeInteger(value) ? value : undefined
+}
+
 function commandExitCode(record: Record<string, unknown>): number | undefined {
   return optionalNumberField(record, 'exit_code') ?? optionalNumberField(record, 'exitCode')
 }
@@ -113,9 +121,11 @@ function recordField(record: Record<string, unknown>, key: string): Record<strin
 
 function eventBase(payload: Record<string, unknown>) {
   const data = eventResult(payload)
+  const eventSeq = optionalSafeIntegerField(payload, 'eventSeq', 'event_seq')
   return {
     taskId: idField(payload, 'taskId') ?? idField(data, 'taskId'),
     subtaskId: idField(payload, 'subtaskId') ?? idField(data, 'subtaskId'),
+    ...(eventSeq !== undefined && { eventSeq }),
     clientUserMessageId:
       idField(payload, 'clientUserMessageId') ??
       idField(payload, 'client_user_message_id') ??

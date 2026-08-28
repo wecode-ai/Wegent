@@ -39,10 +39,14 @@ export type RuntimePaneMessageAction = WorkbenchMessageAction<Attachment, TurnFi
 
 export interface RuntimeTaskStreamHandlers {
   onMessageAction: (action: RuntimePaneMessageAction) => void
-  onAssistantStart?: (turnId: string) => void
+  onAssistantStart?: (turnId: string, eventSeq?: number) => void
   onAssistantFirstToken?: (turnId: string) => void
   onAssistantResponseSize?: (turnId: string, responseSizeBytes: number) => void
-  onAssistantSettled?: (turnId: string, outcome: 'succeeded' | 'failed' | 'cancelled') => void
+  onAssistantSettled?: (
+    turnId: string,
+    outcome: 'succeeded' | 'failed' | 'cancelled',
+    eventSeq?: number
+  ) => void
   onContextUsageUpdated?: (usage: RuntimeContextUsage) => void
   onSubagentActivity?: (payload: RuntimeSubagentActivityPayload) => void
   onRuntimeTaskTitleUpdated?: (payload: RuntimeTaskTitleUpdatedPayload) => void
@@ -57,7 +61,7 @@ export interface RuntimeTaskStreamHandlers {
 
 export interface RuntimeConversationStreamHandlers {
   onMessageAction: (address: RuntimeTaskAddress, action: RuntimePaneMessageAction) => void
-  onAssistantStart?: (address: RuntimeTaskAddress, turnId: string) => void
+  onAssistantStart?: (address: RuntimeTaskAddress, turnId: string, eventSeq?: number) => void
   onAssistantFirstToken?: (address: RuntimeTaskAddress, turnId: string) => void
   onAssistantResponseSize?: (
     address: RuntimeTaskAddress,
@@ -67,7 +71,8 @@ export interface RuntimeConversationStreamHandlers {
   onAssistantSettled?: (
     address: RuntimeTaskAddress,
     turnId: string,
-    outcome: 'succeeded' | 'failed' | 'cancelled'
+    outcome: 'succeeded' | 'failed' | 'cancelled',
+    eventSeq?: number
   ) => void
   onContextUsageUpdated?: (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => void
   onSubagentActivity?: (
@@ -116,12 +121,13 @@ export function createRuntimeConversationStreamHandlers(
 
     const created = createRuntimeTaskStreamHandlers(address, {
       onMessageAction: action => handlers.onMessageAction(address, action),
-      onAssistantStart: turnId => handlers.onAssistantStart?.(address, turnId),
+      onAssistantStart: (turnId, eventSeq) =>
+        handlers.onAssistantStart?.(address, turnId, eventSeq),
       onAssistantFirstToken: turnId => handlers.onAssistantFirstToken?.(address, turnId),
       onAssistantResponseSize: (turnId, responseSizeBytes) =>
         handlers.onAssistantResponseSize?.(address, turnId, responseSizeBytes),
-      onAssistantSettled: (turnId, outcome) =>
-        handlers.onAssistantSettled?.(address, turnId, outcome),
+      onAssistantSettled: (turnId, outcome, eventSeq) =>
+        handlers.onAssistantSettled?.(address, turnId, outcome, eventSeq),
       onContextUsageUpdated: usage => handlers.onContextUsageUpdated?.(address, usage),
       onSubagentActivity: payload => handlers.onSubagentActivity?.(address, payload),
       onRuntimeTaskTitleUpdated: payload => handlers.onRuntimeTaskTitleUpdated?.(address, payload),
@@ -167,7 +173,8 @@ export function createRuntimeTaskStreamHandlers(
   const settleAssistantTurn = (
     terminalTurnId: string,
     outcome: 'succeeded' | 'failed' | 'cancelled',
-    allowProviderAlias = true
+    allowProviderAlias = true,
+    eventSeq?: number
   ) => {
     if (settledAssistantTurnIds.has(terminalTurnId)) return
 
@@ -180,7 +187,11 @@ export function createRuntimeTaskStreamHandlers(
     }
     settledAssistantTurnIds.add(terminalTurnId)
     settledAssistantTurnIds.add(lifecycleTurnId)
-    handlers.onAssistantSettled?.(lifecycleTurnId, outcome)
+    if (eventSeq === undefined) {
+      handlers.onAssistantSettled?.(lifecycleTurnId, outcome)
+    } else {
+      handlers.onAssistantSettled?.(lifecycleTurnId, outcome, eventSeq)
+    }
   }
 
   const streamHandlers: ChatStreamHandlers = {
@@ -213,7 +224,11 @@ export function createRuntimeTaskStreamHandlers(
       }
       if (settledAssistantTurnIds.has(identity.subtaskId)) return
       unsettledAssistantTurnIds.add(identity.subtaskId)
-      handlers.onAssistantStart?.(identity.subtaskId)
+      if (payload.eventSeq === undefined) {
+        handlers.onAssistantStart?.(identity.subtaskId)
+      } else {
+        handlers.onAssistantStart?.(identity.subtaskId, payload.eventSeq)
+      }
       handlers.onMessageAction({
         type: 'assistant_started',
         taskId: payload.taskId,
@@ -334,7 +349,7 @@ export function createRuntimeTaskStreamHandlers(
           new TextEncoder().encode(assistantText).byteLength
         )
       }
-      settleAssistantTurn(identity.subtaskId, 'succeeded')
+      settleAssistantTurn(identity.subtaskId, 'succeeded', true, payload.eventSeq)
     },
     onChatError: payload => {
       if (!isRuntimeTaskStreamPayload(address, payload)) {
@@ -376,7 +391,12 @@ export function createRuntimeTaskStreamHandlers(
           errorType: payload.type,
         })
       }
-      settleAssistantTurn(identity.subtaskId, cancelled ? 'cancelled' : 'failed')
+      settleAssistantTurn(
+        identity.subtaskId,
+        cancelled ? 'cancelled' : 'failed',
+        true,
+        payload.eventSeq
+      )
       streamedFileChanges.delete(identity.subtaskId)
     },
     onBlockCreated: payload => {

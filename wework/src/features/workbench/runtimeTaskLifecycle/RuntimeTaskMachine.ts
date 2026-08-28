@@ -13,6 +13,8 @@ export class RuntimeTaskMachine {
     this.state = {
       address,
       task: null,
+      lastEventSeq: null,
+      lastTerminalTurnId: null,
       executionPhase: 'unknown',
       turnPhase: 'idle',
       turnOutcome: null,
@@ -38,6 +40,7 @@ export class RuntimeTaskMachine {
     const {
       address,
       task,
+      lastEventSeq,
       executionPhase,
       turnPhase,
       turnOutcome,
@@ -58,6 +61,7 @@ export class RuntimeTaskMachine {
       key: getRuntimeTaskLifecycleKey(address),
       address,
       task,
+      lastEventSeq,
       ...(workspaceCreationKind ? { workspaceCreationKind } : {}),
       execution: {
         phase: executionPhase,

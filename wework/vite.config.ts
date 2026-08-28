@@ -191,7 +191,7 @@ export default defineConfig({
       ...configDefaults.exclude,
       'dsh/**/*.test.mjs',
       'e2e/**',
-      'scripts/harness-runtime-metadata.test.mjs',
+      'scripts/**/*.test.mjs',
       'test-results/**',
     ],
     coverage: {

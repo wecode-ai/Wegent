@@ -422,15 +422,17 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
       subtaskId: 'provisional-turn',
       deviceId: 'device-1',
+      eventSeq: 40,
     })
     handlers.onChatDone?.({
       taskId: 'runtime-task-1',
       subtaskId: 'canonical-turn',
       deviceId: 'device-1',
+      eventSeq: 41,
       result: {},
     })
 
-    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'succeeded')
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'succeeded', 41)
   })
 
   test('ignores a canonical start that arrives after its aliased turn settled', () => {
@@ -451,11 +453,13 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
       subtaskId: 'provisional-turn',
       deviceId: 'device-1',
+      eventSeq: 50,
     })
     handlers.onChatError?.({
       taskId: 'runtime-task-1',
       subtaskId: 'canonical-turn',
       deviceId: 'device-1',
+      eventSeq: 51,
       error: 'interrupted',
       type: 'response.incomplete',
     })
@@ -463,12 +467,13 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
       subtaskId: 'canonical-turn',
       deviceId: 'device-1',
+      eventSeq: 52,
     })
 
     expect(onAssistantStart).toHaveBeenCalledTimes(1)
-    expect(onAssistantStart).toHaveBeenCalledWith('provisional-turn')
+    expect(onAssistantStart).toHaveBeenCalledWith('provisional-turn', 50)
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
-    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'cancelled')
+    expect(onAssistantSettled).toHaveBeenCalledWith('provisional-turn', 'cancelled', 51)
     expect(actions.filter(action => action.type === 'assistant_started')).toHaveLength(1)
   })
 
@@ -483,25 +488,27 @@ describe('createRuntimeTaskStreamHandlers', () => {
       onAssistantSettled,
     })
 
-    for (const subtaskId of ['provisional-turn-1', 'provisional-turn-2']) {
+    for (const [index, subtaskId] of ['provisional-turn-1', 'provisional-turn-2'].entries()) {
       handlers.onChatStart?.({
         taskId: 'runtime-task-1',
         subtaskId,
         deviceId: 'device-1',
+        eventSeq: index + 60,
       })
     }
-    for (const subtaskId of ['canonical-turn-1', 'canonical-turn-2']) {
+    for (const [index, subtaskId] of ['canonical-turn-1', 'canonical-turn-2'].entries()) {
       handlers.onChatDone?.({
         taskId: 'runtime-task-1',
         subtaskId,
         deviceId: 'device-1',
+        eventSeq: index + 62,
         result: {},
       })
     }
 
     expect(onAssistantSettled.mock.calls).toEqual([
-      ['provisional-turn-1', 'succeeded'],
-      ['provisional-turn-2', 'succeeded'],
+      ['provisional-turn-1', 'succeeded', 62],
+      ['provisional-turn-2', 'succeeded', 63],
     ])
   })
 
@@ -520,27 +527,31 @@ describe('createRuntimeTaskStreamHandlers', () => {
       taskId: 'runtime-task-1',
       subtaskId: 'turn-1',
       deviceId: 'device-1',
+      eventSeq: 70,
     })
     handlers.onChatDone?.({
       taskId: 'runtime-task-1',
       subtaskId: 'turn-1',
       deviceId: 'device-1',
+      eventSeq: 71,
       result: {},
     })
     handlers.onChatStart?.({
       taskId: 'runtime-task-1',
       subtaskId: 'turn-2',
       deviceId: 'device-1',
+      eventSeq: 80,
     })
     handlers.onChatDone?.({
       taskId: 'runtime-task-1',
       subtaskId: 'turn-1',
       deviceId: 'device-1',
+      eventSeq: 71,
       result: {},
     })
 
     expect(onAssistantSettled).toHaveBeenCalledTimes(1)
-    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'succeeded')
+    expect(onAssistantSettled).toHaveBeenCalledWith('turn-1', 'succeeded', 71)
   })
 
   test('maps a Codex failure to an identified canonical error item action', () => {

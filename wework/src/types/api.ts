@@ -1743,6 +1743,7 @@ export interface ChatCancelAck {
 export interface ChatStartPayload {
   taskId?: string
   subtaskId?: string
+  eventSeq?: number
   clientUserMessageId?: string
   runtimeGeneratedUserMessage?: {
     id: string
@@ -1794,6 +1795,7 @@ export interface ChatChunkPayload {
 export interface ChatDonePayload {
   taskId?: string
   subtaskId?: string
+  eventSeq?: number
   offset?: number
   result: ChatResultPayload
   deviceId?: string
@@ -1802,6 +1804,7 @@ export interface ChatDonePayload {
 export interface ChatErrorPayload {
   taskId?: string
   subtaskId?: string
+  eventSeq?: number
   error: string
   type?: string
   deviceId?: string

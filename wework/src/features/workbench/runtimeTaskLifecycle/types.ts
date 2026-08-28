@@ -16,6 +16,8 @@ export interface RuntimeTaskLifecycleState {
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
   workspaceCreationKind?: 'worktree'
+  lastEventSeq: number | null
+  lastTerminalTurnId: string | null
   executionPhase: RuntimeTaskExecutionPhase
   turnPhase: RuntimeTaskTurnPhase
   turnOutcome: RuntimeTaskTurnOutcome
@@ -44,6 +46,7 @@ export interface RuntimeTaskLifecycleSnapshot {
   address: RuntimeTaskAddress
   task: RuntimeTaskSummary | null
   workspaceCreationKind?: 'worktree'
+  lastEventSeq: number | null
   execution: {
     phase: RuntimeTaskExecutionPhase
     known: boolean
@@ -75,11 +78,12 @@ export type RuntimeTaskLifecycleEvent =
   | { type: 'stop_rejected' }
   | { type: 'executor_started' }
   | { type: 'executor_settled' }
-  | { type: 'turn_started'; turnId?: string | null }
+  | { type: 'turn_started'; turnId?: string | null; eventSeq?: number }
   | {
       type: 'turn_settled'
       turnId?: string | null
       outcome?: Exclude<RuntimeTaskTurnOutcome, null>
+      eventSeq?: number
     }
   | { type: 'turn_recovered'; streaming: boolean; turnId?: string | null }
   | { type: 'goal_status_received'; goalStatus: RuntimeGoalStatus | null }

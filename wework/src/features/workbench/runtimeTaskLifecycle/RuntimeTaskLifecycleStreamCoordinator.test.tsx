@@ -1,6 +1,6 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeWorkListResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '../workbenchServices'
 import {
@@ -43,6 +43,33 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
 
     expect(listRuntimeWork).not.toHaveBeenCalled()
     expect(getRuntimeTranscript).not.toHaveBeenCalled()
+  })
+
+  test('subscribes only to recovery events', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    let streamHandlers: ChatStreamHandlers = {}
+    const services = {
+      chatStream: {
+        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
+          streamHandlers = handlers
+          return vi.fn()
+        }),
+      },
+      executorClient: {
+        runtime: {
+          listRuntimeWork: vi.fn(),
+          getRuntimeTranscript: vi.fn(),
+        },
+      },
+    } as unknown as WorkbenchServices
+
+    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
+
+    expect(streamHandlers.onChatStart).toBeUndefined()
+    expect(streamHandlers.onChatDone).toBeUndefined()
+    expect(streamHandlers.onChatError).toBeUndefined()
+    expect(streamHandlers.onRuntimeEventLagged).toBeDefined()
+    expect(streamHandlers.onRuntimeTransportReplaced).toBeDefined()
   })
 
   test('reconnects and reconciles running tasks after system resume', async () => {
@@ -98,11 +125,12 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
     store.syncRuntimeWork(runtimeWork(true))
     let streamHandlers: ChatStreamHandlers = {}
     const pendingRuntimeWork: Array<(value: RuntimeWorkListResponse) => void> = []
-    const listRuntimeWork = vi.fn(() => {
-      return new Promise<RuntimeWorkListResponse>(resolve => {
-        pendingRuntimeWork.push(resolve)
-      })
-    })
+    const listRuntimeWork = vi.fn(
+      () =>
+        new Promise<RuntimeWorkListResponse>(resolve => {
+          pendingRuntimeWork.push(resolve)
+        })
+    )
     const services = {
       chatStream: {
         subscribe: vi.fn((handlers: ChatStreamHandlers) => {
@@ -351,318 +379,6 @@ describe('RuntimeTaskLifecycleStreamCoordinator', () => {
       [backgroundAddress.taskId, currentAddress.taskId].sort()
     )
   })
-
-  test('reconciles a provider-renamed terminal turn from the authoritative transcript', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'provisional-turn')
-    let streamHandlers: ChatStreamHandlers = {}
-    const listRuntimeWork = vi.fn()
-    const getRuntimeTranscript = vi.fn().mockResolvedValue({
-      taskId: address.taskId,
-      workspacePath: address.workspacePath,
-      runtime: address.runtime,
-      running: false,
-      messages: [
-        {
-          id: 'assistant-1',
-          role: 'assistant',
-          content: 'fast completed answer',
-          status: 'done',
-        },
-      ],
-      turns: [
-        {
-          id: 'provider-renamed-turn',
-          status: 'completed',
-          completedAt: 1_786_692_066_192,
-          items: [
-            {
-              id: 'assistant-item-1',
-              type: 'assistant_text',
-              content: 'fast completed answer',
-              createdAt: 1_786_692_066_192,
-            },
-          ],
-        },
-      ],
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'provider-renamed-turn',
-        result: {},
-      } as never)
-    })
-
-    expect(listRuntimeWork).not.toHaveBeenCalled()
-    await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    )
-    await waitFor(() => expect(store.getTask(address)?.turn.outcome).toBe('succeeded'))
-    expect(store.getTask(address)?.execution.phase).toBe('idle')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
-  })
-
-  test('does not settle a newer turn from a repeated old terminal event', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'turn-1')
-    store.turnSettled(address, 'turn-1', 'succeeded')
-    let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn().mockResolvedValue({
-      ...runtimeTranscript(true),
-      turns: [
-        {
-          id: 'turn-1',
-          status: 'completed',
-          completedAt: 1_786_692_066_192,
-          items: [],
-        },
-        {
-          id: 'turn-2',
-          status: 'streaming',
-          items: [],
-        },
-      ],
-    })
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn(),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatStart?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-2',
-      })
-    })
-    expect(store.getTask(address)?.turn.id).toBe('turn-2')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
-
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-1',
-        result: { value: 'old answer' },
-      })
-    })
-
-    await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    )
-    expect(store.getTask(address)?.turn.id).toBe('turn-2')
-    expect(store.getTask(address)?.turn.outcome).toBeNull()
-    expect(store.getTask(address)?.execution.phase).toBe('running')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
-  })
-
-  test('does not apply a terminal transcript after a newer turn starts', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'turn-1')
-    let streamHandlers: ChatStreamHandlers = {}
-    let resolveTranscript: ((value: RuntimeTranscriptResponse) => void) | undefined
-    const getRuntimeTranscript = vi.fn(
-      () =>
-        new Promise<RuntimeTranscriptResponse>(resolve => {
-          resolveTranscript = resolve
-        })
-    )
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn(),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-1',
-        result: {},
-      })
-    })
-    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
-
-    act(() => store.turnStarted(address, 'turn-2'))
-    await act(async () => {
-      resolveTranscript?.(runtimeTranscript(false))
-    })
-
-    expect(store.getTask(address)?.turn.id).toBe('turn-2')
-    expect(store.getTask(address)?.turn.outcome).toBeNull()
-    expect(store.getTask(address)?.execution.phase).toBe('running')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(true)
-  })
-
-  test('reconciles executor state when completion already carries content', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true, 'executor-device'))
-    store.turnStarted(address, 'turn-1')
-    let streamHandlers: ChatStreamHandlers = {}
-    const getRuntimeTranscript = vi.fn().mockResolvedValue(runtimeTranscript(false))
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork: vi.fn(),
-          getRuntimeTranscript,
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: address.taskId,
-        deviceId: 'executor-device',
-        subtaskId: 'turn-1',
-        result: { value: 'streamed answer' },
-      } as never)
-    })
-
-    await waitFor(() =>
-      expect(getRuntimeTranscript).toHaveBeenCalledWith({
-        ...address,
-        limit: 50,
-        refresh: true,
-      })
-    )
-    await waitFor(() => expect(store.getTask(address)?.execution.phase).toBe('idle'))
-    expect(store.getTask(address)?.turn.outcome).toBe('succeeded')
-    expect(store.getTask(address)?.derived.shouldShowSidebarRunning).toBe(false)
-  })
-
-  test('settles a matching cancellation without projecting executor execution as idle', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    store.turnStarted(address, 'turn-1')
-    let streamHandlers: ChatStreamHandlers = {}
-    const listRuntimeWork = vi.fn()
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript: vi.fn(),
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatError?.({
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        subtaskId: 'turn-1',
-        error: 'cancelled',
-        type: 'cancelled',
-      } as never)
-    })
-
-    expect(listRuntimeWork).not.toHaveBeenCalled()
-    expect(store.getTask(address)?.turn.outcome).toBe('cancelled')
-    expect(store.getTask(address)?.derived.isBusy).toBe(true)
-  })
-
-  test('ignores a terminal event for another task', async () => {
-    const store = new RuntimeTaskLifecycleStore('test')
-    const address = runtimeTaskAddress()
-    store.syncRuntimeWork(runtimeWork(true))
-    let streamHandlers: ChatStreamHandlers = {}
-    const listRuntimeWork = vi.fn()
-    const services = {
-      chatStream: {
-        subscribe: vi.fn((handlers: ChatStreamHandlers) => {
-          streamHandlers = handlers
-          return vi.fn()
-        }),
-      },
-      executorClient: {
-        runtime: {
-          listRuntimeWork,
-          getRuntimeTranscript: vi.fn(),
-        },
-      },
-    } as unknown as WorkbenchServices
-
-    render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />)
-    await act(async () => {
-      streamHandlers.onChatDone?.({
-        taskId: 'another-task',
-        deviceId: address.deviceId,
-        subtaskId: 'turn-1',
-        result: {},
-      } as never)
-    })
-
-    expect(listRuntimeWork).not.toHaveBeenCalled()
-    expect(store.getTask(address)?.derived.isBusy).toBe(true)
-  })
 })
 
 function runtimeTaskAddress() {
@@ -674,14 +390,13 @@ function runtimeTaskAddress() {
   }
 }
 
-function runtimeWork(running: boolean, remoteHostId?: string): RuntimeWorkListResponse {
+function runtimeWork(running: boolean): RuntimeWorkListResponse {
   const address = runtimeTaskAddress()
   return {
     projects: [],
     chats: [
       {
         deviceId: address.deviceId,
-        ...(remoteHostId ? { remoteHostId } : {}),
         workspacePath: address.workspacePath,
         available: true,
         tasks: [
@@ -701,7 +416,7 @@ function runtimeWork(running: boolean, remoteHostId?: string): RuntimeWorkListRe
   }
 }
 
-function runtimeTranscript(running: boolean): RuntimeTranscriptResponse {
+function runtimeTranscript(running: boolean) {
   const address = runtimeTaskAddress()
   return {
     taskId: address.taskId,

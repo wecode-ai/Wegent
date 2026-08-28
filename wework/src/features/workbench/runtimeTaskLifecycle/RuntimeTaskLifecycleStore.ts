@@ -238,16 +238,17 @@ export class RuntimeTaskLifecycleStore {
     this.dispatch(address, { type: 'executor_settled' })
   }
 
-  turnStarted(address: RuntimeTaskAddress, turnId?: string | null): void {
-    this.dispatch(address, { type: 'turn_started', turnId })
+  turnStarted(address: RuntimeTaskAddress, turnId?: string | null, eventSeq?: number): void {
+    this.dispatch(address, { type: 'turn_started', turnId, eventSeq })
   }
 
   turnSettled(
     address: RuntimeTaskAddress,
     turnId?: string | null,
-    outcome?: 'succeeded' | 'failed' | 'cancelled'
+    outcome?: 'succeeded' | 'failed' | 'cancelled',
+    eventSeq?: number
   ): void {
-    this.dispatch(address, { type: 'turn_settled', turnId, outcome })
+    this.dispatch(address, { type: 'turn_settled', turnId, outcome, eventSeq })
   }
 
   syncTranscript(
@@ -569,6 +570,7 @@ export function runtimeTaskLifecycleTransitionChanged(
     expected.turn.phase !== current.turn.phase ||
     expected.turn.id !== current.turn.id ||
     expected.turn.outcome !== current.turn.outcome ||
+    expected.lastEventSeq !== current.lastEventSeq ||
     expected.goalStatus !== current.goalStatus ||
     expected.continuable !== current.continuable
   )
