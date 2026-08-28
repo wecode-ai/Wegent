@@ -28,6 +28,7 @@ const corePluginDirectories = [
   'ui-applications',
   'ui-automations',
   'ui-cloud-work',
+  'ui-record-replay',
 ]
 
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
@@ -189,6 +190,7 @@ function pluginTarget(directory) {
     'ui-applications': 'wework-ui-applications',
     'ui-automations': 'wework-ui-automations',
     'ui-cloud-work': 'wework-ui-cloud-work',
+    'ui-record-replay': 'wework-ui-record-replay',
   }[directory]
 }
 

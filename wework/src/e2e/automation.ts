@@ -1161,6 +1161,21 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'evaluateEmbeddedBrowser': {
+      const value = JSON.parse(command.value ?? '{}') as {
+        expression?: string
+        label?: string
+      }
+      if (!value.expression?.trim()) {
+        throw new Error('evaluateEmbeddedBrowser requires an expression')
+      }
+      return JSON.stringify(
+        await invokeDesktopHost('browser.evaluate', {
+          label: value.label?.trim() || 'workspace-browser',
+          expression: value.expression,
+        })
+      )
+    }
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {

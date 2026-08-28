@@ -221,6 +221,19 @@ export function createElectronCapabilityRouter(
     browser.navigate(stringParam(params, 'label'), stringParam(params, 'url'))
   )
   router.register('browser.reload', params => browser.reload(stringParam(params, 'label')))
+  router.register('browser.recordReplay.list', () => browser.listRecordings())
+  router.register('browser.recordReplay.status', () => browser.recordingStatus())
+  router.register('browser.recordReplay.start', params =>
+    browser.startRecording(stringParam(params, 'title'), stringParam(params, 'label'))
+  )
+  router.register('browser.recordReplay.stop', () => browser.stopRecording())
+  router.register('browser.recordReplay.delete', params =>
+    browser.deleteRecording(stringParam(params, 'id'))
+  )
+  router.register('browser.recordReplay.replay', params =>
+    browser.replayRecording(stringParam(params, 'id'), stringParam(params, 'label'))
+  )
+  router.register('browser.recordReplay.cancel', () => browser.cancelReplay())
   router.register('browser.goBack', params => browser.goBack(stringParam(params, 'label')))
   router.register('browser.goForward', params => browser.goForward(stringParam(params, 'label')))
   registerBrowserHistoryCapabilities(router, browser)

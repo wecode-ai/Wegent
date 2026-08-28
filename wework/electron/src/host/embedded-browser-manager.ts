@@ -7,6 +7,12 @@ import {
   type BrowserHistoryEntry,
   type BrowserHistorySearch,
 } from './browser-history-store.js'
+import {
+  BrowserRecordReplay,
+  type BrowserRecording,
+  type BrowserRecordingStatus,
+  type BrowserRecordingSummary,
+} from './browser-record-replay.js'
 import { prepareLocalFileNavigation } from './local-file-preview.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -103,11 +109,17 @@ export class EmbeddedBrowserManager {
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
   private readonly events: BrowserHostEvent[] = []
   private readonly history: BrowserHistoryStore
+  private readonly recordReplay: BrowserRecordReplay
   private eventSequence = 0
   private historyGeneration = 0
 
   constructor(dataDirectory: string) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
+    this.recordReplay = new BrowserRecordReplay(
+      dataDirectory,
+      label => this.entries.get(this.activeLabel(label))?.contents ?? null,
+      (label, url) => this.navigate(this.activeLabel(label), url)
+    )
     session
       .fromPartition(EMBEDDED_BROWSER_PARTITION)
       .on('will-download', (_event, item, webContents) => {
@@ -206,6 +218,7 @@ export class EmbeddedBrowserManager {
         entry.previewDisplayUrl = null
         entry.previewSourceUrl = null
       }
+      this.recordReplay.recordNavigation(this.recordReplayLabel(entry.label), url, false)
       emitPageState()
     })
     contents.on('did-navigate-in-page', (_event, url) => {
@@ -214,6 +227,7 @@ export class EmbeddedBrowserManager {
         entry.previewDisplayUrl = null
         entry.previewSourceUrl = null
       }
+      this.recordReplay.recordNavigation(this.recordReplayLabel(entry.label), url, true)
       emitPageState()
     })
     contents.on('did-fail-load', (_event, code, message, validatedURL, isMainFrame) => {
@@ -229,12 +243,42 @@ export class EmbeddedBrowserManager {
     })
     contents.on('did-finish-load', () => {
       void this.recordHistoryVisit(entry)
+      void this.recordReplay.browserReady(this.recordReplayLabel(entry.label), contents)
     })
     this.entries.set(label, entry)
     // Registration, not navigation completion, is the browser host readiness boundary.
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
+    await this.recordReplay.browserReady(this.recordReplayLabel(entry.label), contents)
     return this.state(label)
+  }
+
+  listRecordings(): Promise<BrowserRecordingSummary[]> {
+    return this.recordReplay.list()
+  }
+
+  recordingStatus(): BrowserRecordingStatus {
+    return this.recordReplay.status()
+  }
+
+  startRecording(title: string, label: string): Promise<BrowserRecordingStatus> {
+    return this.recordReplay.start(title, requiredLabel(label))
+  }
+
+  stopRecording(): Promise<BrowserRecording> {
+    return this.recordReplay.stop()
+  }
+
+  deleteRecording(id: string): Promise<boolean> {
+    return this.recordReplay.remove(id)
+  }
+
+  replayRecording(id: string, label: string): Promise<BrowserRecordingStatus> {
+    return this.recordReplay.replay(id, requiredLabel(label))
+  }
+
+  cancelReplay(): void {
+    this.recordReplay.cancel()
   }
 
   setBounds(label: string, bounds: BrowserBounds, visible: boolean): void {
@@ -351,6 +395,10 @@ export class EmbeddedBrowserManager {
     const normalizedBaseLabel = requiredLabel(baseLabel)
     const normalizedActiveLabel = requiredLabel(activeLabel)
     this.activeTabs.set(normalizedBaseLabel, normalizedActiveLabel)
+    const activeEntry = this.entries.get(normalizedActiveLabel)
+    if (activeEntry) {
+      void this.recordReplay.browserReady(normalizedBaseLabel, activeEntry.contents)
+    }
     const prefix = `${normalizedBaseLabel}:`
     for (const entry of this.entries.values()) {
       if (
@@ -366,6 +414,13 @@ export class EmbeddedBrowserManager {
   activeLabel(baseLabel: string): string {
     const normalizedBaseLabel = requiredLabel(baseLabel)
     return this.activeTabs.get(normalizedBaseLabel) ?? normalizedBaseLabel
+  }
+
+  private recordReplayLabel(activeLabel: string): string {
+    for (const [baseLabel, currentLabel] of this.activeTabs) {
+      if (currentLabel === activeLabel) return baseLabel
+    }
+    return activeLabel
   }
 
   has(label: string): boolean {

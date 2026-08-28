@@ -17,8 +17,11 @@ describe('buildAiVerifyEnvironment', () => {
         WEGENT_EXECUTOR_SOURCE_DIR: '/tmp/foreign-source',
         ELECTRON_RUN_AS_NODE: '1',
         WEWORK_COMPONENT_RESOURCES_ROOT: '/tmp/foreign-components',
+        WEWORK_CORE_PLUGIN_ROOT: '/Applications/WeWork.app/Contents/Resources/wework-core-plugins',
+        WEWORK_CORE_PLUGINS_SHA256: 'foreign-plugin-hash',
         WEWORK_EXECUTOR_PATH: '/Applications/WeWork.app/Contents/Resources/bin/wegent-executor',
         WEWORK_EXECUTOR_SIDECAR: '/tmp/foreign-sidecar',
+        WEWORK_HARNESS_RESOURCE_ROOT: '/Applications/WeWork.app/Contents/Resources/harness-runtime',
         WEWORK_HARNESS_RUNTIME_ROOT: '/tmp/foreign-harness-runtime',
         WEWORK_NODE_PATH: '/Applications/WeWork.app/Contents/MacOS/WeWork',
         WEWORK_NODE_RUNTIME_KIND: 'electron',
@@ -63,8 +66,11 @@ describe('buildAiVerifyEnvironment', () => {
     expect(environment.DWS_BINARY_PATH).toBeUndefined()
     expect(environment.ELECTRON_RUN_AS_NODE).toBeUndefined()
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toBeUndefined()
+    expect(environment.WEWORK_CORE_PLUGINS_SHA256).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_PATH).toBeUndefined()
     expect(environment.WEWORK_EXECUTOR_SIDECAR).toBeUndefined()
+    expect(environment.WEWORK_HARNESS_RESOURCE_ROOT).toBeUndefined()
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toBeUndefined()
     expect(environment.WEWORK_NODE_PATH).toBeUndefined()
     expect(environment.WEWORK_NODE_RUNTIME_KIND).toBeUndefined()

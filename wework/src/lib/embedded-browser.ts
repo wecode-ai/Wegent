@@ -135,6 +135,28 @@ export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   port: number
 }
 
+export interface BrowserRecordingSummary {
+  id: string
+  title: string
+  browserLabel: string
+  createdAt: number
+  endedAt: number
+  initialUrl: string | null
+  stepCount: number
+  durationMs: number
+  containsHandoff: boolean
+}
+
+export interface BrowserRecordingStatus {
+  phase: 'idle' | 'recording' | 'replaying' | 'paused' | 'failed'
+  recordingId: string | null
+  browserLabel: string | null
+  title: string | null
+  stepCount: number
+  currentStep: number | null
+  message: string | null
+}
+
 interface ElectronBrowserHostEvent {
   sequence: number
   type:
@@ -445,6 +467,40 @@ export async function closeEmbeddedBrowsers(labels: string[]): Promise<void> {
 
 export async function clearEmbeddedBrowserData(kinds?: EmbeddedBrowserDataKind[]): Promise<number> {
   return invokeDesktopHost<number>('browser.clearData', { dataKinds: kinds ?? null })
+}
+
+export function listBrowserRecordings(): Promise<BrowserRecordingSummary[]> {
+  return invokeDesktopHost('browser.recordReplay.list')
+}
+
+export function readBrowserRecordingStatus(): Promise<BrowserRecordingStatus> {
+  return invokeDesktopHost('browser.recordReplay.status')
+}
+
+export function startBrowserRecording(
+  title: string,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<BrowserRecordingStatus> {
+  return invokeDesktopHost('browser.recordReplay.start', { title, label })
+}
+
+export function stopBrowserRecording(): Promise<void> {
+  return invokeDesktopHost('browser.recordReplay.stop')
+}
+
+export function deleteBrowserRecording(id: string): Promise<boolean> {
+  return invokeDesktopHost('browser.recordReplay.delete', { id })
+}
+
+export function replayBrowserRecording(
+  id: string,
+  label = DEFAULT_EMBEDDED_BROWSER_LABEL
+): Promise<BrowserRecordingStatus> {
+  return invokeDesktopHost('browser.recordReplay.replay', { id, label })
+}
+
+export function cancelBrowserReplay(): Promise<void> {
+  return invokeDesktopHost('browser.recordReplay.cancel')
 }
 
 export function requestEmbeddedBrowserOpen(

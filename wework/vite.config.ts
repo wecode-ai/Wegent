@@ -113,6 +113,7 @@ export default defineConfig({
         'wework-ui-applications': path.resolve(__dirname, 'dsh/ui-applications/src/route.tsx'),
         'wework-ui-automations': path.resolve(__dirname, 'dsh/ui-automations/src/route.tsx'),
         'wework-ui-cloud-work': path.resolve(__dirname, 'dsh/ui-cloud-work/src/route.tsx'),
+        'wework-ui-record-replay': path.resolve(__dirname, 'dsh/ui-record-replay/src/route.tsx'),
         'wework-ui-cloud-work-sidebar': path.resolve(
           __dirname,
           'dsh/ui-cloud-work/src/sidebar-navigation.tsx'
