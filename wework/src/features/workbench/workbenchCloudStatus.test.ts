@@ -110,6 +110,41 @@ describe('mergeRuntimeWorkLists', () => {
     ).toEqual(['task-local', 'task-remote'])
   })
 
+  test('keeps the persisted sidebar project order across runtime source merges', () => {
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'project-b', name: 'Project B', sidebarOrder: 1 },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/workspace/b' }],
+        },
+        {
+          project: { key: 'project-a', name: 'Project A', sidebarOrder: 0 },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/workspace/a' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'project-c', name: 'Project C', sidebarOrder: 2 },
+          deviceWorkspaces: [{ ...workspace('remote-device', []), workspacePath: '/workspace/c' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    const merged = mergeRuntimeWorkLists(localWork, cloudWork)
+
+    expect(merged.projects.map(project => project.project.name)).toEqual([
+      'Project A',
+      'Project B',
+      'Project C',
+    ])
+  })
+
   test('deduplicates one completed task projected through different workspace paths', () => {
     const staleProjection: RuntimeWorkListResponse = {
       projects: [

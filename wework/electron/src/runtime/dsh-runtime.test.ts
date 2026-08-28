@@ -68,6 +68,18 @@ describe('DSH runtime readiness', () => {
     setTimeout(() => ready.add('/terminal'), 100)
     await expect(started).resolves.toBeUndefined()
   })
+
+  test('uses the configured managed-process startup timeout', async () => {
+    const runtime = new DshRuntime({
+      url: 'http://127.0.0.1/pending',
+      command: process.execPath,
+      args: ['-e', 'setInterval(() => {}, 1000)'],
+      startTimeoutMs: 10,
+    })
+
+    await expect(runtime.start()).rejects.toThrow('dsh-web startup timed out')
+    await runtime.stop()
+  })
 })
 
 function listen(server: ReturnType<typeof createServer>): Promise<void> {

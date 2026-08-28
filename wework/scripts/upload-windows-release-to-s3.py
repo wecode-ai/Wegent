@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
+from minio_release_assets import (
+    load_component_assets,
+    publish_component_assets,
+    publish_component_manifest,
+)
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$")
 
@@ -213,6 +218,7 @@ def publish_channel(
     channel: str,
 ) -> bool:
     channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
+    component_manifest = output_dir / f"components-{channel}-windows-x64.json"
     electron_channel = "latest" if channel == "stable" else "beta"
     electron_manifest = output_dir / f"{electron_channel}.yml"
     if not release_advances_channel(
@@ -220,7 +226,7 @@ def publish_channel(
         bucket,
         prefix,
         channel_manifest,
-        ((prefix, electron_manifest.name),),
+        ((prefix, electron_manifest.name), (prefix, component_manifest.name)),
     ):
         return False
     upload_electron_manifest(client, bucket, prefix, electron_manifest)
@@ -253,13 +259,62 @@ def main() -> None:
     bucket = require_env("ATTACHMENT_S3_BUCKET")
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/windows")
     version = require_env("RELEASE_VERSION")
+    source_sha = require_env("RELEASE_SOURCE_SHA")
+    release_kind = os.environ.get("RELEASE_KIND", "full")
+    if release_kind not in {"full", "component"}:
+        raise SystemExit(f"Unsupported Wework release kind: {release_kind}")
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
         raise SystemExit(f"Unsupported Wework update channel: {channel}")
     output_dir = Path(require_env("RELEASE_OUTPUT_DIR"))
+    component_prefix = os.environ.get("WEWORK_COMPONENT_S3_PREFIX", "wework/components")
 
     if not client.bucket_exists(bucket):
         raise SystemExit(f"S3 bucket does not exist: {bucket}")
+
+    component_assets = load_component_assets(output_dir, "windows", "x64", version)
+    publish_component_assets(
+        client,
+        bucket,
+        prefix,
+        component_prefix,
+        component_assets,
+        lambda path, target_prefix: upload_file(
+            client,
+            bucket,
+            target_prefix,
+            path,
+            "public, max-age=31536000, immutable",
+        ),
+    )
+
+    def upload_component_channel(
+        target_channel: str,
+        component_only: bool,
+        allow_different_app_version: bool,
+    ) -> bool:
+        return publish_component_manifest(
+            client,
+            bucket,
+            prefix,
+            output_dir,
+            target_channel,
+            "windows",
+            "x64",
+            version,
+            source_sha,
+            component_only,
+            allow_different_app_version,
+            lambda path, target_prefix: upload_file(
+                client, bucket, target_prefix, path, "no-cache, no-store"
+            ),
+        )
+
+    if release_kind == "component":
+        upload_component_channel(channel, True, False)
+        if channel == "stable":
+            upload_component_channel("beta", True, True)
+        return
 
     artifacts = sorted(output_dir.glob(f"WeWork_{version}_*"))
     if not artifacts:
@@ -276,8 +331,12 @@ def main() -> None:
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
     advanced = publish_channel(client, bucket, prefix, output_dir, channel)
+    if advanced:
+        upload_component_channel(channel, False, False)
     if channel == "stable":
-        publish_channel(client, bucket, prefix, output_dir, "beta")
+        beta_advanced = publish_channel(client, bucket, prefix, output_dir, "beta")
+        if beta_advanced:
+            upload_component_channel("beta", False, False)
     if channel != "stable" or not advanced:
         return
     publish_latest_installer(client, bucket, prefix, version, artifacts)

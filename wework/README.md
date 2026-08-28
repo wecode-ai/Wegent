@@ -15,14 +15,15 @@ workflows. It is built with Electron, Vite, React, and TypeScript.
 
 ## Startup Experience
 
-Wework 启动时以“人和机器人共同准备工作台”为核心语义，依次呈现整理项目、连接工具和唤醒智能体三个阶段。启动动效必须保持文案与阶段图形同步，支持深色模式和减少动态效果偏好，并避免原生窗口阴影形成额外黑色边框。桌面运行时启动失败时必须退出准备动画，显示具体错误和重试入口。
+Wework 启动时以“人和机器人共同准备工作台”为核心语义，依次呈现整理项目、连接工具和唤醒智能体三个阶段。启动动效必须保持文案与阶段图形同步，支持深色模式和减少动态效果偏好，并避免原生窗口阴影形成额外黑色边框。Core DSH 最多等待 120 秒完成启动；超时或其他桌面运行时启动失败时必须退出准备动画，显示具体错误和重试入口。
 
 The Wework startup experience represents a person and a robot preparing the
 workbench together. It progresses through project organization, tool
 connection, and agent activation. Keep the copy synchronized with the visual
 stage, support dark mode and reduced motion, and avoid native window shadows
-that create an extra dark outline. If the desktop runtime fails to start,
-replace the preparation animation with the concrete error and a retry action.
+that create an extra dark outline. Core DSH has up to 120 seconds to become
+ready. If it times out or another desktop runtime fails to start, replace the
+preparation animation with the concrete error and a retry action.
 
 ## Development
 

@@ -83,6 +83,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain("path: 'bundled-plugins'")
+    expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
+    expect(source).toContain('version: weworkRuntimeVersion')
+    expect(source).toContain('sourceSha,')
+    expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
@@ -115,6 +121,21 @@ describe('desktop resource migration', () => {
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
+  })
+
+  test('creates macOS component archives from the requested packaged application', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
+    expect(source).toContain(
+      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
+    )
+    expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
+    expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
+    expect(source).not.toContain('async function findDirectory')
   })
 
   test('signs legacy updater assets through the Windows command interpreter', async () => {
@@ -150,6 +171,8 @@ describe('desktop resource migration', () => {
 
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('electronInstallScript')
+    expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
+    expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
 
   test.each([

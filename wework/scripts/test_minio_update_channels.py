@@ -16,7 +16,10 @@ SCRIPT_DIR = Path(__file__).parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from minio_release_assets import (  # noqa: E402
+    load_component_assets,
     load_runtime_asset_pairs,
+    publish_component_assets,
+    publish_component_manifest,
     publish_runtime_asset_pairs,
 )
 
@@ -376,6 +379,168 @@ def runtime_asset(kind: str, archive: Path, descriptor: Path) -> dict[str, str]:
     }
 
 
+def write_component_release(
+    tmp_path: Path,
+    platform: str = "macos",
+    arch: str = "arm64",
+    version: str = "1.2.3",
+    source_sha: str = "a" * 40,
+) -> None:
+    components = {}
+    for component_id in ("coreDsh", "executor"):
+        content = component_id.encode()
+        archive_sha256 = sha256(content).hexdigest()
+        asset_name = (
+            f"WeworkComponent_{component_id}_{archive_sha256}_"
+            f"{platform}_{arch}.tar.gz"
+        )
+        (tmp_path / asset_name).write_bytes(content)
+        components[component_id] = {
+            "version": "fixture",
+            "contentSha256": "b" * 64,
+            "archiveSha256": archive_sha256,
+            "archiveBytes": len(content),
+            "assetName": asset_name,
+            "entryPath": ".",
+        }
+    (tmp_path / f"components-{platform}-{arch}.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "appVersion": version,
+                "platform": platform,
+                "arch": arch,
+                "components": components,
+            }
+        ),
+        encoding="utf-8",
+    )
+    for channel in ("stable", "beta"):
+        (tmp_path / f"components-{channel}-{platform}-{arch}.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "appVersion": version,
+                    "sourceSha": source_sha,
+                    "channel": channel,
+                    "platform": platform,
+                    "arch": arch,
+                    "components": components,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+
+def test_component_assets_split_shared_and_release_specific_storage(
+    tmp_path: Path,
+) -> None:
+    write_component_release(tmp_path)
+    client = FakeClient()
+    uploaded = []
+
+    publish_component_assets(
+        client,
+        "releases",
+        "wework/macos",
+        "wework/components",
+        load_component_assets(tmp_path, "macos", "arm64", "1.2.3"),
+        lambda path, prefix: uploaded.append((path.name, prefix)),
+    )
+
+    assert [prefix for _, prefix in uploaded] == [
+        "wework/components",
+        "wework/macos",
+    ]
+
+
+def test_component_only_manifest_requires_the_same_installed_app_version(
+    tmp_path: Path,
+) -> None:
+    write_component_release(tmp_path)
+    client = FakeClient()
+    manifest_name = "components-stable-macos-arm64.json"
+    client.objects[f"wework/macos/{manifest_name}"] = json.dumps(
+        {"appVersion": "1.2.4"}
+    ).encode()
+
+    with pytest.raises(SystemExit, match="advanced from 1.2.3 to 1.2.4"):
+        publish_component_manifest(
+            client,
+            "releases",
+            "wework/macos",
+            tmp_path,
+            "stable",
+            "macos",
+            "arm64",
+            "1.2.3",
+            "a" * 40,
+            True,
+            False,
+            lambda _path, _prefix: None,
+        )
+
+
+def test_component_only_manifest_replaces_the_same_app_version(
+    tmp_path: Path,
+) -> None:
+    write_component_release(tmp_path)
+    client = FakeClient()
+    manifest_name = "components-stable-macos-arm64.json"
+    client.objects[f"wework/macos/{manifest_name}"] = json.dumps(
+        {"appVersion": "1.2.3", "sourceSha": "0" * 40}
+    ).encode()
+    uploaded = []
+
+    published = publish_component_manifest(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        "stable",
+        "macos",
+        "arm64",
+        "1.2.3",
+        "a" * 40,
+        True,
+        False,
+        lambda path, prefix: uploaded.append((path.name, prefix)),
+    )
+
+    assert published
+    assert uploaded == [(manifest_name, "wework/macos")]
+
+
+def test_component_only_secondary_channel_keeps_a_different_app_version(
+    tmp_path: Path,
+) -> None:
+    write_component_release(tmp_path)
+    client = FakeClient()
+    manifest_name = "components-beta-macos-arm64.json"
+    client.objects[f"wework/macos/{manifest_name}"] = json.dumps(
+        {"appVersion": "1.2.4-beta.1"}
+    ).encode()
+    uploaded = []
+
+    published = publish_component_manifest(
+        client,
+        "releases",
+        "wework/macos",
+        tmp_path,
+        "beta",
+        "macos",
+        "arm64",
+        "1.2.3",
+        "a" * 40,
+        True,
+        True,
+        lambda path, prefix: uploaded.append((path, prefix)),
+    )
+
+    assert not published
+    assert uploaded == []
+
+
 def test_runtime_asset_pairs_are_loaded_from_the_release_manifest(
     tmp_path: Path,
 ) -> None:
@@ -618,6 +783,9 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "prepare-desktop-release-assets.mjs" in script
     assert "generate-desktop-update-manifests.mjs" in script
     assert 'WEWORK_RELEASE_TARGETS="macos-$arch"' in script
+    assert 'WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL"' in script
+    assert '--release-kind) RELEASE_KIND="$2"' in script
+    assert '"$notes_path" "$SOURCE_SHA"' in script
     assert 'WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL"' in script
     assert 'WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET"' in script
     assert "wework_configure_internal_updater_key" in script
@@ -632,6 +800,9 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert "prepare-desktop-release-assets.mjs" in script
     assert "generate-desktop-update-manifests.mjs" in script
     assert "WEWORK_RELEASE_TARGETS=windows-x64" in script
+    assert 'WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL"' in script
+    assert '--release-kind) RELEASE_KIND="$2"' in script
+    assert '"$notes_path" "$SOURCE_SHA"' in script
     assert 'WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL"' in script
     assert 'WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET"' in script
     assert "node -p process.platform" in script
@@ -644,12 +815,14 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     "script_name",
     ["upload-mac-release-to-s3.py", "upload-windows-release-to-s3.py"],
 )
-def test_minio_uploads_electron_manifests_without_runtime_sidecars(
+def test_minio_uploads_component_assets_without_legacy_runtime_sidecars(
     script_name: str,
 ) -> None:
     script = (SCRIPT_DIR / script_name).read_text(encoding="utf-8")
 
     assert "upload_electron_manifest" in script
+    assert "publish_component_assets" in script
+    assert "publish_component_manifest" in script
     assert "publish_runtime_asset_pairs" not in script
 
 
@@ -663,20 +836,11 @@ def test_electron_release_bakes_the_minio_update_base_url() -> None:
     assert "packageMetadata.weworkUpdateBaseUrl?.trim()" in main
 
 
-def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:
-    script = (SCRIPT_DIR / "prepare-execution-runtime.mjs").read_text(encoding="utf-8")
-
-    assert "node-runtime-tar-gzip-v2" in script
-    assert "WEWORK_RUNTIME_TARGET" in script
-    assert "SHASUMS256.txt" in script
-    assert "Target Node runtime has the wrong architecture" in script
-
-
 def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v5" in script
+    assert "dsh-runtime-tar-gzip-v6" in script
     assert "supportedArchitectures" in script
     assert "--ignore-scripts" in script
     assert "prepareTargetSpawnHelpers" in script
@@ -685,9 +849,7 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
 @pytest.mark.parametrize(
     ("script_name", "target", "expected"),
     [
-        ("prepare-execution-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
         ("prepare-harness-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
-        ("prepare-execution-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
         ("prepare-harness-runtime.mjs", "x86_64-pc-windows-msvc", "windows-x64"),
     ],
 )

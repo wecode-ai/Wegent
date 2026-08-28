@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+SHARED_COMPONENT_IDS = frozenset({"coreDsh", "codex", "dws"})
+
 
 @dataclass(frozen=True)
 class RuntimeAssetPair:
@@ -13,6 +15,153 @@ class RuntimeAssetPair:
     descriptor: Path
     archive_bytes: int
     archive_sha256: str
+
+
+@dataclass(frozen=True)
+class ComponentAsset:
+    component_id: str
+    archive: Path
+    archive_bytes: int
+    archive_sha256: str
+
+
+def load_component_assets(
+    output_dir: Path,
+    platform: str,
+    arch: str,
+    version: str,
+) -> list[ComponentAsset]:
+    descriptor_path = output_dir / f"components-{platform}-{arch}.json"
+    descriptor = _read_json(descriptor_path, "component descriptor")
+    if (
+        descriptor.get("schemaVersion") != 1
+        or descriptor.get("appVersion") != version
+        or descriptor.get("platform") != platform
+        or descriptor.get("arch") != arch
+    ):
+        raise SystemExit(f"Invalid component descriptor metadata: {descriptor_path}")
+
+    components = descriptor.get("components")
+    if not isinstance(components, dict) or not components:
+        raise SystemExit(
+            f"Component descriptor contains no components: {descriptor_path}"
+        )
+
+    assets = []
+    for component_id, component in components.items():
+        if not isinstance(component_id, str) or not isinstance(component, dict):
+            raise SystemExit(f"Invalid component descriptor entry: {descriptor_path}")
+        asset_name = component.get("assetName")
+        archive_sha256 = component.get("archiveSha256")
+        if (
+            not isinstance(asset_name, str)
+            or Path(asset_name).name != asset_name
+            or not asset_name.endswith(".tar.gz")
+            or not _is_sha256(archive_sha256)
+        ):
+            raise SystemExit(
+                f"Invalid component asset metadata for {component_id}: {descriptor_path}"
+            )
+        archive = output_dir / asset_name
+        archive_bytes = archive.stat().st_size if archive.is_file() else 0
+        if archive_bytes <= 0 or _file_sha256(archive) != archive_sha256:
+            raise SystemExit(
+                f"Component archive does not match its descriptor: {archive}"
+            )
+        assets.append(
+            ComponentAsset(
+                component_id=component_id,
+                archive=archive,
+                archive_bytes=archive_bytes,
+                archive_sha256=archive_sha256,
+            )
+        )
+    return assets
+
+
+def publish_component_assets(
+    client: object,
+    bucket: str,
+    release_prefix: str,
+    shared_prefix: str,
+    assets: list[ComponentAsset],
+    upload: Callable[[Path, str], None],
+) -> None:
+    for asset in assets:
+        prefix = (
+            shared_prefix
+            if asset.component_id in SHARED_COMPONENT_IDS
+            else release_prefix
+        )
+        object_name = _storage_key(prefix, asset.archive.name)
+        if _object_exists(client, bucket, object_name):
+            if not _remote_file_matches(
+                client,
+                bucket,
+                object_name,
+                asset.archive_bytes,
+                asset.archive_sha256,
+            ):
+                raise SystemExit(
+                    f"Published component archive does not match {asset.archive.name}"
+                )
+            print(f"Reusing published component: {asset.archive.name}")
+            continue
+        upload(asset.archive, prefix)
+
+
+def publish_component_manifest(
+    client: object,
+    bucket: str,
+    prefix: str,
+    output_dir: Path,
+    channel: str,
+    platform: str,
+    arch: str,
+    version: str,
+    source_sha: str,
+    component_only: bool,
+    allow_different_app_version: bool,
+    upload: Callable[[Path, str], None],
+) -> bool:
+    path = output_dir / f"components-{channel}-{platform}-{arch}.json"
+    manifest = _read_json(path, "component manifest")
+    if (
+        manifest.get("schemaVersion") != 1
+        or manifest.get("appVersion") != version
+        or manifest.get("sourceSha") != source_sha
+        or manifest.get("channel") != channel
+        or manifest.get("platform") != platform
+        or manifest.get("arch") != arch
+        or not isinstance(manifest.get("components"), dict)
+    ):
+        raise SystemExit(f"Invalid component manifest metadata: {path}")
+
+    if component_only:
+        current = _read_remote_json(
+            client,
+            bucket,
+            _storage_key(prefix, path.name),
+        )
+        if current is None:
+            raise SystemExit(
+                f"Cannot publish components without an existing {channel} app release"
+            )
+        current_version = current.get("appVersion")
+        if current_version != version:
+            if allow_different_app_version:
+                print(
+                    f"Keeping {channel} component manifest at app version "
+                    f"{current_version}."
+                )
+                return False
+            raise SystemExit(
+                f"The {channel} channel advanced from {version} to "
+                f"{current_version} while components were building"
+            )
+
+    upload(path, prefix)
+    return True
 
 
 def load_runtime_asset_pairs(output_dir: Path) -> list[RuntimeAssetPair]:
@@ -142,6 +291,40 @@ def _object_exists(client: object, bucket: str, object_name: str) -> bool:
         raise
 
 
+def _read_json(path: Path, description: str) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"Invalid {description} {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise SystemExit(f"Invalid {description}: {path}")
+    return value
+
+
+def _read_remote_json(
+    client: object,
+    bucket: str,
+    object_name: str,
+) -> dict | None:
+    from minio.error import S3Error
+
+    response = None
+    try:
+        response = client.get_object(bucket, object_name)
+        value = json.loads(response.read().decode("utf-8"))
+        return value if isinstance(value, dict) else None
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return None
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    finally:
+        if response is not None:
+            response.close()
+            response.release_conn()
+
+
 def _read_descriptor(path: Path) -> dict:
     try:
         descriptor = json.loads(path.read_text(encoding="utf-8"))
@@ -160,14 +343,27 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _remote_archive_matches(
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdefABCDEF" for character in value)
+    )
+
+
+def _storage_key(prefix: str, filename: str) -> str:
+    return "/".join(part for part in (prefix.strip("/"), filename) if part)
+
+
+def _remote_file_matches(
     client: object,
     bucket: str,
     object_name: str,
-    pair: RuntimeAssetPair,
+    expected_bytes: int,
+    expected_sha256: str,
 ) -> bool:
     metadata = client.stat_object(bucket, object_name)
-    if metadata.size != pair.archive_bytes:
+    if metadata.size != expected_bytes:
         return False
     response = client.get_object(bucket, object_name)
     digest = sha256()
@@ -177,7 +373,22 @@ def _remote_archive_matches(
     finally:
         response.close()
         response.release_conn()
-    return digest.hexdigest() == pair.archive_sha256
+    return digest.hexdigest() == expected_sha256
+
+
+def _remote_archive_matches(
+    client: object,
+    bucket: str,
+    object_name: str,
+    pair: RuntimeAssetPair,
+) -> bool:
+    return _remote_file_matches(
+        client,
+        bucket,
+        object_name,
+        pair.archive_bytes,
+        pair.archive_sha256,
+    )
 
 
 def _remote_descriptor_matches(

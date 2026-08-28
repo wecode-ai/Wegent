@@ -5,6 +5,7 @@ import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
   loadDefaultWorkItemProject,
+  publishProjectSpaceTaskBindingChanged,
   projectSpaceKey,
   projectSpaceRef,
   runtimeCloudProjectId,
@@ -118,6 +119,7 @@ function pendingBindingTargetsTask(address: RuntimeTaskAddress): boolean {
 
 function publishBoundProjectSpaceContext(update: BoundProjectSpaceContextUpdate) {
   rememberProjectTaskStore(update.task, update.project.project_store)
+  publishProjectSpaceTaskBindingChanged(update.task)
   const pendingBinding = pendingTodoBindingsByTask.get(runtimeTaskKey(update.task))
   if (pendingBinding) clearPendingBinding(pendingBinding)
   for (const listener of boundProjectSpaceContextListeners) listener(update)
@@ -426,6 +428,9 @@ export function useWorkbenchCloudProjectContext({
       void waitForPendingProjectSpaceContext(contextApis, contextRuntimeTask, () => active)
         .then(context => {
           if (!active || contextLookupGenerationRef.current !== lookupGeneration) return
+          if (rememberProjectTaskStore(contextRuntimeTask, context.project.project_store)) {
+            publishProjectSpaceTaskBindingChanged(contextRuntimeTask)
+          }
           setBoundCloudProject(context.project)
           setBoundCloudItem(context.loop_item)
           setDeliveryItem(
