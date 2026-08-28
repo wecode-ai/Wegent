@@ -342,6 +342,11 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     raise ExternalDocumentFetchError(
                         "DingTalk export returned invalid data"
                     )
+                task_id = data.get("taskId")
+                if "taskId" in arguments and task_id != arguments["taskId"]:
+                    raise ExternalDocumentFetchError(
+                        "DingTalk export task identity changed"
+                    )
                 if data.get("status") == "success":
                     filename = data.get("fileName")
                     if not isinstance(filename, str) or not filename.lower().endswith(
@@ -350,18 +355,15 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                         raise ExternalDocumentFetchError(
                             "DingTalk export did not return an XLSX workbook"
                         )
-                    return await download_content(data.get("downloadUrl"))
-                task_id = data.get("taskId")
+                    # Completion can precede publication of the download URL.
+                    if data.get("downloadUrl"):
+                        return await download_content(data["downloadUrl"])
                 if (
-                    data.get("status") != "pending"
+                    data.get("status") not in {"pending", "success"}
                     or not isinstance(task_id, str)
-                    or not task_id
+                    or not task_id.strip()
                 ):
                     raise ExternalDocumentFetchError("DingTalk AI Table export failed")
-                if "taskId" in arguments and task_id != arguments["taskId"]:
-                    raise ExternalDocumentFetchError(
-                        "DingTalk export task identity changed"
-                    )
                 arguments = {"baseId": node_id, "taskId": task_id, "timeoutMs": 30000}
                 await asyncio.sleep(0.2)
         raise ExternalDocumentFetchError("DingTalk AI Table export timed out")
@@ -384,7 +386,13 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             raise ExternalDocumentFetchError(
                 f"DingTalk MCP returned invalid JSON for {tool_name}"
             ) from exc
-        if not isinstance(payload, dict) or payload.get("success") is not True:
+        # AI Table tools use a status envelope; Docs tools use a boolean flag.
+        succeeded = isinstance(payload, dict) and (
+            payload.get("status") == "success"
+            if tool_name == "export_data"
+            else payload.get("success") is True
+        )
+        if not succeeded:
             raise ExternalDocumentFetchError(
                 f"DingTalk MCP returned an unsuccessful response for {tool_name}"
             )

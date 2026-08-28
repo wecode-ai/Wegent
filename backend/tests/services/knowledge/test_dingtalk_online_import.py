@@ -9,24 +9,35 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+from io import BytesIO
 from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
+from fastapi.testclient import TestClient
+from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
 from app.models.dingtalk_doc import DingTalkNodeSource, DingtalkSyncedNode
+from app.models.knowledge import DocumentIndexStatus
 from app.models.user import User
 from app.schemas.dingtalk_doc import DingtalkDocNode
+from app.schemas.knowledge import KnowledgeBaseCreate
+from app.services.context import context_service
 from app.services.dingtalk_doc_service import DingTalkDocService
 from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+from app.services.knowledge.external_document_import import (
+    external_document_import_service,
+    run_external_document_import,
+)
 from app.services.knowledge.external_document_providers import (
     DingTalkExternalDocumentProvider,
     ExternalDocumentFetchError,
     ExternalDocumentImportError,
 )
+from app.services.knowledge.knowledge_service import KnowledgeService
 
 McpFixture = tuple[dict[str, Any], MagicMock]
 
@@ -57,7 +68,7 @@ async def test_signed_download_does_not_log_credentials(
     )
     responses, _ = docs_mcp
     responses["export_data"] = {
-        "success": True,
+        "status": "success",
         "data": {
             "status": "success",
             "fileName": "Base.xlsx",
@@ -145,6 +156,7 @@ async def test_missing_ai_configuration_does_not_block_text_import(
             "downloadUrl": "https://files.example.test/secret",
         },
         {"status": "success", "fileName": "Base.xlsx"},
+        {"status": "success", "fileName": "Base.xlsx", "taskId": " "},
     ],
 )
 async def test_invalid_export_results_are_not_downloaded(
@@ -155,25 +167,30 @@ async def test_invalid_export_results_are_not_downloaded(
     signed_download: list,
     data: dict,
 ) -> None:
-    responses, _ = docs_mcp
-    responses["export_data"] = {"success": True, "data": data}
+    responses, session = docs_mcp
+    responses["export_data"] = {"status": "success", "data": data}
     with pytest.raises(ExternalDocumentFetchError):
         await ai_source.fetch_content(test_db, test_user, "base-1")
     assert signed_download == []
+    assert (
+        sum(c.args[0] == "export_data" for c in session.call_tool.await_args_list) == 1
+    )
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["pending", "success"])
 async def test_export_polling_is_bounded_without_restarting_job(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
     ai_source: DingTalkExternalDocumentProvider,
     monkeypatch: pytest.MonkeyPatch,
+    status: str,
 ) -> None:
     responses, session = docs_mcp
     responses["export_data"] = {
-        "success": True,
-        "data": {"status": "pending", "taskId": "pending-job"},
+        "status": "success",
+        "data": {"status": status, "taskId": "pending-job", "fileName": "Base.xlsx"},
     }
     monkeypatch.setattr(
         "app.services.knowledge.external_document_providers.asyncio.sleep", AsyncMock()
@@ -187,6 +204,60 @@ async def test_export_polling_is_bounded_without_restarting_job(
     ]
     assert len(calls) == 6
     assert all(c["taskId"] == "pending-job" and "scope" not in c for c in calls[1:])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_id", ["other-job", None])
+async def test_export_rejects_changed_or_missing_task_identity(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+    response_id: str | None,
+) -> None:
+    responses, _ = docs_mcp
+    responses["export_data"] = lambda args: {
+        "status": "success",
+        "data": (
+            {
+                "status": "success",
+                "fileName": "Base.xlsx",
+                "taskId": response_id,
+                "downloadUrl": "https://files.example.test/base",
+            }
+            if "taskId" in args
+            else {"status": "pending", "taskId": "export-1"}
+        ),
+    }
+
+    with pytest.raises(ExternalDocumentFetchError, match="task identity changed"):
+        await ai_source.fetch_content(test_db, test_user, "base-1")
+    assert signed_download == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("envelope", [{"success": True}, {"status": "failed"}, {}])
+async def test_ai_export_requires_its_own_success_envelope(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+    envelope: dict,
+) -> None:
+    responses, _ = docs_mcp
+    responses["export_data"] = {
+        **envelope,
+        "data": {
+            "status": "success",
+            "fileName": "Base.xlsx",
+            "downloadUrl": "https://files.example.test/base",
+        },
+    }
+    with pytest.raises(ExternalDocumentFetchError, match="unsuccessful response"):
+        await ai_source.fetch_content(test_db, test_user, "base-1")
+    assert signed_download == []
 
 
 @pytest.mark.asyncio
@@ -212,7 +283,7 @@ async def test_unsafe_or_failed_download_never_returns_content_or_leaks_url(
 ) -> None:
     responses, _ = docs_mcp
     responses["export_data"] = {
-        "success": True,
+        "status": "success",
         "data": {"status": "success", "fileName": "Base.xlsx", "downloadUrl": url},
     }
     mock_download(monkeypatch, status=status_code, body=b"oversized")
@@ -268,8 +339,13 @@ def signed_download(monkeypatch: pytest.MonkeyPatch) -> list:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("initial_status", ["pending", "success"])
 async def test_ai_table_exports_whole_base_and_polls_same_task(
-    test_db: Session, test_user: User, docs_mcp: McpFixture, signed_download: list
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    signed_download: list,
+    initial_status: str,
 ) -> None:
     responses, session = docs_mcp
     info = {
@@ -283,15 +359,21 @@ async def test_ai_table_exports_whole_base_and_polls_same_task(
     responses["list_nodes"] = {"success": True, "nodes": [info]}
     responses["get_document_info"] = info
     responses["export_data"] = lambda args: {
-        "success": True,
+        "status": "success",
+        "error": {},
         "data": (
             {
                 "status": "success",
                 "fileName": "Project.xlsx",
+                "taskId": "export-1",
                 "downloadUrl": "https://files.example.test/project",
             }
             if "taskId" in args
-            else {"status": "pending", "taskId": "export-1"}
+            else {
+                "status": initial_status,
+                "fileName": "Project.xlsx",
+                "taskId": "export-1",
+            }
         ),
     }
     await DingTalkDocService.sync_dingtalk_docs(test_user, test_db)
@@ -316,6 +398,74 @@ async def test_ai_table_exports_whole_base_and_polls_same_task(
         "https://mcp.example.test/docs",
         "https://mcp.example.test/ai_table",
     ]
+
+
+def test_exported_workbook_is_saved_and_previewable_before_index_success(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    ai_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+    dispatched: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workbook = Workbook()
+    workbook.active.append(["Project", "Status"])
+    workbook.active.append(["AI export preview", "Ready"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+    body = buffer.getvalue()
+    mock_download(monkeypatch, body=body)
+    responses, _ = docs_mcp
+    responses["export_data"] = lambda args: {
+        "status": "success",
+        "error": {},
+        "data": {
+            "status": "success",
+            "fileName": "Base.xlsx",
+            "taskId": "export-1",
+            **(
+                {"downloadUrl": "https://files.example.test/base"}
+                if "taskId" in args
+                else {}
+            ),
+        },
+    }
+    # No retrieval configuration: indexing will fail without contacting RAG.
+    kb_id = KnowledgeService.create_knowledge_base(
+        test_db, test_user.id, KnowledgeBaseCreate(name="export-preview-kb")
+    )
+    document = external_document_import_service.import_document(
+        test_db, test_user, kb_id, "dingtalk", "base-1"
+    )
+    document_id = document.id
+
+    run_external_document_import(
+        test_db, document, test_user, generation=document.index_generation
+    )
+
+    current = KnowledgeService.get_document(test_db, document_id, test_user.id)
+    assert current.file_extension == "xlsx"
+    assert current.file_size == len(body)
+    assert current.index_status == DocumentIndexStatus.FAILED
+    attachment = context_service.get_context(
+        test_db, current.attachment_id, test_user.id
+    )
+    assert context_service.get_attachment_binary_data(test_db, attachment) == body
+    response = test_client.get(
+        f"/api/knowledge-bases/{kb_id}/documents/{document_id}/detail",
+        headers={"Authorization": f"Bearer {test_token}"},
+        params={"include_summary": False},
+    )
+    assert response.status_code == 200, response.text
+    assert "AI export preview" in response.json()["content"]
+    repeated = external_document_import_service.import_document(
+        test_db, test_user, kb_id, "dingtalk", "base-1"
+    )
+    assert repeated.id == document_id
 
 
 @pytest.mark.asyncio
