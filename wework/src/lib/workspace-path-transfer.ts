@@ -167,7 +167,7 @@ export async function resolveDataTransferWorkspacePaths(
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)
     return {
-      attachmentFiles: files.filter(isWorkspaceImageFile),
+      attachmentFiles: files,
       referenceEntries: [],
     }
   }

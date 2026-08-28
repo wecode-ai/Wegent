@@ -1205,6 +1205,7 @@ describe('ComposerTextarea', () => {
         'file'
       )
     })
+    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
     expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledWith(dropEvent.dataTransfer, 'drop')
     expect(onPasteFiles).not.toHaveBeenCalled()
   })

@@ -191,6 +191,17 @@ describe('workspace path transfer', () => {
     })
   })
 
+  test('keeps ordinary dropped files as attachments when native path inspection fails', async () => {
+    const file = new File(['archive'], 'feedback.zip', { type: 'application/zip' })
+    const data = clipboardData({}, [file])
+    mocks.desktopHost.mockRejectedValue(new Error('native inspection failed'))
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+  })
+
   test('reads bytes only for image paths when resolving stored local paths', async () => {
     const image = new File(['image'], 'preview.png', { type: 'image/png' })
     mocks.desktopHost.mockResolvedValue([
