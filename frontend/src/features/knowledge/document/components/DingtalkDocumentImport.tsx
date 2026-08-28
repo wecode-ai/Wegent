@@ -289,7 +289,12 @@ export function DingtalkDocumentImport({
         )}
       >
         <div className="flex shrink-0 items-center text-xs text-text-secondary">
-          <p>{t('document.upload.dingtalk.compactHint')}</p>
+          <p>
+            {t('document.upload.dingtalk.compactHint')} ·{' '}
+            <span data-testid="dingtalk-import-shared-hint">
+              {t('document.upload.dingtalk.sharedHint')}
+            </span>
+          </p>
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -314,14 +319,6 @@ export function DingtalkDocumentImport({
               )}
             </PopoverContent>
           </Popover>
-        </div>
-
-        <div
-          className="flex shrink-0 items-center gap-2 rounded-lg bg-surface p-2 text-xs text-text-secondary"
-          data-testid="dingtalk-import-shared-hint"
-        >
-          <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{t('document.upload.dingtalk.sharedHint')}</span>
         </div>
 
         {result !== null ? (

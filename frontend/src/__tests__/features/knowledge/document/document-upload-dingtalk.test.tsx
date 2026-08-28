@@ -49,7 +49,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.title': 'Import DingTalk documents',
         'document.upload.dingtalk.hint': 'Pick DingTalk documents to import.',
         'document.upload.dingtalk.help': 'Import details',
-        'document.upload.dingtalk.compactHint': 'Online text documents (adoc), up to 50 per import',
+        'document.upload.dingtalk.compactHint': dingtalk.compactHint,
         'document.upload.dingtalk.loading': 'Loading DingTalk documents...',
         'document.upload.dingtalk.notConfigured': 'DingTalk Docs is not configured',
         'document.upload.dingtalk.wikispaceNotConfigured':
@@ -1058,12 +1058,15 @@ describe('DocumentUpload dingtalk source', () => {
     expect(trigger).toHaveTextContent('Target')
   })
 
-  it('always explains that imported content follows knowledge base permissions', async () => {
+  it('keeps the import limit and target permissions visible beside one details entry', async () => {
     await openDingtalkMode()
 
+    expect(screen.getByText('Up to 50 per import', { exact: false })).toBeVisible()
     expect(screen.getByTestId('dingtalk-import-shared-hint')).toHaveTextContent(
-      "Imported content follows the target knowledge base's access permissions"
+      'Imported content uses target knowledge base permissions'
     )
+    expect(screen.getByTestId('dingtalk-import-shared-hint')).toBeVisible()
+    expect(screen.getAllByTestId('dingtalk-import-help')).toHaveLength(1)
   })
 
   it('disables submission without document management permission', async () => {
