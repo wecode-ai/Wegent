@@ -128,6 +128,45 @@ class TestIsConfigured:
 class TestSyncNodesToDb:
     """Tests for _sync_nodes_to_db using real database session."""
 
+    @pytest.mark.parametrize("source", ["docs", "wikispace"])
+    def test_duplicate_input_keeps_last_node_and_counts_each_identity_once(
+        self, test_db: Session, test_user: User, source: str
+    ) -> None:
+        now = datetime(2026, 8, 28, 16, 0, 0)
+        first = {
+            "nodeId": "duplicate-node",
+            "name": "First",
+            "nodeType": "file",
+            "contentType": "ALIDOC",
+            "extension": "adoc",
+            "parentId": "old-parent",
+            "updateTime": now.timestamp(),
+        }
+        last = {**first, "name": "Last", "parentId": "new-parent"}
+
+        result = DingTalkDocService._sync_nodes_to_db(
+            test_user.id, [first, last], now, test_db, source=source
+        )
+
+        assert (result["added"], result["updated"], result["total"]) == (1, 0, 1)
+        document = test_db.query(DingtalkSyncedNode).one()
+        original_id = document.id
+        assert document.name == "Last"
+        assert document.parent_node_id == "new-parent"
+        assert document.raw_metadata == last
+
+        refreshed = {**last, "name": "Refreshed"}
+        result = DingTalkDocService._sync_nodes_to_db(
+            test_user.id, [first, refreshed], now, test_db, source=source
+        )
+
+        assert (result["added"], result["updated"], result["total"]) == (0, 1, 1)
+        test_db.expire_all()
+        document = test_db.query(DingtalkSyncedNode).one()
+        assert document.id == original_id
+        assert document.name == "Refreshed"
+        assert document.raw_metadata == refreshed
+
     def test_adds_new_nodes(self, test_db: Session, test_user: User) -> None:
         """New nodes are added to the database."""
         now = datetime.now(timezone.utc)

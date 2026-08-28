@@ -373,17 +373,15 @@ class DingTalkDocService:
 
         """
         source_value = DingTalkDocService._normalize_source(source)
+        # A provider response may repeat a node; persist its last complete value once.
+        nodes_by_id = {node["nodeId"]: node for node in nodes if node.get("nodeId")}
+        nodes = list(nodes_by_id.values())
         added = 0
         updated = 0
         deleted = 0
 
         # Build a map of current DingTalk node IDs
-        dingtalk_node_ids = set()
-        for node_data in nodes:
-            node_id = node_data.get("nodeId", "")
-            if not node_id:
-                continue
-            dingtalk_node_ids.add(node_id)
+        dingtalk_node_ids = set(nodes_by_id)
 
         # Mark nodes no longer in DingTalk as inactive (filter by source)
         existing_active = (
@@ -403,11 +401,7 @@ class DingTalkDocService:
                 deleted += 1
 
         # Collect all non-empty node IDs for a single batch lookup (avoids N+1 queries)
-        node_ids = [
-            node_data.get("nodeId", "")
-            for node_data in nodes
-            if node_data.get("nodeId", "")
-        ]
+        node_ids = list(nodes_by_id)
         existing_nodes_map: dict[str, DingtalkSyncedNode] = {}
         if node_ids:
             existing_rows = (
@@ -423,9 +417,7 @@ class DingTalkDocService:
 
         # Upsert nodes from DingTalk
         for node_data in nodes:
-            node_id = node_data.get("nodeId", "")
-            if not node_id:
-                continue
+            node_id = node_data["nodeId"]
 
             name = node_data.get("name", node_data.get("title", "Untitled"))
             node_type_raw = str(node_data.get("nodeType", "")).strip().lower()

@@ -396,6 +396,14 @@ jobs:
           source .venv/bin/activate
           alembic upgrade head
 
+      - name: Verify DingTalk sync MySQL transaction rollback
+        if: matrix.shardIndex == 1
+        working-directory: ./backend
+        env:
+          DINGTALK_SYNC_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PYTHONPATH: ..:.
+        run: uv run --no-sync python tests/integration/dingtalk_sync_mysql.py
+
       - name: Start backend server
         working-directory: ./backend
         env:
