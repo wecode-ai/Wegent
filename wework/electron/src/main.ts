@@ -8,7 +8,6 @@ import {
   nativeImage,
   nativeTheme,
   powerMonitor,
-  safeStorage,
   screen,
   session,
   shell,
@@ -1225,7 +1224,7 @@ if (hasSingleInstanceLock) {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
     preferences = new PreferencesStore(app.getPath('userData'))
-    cloudCredentials = new CloudCredentialService(app.getPath('userData'), safeStorage)
+    cloudCredentials = new CloudCredentialService(app.getPath('userData'))
     installDshWindowLabelHeaders()
     installIpc()
     systemResume.start()
