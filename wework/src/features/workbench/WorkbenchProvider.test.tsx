@@ -2060,6 +2060,12 @@ function FollowUpProbe() {
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
   const firstQueuedMessage = paneSession.queuedMessages[0]
+  const busyResumeQueuedMessagesWithInputRef = useRef(paneSession.resumeQueuedMessagesWithInput)
+  useEffect(() => {
+    if (paneSession.status.isBusy) {
+      busyResumeQueuedMessagesWithInputRef.current = paneSession.resumeQueuedMessagesWithInput
+    }
+  }, [paneSession.resumeQueuedMessagesWithInput, paneSession.status.isBusy])
   const gptModel =
     workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
 
@@ -2255,7 +2261,7 @@ function FollowUpProbe() {
       </button>
       <button
         type="button"
-        onClick={() => void paneSession.resumeQueuedMessagesWithInput('手动消息')}
+        onClick={() => void busyResumeQueuedMessagesWithInputRef.current('手动消息')}
       >
         resume queue with manual input
       </button>

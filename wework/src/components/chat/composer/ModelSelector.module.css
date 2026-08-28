@@ -6,6 +6,7 @@
 .submenu {
   transform-origin: var(--radix-popover-content-transform-origin);
   --model-selector-submenu-enter-x: -7px;
+
   animation: model-selector-submenu-enter 170ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 

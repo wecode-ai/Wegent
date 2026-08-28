@@ -1829,6 +1829,9 @@ export function useWorkbenchPaneSession({
         const submittedInput = (inputOverride ?? input).trim()
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
+        const paneIsBusy = currentRuntimeTask
+          ? (lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy)
+          : paneStatus.isBusy
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
           submittedValue: textMetrics(inputOverride),
@@ -1841,7 +1844,7 @@ export function useWorkbenchPaneSession({
           guideWhenBusy: options.guideWhenBusy === true,
           interruptWhenBusy: options.interruptWhenBusy === true,
           hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
-          paneBusy: paneStatus.isBusy,
+          paneBusy: paneIsBusy,
         })
 
         if (goalDraftActive) {
@@ -1871,7 +1874,7 @@ export function useWorkbenchPaneSession({
             }
 
             resetAttachments()
-            if (paneStatus.isBusy && options.guideWhenBusy) {
+            if (paneIsBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1895,7 +1898,7 @@ export function useWorkbenchPaneSession({
               ...baseMessage,
               initialGoal,
             }
-            if (paneStatus.isBusy) {
+            if (paneIsBusy) {
               setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
@@ -2008,7 +2011,7 @@ export function useWorkbenchPaneSession({
             setError('当前对话还没有可压缩的 Codex 线程')
             return false
           }
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             setError('当前回复进行中，完成后再压缩上下文')
             return false
           }
@@ -2168,7 +2171,7 @@ export function useWorkbenchPaneSession({
             ...getRuntimeModelFields(),
           }
 
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             resetAttachments()
             setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
@@ -2222,7 +2225,7 @@ export function useWorkbenchPaneSession({
         }
 
         resetAttachments()
-        if (paneStatus.isBusy) {
+        if (paneIsBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
