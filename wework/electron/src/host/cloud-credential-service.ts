@@ -34,6 +34,7 @@ export interface AuthorizationPollResult {
   accessToken?: string
   tokenType?: string
   username?: string
+  credentialMode?: 'desktop_refresh' | 'legacy_access_token'
   error?: string
 }
 
@@ -95,7 +96,17 @@ export class CloudCredentialService {
         }
       }
       const accessToken = requiredString(payload.access_token, 'access token')
-      const refreshToken = requiredString(payload.refresh_token, 'refresh token')
+      const refreshToken = optionalString(payload.refresh_token)
+      if (!refreshToken) {
+        await rm(this.path(), { force: true })
+        return {
+          status,
+          accessToken,
+          tokenType: optionalString(payload.token_type),
+          username: optionalString(payload.username),
+          credentialMode: 'legacy_access_token',
+        }
+      }
       const existing = await this.readCredential()
       const credential = existing ?? this.generateCredential(apiBaseUrl)
       await this.writeCredential({
@@ -108,6 +119,7 @@ export class CloudCredentialService {
         accessToken,
         tokenType: optionalString(payload.token_type),
         username: optionalString(payload.username),
+        credentialMode: 'desktop_refresh',
       }
     })
   }

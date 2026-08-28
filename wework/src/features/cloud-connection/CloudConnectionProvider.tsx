@@ -28,6 +28,7 @@ import {
   normalizeStoredCloudConnection,
   readStoredCloudConnection,
   saveStoredCloudConnection,
+  type CloudCredentialMode,
   type CloudConnectionRuntimeConfig,
   type CloudConnectionSnapshot,
 } from './cloudConnectionStorage'
@@ -46,6 +47,7 @@ interface WeworkAuthSessionPollResponse {
   accessToken?: string
   tokenType?: string
   username?: string
+  credentialMode?: CloudCredentialMode
   error?: string
 }
 
@@ -125,16 +127,31 @@ function snapshotFromConnection(
         import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
         null)
       : null
+  const credentialMode =
+    migrated.credentialMode ?? (migrated.token ? 'legacy_access_token' : 'desktop_refresh')
+  const legacyToken = credentialMode === 'legacy_access_token' ? (migrated.token ?? null) : null
+  const legacyTokenExpiresAt =
+    credentialMode === 'legacy_access_token'
+      ? (migrated.tokenExpiresAt ?? (legacyToken ? getJwtExpiry(legacyToken) : null))
+      : null
+  const legacyTokenExpired = legacyTokenExpiresAt !== null && legacyTokenExpiresAt <= Date.now()
   return {
-    status: e2eAccessToken ? 'connected' : 'restoring',
+    status: e2eAccessToken
+      ? 'connected'
+      : credentialMode === 'desktop_refresh'
+        ? 'restoring'
+        : legacyToken && !legacyTokenExpired
+          ? 'connected'
+          : 'expired',
     webUrl: migrated.webUrl,
     backendUrl: migrated.backendUrl,
     apiBaseUrl: migrated.apiBaseUrl,
     socketBaseUrl: migrated.socketBaseUrl,
     socketPath: migrated.socketPath,
     socketBaseUrlOverride: migrated.socketBaseUrlOverride,
-    token: e2eAccessToken,
-    tokenExpiresAt: e2eAccessToken ? getJwtExpiry(e2eAccessToken) : null,
+    credentialMode,
+    token: e2eAccessToken ?? (legacyTokenExpired ? null : legacyToken),
+    tokenExpiresAt: e2eAccessToken ? getJwtExpiry(e2eAccessToken) : legacyTokenExpiresAt,
     user: migrated.user,
     connectedAt: migrated.connectedAt,
     error: null,
@@ -297,6 +314,7 @@ function connectionSnapshot(
   webUrl: string,
   token: string,
   user: User,
+  credentialMode: CloudCredentialMode,
   socketBaseUrlOverride?: string
 ): CloudConnectionSnapshot {
   return {
@@ -304,6 +322,7 @@ function connectionSnapshot(
     socketBaseUrlOverride: socketBaseUrlOverride?.trim() || undefined,
     webUrl: webUrl.replace(/\/+$/, ''),
     status: 'connected',
+    credentialMode,
     token,
     tokenExpiresAt: getJwtExpiry(token),
     user,
@@ -333,6 +352,10 @@ function persistSnapshot(snapshot: CloudConnectionSnapshot): void {
     socketPath: snapshot.socketPath,
     socketBaseUrlOverride: snapshot.socketBaseUrlOverride,
     webUrl: snapshot.webUrl,
+    credentialMode: snapshot.credentialMode ?? 'desktop_refresh',
+    token: snapshot.credentialMode === 'legacy_access_token' ? snapshot.token : undefined,
+    tokenExpiresAt:
+      snapshot.credentialMode === 'legacy_access_token' ? snapshot.tokenExpiresAt : undefined,
     user: snapshot.user,
     connectedAt: snapshot.connectedAt,
   }
@@ -495,12 +518,14 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
             console.warn('[CloudConnection] Failed to close authorization window', error)
           })
           const user = await fetchCloudUser(config, pollResult.accessToken)
+          initialRefreshStartedRef.current = true
           applyConnectedSnapshot(
             connectionSnapshot(
               config,
               session.web_url,
               pollResult.accessToken,
               user,
+              pollResult.credentialMode ?? 'desktop_refresh',
               socketBaseUrlOverride
             ),
             connectionGeneration
@@ -533,6 +558,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     if (refreshPromiseRef.current) return refreshPromiseRef.current
     if (!snapshot.apiBaseUrl) return Promise.resolve(null)
     const refreshGeneration = refreshGenerationRef.current
+    const credentialMode = snapshot.credentialMode ?? 'desktop_refresh'
     const config = {
       backendUrl: snapshot.backendUrl ?? '',
       apiBaseUrl: snapshot.apiBaseUrl,
@@ -541,13 +567,19 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     }
     const refresh = (async () => {
       try {
-        const refreshed = await refreshDesktopCloudAccessToken(config.apiBaseUrl)
+        const accessToken =
+          credentialMode === 'legacy_access_token'
+            ? snapshot.token
+            : (await refreshDesktopCloudAccessToken(config.apiBaseUrl)).accessToken
+        if (!accessToken) {
+          throw new DesktopCloudCredentialError(
+            'credentials_unavailable',
+            'Cloud access token is unavailable',
+            null
+          )
+        }
         if (refreshGenerationRef.current !== refreshGeneration) return null
-        const user = await fetchCloudUser(
-          config,
-          refreshed.accessToken,
-          CLOUD_STARTUP_REQUEST_TIMEOUT_MS
-        )
+        const user = await fetchCloudUser(config, accessToken, CLOUD_STARTUP_REQUEST_TIMEOUT_MS)
         if (refreshGenerationRef.current !== refreshGeneration) return null
         setSnapshot(current => {
           if (
@@ -559,8 +591,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
           const nextSnapshot = {
             ...current,
             status: 'connected' as const,
-            token: refreshed.accessToken,
-            tokenExpiresAt: getJwtExpiry(refreshed.accessToken),
+            credentialMode,
+            token: accessToken,
+            tokenExpiresAt: getJwtExpiry(accessToken),
             user,
             error: null,
           }
@@ -571,15 +604,19 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       } catch (error) {
         if (refreshGenerationRef.current !== refreshGeneration) return null
         const authExpired =
-          error instanceof DesktopCloudCredentialError &&
-          ['cloud_auth_expired', 'credentials_unavailable'].includes(error.code)
+          (credentialMode === 'legacy_access_token' &&
+            error instanceof ApiError &&
+            error.status === 401) ||
+          (error instanceof DesktopCloudCredentialError &&
+            ['cloud_auth_expired', 'credentials_unavailable'].includes(error.code))
         setSnapshot(current =>
           authExpired
             ? {
                 ...current,
                 status: 'expired',
                 token: null,
-                tokenExpiresAt: null,
+                tokenExpiresAt:
+                  credentialMode === 'legacy_access_token' ? current.tokenExpiresAt : null,
                 error: 'Cloud login has expired',
               }
             : {
@@ -596,7 +633,14 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     })()
     refreshPromiseRef.current = refresh
     return refresh
-  }, [snapshot.apiBaseUrl, snapshot.backendUrl, snapshot.socketBaseUrl, snapshot.socketPath])
+  }, [
+    snapshot.apiBaseUrl,
+    snapshot.backendUrl,
+    snapshot.credentialMode,
+    snapshot.socketBaseUrl,
+    snapshot.socketPath,
+    snapshot.token,
+  ])
 
   const disconnect = useCallback(() => {
     disconnectRequestedRef.current = true
@@ -619,16 +663,43 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     if (
       initialRefreshStartedRef.current ||
       !snapshot.apiBaseUrl ||
-      snapshot.status !== 'restoring'
+      (snapshot.status !== 'restoring' &&
+        !(snapshot.status === 'connected' && snapshot.credentialMode === 'legacy_access_token'))
     ) {
       return
     }
     initialRefreshStartedRef.current = true
     void refreshUser()
-  }, [refreshUser, snapshot.apiBaseUrl, snapshot.status])
+  }, [refreshUser, snapshot.apiBaseUrl, snapshot.credentialMode, snapshot.status])
 
   useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.tokenExpiresAt) return
+    if (snapshot.credentialMode === 'legacy_access_token') {
+      let timer: number | undefined
+      const expireWhenDue = () => {
+        const remainingMs = snapshot.tokenExpiresAt! - Date.now()
+        if (remainingMs > 0) {
+          timer = window.setTimeout(expireWhenDue, Math.min(MAX_TIMER_DELAY_MS, remainingMs))
+          return
+        }
+        setSnapshot(current =>
+          current.status === 'connected' &&
+          current.credentialMode === 'legacy_access_token' &&
+          current.tokenExpiresAt === snapshot.tokenExpiresAt
+            ? {
+                ...current,
+                status: 'expired',
+                token: null,
+                error: 'Cloud login has expired',
+              }
+            : current
+        )
+      }
+      expireWhenDue()
+      return () => {
+        if (timer !== undefined) window.clearTimeout(timer)
+      }
+    }
     const delayMs = Math.min(
       MAX_TIMER_DELAY_MS,
       Math.max(
@@ -640,7 +711,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       void refreshUser()
     }, delayMs)
     return () => window.clearTimeout(timer)
-  }, [refreshUser, snapshot.status, snapshot.tokenExpiresAt])
+  }, [refreshUser, snapshot.credentialMode, snapshot.status, snapshot.tokenExpiresAt])
 
   useEffect(() => {
     const refresh = () => {

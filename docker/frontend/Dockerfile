@@ -41,7 +41,6 @@ ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY --from=deps /app/packages/chat-core/node_modules ./packages/chat-core/node_modules
-COPY --from=deps /app/patches ./patches
 
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -56,7 +55,7 @@ ENV HUSKY=0
 WORKDIR /app/frontend
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate \
-    && pnpm run build
+    && pnpm --config.verify-deps-before-run=false run build
 
 # ---- Production Stage ----
 FROM node:22-slim AS runner
