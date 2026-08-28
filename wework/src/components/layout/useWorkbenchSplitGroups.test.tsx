@@ -55,6 +55,45 @@ describe('useWorkbenchSplitGroups', () => {
     )
   })
 
+  it('loads the persisted layout when the workspace tab storage scope becomes available', async () => {
+    const bootstrapStorageKey = 'workbench-split-groups-bootstrap'
+    const restoredStorageKey = 'workbench-split-groups-fixed-task'
+    localStorage.setItem(
+      restoredStorageKey,
+      serializeWorkbenchSplitGroups(createWorkbenchSplitGroupsState(restoredRuntimePaneKey))
+    )
+
+    const { result, rerender } = renderHook(
+      ({ currentStorageKey, runtimeKeysReady }) =>
+        useWorkbenchSplitGroups({
+          storageKey: currentStorageKey,
+          legacyStorageKey,
+          activePaneKey: 'blank:0',
+          validRuntimeKeys: runtimeKeysReady ? [restoredRuntimePaneKey] : [],
+          runtimeKeysReady,
+        }),
+      {
+        initialProps: {
+          currentStorageKey: bootstrapStorageKey,
+          runtimeKeysReady: false,
+        },
+      }
+    )
+
+    expect(activePaneKeys(result.current.state)).toEqual(['blank:0'])
+
+    rerender({
+      currentStorageKey: restoredStorageKey,
+      runtimeKeysReady: true,
+    })
+
+    await waitFor(() =>
+      expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
+    )
+    expect(localStorage.getItem(restoredStorageKey)).toContain(restoredRuntimePaneKey)
+    expect(localStorage.getItem(restoredStorageKey)).not.toContain('blank:0')
+  })
+
   it('replaces a stale persisted blank pane with the current startup blank pane', async () => {
     localStorage.setItem(
       storageKey,

@@ -88,7 +88,7 @@ async function snapshot(control) {
   return JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   const capture = (control, name) => captureScreenshot(control, name, ACTIVE_WORKBENCH_SELECTOR)
   const projects = [WEBSITE_PROJECT, MOBILE_PROJECT]
   let createdProjectPayload = null
@@ -156,7 +156,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       // of a top-level group-chat tab, and task comments do not open a separate
       // side drawer.
       await control.command('waitFor', '[data-testid="workspace-tab-add"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add"]')
       await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', {
