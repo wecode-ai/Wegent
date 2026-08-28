@@ -40,6 +40,7 @@ if (platform === 'macos') {
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
   packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
+  await requireFile(join(packagedComponentResourcesRoot, 'app-update.yml'))
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
@@ -154,6 +155,12 @@ async function findFile(root, pattern) {
 async function requireDirectory(path) {
   if (!(await stat(path).catch(() => null))?.isDirectory()) {
     throw new Error(`Required application directory is missing: ${path}`)
+  }
+}
+
+async function requireFile(path) {
+  if (!(await stat(path).catch(() => null))?.isFile()) {
+    throw new Error(`Required application file is missing: ${path}`)
   }
 }
 

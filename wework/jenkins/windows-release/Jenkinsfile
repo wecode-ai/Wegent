@@ -37,6 +37,7 @@ pipeline {
   }
 
   options {
+    skipDefaultCheckout(true)
     timestamps()
     disableConcurrentBuilds()
     timeout(time: 2, unit: 'HOURS')
@@ -105,14 +106,18 @@ if not exist "%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.e
     stage('Checkout') {
       steps {
         deleteDir()
-        checkout([
-          $class: 'GitSCM',
-          branches: [[name: params.BRANCH.trim()]],
-          userRemoteConfigs: [[
-            credentialsId: 'wegent-git-credentials',
-            url: 'https://git.intra.weibo.com/weibo_rd/common/wecode/wegent.git'
-          ]]
-        ])
+        checkout(
+          changelog: false,
+          poll: false,
+          scm: [
+            $class: 'GitSCM',
+            branches: [[name: params.BRANCH.trim()]],
+            userRemoteConfigs: [[
+              credentialsId: 'wegent-git-credentials',
+              url: 'https://git.intra.weibo.com/weibo_rd/common/wecode/wegent.git'
+            ]]
+          ]
+        )
       }
     }
 

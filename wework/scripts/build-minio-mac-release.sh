@@ -266,7 +266,8 @@ verify_uploaded_artifacts() {
     exit 1
   fi
   node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
-    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" macos "$arch"
+    "$UPDATE_BASE_URL" "$COMPONENT_BASE_URL" \
+    "$VERSION" "$CHANNEL" macos "$arch"
   if [ "$RELEASE_KIND" = "component" ]; then
     return
   fi
