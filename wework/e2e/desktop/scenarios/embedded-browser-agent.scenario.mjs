@@ -1122,6 +1122,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Annotation adjustment did not update the target'
       )
       await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
       const originalViewPressedBefore = await control.command(

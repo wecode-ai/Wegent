@@ -255,6 +255,7 @@ class ChatService(ChatInterface):
         # Create chat context for resource management
         context = ChatContext(request)
         guidance_consumer: GuidanceConsumer | None = None
+        on_tool_event = None
 
         try:
             logger.debug(
@@ -556,6 +557,7 @@ class ChatService(ChatInterface):
 
             # Finalize if not cancelled
             await guidance_consumer.expire_pending()
+            await on_tool_event.wait_pending()
             if not core.is_cancelled():
                 if context_metrics_tracker is not None:
                     final_messages = _resolve_final_context_metric_messages(
@@ -579,6 +581,8 @@ class ChatService(ChatInterface):
             logger.exception("[CHAT_SERVICE] Error processing chat: %s", e)
             raise
         finally:
+            if on_tool_event is not None:
+                await on_tool_event.wait_pending()
             if guidance_consumer is not None:
                 await guidance_consumer.expire_pending()
             add_span_event("cleaning_up_context")
