@@ -28,7 +28,7 @@ from shared.utils.tool_arguments import sanitize_tool_arguments
 logger = logging.getLogger(__name__)
 
 
-def _log_task_error(task: "asyncio.Task") -> None:
+def _log_task_error(task: asyncio.Task[Any]) -> None:
     """Log exceptions from fire-and-forget tasks."""
     if not task.cancelled() and task.exception() is not None:
         logger.exception(
@@ -84,7 +84,7 @@ class ToolEventHandler:
         self._agent_builder = agent_builder
         self._pending_tasks: set[asyncio.Task[Any]] = set()
 
-    def __call__(self, kind: str, event_data: dict) -> None:
+    def __call__(self, kind: str, event_data: dict[str, Any]) -> None:
         """Handle tool events and emit tool data via ResponsesAPIEmitter."""
         tool_name = event_data.get("name", "unknown")
         run_id = event_data.get("run_id", "")
@@ -168,7 +168,7 @@ def _handle_tool_start(
     agent_builder: Any,
     tool_name: str,
     run_id: str,
-    event_data: dict,
+    event_data: dict[str, Any],
     run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
     """Handle tool start event."""
@@ -298,7 +298,7 @@ def _handle_tool_end(
     agent_builder: Any,
     tool_name: str,
     run_id: str,
-    event_data: dict,
+    event_data: dict[str, Any],
     run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
     """Handle tool end event."""

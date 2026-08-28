@@ -5,6 +5,7 @@
 """Tests for Chat Shell Responses API stream compaction."""
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -139,9 +140,9 @@ async def test_cancelled_stream_waits_for_late_tool_event_tasks() -> None:
     )
     original_delta = emitter.tool_argument_delta
 
-    async def delayed_delta(**kwargs):
+    async def delayed_delta(**kwargs: Any) -> None:
         await asyncio.sleep(0.2)
-        return await original_delta(**kwargs)
+        await original_delta(**kwargs)
 
     emitter.tool_argument_delta = delayed_delta
     handler = create_tool_event_handler(object(), emitter, object())

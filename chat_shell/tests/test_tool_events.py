@@ -4,6 +4,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -232,11 +233,11 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits():
 
 
 @pytest.mark.asyncio
-async def test_tool_event_handler_waits_for_pending_emissions():
+async def test_tool_event_handler_waits_for_pending_emissions() -> None:
     emitter = AsyncMock()
     release = asyncio.Event()
 
-    async def delayed_delta(**kwargs):
+    async def delayed_delta(**kwargs: Any) -> dict[str, Any]:
         await release.wait()
         return kwargs
 
