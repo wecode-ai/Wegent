@@ -653,13 +653,17 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [refreshUser, snapshot.apiBaseUrl, snapshot.status])
 
   const value = useMemo<CloudConnectionContextValue>(() => {
-    const isConnected = snapshot.status === 'connected' && Boolean(snapshot.token)
+    const effectiveSnapshot =
+      snapshot.status === 'connected' && !readStoredCloudConnection()
+        ? DISCONNECTED_STATE
+        : snapshot
+    const isConnected = effectiveSnapshot.status === 'connected' && Boolean(effectiveSnapshot.token)
     return {
-      ...snapshot,
+      ...effectiveSnapshot,
       isConnected,
       serviceKey: isConnected
-        ? `${snapshot.apiBaseUrl ?? ''}:${snapshot.tokenExpiresAt ?? ''}:${snapshot.user?.id ?? ''}`
-        : snapshot.status,
+        ? `${effectiveSnapshot.apiBaseUrl ?? ''}:${effectiveSnapshot.tokenExpiresAt ?? ''}:${effectiveSnapshot.user?.id ?? ''}`
+        : effectiveSnapshot.status,
       connectWithAuthorization,
       refreshUser,
       disconnect,
