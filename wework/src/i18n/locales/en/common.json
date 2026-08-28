@@ -3140,7 +3140,6 @@
     "work_item_context_pending_title": "This task automatically joins a workspace",
     "open_work_item_context_title": "View this task's workspace",
     "work_item_auto_create_hint": "Sending creates a workspace and syncs task progress",
-    "work_item_binding_pending": "Linking the current task",
     "work_item_create_title": "My tasks",
     "work_item_label": "Workspace",
     "tasks_in_work_item": "Tasks in this workspace",

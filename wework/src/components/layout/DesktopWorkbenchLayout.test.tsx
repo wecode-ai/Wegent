@@ -2420,7 +2420,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('keeps the work-item guide visible while a runtime task binding is unresolved', async () => {
+  test('keeps the work-item guide usable when a runtime task context lookup stalls', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
@@ -2476,8 +2476,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     const workItemGuide = await screen.findByTestId('project-space-context-pill')
     const composerInput = screen.getByTestId('chat-message-input')
-    expect(workItemGuide).toHaveTextContent('工作空间')
-    expect(workItemGuide).toHaveAttribute('title', '工作空间')
+    expect(workItemGuide).toHaveTextContent('工作项')
+    expect(workItemGuide).toHaveAttribute('title', '工作项')
+    expect(screen.queryByTestId('work-item-guide-summary-pending')).not.toBeInTheDocument()
     expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )

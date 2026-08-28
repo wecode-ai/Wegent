@@ -39,6 +39,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
+  'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
@@ -49,6 +50,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-apps',
   'offline-local-project-space',
+  'cloud-context-resilience',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',

@@ -3137,7 +3137,6 @@
     "work_item_context_pending_title": "当前任务会自动加入工作空间",
     "open_work_item_context_title": "查看当前任务所属的工作空间",
     "work_item_auto_create_hint": "发送后自动创建工作空间，并同步任务进展",
-    "work_item_binding_pending": "正在关联当前任务",
     "work_item_create_title": "我的任务",
     "work_item_label": "工作空间",
     "tasks_in_work_item": "同一工作空间中的任务",
