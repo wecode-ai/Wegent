@@ -2119,6 +2119,39 @@ fn finishing_execution_removes_its_codex_turn_context() {
     assert!(handler.active_codex_turn("task-1").is_none());
 }
 
+#[tokio::test]
+async fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut source = RuntimeTaskLink::new_pending(
+        "source-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Source task".to_owned(),
+    );
+    source.thread_id = Some("source-thread".to_owned());
+    handler.upsert_local_task(source);
+    let execution_id = start_test_execution(&handler, "source-task");
+    let waiting_handler = handler.clone();
+    let wait = tokio::spawn(async move {
+        waiting_handler
+            .wait_for_running_side_source_turn("source-thread")
+            .await;
+    });
+
+    tokio::task::yield_now().await;
+    assert!(!wait.is_finished());
+    handler.record_active_codex_turn(
+        "source-task",
+        execution_id,
+        "source-thread".to_owned(),
+        "source-turn".to_owned(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), wait)
+        .await
+        .expect("side source readiness should unblock after turn/start")
+        .expect("side source readiness task should not panic");
+}
+
 #[test]
 fn stale_provider_turn_cannot_replace_the_current_execution() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");

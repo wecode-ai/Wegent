@@ -316,7 +316,6 @@ export function WorkspaceTabsProvider({
   children,
 }: WorkspaceTabsProviderProps) {
   const startupTabApplied = useRef(false)
-  const replaceActiveTabRouteAfterCommit = useRef(false)
   const [state, dispatch] = useReducer(
     workspaceTabsReducer,
     undefined,
@@ -328,16 +327,9 @@ export function WorkspaceTabsProvider({
     if (fixedTabs.length > 0) dispatch({ type: 'syncFixed', tabs: fixedTabs })
   }, [fixedTabs])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     dispatch({ type: 'routeChanged', pathname, search, labels })
   }, [labels, pathname, search])
-
-  useLayoutEffect(() => {
-    if (!replaceActiveTabRouteAfterCommit.current) return
-    replaceActiveTabRouteAfterCommit.current = false
-    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId)
-    if (activeTab) replaceTabRoute(activeTab)
-  }, [state.activeTabId, state.tabs])
 
   useEffect(() => {
     if (startupTabApplied.current || (!startupTabKind && !startupTabId)) return
@@ -458,8 +450,9 @@ export function WorkspaceTabsProvider({
     (updates: Partial<Pick<WorkspaceTab, 'title' | 'contentRoute'>>) => {
       const currentTab = state.tabs.find(tab => tab.id === state.activeTabId)
       if (!currentTab) return
-      replaceActiveTabRouteAfterCommit.current = true
-      dispatch({ type: 'updateActive', updates })
+      const updated = { ...currentTab, ...updates }
+      flushSync(() => dispatch({ type: 'updateActive', updates }))
+      replaceTabRoute(updated)
     },
     [state.activeTabId, state.tabs]
   )
