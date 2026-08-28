@@ -358,8 +358,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
 
   useEffect(() => {
-    if (desktopRestoreStartedRef.current || snapshot.status !== 'disconnected') return
+    if (desktopRestoreStartedRef.current) return
     desktopRestoreStartedRef.current = true
+    if (snapshot.status !== 'disconnected') return
     void getAppPreferences()
       .then(preferences => {
         const stored = normalizeStoredCloudConnection(preferences.cloudConnection)

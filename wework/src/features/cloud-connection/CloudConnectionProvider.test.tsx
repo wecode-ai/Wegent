@@ -80,6 +80,9 @@ function CloudSocketProbe() {
       <span data-testid="cloud-connection-status">{cloud.status}</span>
       <span data-testid="cloud-socket-base-url">{cloud.socketBaseUrl}</span>
       <span data-testid="cloud-web-url">{cloud.webUrl}</span>
+      <button type="button" data-testid="disconnect-cloud-button" onClick={cloud.disconnect}>
+        disconnect
+      </button>
     </>
   )
 }
@@ -276,6 +279,41 @@ describe('CloudConnectionProvider', () => {
     expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
       'token'
     )
+  })
+
+  it('does not restore stale desktop preferences after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    await updateAppPreferences({ cloudConnection: storedConnection })
+    saveStoredCloudConnection(storedConnection)
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') return Promise.resolve({})
+      if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    )
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    )
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
   })
 
   it('keeps stored connection metadata while the initial credential refresh is pending', async () => {
