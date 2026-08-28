@@ -158,6 +158,7 @@ describe('managed executor runtime', () => {
         identityPath,
       ],
       environment: {
+        ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
         VITE_WEWORK_E2E: 'true',
         WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
       },

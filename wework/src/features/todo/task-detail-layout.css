@@ -340,12 +340,24 @@
 
 .task-detail-workspace-description .task-detail-desc.is-collapsed {
   display: block;
+  position: relative;
 }
 
 .task-detail-workspace-description .task-detail-desc.is-collapsed .bn-editor {
-  max-height: calc(var(--text-sm) * 1.6 * 2);
+  max-height: calc(var(--task-detail-body-font-size) * 1.75 * 2 + 6px);
   overflow: hidden;
   color: rgb(var(--color-text-muted));
+}
+
+.task-detail-workspace-description .task-detail-desc.is-collapsed[data-overflowing='true']::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 16px;
+  background: linear-gradient(to bottom, rgb(var(--color-muted) / 0), rgb(var(--color-muted)) 88%);
+  content: '';
+  pointer-events: none;
 }
 
 .task-detail-workspace-description .task-detail-desc-toggle {
@@ -896,6 +908,7 @@
 }
 
 .task-detail-title {
+  field-sizing: content;
   font-size: var(--task-detail-title-font-size);
   font-weight: 650;
   line-height: 1.3;

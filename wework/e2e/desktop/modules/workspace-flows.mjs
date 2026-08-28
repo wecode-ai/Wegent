@@ -401,6 +401,12 @@ async function verifyWorkspaceIssueCreation(control) {
   })
 
   const projectName = 'Workspace Issue E2E'
+  const issueTitle =
+    'WEWORK_DESKTOP_E2E_ISSUE_TITLE Verify that a deliberately long Issue title wraps across multiple lines in the workspace sidebar without clipping or overlapping the description below it.'
+  const issueDescription =
+    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
+  const twoLineBreakMarker = '换行标记'
+  const twoLineIssueDescription = `折叠描述第一行${twoLineBreakMarker}折叠描述第二行`
   await control.command('click', `${boardContentSelector} [data-testid="cloud-project-add"]`)
   await control.command('waitFor', '[data-testid="cloud-project-name"]', {
     visible: true,
@@ -518,8 +524,11 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('fill', '[data-testid="workspace-issue-title"]', {
+    value: issueTitle,
+  })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
-    value: 'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    value: issueDescription,
   })
   await control.command('waitFor', '[data-testid="workspace-issue-draft-status"]', {
     text: '草稿已自动保存',
@@ -541,8 +550,14 @@ async function verifyWorkspaceIssueCreation(control) {
   await waitForControlValueIncludes(
     control,
     '[data-testid="workspace-issue-description"]',
-    'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified',
+    issueDescription,
     'Fullscreen Issue content did not survive closing and reopening'
+  )
+  await waitForControlValueIncludes(
+    control,
+    '[data-testid="workspace-issue-title"]',
+    issueTitle,
+    'Fullscreen Issue title did not survive closing and reopening'
   )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
   await control.command(
@@ -553,10 +568,152 @@ async function verifyWorkspaceIssueCreation(control) {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
+  const [issueTitleMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`
+    )
+  )
+  const [issueDescriptionMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${boardContentSelector} .task-detail-workspace-description`
+    )
+  )
+  const issueTitleLineHeight = Number.parseFloat(
+    await control.command(
+      'getComputedStyleValue',
+      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+      { value: 'line-height' }
+    )
+  )
+  assert.ok(
+    issueTitleMetrics.scrollHeight >= issueTitleLineHeight * 2,
+    `The Issue sidebar title fixture did not wrap across multiple lines: ${JSON.stringify({
+      metrics: issueTitleMetrics,
+      lineHeight: issueTitleLineHeight,
+    })}`
+  )
+  assert.ok(
+    issueTitleMetrics.clientHeight >= issueTitleMetrics.scrollHeight - 1,
+    `The Issue sidebar title clipped wrapped content: ${JSON.stringify(issueTitleMetrics)}`
+  )
+  assert.ok(
+    issueTitleMetrics.bottom <= issueDescriptionMetrics.top,
+    `The Issue sidebar title overlapped the description: ${JSON.stringify({
+      title: issueTitleMetrics,
+      description: issueDescriptionMetrics,
+    })}`
+  )
+  const collapsedDescriptionSelector = `${boardContentSelector} .task-detail-desc.is-collapsed`
+  await waitForAttribute(
+    control,
+    collapsedDescriptionSelector,
+    'data-overflowing',
+    'true',
+    'The collapsed Issue description did not expose its overflow treatment'
+  )
+  const [collapsedDescriptionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-editor`)
+  )
+  const collapsedDescriptionBlocks = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-block-outer`)
+  )
+  const lastCollapsedDescriptionBlock = collapsedDescriptionBlocks.at(-1)
+  const descriptionLineHeight = Number.parseFloat(
+    await control.command('getComputedStyleValue', `${collapsedDescriptionSelector} .bn-editor`, {
+      value: 'line-height',
+    })
+  )
+  assert.ok(
+    collapsedDescriptionMetrics.clientHeight >= descriptionLineHeight * 2,
+    `The collapsed Issue description clipped its second line: ${JSON.stringify({
+      metrics: collapsedDescriptionMetrics,
+      lineHeight: descriptionLineHeight,
+    })}`
+  )
+  assert.ok(
+    lastCollapsedDescriptionBlock &&
+      lastCollapsedDescriptionBlock.bottom > collapsedDescriptionMetrics.bottom + 1,
+    `The overflow regression fixture did not exceed the collapsed description: ${JSON.stringify({
+      editor: collapsedDescriptionMetrics,
+      lastBlock: lastCollapsedDescriptionBlock,
+    })}`
+  )
   await captureVerificationScreenshot(
     control,
     'workspace-issue-02-created.png',
     boardContentSelector
+  )
+  await control.command(
+    'fill',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      value: twoLineIssueDescription,
+    }
+  )
+  await control.command(
+    'selectText',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      value: twoLineBreakMarker,
+    }
+  )
+  await control.command(
+    'press',
+    `${boardContentSelector} [data-testid="cloud-todo-detail-description"]`,
+    {
+      key: 'Enter',
+    }
+  )
+  await waitForElementCount(
+    control,
+    `${collapsedDescriptionSelector} .bn-block-outer`,
+    2,
+    'The two-line regression fixture did not split into two editor blocks'
+  )
+  await waitForAttribute(
+    control,
+    collapsedDescriptionSelector,
+    'data-overflowing',
+    'false',
+    'A fully visible two-line Issue description still exposed its overflow treatment'
+  )
+  const [twoLineDescriptionMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-editor`)
+  )
+  const [twoLineDescriptionParagraphMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} p`)
+  )
+  const twoLineDescriptionBlocks = JSON.parse(
+    await control.command('getElementMetrics', `${collapsedDescriptionSelector} .bn-block-outer`)
+  )
+  const firstTwoLineDescriptionBlock = twoLineDescriptionBlocks.at(0)
+  const lastTwoLineDescriptionBlock = twoLineDescriptionBlocks.at(-1)
+  const twoLineDescriptionLineHeight = Number.parseFloat(
+    await control.command('getComputedStyleValue', `${collapsedDescriptionSelector} p`, {
+      value: 'line-height',
+    })
+  )
+  assert.ok(
+    firstTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock.bottom - firstTwoLineDescriptionBlock.top >=
+        twoLineDescriptionLineHeight * 2 - 1,
+    `The two-line regression fixture did not wrap to two lines: ${JSON.stringify({
+      paragraph: twoLineDescriptionParagraphMetrics,
+      firstBlock: firstTwoLineDescriptionBlock,
+      lastBlock: lastTwoLineDescriptionBlock,
+      lineHeight: twoLineDescriptionLineHeight,
+    })}`
+  )
+  assert.ok(
+    lastTwoLineDescriptionBlock &&
+      lastTwoLineDescriptionBlock.bottom <= twoLineDescriptionMetrics.bottom + 1,
+    `The collapsed Issue description clipped a fully visible second line: ${JSON.stringify({
+      editor: twoLineDescriptionMetrics,
+      lastBlock: lastTwoLineDescriptionBlock,
+    })}`
   )
   const issueStatusSelector = `${boardContentSelector} [data-testid="cloud-todo-detail-status"]`
   await control.command('select', issueStatusSelector, { value: 'pending' })
@@ -978,6 +1135,17 @@ async function waitForAttribute(control, selector, name, expected, message) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
   throw new Error(`${message}: expected ${name}=${expected}, received ${actual}`)
+}
+
+async function waitForElementCount(control, selector, expected, message) {
+  const startedAt = Date.now()
+  let actual = 0
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    actual = Number(await control.command('getElementCount', selector))
+    if (actual === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(`${message}: expected ${expected}, received ${actual}`)
 }
 
 async function verifyWorkspaceTabIsolation(control) {
