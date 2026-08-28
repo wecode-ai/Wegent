@@ -72,6 +72,63 @@ function desktopWindowLogPath() {
   return join(resultDir, 'app.log')
 }
 
+async function waitForInlineStyleValue(control, selector, property, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const value = await control.command('getInlineStyle', selector, { value: property })
+    if (value === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function openBrowserForModelSwitchWarning(control) {
+  const browserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+  let snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  if (!snapshot.testIds.includes('workspace-browser-url-input')) {
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      snapshot = await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('right-workspace-browser-option') ||
+          value.testIds.includes('right-workspace-new-tab-button'),
+        'The right workspace did not expose a browser launcher',
+        DEFAULT_STEP_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-browser-option"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
+    await control.command('click', '[data-testid="right-workspace-browser-option"]')
+  }
+  await control.command('waitFor', browserInputSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', browserInputSelector, {
+    value: new URL(control.url).origin,
+  })
+  await control.command('submit', browserInputSelector)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', '[data-testid="workspace-browser-electron-webview"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('drag', '[data-testid="right-workspace-resize-handle"]', {
+    target: ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
+  })
+}
+
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   control.setScenario('provider_switch_retry')
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -90,6 +147,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The failed Luna turn was unexpectedly sent more than once'
   )
 
+  await openBrowserForModelSwitchWarning(control)
   await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
   await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -99,6 +157,58 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  const modelSubmenuMetrics = await getSingleElementMetrics(
+    control,
+    '[data-testid="model-selector-submenu"]',
+    'The narrow-pane model submenu'
+  )
+  const viewportMetrics = await getSingleElementMetrics(
+    control,
+    ACTIVE_WORKBENCH_SELECTOR,
+    'The desktop viewport'
+  )
+  const rightPanelMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+    'The right workspace panel'
+  )
+  const browserHostMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    'The embedded browser host'
+  )
+  assert.ok(
+    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
+      modelSubmenuMetrics,
+      viewportMetrics,
+    })}`
+  )
+  assert.ok(
+    modelSubmenuMetrics.width >= 280 &&
+      modelSubmenuMetrics.left >= 16 &&
+      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
+      modelSubmenuMetrics.right > rightPanelMetrics.left &&
+      modelSubmenuMetrics.right > browserHostMetrics.left &&
+      modelSubmenuMetrics.left < browserHostMetrics.right &&
+      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
+      modelSubmenuMetrics.top < browserHostMetrics.bottom,
+    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+      {
+        browserHostMetrics,
+        modelSubmenuMetrics,
+        rightPanelMetrics,
+      }
+    )}`
+  )
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'none',
+    'The model flyout did not block interaction with the embedded browser'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-picker-open.png')
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
@@ -108,9 +218,33 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'none',
+    'The model switch dialog did not block interaction with the embedded browser'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-open.png')
   await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('model-switch-warning-dialog') &&
+      snapshot.testIds.includes('workspace-browser-native-view'),
+    'The model switch dialog did not restore the embedded browser',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'auto',
+    'The embedded browser remained blocked after the model switch dialog closed'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-closed.png')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PROVIDER_SWITCH_COMPLETION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type FocusEvent,
   type ReactNode,
 } from 'react'
@@ -30,7 +31,7 @@ interface HoverCardProps {
   estimatedHeight?: number
 }
 
-interface HoverCardPosition {
+type HoverCardPosition = CSSProperties & {
   left: number
   top: number
 }

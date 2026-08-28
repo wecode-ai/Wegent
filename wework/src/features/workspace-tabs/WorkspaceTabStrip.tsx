@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type DragEvent,
   type RefObject,
 } from 'react'
@@ -25,7 +26,7 @@ import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/d
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
-interface MenuPosition {
+type MenuPosition = CSSProperties & {
   left: number
   top: number
 }

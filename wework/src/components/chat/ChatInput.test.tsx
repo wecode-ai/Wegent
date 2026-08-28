@@ -670,6 +670,7 @@ describe('ChatInput', () => {
       config: { ui: { family: 'local' } },
     }
     const setSelectedModel = vi.fn()
+    const onModelSelectorOpenChange = vi.fn()
 
     render(
       <ChatInput
@@ -683,6 +684,7 @@ describe('ChatInput', () => {
           activeModel,
           selectedModel: activeModel,
           setSelectedModel,
+          onModelSelectorOpenChange,
         })}
       />
     )
@@ -694,13 +696,18 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-switch-warning-dialog-overlay').parentElement).toBe(
+      document.body
+    )
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onModelSelectorOpenChange).toHaveBeenLastCalledWith(false, 'selection')
 
     await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
 
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onModelSelectorOpenChange).toHaveBeenLastCalledWith(false, 'dismiss')
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
@@ -1084,6 +1091,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(screen.getByTestId('paused-queue-send-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('paused-queue-send-dialog-overlay').parentElement).toBe(document.body)
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))
@@ -1744,7 +1752,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
       'z-system-popover',
-      'w-64'
+      'w-[224px]'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
@@ -1768,7 +1776,7 @@ describe('ChatInput', () => {
       'data-enter-animation',
       'submenu'
     )
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '280px' })
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
@@ -1840,7 +1848,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('快速')
     expect(screen.getByTestId('model-control-speed-fast')).not.toHaveTextContent('⚡')
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '233px' })
 
     const speedMenuItem = screen.getByTestId('model-control-menu-speed')
     const resetRow = screen.getByTestId('model-reset-default-row')
@@ -2753,7 +2761,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {
+  test('constrains the desktop model submenu to the available viewport height', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
@@ -2837,9 +2845,9 @@ describe('ChatInput', () => {
       await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
       await waitFor(() => {
-        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          top: '20px',
-        })
+        expect(screen.getByTestId('model-selector-submenu').style.maxHeight).toBe(
+          'min(var(--radix-popover-content-available-height), calc(100vh - 16px))'
+        )
       })
     } finally {
       Object.defineProperty(window, 'innerHeight', {
