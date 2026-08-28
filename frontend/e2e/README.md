@@ -240,10 +240,13 @@ workflow job, uploads it as `frontend-next-build`, and restores that artifact in
 each browser/API shard and in the executor E2E job before starting the generated
 Next.js standalone server.
 
-The executor regression job also consumes `executor-e2e-runtime`, which is built
-once by `build-executor-e2e-runtime`. That artifact contains the
-`wegent/e2e-claudecode-executor:latest` Docker image and the extracted local
-executor binary used by device-mode coverage.
+The executor regression job consumes a content-addressed Executor image keyed by
+the Dockerfile, Rust sources, lockfile, and shared assets. Internal pull requests
+publish that immutable image once, so merge-queue validation can pull the exact
+same build input without recompiling it. The merge-queue job still extracts the
+local executor binary from that image and runs the full device-mode and Docker
+executor coverage against its own merged source tree. Fork pull requests use a
+workflow artifact instead because their tokens cannot publish packages.
 
 The workflow caches Python virtualenvs, frontend `node_modules`, and the executor
 job's Claude Code CLI. Playwright browsers and their operating-system

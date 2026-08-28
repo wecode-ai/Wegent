@@ -177,29 +177,85 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
 
   build-executor-e2e-runtime:
-    name: Build Executor E2E Runtime Artifact
+    name: Prepare Executor E2E Runtime
     needs: changes
     if: github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.platform_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.runtime.outputs.image }}
+      artifact: ${{ steps.access.outputs.artifact }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
+      - name: Resolve Executor E2E registry access
+        id: access
+        env:
+          REGISTRY_ENABLED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          if [[ "$REGISTRY_ENABLED" == "true" ]]; then
+            echo "artifact=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "artifact=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
-      - name: Build ClaudeCode Source Executor Image
+      - name: Resolve Executor E2E runtime
+        id: runtime
+        env:
+          SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'shared/assets/**') }}
+        run: .github/scripts/resolve-executor-e2e-runtime.sh
+
+      - name: Check content-addressed Executor E2E image
+        if: steps.access.outputs.artifact != 'true'
+        id: image-check
+        env:
+          IMAGE: ${{ steps.runtime.outputs.image }}
+        run: |
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish Executor E2E image
+        if: steps.access.outputs.artifact != 'true' && steps.image-check.outputs.exists != 'true'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
           file: frontend/e2e/fixtures/claudecode-executor/Dockerfile
+          build-args: BASE_IMAGE=${{ steps.runtime.outputs.base-image }}
+          push: true
+          tags: ${{ steps.runtime.outputs.image }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
+
+      - name: Build fork Executor E2E image
+        if: steps.access.outputs.artifact == 'true'
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: .
+          file: frontend/e2e/fixtures/claudecode-executor/Dockerfile
+          build-args: BASE_IMAGE=${{ steps.runtime.outputs.base-image }}
           load: true
           tags: wegent/e2e-claudecode-executor:latest
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-executor:buildcache-e2e
 
-      - name: Extract ClaudeCode Executor Binary
+      - name: Extract fork Executor binary
+        if: steps.access.outputs.artifact == 'true'
         run: |
           mkdir -p executor/target/release
           container_id="$(docker create wegent/e2e-claudecode-executor:latest)"
@@ -207,10 +263,12 @@ jobs:
           docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
           chmod 0755 executor/target/release/wegent-executor
 
-      - name: Archive executor E2E runtime
+      - name: Archive fork Executor E2E runtime
+        if: steps.access.outputs.artifact == 'true'
         run: .github/scripts/archive-executor-e2e-runtime.sh
 
-      - name: Upload executor E2E runtime
+      - name: Upload fork Executor E2E runtime
+        if: steps.access.outputs.artifact == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: executor-e2e-runtime
@@ -580,10 +638,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Pull Platform E2E image
+      - name: Pull E2E images
         env:
           PLATFORM_E2E_IMAGE: ${{ needs.prepare-platform-e2e-image.outputs.image }}
-        run: docker pull "$PLATFORM_E2E_IMAGE"
+          EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
+          USE_EXECUTOR_ARTIFACT: ${{ needs.build-executor-e2e-runtime.outputs.artifact }}
+        run: |
+          docker pull "$PLATFORM_E2E_IMAGE" &
+          platform_pid=$!
+          if [[ "$USE_EXECUTOR_ARTIFACT" != "true" ]]; then
+            docker pull "$EXECUTOR_E2E_IMAGE" &
+            executor_pid=$!
+          fi
+
+          status=0
+          wait "$platform_pid" || status=$?
+          if [[ -n "${executor_pid:-}" ]]; then
+            wait "$executor_pid" || status=$?
+          fi
+          exit "$status"
 
       - name: Free executor E2E runner disk space
         run: .github/scripts/free-runner-disk-space-if-needed.sh 50
@@ -653,13 +726,26 @@ jobs:
       - name: Restore frontend E2E build
         run: .github/scripts/restore-frontend-e2e-build.sh
 
-      - name: Download executor E2E runtime
+      - name: Extract content-addressed Executor binary
+        if: needs.build-executor-e2e-runtime.outputs.artifact != 'true'
+        env:
+          EXECUTOR_E2E_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.image }}
+        run: |
+          mkdir -p executor/target/release
+          container_id="$(docker create "$EXECUTOR_E2E_IMAGE")"
+          trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          docker cp "$container_id:/app/executor" executor/target/release/wegent-executor
+          chmod 0755 executor/target/release/wegent-executor
+
+      - name: Download fork Executor E2E runtime
+        if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: executor-e2e-runtime
           path: .ci-artifacts
 
-      - name: Restore executor E2E runtime
+      - name: Restore fork Executor E2E runtime
+        if: needs.build-executor-e2e-runtime.outputs.artifact == 'true'
         run: .github/scripts/restore-executor-e2e-runtime.sh
 
       - name: Run database migrations
@@ -806,7 +892,7 @@ jobs:
         working-directory: ./executor_manager
         env:
           REDIS_URL: redis://localhost:6379/0
-          EXECUTOR_IMAGE: wegent/e2e-claudecode-executor:latest
+          EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || needs.build-executor-e2e-runtime.outputs.image }}
           EXECUTOR_PORT_RANGE_MIN: "12000"
           EXECUTOR_PORT_RANGE_MAX: "12100"
           EXECUTOR_READY_MAX_RETRIES: "90"
@@ -861,6 +947,7 @@ jobs:
           E2E_USE_ISOLATED_USERS: "false"
           MOCK_MODEL_SERVER_URL: http://localhost:9999
           E2E_LOCAL_CLAUDE_MODEL_SERVER_URL: http://localhost:9999
+          E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == 'true' && 'wegent/e2e-claudecode-executor:latest' || needs.build-executor-e2e-runtime.outputs.image }}
           E2E_DEVICE_ID: e2e-claudecode-device
           CI: true
         run: |
@@ -886,6 +973,7 @@ jobs:
             --env MOCK_MODEL_SERVER_URL \
             --env E2E_CLAUDE_MODEL_SERVER_URL \
             --env E2E_LOCAL_CLAUDE_MODEL_SERVER_URL \
+            --env E2E_CLAUDE_EXECUTOR_IMAGE \
             --env E2E_DEVICE_ID \
             --env CI \
             "$PLATFORM_E2E_IMAGE" \

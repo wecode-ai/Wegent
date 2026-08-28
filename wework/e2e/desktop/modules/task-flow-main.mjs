@@ -58,6 +58,8 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 
+import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
+
 import {
   verifyActiveGoalIdleUnreadLifecycle,
   verifyBusyTurnGoalHandoff,
@@ -270,6 +272,8 @@ import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
+  verifyTrackedTaskRunningStatus,
+  verifyTrackedTaskSettledStatus,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
@@ -1112,7 +1116,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
-      WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -1176,17 +1180,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
-    const electronLaunchArguments =
-      process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
-        ? (() => {
-            assert.equal(
-              process.env.WEWORK_E2E_ISOLATED_XVFB,
-              'true',
-              'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
-            )
-            return ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
-          })()
-        : []
+    const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
@@ -2257,7 +2251,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     let associatedTaskTabTestId = null
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
     }
@@ -2325,7 +2322,10 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     let taskRowTestId
     let taskRowCompletionText = COMPLETION_TEXT
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       await control.command('waitFor', activeModelSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -2358,6 +2358,26 @@ last_updated = "2026-07-30T00:00:00Z"`
           testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeInitialTask.has(testId)
       )
       assert.ok(taskRowTestId, 'The initial task row identity was not found')
+      if (associatedTaskTabTestId) {
+        phase = 'project-space-running-task-synchronized'
+        await verifyTrackedTaskRunningStatus(control, associatedTaskTabTestId)
+      }
+      if (shouldRunDesktopCheckpoint('task-status-sync')) {
+        phase = 'project-space-settled-task-synchronized'
+        control.releaseInitialToolExecution()
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await verifyTrackedTaskSettledStatus(control)
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
       await verifyUserMessageNavigation({
         control,
         projectRowSelector,
