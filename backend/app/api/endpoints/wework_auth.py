@@ -37,6 +37,8 @@ SESSION_TTL_SECONDS = 5 * 60
 POLL_INTERVAL_SECONDS = 2
 SESSION_KEY_PREFIX = "wework_auth_session:"
 DEVICE_PROOF_MAX_AGE_SECONDS = 5 * 60
+LEGACY_ACCESS_AUTH_MODE = "legacy_access"
+DEVICE_BOUND_REFRESH_AUTH_MODE = "device_bound_refresh"
 
 
 def _session_key(session_id: str) -> str:
@@ -117,6 +119,17 @@ def _require_poll_token(session_data: dict, poll_token: str | None) -> None:
         )
 
 
+def _uses_device_bound_refresh(session_data: dict) -> bool:
+    auth_mode = session_data.get("auth_mode")
+    if auth_mode == DEVICE_BOUND_REFRESH_AUTH_MODE:
+        return True
+    if auth_mode == LEGACY_ACCESS_AUTH_MODE:
+        return False
+
+    device_thumbprint = session_data.get("device_thumbprint")
+    return isinstance(device_thumbprint, str) and bool(device_thumbprint)
+
+
 def _base64url_decode(value: str) -> bytes:
     padding = "=" * ((4 - len(value) % 4) % 4)
     try:
@@ -185,6 +198,15 @@ def _create_wework_access_token(user: User) -> str:
             "token_use": WEWORK_ACCESS_TOKEN_USE,
         },
         expires_delta=settings.WEWORK_ACCESS_TOKEN_EXPIRE_MINUTES,
+    )
+
+
+def _create_legacy_wework_access_token(user: User) -> str:
+    return create_access_token(
+        data={
+            "sub": user.user_name,
+            "user_id": user.id,
+        }
     )
 
 
@@ -279,21 +301,28 @@ async def get_wework_web_config() -> WeworkWebConfigResponse:
 
 @router.post("/sessions", response_model=WeworkAuthSessionCreateResponse)
 async def create_wework_auth_session(
-    request: WeworkAuthSessionCreateRequest,
+    request: WeworkAuthSessionCreateRequest | None = None,
 ) -> WeworkAuthSessionCreateResponse:
     """Create a short-lived cloud authorization session for Wework desktop."""
-    device_public_key = _validated_device_public_key(request.device_public_key)
     session_id = str(uuid.uuid4())
     poll_token = secrets.token_urlsafe(32)
     expires_at = int(time.time()) + SESSION_TTL_SECONDS
     session_data = {
         "status": "pending",
+        "auth_mode": LEGACY_ACCESS_AUTH_MODE,
         "poll_token": poll_token,
         "created_at": int(time.time()),
         "expires_at": expires_at,
-        "device_public_key": device_public_key,
-        "device_thumbprint": _device_key_thumbprint(device_public_key),
     }
+    if request is not None and request.device_public_key is not None:
+        device_public_key = _validated_device_public_key(request.device_public_key)
+        session_data.update(
+            {
+                "auth_mode": DEVICE_BOUND_REFRESH_AUTH_MODE,
+                "device_public_key": device_public_key,
+                "device_thumbprint": _device_key_thumbprint(device_public_key),
+            }
+        )
 
     success = await cache_manager.set(
         _session_key(session_id),
@@ -344,7 +373,9 @@ async def poll_wework_auth_session(
     access_token = session_data.get("access_token")
     refresh_token = session_data.get("refresh_token")
     username = session_data.get("username")
-    if not isinstance(access_token, str) or not isinstance(refresh_token, str):
+    if not isinstance(access_token, str) or (
+        _uses_device_bound_refresh(session_data) and not isinstance(refresh_token, str)
+    ):
         return WeworkAuthSessionPollResponse(
             status="failed",
             error="Authorization token is missing",
@@ -379,23 +410,33 @@ async def approve_wework_auth_session(
         return WeworkAuthSessionActionResponse(status=current_status)
 
     device_thumbprint = session_data.get("device_thumbprint")
-    if not isinstance(device_thumbprint, str) or not device_thumbprint:
+    uses_device_bound_refresh = _uses_device_bound_refresh(session_data)
+    if uses_device_bound_refresh and (
+        not isinstance(device_thumbprint, str) or not device_thumbprint
+    ):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Authorization session is missing its device binding",
         )
-    access_token = _create_wework_access_token(current_user)
-    refresh_token = _create_wework_refresh_token(current_user, device_thumbprint)
+    access_token = (
+        _create_wework_access_token(current_user)
+        if uses_device_bound_refresh
+        else _create_legacy_wework_access_token(current_user)
+    )
     session_data.update(
         {
             "status": "approved",
             "access_token": access_token,
-            "refresh_token": refresh_token,
             "username": current_user.user_name,
             "approved_user_id": current_user.id,
             "approved_at": int(time.time()),
         }
     )
+    if uses_device_bound_refresh:
+        session_data["refresh_token"] = _create_wework_refresh_token(
+            current_user,
+            device_thumbprint,
+        )
     await _write_session(session_id, session_data)
     return WeworkAuthSessionActionResponse(status="approved")
 
