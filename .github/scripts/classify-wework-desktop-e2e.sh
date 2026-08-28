@@ -393,7 +393,9 @@ classify_wework_path() {
       wework/src/features/workbench/projectTaskTracking* | \
       wework/src/features/workbench/workbenchContextTypes*)
       select_target "core:task-status-sync"
-      select_target "core:cloud-context-resilience"
+      if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
+        select_target "core:cloud-context-resilience"
+      fi
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
