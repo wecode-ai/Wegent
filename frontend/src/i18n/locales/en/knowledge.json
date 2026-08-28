@@ -608,7 +608,7 @@
         "submitButton": "Import",
         "myDocs": "My documents",
         "wikispace": "DingTalk wiki",
-        "wikispaceNotConfigured": "DingTalk wiki spaces are not configured yet. Configure them in Settings first.",
+        "wikispaceNotConfigured": "Configure and enable both DingTalk Docs and DingTalk Knowledge Base to use this directory.",
         "refresh": "Refresh",
         "refreshing": "Refreshing...",
         "refreshFailed": "Failed to refresh the directory. The current directory is kept",

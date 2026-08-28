@@ -52,8 +52,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.compactHint': dingtalk.compactHint,
         'document.upload.dingtalk.loading': 'Loading DingTalk documents...',
         'document.upload.dingtalk.notConfigured': 'DingTalk Docs is not configured',
-        'document.upload.dingtalk.wikispaceNotConfigured':
-          'DingTalk wiki spaces are not configured',
+        'document.upload.dingtalk.wikispaceNotConfigured': dingtalk.wikispaceNotConfigured,
         'document.upload.dingtalk.empty': 'No documents',
         'document.upload.dingtalk.loadFailed': 'Failed to load',
         'document.upload.dingtalk.refresh': 'Refresh',
@@ -1216,7 +1215,7 @@ describe('DocumentUpload dingtalk source', () => {
       await screen.findByText(
         source === 'docs'
           ? 'DingTalk Docs is not configured'
-          : 'DingTalk wiki spaces are not configured'
+          : 'Configure and enable both DingTalk Docs and DingTalk Knowledge Base to use this directory.'
       )
     ).toBeInTheDocument()
     expect(screen.getByTestId('dingtalk-go-to-settings-button')).toHaveAttribute(
