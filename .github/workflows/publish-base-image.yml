@@ -12,6 +12,11 @@ on:
         description: 'Image tag to publish, for example 1.0.2 or test-0.'
         type: string
         required: true
+      promote_latest:
+        description: 'Also update the latest tag after verification.'
+        type: boolean
+        required: false
+        default: false
 
 env:
   GIT_REF: main
@@ -136,20 +141,29 @@ jobs:
       - name: Publish multi-platform image
         shell: bash
         env:
+          PROMOTE_LATEST: ${{ inputs.promote_latest }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
 
           IMAGE="${IMAGE_PREFIX}/${IMAGE_NAME}"
-          docker buildx imagetools create \
-            --tag "${IMAGE}:${VERSION}" \
+          TAGS=(--tag "${IMAGE}:${VERSION}")
+          if [[ "${PROMOTE_LATEST}" == "true" ]]; then
+            TAGS+=(--tag "${IMAGE}:latest")
+          fi
+
+          docker buildx imagetools create "${TAGS[@]}" \
             "${IMAGE}:${VERSION}-amd64" \
             "${IMAGE}:${VERSION}-arm64"
           docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          if [[ "${PROMOTE_LATEST}" == "true" ]]; then
+            docker buildx imagetools inspect "${IMAGE}:latest"
+          fi
 
           {
             echo "### Base image published"
             echo
             echo "- Image: \`${IMAGE}:${VERSION}\`"
             echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`"
+            echo "- Promoted to latest: \`${PROMOTE_LATEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"
