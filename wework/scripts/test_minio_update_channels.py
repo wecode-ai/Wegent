@@ -610,6 +610,12 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert '--unsigned) UNSIGNED="true"' in script
+    assert 'if [ "$UNSIGNED" = "true" ]' in script
+    assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
+    assert "unset WIN_CSC_LINK" in script
+    assert "wework_configure_internal_updater_key" in script
+    assert "Legacy Tauri updater bridge signing is preserved." in script
     assert "node -p process.platform" in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script
@@ -617,6 +623,27 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert "cargo-xwin" not in script
     assert "src-tauri" not in script
     assert "pnpm exec tauri build" not in script
+
+
+def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> None:
+    pipeline = (SCRIPT_DIR.parent / "jenkins/windows-release/Jenkinsfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "label 'windows'" in pipeline
+    assert "C:\\\\Windows\\\\System32\\\\cmd.exe" in pipeline
+    assert "C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe" in pipeline
+    assert "build-minio-windows-release.sh" in pipeline
+    assert "--unsigned" in pipeline
+    assert "WEWORK_UPDATER_KEY_PATH" in pipeline
+    assert "Required legacy updater key file is missing or empty" in pipeline
+    assert "WeWork_${version}_windows_x64-setup.exe" in pipeline
+    assert "windows-x86_64" in pipeline
+    assert "latest.json" in pipeline
+    assert "archiveArtifacts" in pipeline
+    assert "wegent-windows-signing-pfx" not in pipeline
+    assert "wegent-windows-signing-password" not in pipeline
+    assert "powershell" not in pipeline
 
 
 @pytest.mark.parametrize(
