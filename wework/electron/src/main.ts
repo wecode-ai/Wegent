@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   Menu,
   nativeImage,
@@ -90,6 +91,8 @@ import {
   type BrandRuntimeMetadata,
 } from './runtime/brand-runtime-environment.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import { resolveDshAppRoute } from './host/dsh-app-route.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -106,6 +109,7 @@ const updateBaseUrl =
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
+const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
 const userDataPath =
   process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
@@ -128,6 +132,7 @@ let systemDragWindow: BrowserWindow | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
+let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -593,7 +598,10 @@ async function createAuxiliaryWindow(
 ): Promise<BrowserWindow> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const isSystemDrag = kind === 'system-drag-panel'
-  const target = new URL(isSystemDrag ? 'system-drag' : 'popout', desktopRuntime.coreDshUrl())
+  const target = resolveDshAppRoute(
+    desktopRuntime.coreDshUrl(),
+    isSystemDrag ? 'system-drag' : 'popout'
+  )
   const auxiliaryWindow = new BrowserWindow({
     width: isSystemDrag ? 440 : 470,
     height: isSystemDrag ? 60 : 112,
@@ -615,6 +623,17 @@ async function createAuxiliaryWindow(
   })
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
+  auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error('[auxiliary-window] renderer failed to load', {
+      kind,
+      code,
+      description,
+      url,
+    })
+  })
+  auxiliaryWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[auxiliary-window] renderer process exited', { kind, ...details })
+  })
   auxiliaryWindow.on('closed', () => {
     if (kind === 'system-drag-panel') systemDragWindow = null
     else {
@@ -638,7 +657,9 @@ async function createAuxiliaryWindow(
         '[data-testid="popout-workbench-page"]'
       )
       popoutWindowReadyPromise = readinessPromise
-      void readinessPromise.catch(() => {})
+      void readinessPromise.catch(error => {
+        console.error('[popout-window] renderer failed to become ready', error)
+      })
     }
     return auxiliaryWindow
   } catch (error) {
@@ -657,12 +678,41 @@ async function showSystemDragPanel(): Promise<void> {
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
   presentWindow(target)
+}
+
+function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
+    return DEFAULT_POPOUT_WINDOW_SHORTCUT
+  }
+  const value = preferenceRecord.popoutWindowShortcut
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+async function updateDesktopPreferences(
+  patch: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const store = requiredPreferences()
+  if (!Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut')) {
+    return store.update(patch)
+  }
+
+  const previousPreferences = await store.read()
+  const previousShortcut = resolvePopoutShortcut(previousPreferences)
+  const nextShortcut = resolvePopoutShortcut(patch)
+  popoutShortcut?.configure(nextShortcut)
+  try {
+    return await store.update(patch)
+  } catch (error) {
+    popoutShortcut?.configure(previousShortcut)
+    throw error
+  }
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -937,6 +987,8 @@ async function shutdown(): Promise<void> {
   popoutWindow = null
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
+  popoutShortcut?.dispose()
+  popoutShortcut = null
   embeddedBrowser?.stop()
   const plugins = workbenchPlugins
   workbenchPlugins = null
@@ -1041,6 +1093,7 @@ async function configureDesktopRuntime(): Promise<void> {
           appUpdates,
           feedback,
           plugins: workbenchPlugins,
+          updatePreferences: updateDesktopPreferences,
         },
         {
           captureTarget: windowLabel =>
@@ -1224,6 +1277,9 @@ if (hasSingleInstanceLock) {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
     preferences = new PreferencesStore(app.getPath('userData'))
+    popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
+      console.error('[popout-window] global shortcut failed', error)
+    )
     cloudCredentials = new CloudCredentialService(app.getPath('userData'))
     installDshWindowLabelHeaders()
     installIpc()
@@ -1246,6 +1302,11 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
+    try {
+      popoutShortcut.configure(resolvePopoutShortcut(startupPreferences))
+    } catch (error) {
+      console.warn('[popout-window] failed to register global shortcut', error)
+    }
     await createWindow(
       resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
     )
