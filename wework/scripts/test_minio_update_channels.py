@@ -586,6 +586,7 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "WEWORK_RELEASE_DIR_ONLY" in script
     assert "WEWORK_SKIP_MACOS_NOTARIZATION" in script
     assert "package-prebuilt-macos-release.mjs" in script
+    assert 'pnpm --dir "$WEWORK_DIR/electron" install --frozen-lockfile' in script
     assert "wework_configure_internal_updater_key" in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script

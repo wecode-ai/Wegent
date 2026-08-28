@@ -6,6 +6,7 @@ const { resolveReleaseVersion } = require('./scripts/release-version.cjs')
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const electronMirror = process.env.WEWORK_ELECTRON_MIRROR?.trim()
 const identity = resolveBuildIdentity()
 const releaseVersion = resolveReleaseVersion(require('./package.json').version)
 const packagePrebuiltMacosRelease =
@@ -35,6 +36,13 @@ module.exports = {
     buildResources: 'build',
     output: 'release-installer',
   },
+  ...(electronMirror
+    ? {
+        electronDownload: {
+          mirror: electronMirror.endsWith('/') ? electronMirror : `${electronMirror}/`,
+        },
+      }
+    : {}),
   files: ['dist/**/*', 'package.json'],
   asar: true,
   asarUnpack: ['**/*.node'],
