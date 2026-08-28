@@ -572,9 +572,9 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         task_id: int,
     ) -> ExecutorReference:
         """Consume the task-level executor reference used to reuse a sandbox."""
-        if not is_new_task_id(task_id):
+        task_model = self._task_model_for_task_lookup(db, task_id=task_id)
+        if task_model is TaskResource:
             return super()._take_task_executor_reference(db, task_id=task_id)
-        task_model = task_model_for_task_id(task_id)
         task = (
             db.query(task_model)
             .filter(task_model.id == task_id)
@@ -584,6 +584,31 @@ class ShardedSubtaskStore(SqlAlchemySubtaskStore):
         if task is None or not isinstance(task.json, dict):
             return ExecutorReference("", "", False)
         return self._consume_task_executor_reference(task)
+
+    def _task_model_for_task_lookup(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        owner_user_id: int | None = None,
+    ) -> type:
+        """Resolve the task model that stores the task row (shard or legacy)."""
+        if is_new_task_id(task_id):
+            return task_model_for_task_id(task_id)
+
+        owner_id = self._legacy_task_owner_user_id(
+            db,
+            task_id=task_id,
+            owner_user_id=owner_user_id,
+        )
+        if owner_id is None:
+            return TaskResource
+
+        task_model = task_model_for_user(owner_id)
+        migrated_task_exists = (
+            db.query(task_model.id).filter(task_model.id == task_id).first() is not None
+        )
+        return task_model if migrated_task_exists else TaskResource
 
     def get_latest_assistant_executor_from(
         self,

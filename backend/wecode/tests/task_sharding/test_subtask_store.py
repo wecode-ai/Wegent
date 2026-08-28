@@ -739,6 +739,50 @@ def test_create_assistant_subtask_consumes_task_executor_reference(
     assert task.json["metadata"]["labels"] == {"unrelated": "preserved"}
 
 
+def test_create_assistant_subtask_consumes_executor_reference_for_migrated_legacy_task(
+    test_db,
+):
+    user_id = 27
+    task_id_value = 927
+    shard_task = add_migrated_legacy_task(
+        test_db, task_id_value=task_id_value, owner_user_id=user_id
+    )
+    shard_task.json = {
+        "kind": "Task",
+        "metadata": {
+            "labels": {
+                "lastExecutorName": "executor-migrated",
+                "lastExecutorNamespace": "wb-plat-ide",
+                "lastExecutorDeletedAt": "false",
+                "unrelated": "preserved",
+            }
+        },
+    }
+    test_db.flush()
+    subtask_id = encode_user_scoped_id(user_id, SEQUENCE_BASE + 27)
+    store = ShardedSubtaskStore(
+        global_id_allocator=RecordingGlobalIdAllocator([subtask_id])
+    )
+
+    subtask = store.create_assistant_subtask(
+        test_db,
+        user_id=user_id,
+        task_id=task_id_value,
+        team_id=25,
+        title="Assistant response",
+        bot_ids=[3],
+        message_id=2,
+        parent_id=1,
+    )
+    test_db.flush()
+
+    assert subtask.__table__.name == subtask_model_for_owner(user_id).__table__.name
+    assert subtask.executor_namespace == "wb-plat-ide"
+    assert subtask.executor_name == "executor-migrated"
+    assert subtask.executor_deleted_at is False
+    assert shard_task.json["metadata"]["labels"] == {"unrelated": "preserved"}
+
+
 def test_edit_user_message_preserves_latest_executor_for_sharded_task(
     test_db,
     monkeypatch,

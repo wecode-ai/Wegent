@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
-from app.stores.tasks import subtask_store, task_access_store
+from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 
