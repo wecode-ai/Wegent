@@ -401,6 +401,8 @@ async function verifyWorkspaceIssueCreation(control) {
   })
 
   const projectName = 'Workspace Issue E2E'
+  const issueTitle =
+    'WEWORK_DESKTOP_E2E_ISSUE_TITLE Verify that a deliberately long Issue title wraps across multiple lines in the workspace sidebar without clipping or overlapping the description below it.'
   const issueDescription =
     'WEWORK_DESKTOP_E2E_ISSUE Workspace fullscreen issue creation verified with a deliberately long description that spans more than two lines in the Issue sidebar so collapsed overflow treatment remains visible.'
   const twoLineBreakMarker = '换行标记'
@@ -522,6 +524,9 @@ async function verifyWorkspaceIssueCreation(control) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('fill', '[data-testid="workspace-issue-title"]', {
+    value: issueTitle,
+  })
   await control.command('fill', '[data-testid="workspace-issue-description"]', {
     value: issueDescription,
   })
@@ -548,6 +553,12 @@ async function verifyWorkspaceIssueCreation(control) {
     issueDescription,
     'Fullscreen Issue content did not survive closing and reopening'
   )
+  await waitForControlValueIncludes(
+    control,
+    '[data-testid="workspace-issue-title"]',
+    issueTitle,
+    'Fullscreen Issue title did not survive closing and reopening'
+  )
   await control.command('click', '[data-testid="workspace-issue-fullscreen-submit"]')
   await control.command(
     'waitFor',
@@ -568,6 +579,20 @@ async function verifyWorkspaceIssueCreation(control) {
       'getElementMetrics',
       `${boardContentSelector} .task-detail-workspace-description`
     )
+  )
+  const issueTitleLineHeight = Number.parseFloat(
+    await control.command(
+      'getComputedStyleValue',
+      `${boardContentSelector} [data-testid="cloud-todo-detail-title"]`,
+      { value: 'line-height' }
+    )
+  )
+  assert.ok(
+    issueTitleMetrics.scrollHeight >= issueTitleLineHeight * 2,
+    `The Issue sidebar title fixture did not wrap across multiple lines: ${JSON.stringify({
+      metrics: issueTitleMetrics,
+      lineHeight: issueTitleLineHeight,
+    })}`
   )
   assert.ok(
     issueTitleMetrics.clientHeight >= issueTitleMetrics.scrollHeight - 1,
