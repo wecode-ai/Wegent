@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
@@ -119,6 +119,47 @@ test('shows Markdown source without a duplicate sticky file header', () => {
       }),
     })
   )
+})
+
+test('drags selected preview lines as plain text', () => {
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.ts',
+        name: 'index.ts',
+        content: 'const first = 1\nconst second = 2\nconst third = 3',
+        editable: true,
+        revision: 'revision-selection',
+        truncated: false,
+        size: 48,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  const props = codeViewMocks.render.mock.lastCall?.[0] as {
+    onSelectedLinesChange: (selection: {
+      id: string
+      range: { start: number; end: number }
+    }) => void
+  }
+  act(() => {
+    props.onSelectedLinesChange({
+      id: '/workspace/project/index.ts',
+      range: { start: 1, end: 2 },
+    })
+  })
+
+  const preview = screen.getByTestId('workspace-file-preview')
+  expect(preview).toHaveAttribute('draggable', 'true')
+  const setData = vi.fn()
+  const dataTransfer = { setData, effectAllowed: 'none' } as unknown as DataTransfer
+  fireEvent.dragStart(preview, { dataTransfer })
+
+  expect(setData).toHaveBeenCalledWith('text/plain', 'const first = 1\nconst second = 2')
+  expect(dataTransfer.effectAllowed).toBe('copy')
 })
 
 test('uses the application dark theme for code and binary previews', () => {

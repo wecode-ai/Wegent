@@ -106,7 +106,7 @@ export interface ElectronE2EHost {
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
-  showSystemDragPanel: () => Promise<void>
+  showSystemDragPanel: () => void | Promise<void>
   systemDragPanelVisible: () => boolean
   takePendingSystemDrops: () => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'

@@ -141,6 +141,7 @@ const desktopHostMocks = vi.hoisted(() => {
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
+        if (capability === 'systemDrag.takePending') return []
         return {}
       }
     ),

@@ -890,6 +890,63 @@ async function dragDesktopControlElement(command: DesktopControlCommand): Promis
   return endDesktopControlDrag(command)
 }
 
+let activeDesktopControlDataTransfer: {
+  source: HTMLElement
+  transfer: DataTransfer
+} | null = null
+
+function dispatchDesktopControlDragEvent(
+  element: HTMLElement,
+  type: string,
+  transfer: DataTransfer
+) {
+  const rect = element.getBoundingClientRect()
+  const event = new DragEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: rect.left + rect.width / 2,
+    clientY: rect.top + rect.height / 2,
+    composed: true,
+  })
+  Object.defineProperty(event, 'dataTransfer', { value: transfer })
+  element.dispatchEvent(event)
+}
+
+function startDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  if (activeDesktopControlDataTransfer) {
+    throw new Error('A data-transfer drag is already active')
+  }
+  const source = findDesktopControlElements(command.selector)[0]
+  if (!source) throw new Error(`Unable to find selector "${command.selector}"`)
+  const transfer = new DataTransfer()
+  dispatchDesktopControlDragEvent(source, 'dragstart', transfer)
+  activeDesktopControlDataTransfer = { source, transfer }
+  return source.textContent?.trim() ?? ''
+}
+
+function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  const activeDrag = activeDesktopControlDataTransfer
+  if (!activeDrag) throw new Error('No data-transfer drag is active')
+
+  try {
+    if (!command.target) throw new Error('Data-transfer drag requires a target selector')
+    const target = findDesktopControlElements(command.target)[0]
+    if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
+    dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
+    dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
+    dispatchDesktopControlDragEvent(target, 'drop', activeDrag.transfer)
+    return activeDrag.source.textContent?.trim() ?? ''
+  } finally {
+    dispatchDesktopControlDragEvent(activeDrag.source, 'dragend', activeDrag.transfer)
+    activeDesktopControlDataTransfer = null
+  }
+}
+
+function dragDesktopControlDataTransfer(command: DesktopControlCommand): string {
+  startDesktopControlDataTransfer(command)
+  return endDesktopControlDataTransfer(command)
+}
+
 function contextMenuDesktopControlElement(selector: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
@@ -1009,22 +1066,107 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
 }
 
 function selectDesktopControlText(selector: string, value: string): string {
-  const element = findDesktopControlElements(selector)[0]
-  if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-  let node = walker.nextNode()
-  while (node && !node.textContent?.includes(value)) node = walker.nextNode()
-  if (!node) throw new Error(`Unable to find text "${value}" inside selector "${selector}"`)
+  const elements = findDesktopControlElements(selector)
+  const wholeElement = value
+    ? elements.find(element => element.textContent?.trim() === value)
+    : undefined
+  if (wholeElement) {
+    const range = document.createRange()
+    range.selectNodeContents(wholeElement)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    return value
+  }
+  let selectedNode: Node | null = null
+  let selectedValue = value
+  let fallbackNode: Node | null = null
+  for (const element of elements) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+    let node = walker.nextNode()
+    while (node) {
+      const text = node.textContent ?? ''
+      if (value && text.trim() === value) {
+        selectedNode = node
+        break
+      }
+      if (value && !fallbackNode && text.includes(value)) fallbackNode = node
+      if (!value && text.trim()) {
+        selectedNode = node
+        selectedValue = text.trim()
+        break
+      }
+      node = walker.nextNode()
+    }
+    if (selectedNode) break
+  }
+  selectedNode ??= fallbackNode
+  if (!selectedNode) {
+    throw new Error(
+      value
+        ? `Unable to find text "${value}" inside selector "${selector}"`
+        : `Unable to find non-empty text inside selector "${selector}"`
+    )
+  }
 
-  const start = node.textContent?.indexOf(value) ?? -1
+  const start = selectedNode.textContent?.indexOf(selectedValue) ?? -1
   const range = document.createRange()
-  range.setStart(node, start)
-  range.setEnd(node, start + value.length)
+  range.setStart(selectedNode, start)
+  range.setEnd(selectedNode, start + selectedValue.length)
   const selection = window.getSelection()
   selection?.removeAllRanges()
   selection?.addRange(range)
   document.dispatchEvent(new Event('selectionchange'))
   document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+  return selectedValue
+}
+
+type XtermAutomationTarget = HTMLElement & {
+  __weworkInputForE2E?: (value: string) => void
+  __weworkSelectTextForE2E?: (value: string) => string
+}
+
+function findXtermAutomationTarget(root: HTMLElement | null): XtermAutomationTarget | null {
+  if (!root) return null
+  const candidates = [root, ...root.querySelectorAll<HTMLElement>('*')]
+  return (
+    candidates.find(candidate => {
+      const target = candidate as XtermAutomationTarget
+      return Boolean(target.__weworkInputForE2E || target.__weworkSelectTextForE2E)
+    }) ?? null
+  )
+}
+
+function selectDesktopControlTerminalText(selector: string, value: string): string {
+  const lines = findDesktopControlElements(selector)
+  let line: HTMLElement | undefined
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.textContent?.includes(value)) {
+      line = lines[index]
+      break
+    }
+  }
+  if (!line) throw new Error(`Unable to find terminal text "${value}" inside "${selector}"`)
+  const terminalRoot = line.closest<HTMLElement>(
+    '[data-testid="embedded-local-terminal"], [data-testid="remote-terminal"]'
+  )
+  const selectedText =
+    findXtermAutomationTarget(terminalRoot)?.__weworkSelectTextForE2E?.(value) ?? ''
+  if (selectedText !== value) {
+    throw new Error(`Unable to select terminal text "${value}" from the xterm buffer`)
+  }
+  return selectedText
+}
+
+function inputDesktopControlTerminal(selector: string, value: string): string {
+  const terminalRoot = findDesktopControlElements(selector)[0]
+  const target = findXtermAutomationTarget(terminalRoot ?? null)
+  if (!target?.__weworkInputForE2E) {
+    throw new Error(`Unable to locate the xterm input bridge inside "${selector}"`)
+  }
+  target.__weworkInputForE2E(value)
   return value
 }
 
@@ -1372,6 +1514,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'drag':
       return dragDesktopControlElement(command)
+    case 'dragDataTransfer':
+      return dragDesktopControlDataTransfer(command)
+    case 'dragDataTransferStart':
+      return startDesktopControlDataTransfer(command)
+    case 'dragDataTransferEnd':
+      return endDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
     case 'dragStart':
@@ -1907,6 +2055,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'selectText':
       return selectDesktopControlText(command.selector, command.value ?? '')
+    case 'selectTerminalText':
+      return selectDesktopControlTerminalText(command.selector, command.value ?? '')
+    case 'terminalInput':
+      return inputDesktopControlTerminal(command.selector, command.value ?? '')
   }
 
   const extensionResult = await desktopControlExtension.execute(command)
