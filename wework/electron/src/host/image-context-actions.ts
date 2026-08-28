@@ -1,8 +1,78 @@
 import { mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path'
-import type { WebContents } from 'electron'
-import type { ImageContext, NativeContextMenuParams } from './image-context-menu.js'
+import { app, clipboard, Menu, shell, type WebContents } from 'electron'
+import {
+  installNativeContextMenu,
+  type ImageContext,
+  type NativeContextMenuActions,
+  type NativeContextMenuMode,
+  type NativeContextMenuParams,
+} from './image-context-menu.js'
+
+export function createNativeContextMenuActions(
+  contents: WebContents,
+  openLinkInNewTab: (url: string) => void = url => {
+    void shell.openExternal(url)
+  }
+): NativeContextMenuActions {
+  return {
+    copyLink: url => clipboard.writeText(url),
+    copyPath: path => clipboard.writeText(path),
+    getState: () => ({
+      canGoBack: !contents.isDestroyed() && contents.canGoBack(),
+      canGoForward: !contents.isDestroyed() && contents.canGoForward(),
+      url: contents.isDestroyed() ? null : contents.getURL() || null,
+    }),
+    goBack: () => {
+      if (!contents.isDestroyed() && contents.canGoBack()) contents.goBack()
+    },
+    goForward: () => {
+      if (!contents.isDestroyed() && contents.canGoForward()) contents.goForward()
+    },
+    inspect: (x, y) => {
+      if (contents.isDestroyed()) return
+      contents.inspectElement(x, y)
+      if (!contents.isDevToolsOpened()) contents.openDevTools({ mode: 'detach' })
+    },
+    openExternal: url => {
+      void shell.openExternal(url)
+    },
+    openImage: async image => {
+      const temporaryPath = image.localPath
+        ? null
+        : await materializeTemporaryImage(contents, image)
+      const path = image.localPath ?? temporaryPath
+      if (!path) throw new Error('Image path is unavailable')
+      const error = await shell.openPath(path)
+      if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
+      if (error) throw new Error(error)
+    },
+    openLinkInNewTab,
+    reloadPage: () => {
+      if (!contents.isDestroyed()) contents.reload()
+    },
+    reportError: (action, error) => {
+      console.error(`[context-menu] ${action} failed`, error)
+    },
+    resolveImageContext: params => resolveRendererImageContext(contents, params),
+    showItemInFolder: path => shell.showItemInFolder(path),
+  }
+}
+
+export function installContextMenu(
+  contents: WebContents,
+  mode: NativeContextMenuMode,
+  actions: NativeContextMenuActions = createNativeContextMenuActions(contents)
+): void {
+  installNativeContextMenu(
+    contents,
+    items => Menu.buildFromTemplate(items),
+    actions,
+    app.getLocale(),
+    mode
+  )
+}
 
 const MAX_IMAGE_BYTES = 100 * 1024 * 1024
 const TEMPORARY_IMAGE_DIRECTORY_PREFIX = 'wework-image-preview-'

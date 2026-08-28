@@ -1,7 +1,6 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -67,15 +66,9 @@ import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
 import {
-  installNativeContextMenu,
-  type NativeContextMenuActions,
-  type NativeContextMenuMode,
-} from './host/image-context-menu.js'
-import {
   cleanupStaleTemporaryImages,
-  materializeTemporaryImage,
-  resolveRendererImageContext,
-  scheduleTemporaryImageCleanup,
+  createNativeContextMenuActions,
+  installContextMenu,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import { ComponentUpdateManager } from './runtime/component-update-manager.js'
@@ -181,70 +174,6 @@ app.on('second-instance', () => {
 rendererHealth.on('change', () => {
   mainWindow?.webContents.send('runtime:changed')
 })
-
-function createNativeContextMenuActions(
-  contents: WebContents,
-  openLinkInNewTab: (url: string) => void = url => {
-    void shell.openExternal(url)
-  }
-): NativeContextMenuActions {
-  return {
-    copyLink: url => clipboard.writeText(url),
-    copyPath: path => clipboard.writeText(path),
-    getState: () => ({
-      canGoBack: !contents.isDestroyed() && contents.canGoBack(),
-      canGoForward: !contents.isDestroyed() && contents.canGoForward(),
-      url: contents.isDestroyed() ? null : contents.getURL() || null,
-    }),
-    goBack: () => {
-      if (!contents.isDestroyed() && contents.canGoBack()) contents.goBack()
-    },
-    goForward: () => {
-      if (!contents.isDestroyed() && contents.canGoForward()) contents.goForward()
-    },
-    inspect: (x, y) => {
-      if (contents.isDestroyed()) return
-      contents.inspectElement(x, y)
-      if (!contents.isDevToolsOpened()) contents.openDevTools({ mode: 'detach' })
-    },
-    openExternal: url => {
-      void shell.openExternal(url)
-    },
-    openImage: async image => {
-      const temporaryPath = image.localPath
-        ? null
-        : await materializeTemporaryImage(contents, image)
-      const path = image.localPath ?? temporaryPath
-      if (!path) throw new Error('Image path is unavailable')
-      const error = await shell.openPath(path)
-      if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
-      if (error) throw new Error(error)
-    },
-    openLinkInNewTab,
-    reloadPage: () => {
-      if (!contents.isDestroyed()) contents.reload()
-    },
-    reportError: (action, error) => {
-      console.error(`[context-menu] ${action} failed`, error)
-    },
-    resolveImageContext: params => resolveRendererImageContext(contents, params),
-    showItemInFolder: path => shell.showItemInFolder(path),
-  }
-}
-
-function installContextMenu(
-  contents: WebContents,
-  mode: NativeContextMenuMode,
-  actions: NativeContextMenuActions = createNativeContextMenuActions(contents)
-): void {
-  installNativeContextMenu(
-    contents,
-    items => Menu.buildFromTemplate(items),
-    actions,
-    app.getLocale(),
-    mode
-  )
-}
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
