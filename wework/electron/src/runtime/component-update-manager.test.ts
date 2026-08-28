@@ -29,7 +29,9 @@ describe('ComponentUpdateManager', () => {
     const paths = await manager.prepareStartup()
 
     expect(paths.coreDsh).toBe(join(fixture.resources, 'harness-runtime'))
+    expect(paths.bundledPlugins).toBe(join(fixture.resources, 'bundled-plugins'))
     expect(paths.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
+    expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
   })
 
   test('downloads changed components and atomically activates them on next startup', async () => {
@@ -105,17 +107,22 @@ async function createFixture(): Promise<Fixture> {
   const data = join(root, 'data')
   await mkdir(join(resources, 'harness-runtime'), { recursive: true })
   await mkdir(join(resources, 'wework-core-plugins'), { recursive: true })
+  await mkdir(join(resources, 'bundled-plugins'), { recursive: true })
   await mkdir(join(resources, 'bin'), { recursive: true })
   await mkdir(join(resources, 'codex'), { recursive: true })
   await writeFile(join(resources, 'harness-runtime', 'runtime.txt'), 'dsh')
   await writeFile(join(resources, 'wework-core-plugins', 'plugin.txt'), 'plugins')
+  await writeFile(join(resources, 'bundled-plugins', 'marketplace.json'), 'bundled plugins')
   await writeFile(join(resources, 'bin', 'wegent-executor'), 'executor-v1')
+  await writeFile(join(resources, 'bin', 'dws'), 'dws')
   await writeFile(join(resources, 'codex', 'codex'), 'codex')
   const paths: Record<ManagedComponentId, string> = {
     coreDsh: 'harness-runtime',
     weworkCorePlugins: 'wework-core-plugins',
+    bundledPlugins: 'bundled-plugins',
     executor: 'bin/wegent-executor',
     codex: 'codex/codex',
+    dws: 'bin/dws',
   }
   const components = Object.fromEntries(
     await Promise.all(

@@ -224,3 +224,17 @@ WEWORK_DESKTOP_RUNTIME=electron
   `src-tauri`、`isTauri`、`data-tauri`、`@tauri-apps`、
   `WEWORK_E2E_DESKTOP_RUNTIME`，命中数为 0。迁移前设计稿、历史计划、QA 记录和
   `.live-architecture` 事务文件保留历史文字，不属于可执行逻辑。
+
+## 2026-08-27 Linux CI GPU 进程稳定性补充
+
+- PR #3073 的 GitHub Actions run `33098311670` 中，Cloud shard 8 已完成队列
+  重排、暂停并发送前三个模型请求，随后 Electron 日志连续出现 zygote 通信失败、
+  `GPU process launch failed: error_code=1002` 与
+  `GPU process isn't usable. Goodbye.`，应用退出导致第四个请求未发送。其余
+  46 个 Desktop E2E job 均通过，因此证据指向隔离 Linux 运行时的 GPU 子进程，
+  而不是队列管理场景逻辑。
+- 隔离启动器继续仅在 Linux、uid 0 且
+  `WEWORK_E2E_ISOLATED_XVFB=true` 时关闭 Chromium sandbox 与硬件 GPU，并增加
+  `--in-process-gpu`，使 GPU 服务作为浏览器进程内线程运行，消除 zygote
+  子进程死亡路径。普通本地验证和产品启动参数保持不变；新增参数契约测试覆盖
+  隔离 root、普通用户、非 Linux 和缺少隔离声明四类路径。

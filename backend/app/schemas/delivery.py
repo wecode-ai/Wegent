@@ -367,14 +367,6 @@ class LoopItemTaskBind(BaseModel):
     )
 
 
-class RuntimeTaskStatusUpdate(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    device_id: str = Field(alias="deviceId", min_length=1, max_length=100)
-    task_id: str = Field(alias="taskId", min_length=1, max_length=255)
-    status: Literal["running", "succeeded", "failed", "cancelled", "archived"]
-
-
 class LoopItemTaskBindingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

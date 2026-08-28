@@ -363,7 +363,6 @@ try {
     if ($LASTEXITCODE -ne 0) {
       Fail 'Error: failed to prepare the Electron workspace.'
     }
-    node electron/node_modules/electron/install.js
     New-Item -ItemType Directory -Force -Path 'electron\resources' | Out-Null
     foreach ($resource in @('icons', 'bundled-plugins')) {
       $target = Join-Path $WEWORK_DIR "resources\$resource"

@@ -6,7 +6,9 @@ sidebar_position: 2
 
 ## 安装与启动
 
-从团队提供的下载地址或 [Wegent Releases](https://github.com/wecode-ai/Wegent/releases) 获取适合当前系统的 Wework 安装包。完成安装后启动应用。
+从团队提供的下载地址或
+[Wegent Desktop 最新版本页](https://github.com/wecode-ai/Wegent/releases/latest)
+获取适合当前系统的最新 Wework 完整安装包。完成安装后启动应用。
 
 首次启动时，Wework 会准备本机执行环境。如果电脑上已有 Codex 配置，可以按引导导入；也可以稍后在 **设置 → 模型** 中完成 Codex 登录或配置其他模型。
 

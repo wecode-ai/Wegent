@@ -32,10 +32,25 @@ trusting a plugin permits it to read that content through the standard DSH
 Session contract; Wework does not maintain a second anonymized-summary
 extension point for the same data.
 
-Codex `tokenUsage.last` is cumulative for the current turn, and projected usage
-chunks retain that meaning. A plugin that needs live token throughput should
-subtract adjacent `outputTokens` values for the same Session and divide by the
-sample interval. It must not add multiple cumulative samples together.
+Codex `tokenUsage.last` describes the most recent model call. One Executor turn
+can contain multiple model calls, so this value resets between calls. The
+projection derives adjacent deltas from thread-level `tokenUsage.total` and
+accumulates those deltas into usage for the current DSH turn. Projected
+`outputTokens` therefore increases monotonically within one turn, and
+`assistant/message.usage` uses the same whole-turn cumulative value.
+
+A plugin that needs live token throughput should subtract adjacent
+`outputTokens` values for the same Session and turn, then divide by the sample
+interval. It must not add multiple cumulative samples together, and it should
+reset its own delta baseline when a new turn starts.
+
+Accurate Codex usage is normally reported when a model call settles, not for
+every generated token. Plugins that need lower-latency feedback can also
+observe standard `text-delta` and `reasoning-delta` chunks, estimate live
+generation throughput over a sliding window, and calibrate that estimate with
+later usage samples. Executor streaming text and thinking blocks are projected
+into those standard chunks; tool, plan, and other non-model blocks are excluded
+from the model output stream.
 
 ```js
 export const inject = ["sessions"];

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
-import { access, cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
@@ -13,59 +13,16 @@ import {
   signPreparedMacOsBinaries,
 } from './lib/deepseek-harness-signing.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
-import { normalizeFileViewerAssetManifest } from './lib/harness-runtime-metadata.mjs'
+import { pruneHarnessRuntime } from './lib/harness-runtime-pruning.mjs'
 import { assertPortableHarnessRuntime } from './lib/portable-runtime.mjs'
 import { acquireProcessLock } from './lib/process-lock.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const coreDshVersion = '0.1.1-rc.2'
-const workbenchDshVersions = new Set(['0.1.0-rc.7', '0.1.0-rc.8'])
+const workbenchDshVersions = new Set(['0.1.0-rc.8'])
 const source = path.join(root, 'harness-runtime')
 const runtimesDirectory = path.join(source, 'runtimes')
 const pluginsDirectory = path.join(source, 'plugins')
-const dshPlugins = [
-  {
-    source: path.join(root, 'dsh', 'app-wework'),
-    target: path.join('plugins', 'wework-app'),
-  },
-  {
-    source: path.join(root, 'dsh', 'electron-host'),
-    target: path.join('plugins', 'wework-electron-host'),
-  },
-  {
-    source: path.join(root, 'dsh', 'executor-runtime'),
-    target: path.join('plugins', 'wework-executor-runtime'),
-  },
-  {
-    source: path.join(root, 'dsh', 'terminal-runtime'),
-    target: path.join('plugins', 'wework-terminal-runtime'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-core-apps'),
-    target: path.join('plugins', 'wework-ui-core-apps'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-core-settings'),
-    target: path.join('plugins', 'wework-ui-core-settings'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-plugin-center'),
-    target: path.join('plugins', 'wework-ui-plugin-center'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-applications'),
-    target: path.join('plugins', 'wework-ui-applications'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-automations'),
-    target: path.join('plugins', 'wework-ui-automations'),
-  },
-  {
-    source: path.join(root, 'dsh', 'ui-cloud-work'),
-    target: path.join('plugins', 'wework-ui-cloud-work'),
-  },
-]
-const dshAppOutput = path.join(root, 'dsh', 'app-wework', 'web')
 const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
@@ -75,7 +32,7 @@ const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
 const prepareLockPath = path.join(cacheDirectory, 'harness-runtime-prepare.lock')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v5'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v6'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -129,20 +86,6 @@ async function sha256(pathname) {
   return hash.digest('hex')
 }
 
-async function normalizeDshAppBuildMetadata() {
-  const manifestPath = path.join(dshAppOutput, 'flyfish-viewer-assets.json')
-  let manifest
-  try {
-    manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
-  } catch (error) {
-    throw new Error(`Failed to normalize DSH app asset manifest: ${error}`)
-  }
-  await writeFile(
-    manifestPath,
-    `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, dshAppOutput), null, 2)}\n`
-  )
-}
-
 async function resetTargetDirectory() {
   await rm(targetDirectory, { recursive: true, force: true })
   await mkdir(targetDirectory, { recursive: true })
@@ -160,21 +103,6 @@ async function runtimeSources() {
       content: await readFile(path.join(pluginsDirectory, name)),
     }))
   )
-  const dshPluginEntries = (
-    await Promise.all(
-      dshPlugins.map(async plugin => {
-        const files = await listFiles(plugin.source)
-        return Promise.all(
-          files
-            .filter(name => !name.endsWith('.test.mjs'))
-            .map(async name => ({
-              name: path.join(plugin.target, name),
-              content: await readFile(path.join(plugin.source, name)),
-            }))
-        )
-      })
-    )
-  ).flat()
   const runtimeDirectories = (await readdir(runtimesDirectory, { withFileTypes: true }))
     .filter(entry => entry.isDirectory())
     .map(entry => entry.name)
@@ -203,12 +131,8 @@ async function runtimeSources() {
           { name: 'pnpm-lock.yaml', content: lockContent },
           ...sharedEntries,
           ...pluginEntries,
-          ...(dshVersion === coreDshVersion ? dshPluginEntries : []),
         ],
-        pluginFiles: [
-          ...pluginFiles,
-          ...(dshVersion === coreDshVersion ? dshPluginEntries.map(entry => entry.name) : []),
-        ],
+        pluginFiles,
       }
     })
   )
@@ -385,6 +309,10 @@ async function buildRuntime(runtime) {
       ],
       staging
     )
+    const pruned = await pruneHarnessRuntime(staging, runtimePlatform())
+    console.log(
+      `Pruned Harness runtime ${runtime.dshVersion}: ${pruned.directories} directories, ${pruned.files} non-runtime files`
+    )
     await assertPortableHarnessRuntime(staging)
     await writeFile(
       path.join(staging, 'runtime.json'),
@@ -446,8 +374,6 @@ try {
       )
     }
 
-    await run(pnpmCommand, ['run', 'build:dsh-app'], root)
-    await normalizeDshAppBuildMetadata()
     const runtimes = (await runtimeSources()).map(runtimeIdentity)
     if (runtimes.length === 0) {
       throw new Error('Harness runtime must declare at least one DSH version')

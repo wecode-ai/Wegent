@@ -1,12 +1,25 @@
 const path = require('node:path')
 
+const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
+
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const identity = resolveBuildIdentity()
 
 module.exports = {
-  appId: 'io.wecode.wework',
-  productName: 'WeWork',
+  appId: identity.identifier,
+  productName: identity.productName,
+  executableName: identity.executableName,
+  extraMetadata: {
+    weworkUpdateBaseUrl: updateBaseUrl,
+    weworkAppId: identity.identifier,
+    weworkProductName: identity.productName,
+    weworkExecutableName: identity.executableName,
+    ...(identity.executorNamespace ? { weworkExecutorNamespace: identity.executorNamespace } : {}),
+    ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
+    ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
+  },
   directories: {
     buildResources: 'build',
     output: 'release-installer',
@@ -30,8 +43,10 @@ module.exports = {
   mac: {
     artifactName: 'WeWork_${version}_macos_${arch}.${ext}',
     category: 'public.app-category.developer-tools',
+    electronLanguages: ['en', 'zh_CN'],
     hardenedRuntime: true,
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
+    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
     target: ['dmg', 'zip'],
   },
   dmg: {
@@ -39,6 +54,7 @@ module.exports = {
   },
   win: {
     artifactName: 'WeWork_${version}_windows_${arch}-setup.${ext}',
+    electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),
     target: ['nsis'],
   },
@@ -53,7 +69,7 @@ module.exports = {
   linux: {
     artifactName: 'WeWork_${version}_linux_${arch}.${ext}',
     category: 'Development',
-    executableName: 'wework',
+    electronLanguages: ['en-US', 'zh-CN'],
     target: ['AppImage'],
   },
 }

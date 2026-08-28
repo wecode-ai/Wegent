@@ -12,6 +12,7 @@ import { resourceLibraryApi } from '@/apis/resourceLibrary'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useTeamContext } from '@/contexts/TeamContext'
 import {
   buildTeamTargetHref,
   getBindModesTargetPage,
@@ -72,6 +73,7 @@ export function DiscoverResources({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  const { refreshTeams } = useTeamContext()
   const { t, i18n } = useTranslation('resource-library')
   const { toast } = useToast()
   const [listings, setListings] = useState<ResourceLibraryListing[]>([])
@@ -334,6 +336,11 @@ export function DiscoverResources({
       await loadListings()
       const teamId = install.installed_reference.team_id
       if (listing.resource_type === 'agent' && targetNamespace === 'default' && teamId) {
+        try {
+          await refreshTeams()
+        } catch (error) {
+          console.error('Failed to refresh teams after marketplace install:', error)
+        }
         router.push(buildAgentUseHref(listing, teamId))
       }
     } catch (error) {

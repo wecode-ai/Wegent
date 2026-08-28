@@ -1136,7 +1136,10 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
 
         if request.executor_name:
             # Direct cancel to specified container
-            port, error = executor._get_container_port(request.executor_name)
+            port, error = await asyncio.to_thread(
+                executor._get_container_port,
+                request.executor_name,
+            )
             if not port:
                 logger.warning(
                     f"[v1/cancel] Container {request.executor_name} not found: {error}"
@@ -1185,7 +1188,11 @@ async def cancel_task_v1(request: CancelRequest, http_request: Request):
 
         else:
             # Find container by task_id and cancel
-            result = executor.cancel_task(request.task_id, request.subtask_id)
+            result = await asyncio.to_thread(
+                executor.cancel_task,
+                request.task_id,
+                request.subtask_id,
+            )
 
             if result.get("status") == "success":
                 logger.info(

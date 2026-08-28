@@ -8,6 +8,7 @@ import io
 import json
 import zipfile
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -24,6 +25,7 @@ from app.schemas.smart_app import (
     SmartAppSubmissionInitRequest,
 )
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
+from app.services.smart_app_download_link import verify_smart_app_download_token
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
 
 
@@ -299,6 +301,12 @@ def test_department_grant_allows_member_download(test_db, test_user, monkeypatch
         test_db, smart_app_id=item.id, user_id=member.id
     )
     assert descriptor.sha256 == hashlib.sha256(package).hexdigest()
+    parsed_url = urlsplit(descriptor.downloadUrl)
+    assert parsed_url.path == f"/api/smart-apps/marketplace/{item.id}/artifact"
+    claims = verify_smart_app_download_token(parse_qs(parsed_url.query)["token"][0])
+    assert claims.smart_app_id == item.id
+    assert claims.release_id == item.latestReleaseId
+    assert claims.user_id == member.id
 
 
 def test_revocation_blocks_future_download_but_does_not_track_local_copy(
@@ -314,6 +322,13 @@ def test_revocation_blocks_future_download_but_does_not_track_local_copy(
         test_db, submission_id=initialized.submissionId, user_id=test_user.id
     )
     assert completed.item is not None
+    descriptor = smart_app_marketplace_service.download_descriptor(
+        test_db,
+        smart_app_id=completed.item.id,
+        user_id=recipient.id,
+    )
+    descriptor_url = urlsplit(descriptor.downloadUrl)
+    claims = verify_smart_app_download_token(parse_qs(descriptor_url.query)["token"][0])
 
     smart_app_marketplace_service.update_access(
         test_db,
@@ -333,6 +348,14 @@ def test_revocation_blocks_future_download_but_does_not_track_local_copy(
             test_db, smart_app_id=completed.item.id, user_id=recipient.id
         )
     assert error.value.status_code == 404
+    with pytest.raises(HTTPException) as artifact_error:
+        smart_app_marketplace_service.download_artifact(
+            test_db,
+            smart_app_id=claims.smart_app_id,
+            release_id=claims.release_id,
+            user_id=claims.user_id,
+        )
+    assert artifact_error.value.status_code == 404
 
 
 def test_same_or_older_version_cannot_replace_release(test_db, test_user, monkeypatch):

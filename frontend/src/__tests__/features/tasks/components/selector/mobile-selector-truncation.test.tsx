@@ -14,6 +14,7 @@ const longModelName = '官网:kimi-k2.5-preview-with-a-very-long-model-name'
 const longTeamName = '一个名字特别特别长的Wegent智能助理用于验证截断'
 let mockFilteredModels: Model[] = []
 let mockRenderDrawerContent = false
+const mockUseModelSelection = jest.fn()
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -76,24 +77,27 @@ jest.mock('@/features/tasks/components/selector/useRecentTeams', () => ({
 
 jest.mock('@/features/tasks/hooks/useModelSelection', () => ({
   DEFAULT_MODEL_NAME: '__default__',
-  useModelSelection: () => ({
-    selectedModel: {
-      id: 'long-model',
-      name: longModelName,
-      displayName: longModelName,
-      type: 'user',
-    },
-    forceOverride: false,
-    filteredModels: mockFilteredModels,
-    showDefaultOption: false,
-    isLoading: false,
-    isMixedTeam: false,
-    isModelRequired: false,
-    error: null,
-    getDisplayText: () => longModelName,
-    selectModelByKey: jest.fn(),
-    setForceOverride: jest.fn(),
-  }),
+  useModelSelection: (options: unknown) => {
+    mockUseModelSelection(options)
+    return {
+      selectedModel: {
+        id: 'long-model',
+        name: longModelName,
+        displayName: longModelName,
+        type: 'user',
+      },
+      forceOverride: false,
+      filteredModels: mockFilteredModels,
+      showDefaultOption: false,
+      isLoading: false,
+      isMixedTeam: false,
+      isModelRequired: false,
+      error: null,
+      getDisplayText: () => longModelName,
+      selectModelByKey: jest.fn(),
+      setForceOverride: jest.fn(),
+    }
+  },
 }))
 
 const selectedTeam: Team = {
@@ -114,6 +118,7 @@ describe('mobile selector truncation', () => {
   beforeEach(() => {
     mockFilteredModels = []
     mockRenderDrawerContent = false
+    mockUseModelSelection.mockClear()
   })
 
   it('constrains the mobile model selector text to the available trigger width', () => {
@@ -154,6 +159,27 @@ describe('mobile selector truncation', () => {
     expect(label).toHaveClass('truncate')
     expect(label).toHaveClass('flex-1')
     expect(label).toHaveClass('min-w-0')
+  })
+
+  it('filters the mobile selector by the requested model category', () => {
+    render(
+      <MobileModelSelector
+        selectedModel={null}
+        setSelectedModel={jest.fn()}
+        forceOverride={false}
+        setForceOverride={jest.fn()}
+        selectedTeam={selectedTeam}
+        disabled={false}
+        modelCategoryType="video"
+      />
+    )
+
+    expect(mockUseModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedTeam,
+        modelCategoryType: 'video',
+      })
+    )
   })
 
   it('shows declared capabilities in the production mobile model selector', () => {

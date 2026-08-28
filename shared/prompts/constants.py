@@ -5,6 +5,7 @@
 """Shared prompt constants used across backend and chat_shell modules."""
 
 import json
+import re
 from typing import Any
 
 # Marker that separates attachment/KB context from the actual user question.
@@ -22,6 +23,10 @@ _SYSTEM_REMINDER_OPEN = "<system-reminder>"
 # Patterns that identify system-context text blocks in old stored formats.
 # These blocks contain attachment metadata or markers — NOT user text.
 _SYSTEM_CONTEXT_PREFIXES = ("<system-reminder>", "<attachment>", "<selected_documents>")
+_LEADING_ATTACHMENT_BLOCKS = re.compile(
+    r"\A(?:\s*<attachment\b[^>]*>.*?</attachment>\s*)+",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 
 
 def _is_system_context_block(text: str) -> bool:
@@ -149,3 +154,9 @@ def extract_user_question(text: str) -> str:
         return after.lstrip("\n").strip()
 
     return text.strip()
+
+
+def normalize_generation_prompt(text: str) -> str:
+    """Return user-authored text for image and video generation providers."""
+    user_text = extract_user_question(text)
+    return _LEADING_ATTACHMENT_BLOCKS.sub("", user_text).strip()

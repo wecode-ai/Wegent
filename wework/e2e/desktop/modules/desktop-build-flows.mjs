@@ -374,12 +374,11 @@ function codexCacheRoot() {
 }
 
 async function prepareHarnessRuntimeRoots(appBinary) {
-  const packagedResources = join(
+  const packagedResourcesRoot = join(
     dirname(appBinary),
-    ...(process.platform === 'darwin'
-      ? ['..', 'Resources', 'harness-runtime']
-      : ['resources', 'harness-runtime'])
+    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
   )
+  const packagedResources = join(packagedResourcesRoot, 'harness-runtime')
   const catalogPath = join(packagedResources, 'runtimes.json')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const runtimeRoot = join(resultDir, 'harness-runtime')
@@ -394,7 +393,10 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     await readFile(dshEntry)
   }
 
-  return { harnessRuntimeRoot: runtimeRoot }
+  return {
+    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    harnessRuntimeRoot: runtimeRoot,
+  }
 }
 
 async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {

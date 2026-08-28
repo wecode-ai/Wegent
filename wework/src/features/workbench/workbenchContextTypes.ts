@@ -472,6 +472,7 @@ export interface WorkbenchProviderProps {
   prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
+  syncProjectTaskTracking?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

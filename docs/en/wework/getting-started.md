@@ -6,7 +6,10 @@ sidebar_position: 2
 
 ## Install and launch
 
-Download the Wework installer for your system from your team or [Wegent Releases](https://github.com/wecode-ai/Wegent/releases). Launch Wework after installation.
+Download the latest complete Wework installer for your system and update
+channel from your team or the
+[latest Wegent Desktop Release](https://github.com/wecode-ai/Wegent/releases/latest).
+Launch Wework after installation.
 
 On first launch, Wework prepares its local runtime. Import an existing Codex configuration when prompted, or open **Settings → Models** later to sign in to Codex or add another model.
 

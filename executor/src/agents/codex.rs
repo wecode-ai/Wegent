@@ -56,9 +56,8 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEWORK_EXECUTOR_SIDECAR",
 ];
 const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
-const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
+const WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
+    "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
@@ -396,6 +395,27 @@ impl CodexAppServerClient {
             if pending_request_count > 0 {
                 return Err(pending_request_count);
             }
+            state.process.take()
+        };
+        if let Some(process) = process {
+            drop(process);
+        }
+        Ok(())
+    }
+
+    async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
+        let process = {
+            let mut state = self.state.lock().await;
+            let active_turn_count = state.active_threads.values().sum::<usize>();
+            let Some(process) = state.process.as_ref() else {
+                state.thread_generations.clear();
+                return Ok(());
+            };
+            let pending_request_count = process.pending.lock().await.len();
+            if active_turn_count > 0 || pending_request_count > 0 {
+                return Err((active_turn_count, pending_request_count));
+            }
+            state.thread_generations.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -1435,12 +1455,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_fields.push(("operation", operation.to_owned()));
                 thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
-                let response = client.request(operation, params).await?;
-                let thread_id = thread_id_from_response(
+                let thread_id = request_shared_thread_id_with_provider_recovery(
+                    client,
                     operation,
-                    &response,
-                    launch_config.model_provider.as_deref(),
-                )?;
+                    params,
+                    &launch_config,
+                    &request.task_id,
+                    &request.subtask_id,
+                )
+                .await?;
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -3751,11 +3774,11 @@ fn global_mcp_config_overrides() -> Vec<String> {
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
     let command =
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let bridge_addr = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
+    let bridge_runtime_file = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
-    let bridge_url = format!("http://{bridge_addr}");
+        .map(PathBuf::from)
+        .unwrap_or_else(|| executor_home().join("runtime/embedded-browser-bridge.json"));
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3815,9 +3838,9 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
                 "mcp_servers",
                 WEWORK_BROWSER_MCP_SERVER_NAME,
                 "env",
-                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
+                WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV
             ]),
-            toml_value(&bridge_url)
+            toml_value(&bridge_runtime_file.display().to_string())
         ),
     ];
 
@@ -3833,21 +3856,6 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             toml_value(&label)
         ));
     }
-    if let Ok(token) = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV) {
-        if !token.trim().is_empty() {
-            overrides.push(format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_BROWSER_MCP_SERVER_NAME,
-                    "env",
-                    "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"
-                ]),
-                toml_value(token.trim())
-            ));
-        }
-    }
-
     overrides
 }
 
@@ -4668,6 +4676,71 @@ fn validate_codex_model_provider(
         // Codex builds return it, so reject an explicit mismatch without breaking those clients.
         None => Ok(()),
     }
+}
+
+async fn request_shared_thread_id_with_provider_recovery(
+    client: &CodexAppServerClient,
+    operation: &'static str,
+    params: Value,
+    launch_config: &CodexLaunchConfig,
+    task_id: &str,
+    subtask_id: &str,
+) -> Result<String, String> {
+    let response = client.request(operation, params.clone()).await?;
+    let provider_error = match thread_id_from_response(
+        operation,
+        &response,
+        launch_config.model_provider.as_deref(),
+    ) {
+        Ok(thread_id) => return Ok(thread_id),
+        Err(error) => error,
+    };
+    if operation != "thread/resume"
+        || validate_codex_model_provider(
+            operation,
+            &response,
+            launch_config.model_provider.as_deref(),
+        )
+        .is_ok()
+    {
+        return Err(provider_error);
+    }
+
+    let mut fields = task_fields(task_id, subtask_id);
+    fields.push(("operation", operation.to_owned()));
+    fields.push(("error", provider_error.clone()));
+    match client.restart_if_idle().await {
+        Ok(()) => {
+            log_executor_event(
+                "codex shared stale thread provider recovery restarting",
+                &fields,
+            );
+        }
+        Err((active_turn_count, pending_request_count)) => {
+            fields.push(("active_turn_count", active_turn_count.to_string()));
+            fields.push(("pending_request_count", pending_request_count.to_string()));
+            log_executor_event(
+                "codex shared stale thread provider recovery unavailable",
+                &fields,
+            );
+            return Err(provider_error);
+        }
+    }
+
+    client
+        .ensure_process_for_launch_config(launch_config)
+        .await?;
+    let response = client.request(operation, params).await?;
+    let thread_id = thread_id_from_response(
+        operation,
+        &response,
+        launch_config.model_provider.as_deref(),
+    )?;
+    log_executor_event(
+        "codex shared stale thread provider recovery completed",
+        &fields,
+    );
+    Ok(thread_id)
 }
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {

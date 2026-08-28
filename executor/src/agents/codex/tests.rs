@@ -3227,13 +3227,12 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     let _lock = crate::test_env::lock();
     let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
     let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-    let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-    let old_bridge_token = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
+    let old_bridge_runtime_file = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+    let bridge_runtime_file = home.join("desktop/embedded-browser-bridge.json");
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
     env::set_var(
-        WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-        "bridge-test-token",
+        WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
+        &bridge_runtime_file,
     );
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
@@ -3278,16 +3277,18 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-        "http://127.0.0.1:43127"
+        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE"],
+        bridge_runtime_file.display().to_string()
     );
     assert_eq!(
         config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
         "workspace-browser-task-123"
     );
-    assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"],
-        "bridge-test-token"
+    assert!(
+        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL")
+    );
+    assert!(
+        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN")
     );
 
     if let Some(old_home) = old_home {
@@ -3295,15 +3296,59 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     } else {
         env::remove_var("WEGENT_EXECUTOR_HOME");
     }
-    if let Some(old_bridge_addr) = old_bridge_addr {
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
+    if let Some(old_bridge_runtime_file) = old_bridge_runtime_file {
+        env::set_var(
+            WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
+            old_bridge_runtime_file,
+        );
     } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
     }
-    if let Some(old_bridge_token) = old_bridge_token {
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, old_bridge_token);
+}
+
+#[test]
+fn codex_browser_mcp_defaults_to_executor_home_runtime_file() {
+    let _lock = crate::test_env::lock();
+    let home = env::temp_dir().join(format!("codex-browser-mcp-default-{}", std::process::id()));
+    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+    let old_bridge_runtime_file = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+
+    let request = ExecutionRequest {
+        task_id: "task:default-runtime".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let config = thread_start_params(&request, &launch_config)
+        .get("config")
+        .and_then(Value::as_object)
+        .cloned()
+        .expect("thread config should be present");
+
+    assert_eq!(
+        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE"],
+        home.join("runtime/embedded-browser-bridge.json")
+            .display()
+            .to_string()
+    );
+    assert!(
+        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL")
+    );
+
+    if let Some(old_home) = old_home {
+        env::set_var("WEGENT_EXECUTOR_HOME", old_home);
     } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
+        env::remove_var("WEGENT_EXECUTOR_HOME");
+    }
+    if let Some(old_bridge_runtime_file) = old_bridge_runtime_file {
+        env::set_var(
+            WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
+            old_bridge_runtime_file,
+        );
+    } else {
+        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
     }
 }
 

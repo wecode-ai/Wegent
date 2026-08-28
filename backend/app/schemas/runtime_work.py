@@ -83,15 +83,6 @@ class RuntimeTaskAddress(BaseModel):
     )
 
 
-class RuntimeTaskStatusReplayRequest(BaseModel):
-    """Request a Runtime to replay authoritative status for selected tasks."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    device_id: str = Field(..., alias="deviceId", min_length=1)
-    task_ids: list[str] = Field(..., alias="taskIds", min_length=1, max_length=200)
-
-
 class RuntimeModelSelection(BaseModel):
     """Model selection persisted with a device-local runtime task."""
 

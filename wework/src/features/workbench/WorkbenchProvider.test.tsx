@@ -13410,6 +13410,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
+      )
+    )
 
     act(() => {
       streamHandlers.onChatStart?.({
@@ -13419,12 +13425,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'running'
-      )
-    )
 
     act(() => {
       streamHandlers.onRuntimeTaskTitleUpdated?.({
@@ -13463,7 +13463,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-a-task-status')).toHaveTextContent('done')
   })
 
-  test('does not synchronize restored task history during workbench load', async () => {
+  test('reconciles restored runtime state without creating board items', async () => {
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -13510,7 +13510,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'running'
+      )
+    )
   })
 
   test('routes task status to the project store recorded in the runtime handle', async () => {
@@ -13686,10 +13691,15 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
     expect(trackProjectTask).not.toHaveBeenCalled()
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-bound' }),
+        'queued'
+      )
+    )
   })
 
-  test('does not regress board completion when a stale running snapshot arrives', async () => {
+  test('waits for canonical executor settlement before projecting completion', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onChatStart) streamHandlers = handlers
@@ -13775,12 +13785,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'succeeded'
-      )
-    )
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     await act(async () => {
       staleRunningUpdate.reject(new Error('stale running update failed'))
@@ -13791,7 +13795,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       await staleRuntimeWorkRefresh.promise
     })
     expect(updateTaskTrackingStatus).toHaveBeenCalledTimes(2)
-    expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('succeeded')
+    expect(updateTaskTrackingStatus.mock.calls.map(([, status]) => status)).toEqual([
+      'running',
+      'running',
+    ])
+    expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('running')
   })
 
   test('polls the cloud executor until idle when the cached snapshot predates the active turn', async () => {

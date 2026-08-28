@@ -148,6 +148,9 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
       ? { stateDeviceId: nullableStringValue(project.stateDeviceId) }
       : {}),
     ...(roots ? { roots } : {}),
+    ...(nullableNumberValue(project.sidebarOrder) !== undefined
+      ? { sidebarOrder: nullableNumberValue(project.sidebarOrder) }
+      : {}),
     ...(booleanValue(project.pinned) !== undefined ? { pinned: booleanValue(project.pinned) } : {}),
     ...(nullableNumberValue(project.pinnedOrder) !== undefined
       ? { pinnedOrder: nullableNumberValue(project.pinnedOrder) }

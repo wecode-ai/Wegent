@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -42,6 +43,7 @@ from app.schemas.smart_app import (
 )
 from app.services.marketplace_artifact_storage import marketplace_artifact_storage
 from app.services.marketplace_tag_service import marketplace_tag_service
+from app.services.smart_app_download_link import build_smart_app_download_url
 from app.services.smart_app_package_parser import (
     MAX_SMART_APP_PACKAGE_SIZE_BYTES,
     SEMVER_PATTERN,
@@ -52,6 +54,13 @@ from app.services.smart_app_package_parser import (
 _DATA_URL = re.compile(r"^data:(image/(?:png|webp|jpeg));base64,([A-Za-z0-9+/=]+)$")
 _APPROVED = (MemberStatus.APPROVED.value, MemberStatus.APPROVED.name)
 _MAX_EXTENSIONS_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True)
+class SmartAppArtifactDownload:
+    storage_key: str
+    filename: str
+    size_bytes: int
 
 
 class SmartAppMarketplaceService:
@@ -333,8 +342,10 @@ class SmartAppMarketplaceService:
         if self._access_role(db, app=app, user_id=user_id) is None:
             raise HTTPException(status_code=404, detail="Smart app not found")
         release = self._latest_release(db, app)
-        url, expires_at = marketplace_artifact_storage.presign_download(
-            release.storage_key
+        url, expires_at = build_smart_app_download_url(
+            smart_app_id=app.id,
+            release_id=release.id,
+            user_id=user_id,
         )
         return SmartAppDownloadDescriptor(
             smartAppId=app.id,
@@ -345,6 +356,35 @@ class SmartAppMarketplaceService:
             sha256=release.sha256,
             sizeBytes=release.size_bytes,
             expiresAt=expires_at,
+        )
+
+    def download_artifact(
+        self,
+        db: Session,
+        *,
+        smart_app_id: int,
+        release_id: int,
+        user_id: int,
+    ) -> SmartAppArtifactDownload:
+        """Resolve one ticketed artifact while rechecking current access."""
+        app = self._published_app(db, smart_app_id)
+        if self._access_role(db, app=app, user_id=user_id) is None:
+            raise HTTPException(status_code=404, detail="Smart app not found")
+        release = (
+            db.query(SmartAppRelease)
+            .filter(
+                SmartAppRelease.id == release_id,
+                SmartAppRelease.smart_app_id == app.id,
+                SmartAppRelease.scan_status == "passed",
+            )
+            .first()
+        )
+        if not release:
+            raise HTTPException(status_code=404, detail="Smart app release not found")
+        return SmartAppArtifactDownload(
+            storage_key=release.storage_key,
+            filename=f"{app.name}-{release.version}.zip",
+            size_bytes=release.size_bytes,
         )
 
     def publish_official_package(

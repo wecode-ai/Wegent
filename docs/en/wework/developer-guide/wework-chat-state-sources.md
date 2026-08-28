@@ -414,6 +414,26 @@ The desktop workbench caches up to 20 regular panes so messages, composer drafts
 
 The message area stores each task's reading position by `conversationKey`. During a task switch, restoration realigns the saved message anchor throughout the layout stabilization window; programmatic `scroll` events in that window must not overwrite the snapshot. An explicit wheel or touch gesture must cancel restoration immediately. Changes to this path must cover the real desktop flow “scroll to the middle of a long response → switch to another task → switch back” and retain screenshots from before the switch, after the switch, and after restoration.
 
+## Project Task Status Synchronization
+
+After a Wework runtime task is bound to a project-space task, the frontend keeps exactly one status synchronization path:
+
+1. `RuntimeTaskLifecycleStore` produces the lifecycle snapshot for the current runtime task.
+2. `WorkbenchProvider` converts that snapshot into `runtimeTaskTrackingStatus` and calls `reconcileProjectTaskTrackingStatus`.
+3. `reconcileProjectTaskTrackingStatus` derives one target status from the bound task's current status and execution status, then updates it through the project-space storage owner.
+4. The fixed Task tab is the only UI owner of this synchronization path. Changing the bound task reruns the same reconciler and must not write status directly.
+
+Running execution maps to `in_progress`. Terminal outcomes such as success, failure, and cancellation map to `in_review` for user confirmation. Archiving also reuses the same reconciler for final convergence. Backend runtime event projection owns project automation workflow status, so the renderer must not issue a separate status PATCH that competes with it.
+
+The following paths are obsolete and must not be restored:
+
+- scanning and replaying task status during renderer startup;
+- exposing replay RPCs such as `runtime.tasks.status.replay` in Wework, Backend, or Executor;
+- letting the renderer write cloud workflow status through `cloud-context/status`;
+- letting boards, detail views, or other tabs infer and write task status from local messages or runtime lists.
+
+After changing this path, run `pnpm --filter wework e2e:desktop -- --segment task-status-sync`. This real Electron checkpoint binds the fixed task and verifies that a running task appears only in the In Progress column, then appears only in the Awaiting Confirmation column after execution settles.
+
 ## Audit Result
 
 - Desktop and mobile layouts no longer scan `messages` directly to decide whether the assistant is streaming; they read `paneSession.status.isAssistantStreaming`.

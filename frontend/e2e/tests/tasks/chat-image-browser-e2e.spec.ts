@@ -136,6 +136,10 @@ test.describe('Chat Image Browser E2E with Mock Model Server', () => {
             namespace: 'default',
           },
           spec: {
+            modelType: 'llm',
+            modelCapabilities: {
+              supportsImage: true,
+            },
             modelConfig: {
               env: {
                 model: 'openai',

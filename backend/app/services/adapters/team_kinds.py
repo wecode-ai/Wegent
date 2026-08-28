@@ -2290,12 +2290,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 # Try to find in public_models cache (by name only)
                 public_model = public_models_cache.get(model_ref_name)
 
-                if public_model:
-                    # Public model - return bind_model format with type
-                    agent_config = {
-                        "bind_model": public_model.name,
-                        "bind_model_type": "public",
-                    }
+                if public_model and public_model.json:
+                    model_crd = Model.model_validate(public_model.json)
+                    if model_crd.spec.isCustomConfig:
+                        model_config = model_crd.spec.modelConfig or {}
+                        agent_config = dict(model_config)
+                        if model_crd.spec.protocol:
+                            agent_config["protocol"] = model_crd.spec.protocol
+                    else:
+                        # Public predefined model - return bind_model format with type
+                        agent_config = {
+                            "bind_model": public_model.name,
+                            "bind_model_type": "public",
+                        }
 
         return {"agent_config": agent_config, "shell_type": shell_type}
 

@@ -374,17 +374,19 @@ class BackgroundExecutionManager:
             running_subtask = running_subtasks[0] if running_subtasks else None
 
             if running_subtask:
+                executor_name = running_subtask.executor_name
+
                 # Build ExecutionRequest for cancel
                 cancel_request = ExecutionRequest(
                     task_id=task_id,
                     subtask_id=running_subtask.id,
                     bot=[{"shell_type": shell_type}],
                     user={"id": user_id},
+                    executor_name=executor_name,
                 )
 
                 # Determine device_id if this is a device task
                 device_id = None
-                executor_name = running_subtask.executor_name
                 if executor_name and executor_name.startswith("device-"):
                     device_id = executor_name[7:]  # Remove "device-" prefix
 

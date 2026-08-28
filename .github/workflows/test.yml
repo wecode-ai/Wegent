@@ -328,10 +328,14 @@ jobs:
           name: frontend-coverage
 
   test-wework:
-    name: Test Wework
+    name: Test Wework (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - name: Checkout code
@@ -346,14 +350,14 @@ jobs:
       - name: Run wework tests
         env:
           TZ: Asia/Shanghai
-        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
+        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests --shard=${{ matrix.shard }}/2
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: ./wework/coverage/coverage-final.json
           flags: wework
-          name: wework-coverage
+          name: wework-coverage-${{ matrix.shard }}
 
   test-wegent-cli:
     name: Test wegent CLI

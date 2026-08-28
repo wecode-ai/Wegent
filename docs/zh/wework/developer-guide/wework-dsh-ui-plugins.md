@@ -15,6 +15,7 @@ client 插件通过 slot 注入。不要再创建 Wework 私有 manifest、动�
 | ------------------------------ | ------------------------ | --------------------------------- |
 | `wework.app`                   | 产品切换器与应用 surface | `id`、`label`、`mode`             |
 | `wework.route`                 | 顶层辅助页面             | `id`、`path`、`telemetryFeature`  |
+| `wework.sidebar.navigation`    | 左侧边栏导航入口         | `id`、`path`、`label`             |
 | `wework.settings.page`         | 设置导航与设置内容       | `id`、`path`、`label`、`category` |
 | `wework.workspace.tab`         | 顶部可关闭工作区 Tab     | `id`、`label`                     |
 | `wework.workspace.sidebar.tab` | 右侧工作区面板 Tab       | `id`、`label`                     |
@@ -71,6 +72,12 @@ export function apply(ctx) {
 `path`、`category`、`mode` 等 Wework 描述冻结到标准 DSH component 的
 `wework` 静态属性，再调用 `ctx.slots.register`。因此发现、依赖、渲染与释放仍由
 DSH 管理，没有第二套 Wework 注册表。
+
+`wework.route` 与 `wework.sidebar.navigation` 的 `icon` 字段接受任意有效的
+[Lucide 图标名称](https://lucide.dev/icons/)，使用 kebab-case，例如
+`shield`、`rocket` 或 `gamepad-2`。Wework 会按名称动态加载图标；名称无效或
+未填写时回退为默认九宫格图标。旧插件使用的 `applications` 名称会继续映射到
+默认应用图标，无需逐个在 Wework 核心中注册图标白名单。
 
 不要直接调用 `ctx.slots.register` 注册到尚未存活的 Wework slot，也不要把
 Wework 描述直接塞进 DSH options。DSH 会在宿主 slot 挂载、卸载或重建时重新执行

@@ -15,6 +15,7 @@ core_segments=(
   project-ai-settings
   model-routing
   permission-modes
+  task-status-sync
   core-task-flow
   task-attachments
   window-lifecycle
@@ -114,7 +115,7 @@ core_shards=(
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  core-task-flow,change-request-status,context-compaction
+  task-status-sync,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
   resilience
@@ -385,6 +386,14 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       return
       ;;
+    wework/src/api/deliveries* | \
+      wework/src/components/layout/useWorkbenchCloudProjectContext* | \
+      wework/src/features/todo/CloudTodoWorkspace* | \
+      wework/src/features/workbench/projectTaskTracking* | \
+      wework/src/features/workbench/workbenchContextTypes*)
+      select_target "core:task-status-sync"
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -420,6 +429,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
+        select_target "core:task-status-sync"
       fi
       return
       ;;

@@ -2,17 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
-#[cfg(windows)]
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
 #[cfg(unix)]
-use std::{
-    os::unix::fs::{FileTypeExt, PermissionsExt},
-    path::Path,
-};
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
+#[cfg(windows)]
+use std::{env, path::PathBuf};
 
 use serde_json::{json, Value};
 #[cfg(windows)]
@@ -62,9 +56,6 @@ use crate::{
     },
     version::get_version,
 };
-
-#[cfg(windows)]
-use crate::local::command::build_env;
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
 pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
@@ -1350,6 +1341,19 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
+        if is_git_workspace_inspection_command(command_key)
+            && path
+                .as_deref()
+                .is_some_and(|workspace| !git_is_worktree(workspace))
+        {
+            return serde_json::to_value(CommandResult::error(
+                "Workspace is not a Git repository".to_owned(),
+                0.0,
+                false,
+            ))
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
         if let Some((result, post_processor)) =
             handle_builtin_device_command(command_key, &params).await
         {
@@ -2596,10 +2600,7 @@ async fn handle_builtin_device_command(
         "git_is_worktree" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
-            Some((
-                CommandResult::ok(if git_is_worktree(path) { "true" } else { "" }),
-                None,
-            ))
+            Some((git_worktree_probe_result(path), None))
         }
         _ => None,
     }
@@ -2607,36 +2608,82 @@ async fn handle_builtin_device_command(
 
 #[cfg(not(windows))]
 async fn handle_builtin_device_command(
-    _command_key: &str,
-    _params: &Value,
+    command_key: &str,
+    params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
-    None
-}
-
-#[cfg(windows)]
-fn git_is_worktree(path: &str) -> bool {
-    git_stdout(path, &["rev-parse", "--is-inside-work-tree"])
-        .map(|output| output.trim() == "true")
-        .unwrap_or(false)
-        || git_stdout(path, &["rev-parse", "--git-dir"]).is_some()
-}
-
-#[cfg(windows)]
-fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let mut command = std::process::Command::new("git");
-    command
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env_clear()
-        .envs(build_env(&HashMap::new()));
-    crate::process::hide_windows_console(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
+    match command_key {
+        "git_is_worktree" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((git_worktree_probe_result(path), None))
+        }
+        _ => None,
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
+}
+
+fn git_worktree_probe_result(path: &str) -> CommandResult {
+    if git_is_worktree(path) {
+        CommandResult::ok("true\n")
+    } else {
+        CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false)
+    }
+}
+
+fn git_is_worktree(path: &str) -> bool {
+    let path = Path::new(path);
+    if !path.is_dir() {
+        return false;
+    }
+    if looks_like_git_dir(path) {
+        return true;
+    }
+
+    path.ancestors().any(|directory| {
+        let marker = directory.join(".git");
+        if marker.is_dir() {
+            return looks_like_git_dir(&marker);
+        }
+        if !marker.is_file() {
+            return false;
+        }
+        resolve_gitdir_file(&marker, directory)
+            .as_deref()
+            .is_some_and(looks_like_git_dir)
+    })
+}
+
+fn looks_like_git_dir(path: &Path) -> bool {
+    path.join("HEAD").is_file()
+        && (path.join("objects").is_dir()
+            || path.join("refs").is_dir()
+            || path.join("commondir").is_file())
+}
+
+fn resolve_gitdir_file(marker: &Path, worktree_root: &Path) -> Option<std::path::PathBuf> {
+    let content = std::fs::read_to_string(marker).ok()?;
+    let git_dir = Path::new(content.trim().strip_prefix("gitdir:")?.trim());
+    Some(if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        worktree_root.join(git_dir)
+    })
+}
+
+fn is_git_workspace_inspection_command(command_key: &str) -> bool {
+    matches!(
+        command_key,
+        "git_branch"
+            | "git_branch_list"
+            | "git_diff_shortstat"
+            | "git_diff"
+            | "git_branch_diff"
+            | "git_branch_diff_shortstat"
+            | "git_diff_unstaged"
+            | "git_diff_staged"
+            | "git_diff_last_commit"
+            | "git_status_porcelain"
+            | "git_remote_url"
+    )
 }
 
 #[cfg(windows)]

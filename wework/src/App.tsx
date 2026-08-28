@@ -14,6 +14,7 @@ import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import {
+  registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStreamCoordinator,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -431,6 +432,7 @@ export function WorkspaceTabSurface({
                 isElectronRuntime() &&
                 getDesktopWindowLabel() === 'main'
               }
+              syncProjectTaskTracking={tab.fixed && tab.kind === 'task'}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -488,6 +490,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }))
   const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
   const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
@@ -614,6 +617,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           services={services}
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
+          syncProjectTaskTracking={false}
         >
           {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />

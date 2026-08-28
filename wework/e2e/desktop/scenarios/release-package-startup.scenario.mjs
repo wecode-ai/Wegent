@@ -171,14 +171,26 @@ async function assertReleasePackageResources() {
     readFile(
       join(
         resourcesRoot,
+        'bundled-plugins',
+        'wework-personal',
+        '.claude-plugin',
+        'marketplace.json'
+      )
+    ),
+    readFile(
+      join(
+        resourcesRoot,
         'bin',
         process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
       )
     ),
+    readFile(join(resourcesRoot, 'bin', process.platform === 'win32' ? 'dws.exe' : 'dws')),
   ])
   assert.deepEqual(Object.keys(components.components).sort(), [
+    'bundledPlugins',
     'codex',
     'coreDsh',
+    'dws',
     'electron',
     'executor',
     'weworkCorePlugins',

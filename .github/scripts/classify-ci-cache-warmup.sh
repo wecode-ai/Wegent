@@ -25,6 +25,9 @@ classify_path() {
       .github/workflows/ci-cache-warmup.yml)
       mark_all
       ;;
+    .github/scripts/resolve-executor-e2e-runtime.sh)
+      changed[docker]=true
+      ;;
     .github/workflows/test.yml | .github/workflows/lint.yml)
       changed[executor_rust]=true
       changed[node]=true

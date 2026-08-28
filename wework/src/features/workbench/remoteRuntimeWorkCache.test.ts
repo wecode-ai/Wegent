@@ -106,6 +106,7 @@ describe('remote runtime work cache', () => {
       projectStore: 'backend',
       projectId: 'space-1',
     }
+    input.projects[0].project.sidebarOrder = 4
 
     writeCachedRemoteRuntimeWork(7, input, [
       device('remote-a', 'online', { client_ip: '10.201.3.200' }),
@@ -127,6 +128,7 @@ describe('remote runtime work cache', () => {
       projectStore: 'backend',
       projectId: 'space-1',
     })
+    expect(restored.projects[0].project.sidebarOrder).toBe(4)
     expect(restoredTask).toMatchObject({
       taskId: 'task-a',
       threadId: 'thread-a',

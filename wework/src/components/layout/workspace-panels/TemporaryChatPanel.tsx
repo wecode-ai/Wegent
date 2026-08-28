@@ -242,7 +242,7 @@ export function TemporaryChatPanel({
           return
         }
         lifecycleStore.syncTranscript(address, transcript, {
-          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+          preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
         })
         const nextMessages = completeRuntimeConversationHydration(
           address,
@@ -273,7 +273,7 @@ export function TemporaryChatPanel({
         refresh: true,
       })
       lifecycleStore.syncTranscript(address, transcript, {
-        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isRunning ?? false,
+        preserveActiveTurn: lifecycleStore.getTask(address)?.derived.isTurnActive ?? false,
       })
       const nextMessages = completeRuntimeConversationHydration(
         address,

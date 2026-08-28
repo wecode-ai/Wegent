@@ -13,6 +13,7 @@ import type { ResourceLibraryListing } from '@/features/resource-library/types'
 const mockToast = jest.fn()
 const mockPush = jest.fn()
 const mockReplace = jest.fn()
+const mockRefreshTeams = jest.fn()
 const mockObserve = jest.fn()
 const mockUnobserve = jest.fn()
 const mockDisconnect = jest.fn()
@@ -53,6 +54,12 @@ jest.mock('@/apis/resourceLibrary', () => ({
 jest.mock('@/hooks/use-toast', () => ({
   useToast: () => ({
     toast: mockToast,
+  }),
+}))
+
+jest.mock('@/contexts/TeamContext', () => ({
+  useTeamContext: () => ({
+    refreshTeams: mockRefreshTeams,
   }),
 }))
 
@@ -153,6 +160,7 @@ function createListing(overrides: Partial<ResourceLibraryListing> = {}): Resourc
 describe('DiscoverResources', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockRefreshTeams.mockResolvedValue([])
     mockSearchParams = new URLSearchParams()
     mockResourceLibraryApi.listListings.mockResolvedValue({
       items: [createListing()],
@@ -789,7 +797,61 @@ describe('DiscoverResources', () => {
     expect(mockResourceLibraryApi.installListing).toHaveBeenCalledWith(82, {
       targetNamespace: 'default',
     })
+    expect(mockRefreshTeams).toHaveBeenCalledTimes(1)
+    expect(mockRefreshTeams.mock.invocationCallOrder[0]).toBeLessThan(
+      mockPush.mock.invocationCallOrder[0]
+    )
     expect(mockToast).not.toHaveBeenCalled()
+  })
+
+  it('opens an installed marketplace agent when refreshing teams fails', async () => {
+    const refreshError = new Error('refresh failed')
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation()
+    mockRefreshTeams.mockRejectedValue(refreshError)
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 82,
+          resource_type: 'agent',
+          name: 'published-agent',
+          display_name: 'Published Agent',
+          publisher_user_id: 3,
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+    mockResourceLibraryApi.installListing.mockResolvedValue({
+      id: 10,
+      listing_id: 82,
+      version_id: 10,
+      user_id: 2,
+      resource_type: 'agent',
+      installed_kind_id: 13,
+      installed_reference: {
+        namespace: 'default',
+        name: 'published-agent',
+        team_id: 128,
+      },
+      install_status: 'installed',
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去对话 Published Agent' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/chat?teamId=128')
+    })
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Failed to refresh teams after marketplace install:',
+      refreshError
+    )
+    expect(mockToast).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
   })
 
   it.each([

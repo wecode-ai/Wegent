@@ -10,18 +10,31 @@ import type { MobileChatInputControlsProps } from '@/features/tasks/components/i
 import { MobileChatInputControls } from '@/features/tasks/components/input/MobileChatInputControls'
 import type { Team } from '@/types/api'
 
-jest.mock('@/features/tasks/components/selector/MobileModelSelector', () => ({
-  __esModule: true,
-  default: () => (
-    <button type="button" data-testid="mobile-model-selector">
+const mockMobileModelSelector = jest.fn(
+  ({
+    selectedTeam: modelTeam,
+    modelCategoryType,
+  }: {
+    selectedTeam?: Team | null
+    modelCategoryType?: 'llm' | 'image' | 'video'
+  }) => (
+    <button
+      type="button"
+      data-testid={
+        modelCategoryType === 'video' ? 'mobile-video-model-selector' : 'mobile-model-selector'
+      }
+      data-team-id={modelTeam?.id}
+      data-model-category={modelCategoryType ?? 'llm'}
+    >
       官网:kimi-k2.5-preview-with-a-very-long-model-name
     </button>
-  ),
-}))
+  )
+)
 
-jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
+jest.mock('@/features/tasks/components/selector/MobileModelSelector', () => ({
   __esModule: true,
-  default: () => <button type="button" data-testid="mobile-video-model-selector" />,
+  default: (props: { selectedTeam?: Team | null; modelCategoryType?: 'llm' | 'image' | 'video' }) =>
+    mockMobileModelSelector(props),
 }))
 
 jest.mock('@/features/tasks/components/selector/VideoSettingsPopover', () => ({
@@ -204,6 +217,14 @@ describe('MobileChatInputControls layout', () => {
       expect(screen.getByTestId('mobile-video-model-selector')).toBeInTheDocument()
       expect(screen.queryByTestId('mobile-model-selector')).not.toBeInTheDocument()
     })
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(selectedTeam.id)
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-model-category',
+      'video'
+    )
 
     fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
     expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(

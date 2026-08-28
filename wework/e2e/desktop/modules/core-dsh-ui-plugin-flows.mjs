@@ -98,10 +98,11 @@ const UI_PLUGINS = [
 export async function verifyCoreDshUiPluginComposition({
   control,
   initialRendererLocation,
+  pluginsRoot,
   restartDesktopApp,
   runtimeRoot,
 }) {
-  const pluginSources = await resolveCoreUiPluginSources(runtimeRoot)
+  const pluginSources = await resolveCoreUiPluginSources(runtimeRoot, pluginsRoot)
   let rendererOrigin = new URL(initialRendererLocation).origin
   const installedContributions = new Map()
 
@@ -321,32 +322,36 @@ async function readCoreDshPlugins(origin) {
   return invokeCoreDshPluginCapability(origin, 'runtime.listCoreDshPlugins')
 }
 
-async function resolveCoreUiPluginSources(runtimeRoot) {
+async function resolveCoreUiPluginSources(runtimeRoot, pluginsRoot) {
   assert.ok(runtimeRoot, 'Core DSH UI plugin composition requires WEWORK_HARNESS_RUNTIME_ROOT')
+  assert.ok(pluginsRoot, 'Core DSH UI plugin composition requires the packaged Core plugin root')
   const roots = await runtimeCandidates(resolve(runtimeRoot))
-  const matching = []
-  for (const root of roots) {
-    const identity = await readJson(join(root, 'runtime.json'))
-    if (identity?.role !== 'core') continue
-    const sources = new Map(
-      UI_PLUGINS.map(plugin => [plugin.name, join(root, 'plugins', plugin.directory)])
+  const matching = (
+    await Promise.all(
+      roots.map(async root => {
+        const identity = await readJson(join(root, 'runtime.json'))
+        return identity?.role === 'core' ? root : null
+      })
     )
-    if (
-      await Promise.all(
-        [...sources.values()].map(source => pathExists(join(source, 'package.json')))
-      ).then(results => results.every(Boolean))
-    ) {
-      matching.push({ root, sources })
-    }
-  }
+  ).filter(Boolean)
   assert.equal(
     matching.length,
     1,
-    `Expected one bundled Core DSH runtime with Wework UI plugins, found ${matching
-      .map(item => item.root)
-      .join(', ')}`
+    `Expected one bundled Core DSH runtime, found ${matching.join(', ')}`
   )
-  return matching[0].sources
+  const sources = new Map(
+    UI_PLUGINS.map(plugin => [plugin.name, join(resolve(pluginsRoot), plugin.directory)])
+  )
+  const missing = (
+    await Promise.all(
+      [...sources].map(async ([name, source]) => [
+        name,
+        (await pathExists(join(source, 'package.json'))) ? null : source,
+      ])
+    )
+  ).filter(([, source]) => source)
+  assert.deepEqual(missing, [], `Packaged Core DSH plugins are unavailable: ${missing.join(', ')}`)
+  return sources
 }
 
 async function runtimeCandidates(root) {

@@ -4,12 +4,16 @@ import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import identityModule from './build-identity.cjs'
+
+const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+const identity = resolveBuildIdentity()
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -45,11 +49,17 @@ await writeFile(
   `${JSON.stringify(
     {
       name: sourcePackage.name,
-      productName: 'WeWork',
+      productName: identity.productName,
       version: sourcePackage.version,
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
+      weworkAppId: identity.identifier,
+      ...(identity.executorNamespace
+        ? { weworkExecutorNamespace: identity.executorNamespace }
+        : {}),
+      ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
+      ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
     },
     null,
     2
@@ -57,13 +67,13 @@ await writeFile(
 )
 const applications = await packager({
   dir: staging,
-  name: 'WeWork',
+  name: identity.productName,
   electronVersion: '43.4.1',
   electronZipDir,
-  appBundleId: 'io.wecode.wework',
+  appBundleId: identity.identifier,
   appVersion: sourcePackage.version,
   buildVersion: sourcePackage.version,
-  executableName: 'WeWork',
+  executableName: identity.executableName,
   out: output,
   overwrite: true,
   asar: {
@@ -86,7 +96,7 @@ if (process.platform === 'darwin') {
   for (const application of applications) {
     await run(
       'codesign',
-      ['--force', '--deep', '--sign', '-', join(application, 'WeWork.app')],
+      ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
       electronRoot
     )
   }

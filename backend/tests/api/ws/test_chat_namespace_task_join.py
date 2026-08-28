@@ -143,7 +143,7 @@ async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state()
         patch(
             "app.services.execution.dispatcher.execution_dispatcher.cancel",
             AsyncMock(return_value=True),
-        ),
+        ) as cancel_mock,
     ):
         result = await namespace.on_chat_cancel(
             "sid-1",
@@ -156,6 +156,9 @@ async def test_chat_cancel_waits_for_runtime_ack_without_faking_terminal_state()
 
     assert result == {"success": True}
     assert mark_cancelling_calls == [(55,)]
+    cancel_request, device_id = cancel_mock.await_args.args
+    assert cancel_request.executor_name == "device-local-device"
+    assert device_id == "local-device"
 
 
 @pytest.mark.asyncio

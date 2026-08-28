@@ -187,6 +187,65 @@ class TestImageAgent:
         mock_shutdown_manager.unregister_stream.assert_awaited_once_with(100)
 
     @pytest.mark.asyncio
+    async def test_execute_uses_prompt_image_as_direct_reference(
+        self,
+        mock_session_manager: MagicMock,
+        mock_shutdown_manager: MagicMock,
+        mock_emitter: AsyncMock,
+        mock_intent_analyzer: AsyncMock,
+        sample_request: ExecutionRequest,
+    ) -> None:
+        from app.services.execution.agents.image.image_agent import ImageAgent
+        from app.services.execution.agents.image.providers.base import (
+            ImageGenerationResult,
+            ImageResult,
+        )
+
+        reference_image = "data:image/png;base64,aW1hZ2U="
+        sample_request.attachments = [
+            {"mime_type": "image/png", "content": reference_image},
+        ]
+        sample_request.prompt = [
+            {
+                "type": "input_text",
+                "text": (
+                    "<attachment>[Image Attachment: reference.png | ID: 67]"
+                    "</attachment>"
+                ),
+            },
+            {"type": "input_image", "image_url": reference_image},
+            {"type": "input_text", "text": "Place it on Mars"},
+        ]
+        mock_result = ImageGenerationResult(
+            images=[
+                ImageResult(url="https://example.com/image1.jpg", size="2048x2048"),
+            ],
+            model="doubao-seedream-5.0-lite",
+        )
+
+        with (
+            patch(
+                "app.services.execution.agents.image.image_agent.get_image_provider"
+            ) as mock_get_provider,
+            patch(
+                "app.services.execution.agents.image.image_agent.ImageAgent._upload_attachment",
+                new=AsyncMock(return_value=999),
+            ),
+        ):
+            mock_provider = AsyncMock()
+            mock_provider.name = "Seedream"
+            mock_provider.generate = AsyncMock(return_value=mock_result)
+            mock_get_provider.return_value = mock_provider
+
+            await ImageAgent().execute(sample_request, mock_emitter)
+
+        mock_provider.generate.assert_awaited_once_with(
+            prompt="Place it on Mars",
+            reference_images=[reference_image],
+        )
+        mock_intent_analyzer.analyze.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_execute_with_cancellation(
         self,
         mock_session_manager,
@@ -552,3 +611,28 @@ class TestImageAgentExtractReferenceImages:
 
         assert len(result) == 1
         assert "data:image/jpeg;base64,abc123" in result
+
+
+class TestImageAgentNormalizePrompt:
+    def test_extracts_reference_image_without_attachment_metadata(self) -> None:
+        from app.services.execution.agents.image.image_agent import ImageAgent
+
+        prompt = [
+            {
+                "type": "input_text",
+                "text": (
+                    "<attachment>[Image Attachment: reference.png | ID: 67]"
+                    "</attachment>"
+                ),
+            },
+            {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+            },
+            {"type": "input_text", "text": "让它出现在火星上"},
+        ]
+
+        text, images = ImageAgent()._normalize_prompt(prompt)
+
+        assert text == "让它出现在火星上"
+        assert images == ["data:image/png;base64,aW1hZ2U="]

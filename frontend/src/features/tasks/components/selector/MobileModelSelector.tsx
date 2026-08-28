@@ -20,7 +20,7 @@ import {
 } from '@/components/model-select/model-grouping'
 import { useModelSelection } from '@/features/tasks/hooks/useModelSelection'
 import type { Team } from '@/types/api'
-import type { Model } from '@/features/tasks/hooks/useModelSelection'
+import type { Model, ModelCategoryType } from '@/features/tasks/hooks/useModelSelection'
 import { DEFAULT_MODEL_NAME } from '@/features/tasks/hooks/useModelSelection'
 
 /** Get display text for a model */
@@ -54,6 +54,7 @@ interface MobileModelSelectorProps {
   teamId?: number | null
   taskId?: number | null
   taskModelId?: string | null
+  modelCategoryType?: ModelCategoryType
 }
 
 /**
@@ -71,6 +72,7 @@ export default function MobileModelSelector({
   teamId,
   taskId,
   taskModelId,
+  modelCategoryType = 'llm',
 }: MobileModelSelectorProps) {
   const { t } = useTranslation()
   const router = useRouter()
@@ -81,6 +83,7 @@ export default function MobileModelSelector({
     taskModelId,
     selectedTeam,
     disabled,
+    modelCategoryType,
   })
 
   // Sync external state with hook state

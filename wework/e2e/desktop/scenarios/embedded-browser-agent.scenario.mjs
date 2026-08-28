@@ -219,20 +219,6 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
-async function writeStaleBridgeRuntime(identity) {
-  await writeFile(
-    identity.runtimePath,
-    `${JSON.stringify({
-      schemaVersion: 1,
-      pid: process.pid,
-      address: '127.0.0.1:9',
-      token: 'stale-upgrade-token',
-      startedAtUnixMs: Date.now() - 60_000,
-    })}\n`,
-    'utf8'
-  )
-}
-
 async function callBridge(identity, payload, label = BROWSER_LABEL) {
   const body = await callBridgeResponse(identity, payload, label)
   assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
@@ -367,8 +353,6 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
       WEWORK_EMBEDDED_BROWSER_LABEL: label,
     },
@@ -1346,7 +1330,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `The embedded browser fixture did not reload after annotation checks: ${JSON.stringify(restoredFixtureReady)}`
       )
 
-      await writeStaleBridgeRuntime(bridgeIdentity)
       const mcpResult = await withBrowserMcp(bridgeIdentity, browserLabel, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,

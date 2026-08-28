@@ -2,7 +2,7 @@ import type { AnalyticsEventMap } from '@/telemetry/events'
 import { getDshSlotEntries, WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from './dshUiSlots'
 
 export interface WeworkDshRoute extends WeworkDshSlotEntry {
-  icon?: 'alarm-clock' | 'applications' | 'cloud' | 'plug'
+  icon?: string
   module?: string
   path: string
   restorePolicy?: 'none' | 'session'

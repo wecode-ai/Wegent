@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
@@ -35,6 +36,7 @@ const [executorPath] = await Promise.all([
     ? Promise.resolve(resolve(configuredExecutorPath))
     : buildExecutor(executorProfile),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
+  buildDshApp(),
 ])
 
 await rm(resourcesRoot, { recursive: true, force: true })
@@ -79,7 +81,28 @@ const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'weg
 const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
+const executorSha256 = await sha256(packagedExecutor)
+const dwsName = process.platform === 'win32' ? 'dws.exe' : 'dws'
+const packagedDws = join(resourcesRoot, 'bin', dwsName)
+await cp(
+  join(
+    sharedResourcesRoot,
+    'binaries',
+    `dws-${codexTarget}${process.platform === 'win32' ? '.exe' : ''}`
+  ),
+  packagedDws
+)
+if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
 const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
+const sourceSha =
+  process.env.WEWORK_SOURCE_SHA?.trim() ||
+  process.env.GITHUB_SHA?.trim() ||
+  (await capture('git', ['rev-parse', 'HEAD'], repositoryRoot)).trim()
+if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
+}
+const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`
 const codexRuntime = JSON.parse(
   await readFile(join(codexResources, 'WEGENT_CODEX_BINARY.json'), 'utf8')
 )
@@ -89,6 +112,7 @@ await writeFile(
     {
       schemaVersion: 1,
       appVersion: electronPackage.version,
+      sourceSha,
       channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
       components: {
         electron: { version: electronPackage.devDependencies.electron },
@@ -98,19 +122,29 @@ await writeFile(
           sha256: await hashTree(harnessResources),
         },
         weworkCorePlugins: {
-          version: electronPackage.version,
+          version: weworkRuntimeVersion,
           path: 'wework-core-plugins',
           sha256: await hashTree(corePluginsRoot),
         },
+        bundledPlugins: {
+          version: weworkRuntimeVersion,
+          path: 'bundled-plugins',
+          sha256: await hashTree(join(resourcesRoot, 'bundled-plugins')),
+        },
         executor: {
-          version: electronPackage.version,
+          version: weworkRuntimeVersion,
           path: `bin/${executorName}`,
-          sha256: await sha256(packagedExecutor),
+          sha256: executorSha256,
         },
         codex: {
           version: codexRuntime.codexVersion,
           path: `codex/${codexRuntime.binaryPath}`,
           sha256: await sha256(join(codexResources, codexRuntime.binaryPath)),
+        },
+        dws: {
+          version: weworkPackage.devDependencies['dingtalk-workspace-cli'],
+          path: `bin/${dwsName}`,
+          sha256: await sha256(packagedDws),
         },
       },
     },
@@ -156,6 +190,17 @@ function pluginTarget(directory) {
     'ui-automations': 'wework-ui-automations',
     'ui-cloud-work': 'wework-ui-cloud-work',
   }[directory]
+}
+
+async function buildDshApp() {
+  await run(pnpmCommand, ['run', 'build:dsh-app'], weworkRoot)
+  const output = join(weworkRoot, 'dsh', 'app-wework', 'web')
+  const manifestPath = join(output, 'flyfish-viewer-assets.json')
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(normalizeFileViewerAssetManifest(manifest, output), null, 2)}\n`
+  )
 }
 
 async function sha256(path) {

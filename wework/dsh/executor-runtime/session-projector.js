@@ -49,20 +49,29 @@ export class ExecutorSessionProjector {
       return
     }
 
+    if (event === 'response.block.created') {
+      this.appendBlockCreated(state, subtaskId, recordField(payload, 'data'))
+      return
+    }
+
+    if (event === 'response.block.updated') {
+      this.appendBlockUpdated(state, subtaskId, recordField(payload, 'data'))
+      return
+    }
+
     if (event === 'thread/tokenUsage/updated' || event === 'thread.tokenUsage.updated') {
       const runtimeUsage = recordField(recordField(payload, 'data'), 'tokenUsage')
-      const usage = tokenUsage(
-        Object.keys(recordField(runtimeUsage, 'last')).length
-          ? recordField(runtimeUsage, 'last')
-          : recordField(runtimeUsage, 'total')
-      )
-      if (!usage) return
+      const totalUsage = tokenUsage(recordField(runtimeUsage, 'total'))
+      const lastUsage = tokenUsage(recordField(runtimeUsage, 'last'))
+      const increment = usageIncrement(totalUsage, state.sourceUsage, lastUsage)
+      if (!increment || !totalUsage) return
       this.ensureOpenTurn(state, subtaskId)
-      state.usage = usage
+      state.sourceUsage = totalUsage
+      state.usage = addUsage(state.usage, increment)
       const appended = state.session.append('assistant/chunk', {
         turn: state.turn,
         step: 1,
-        chunk: { type: 'usage', usage },
+        chunk: { type: 'usage', usage: state.usage },
       })
       state.sourceEventSeqs.push(appended.seq)
       return
@@ -91,6 +100,8 @@ export class ExecutorSessionProjector {
       textStarted: false,
       reasoningStarted: false,
       usage: null,
+      sourceUsage: null,
+      blocks: new Map(),
       sourceEventSeqs: [],
       generatedUserMessageIds: new Set(),
     }
@@ -110,6 +121,7 @@ export class ExecutorSessionProjector {
     state.textStarted = false
     state.reasoningStarted = false
     state.usage = null
+    state.blocks.clear()
     state.sourceEventSeqs = []
     state.session.append('turn/start', { turn: state.turn })
     state.session.append('step/start', { turn: state.turn, step: 1 })
@@ -166,6 +178,36 @@ export class ExecutorSessionProjector {
     state.sourceEventSeqs.push(appended.seq)
   }
 
+  appendBlockCreated(state, subtaskId, data) {
+    const block = recordField(data, 'block')
+    const id = stringField(block, 'id')
+    const kind = projectedBlockKind(block)
+    if (!id || !kind) return
+    const content = stringField(block, 'content') ?? ''
+    state.blocks.set(id, { kind, content })
+    if (content) this.appendDelta(state, subtaskId, kind, content)
+  }
+
+  appendBlockUpdated(state, subtaskId, data) {
+    const id = stringField(data, 'block_id') ?? stringField(data, 'blockId')
+    if (!id) return
+    const tracked = state.blocks.get(id)
+    if (!tracked) return
+    const updates = recordField(data, 'updates')
+    const delta = stringField(updates, 'content_delta') ?? stringField(updates, 'contentDelta')
+    if (delta) {
+      tracked.content += delta
+      this.appendDelta(state, subtaskId, tracked.kind, delta)
+      return
+    }
+    const content = stringField(updates, 'content')
+    if (!content || content === tracked.content) return
+    if (!content.startsWith(tracked.content)) return
+    const suffix = content.slice(tracked.content.length)
+    tracked.content = content
+    if (suffix) this.appendDelta(state, subtaskId, tracked.kind, suffix)
+  }
+
   finishTurn(state, subtaskId, event, data) {
     if (!state.open) {
       if (!subtaskId || subtaskId === state.subtaskId) return
@@ -177,7 +219,7 @@ export class ExecutorSessionProjector {
     const completedText = responseText(data)
     if (!state.text && completedText) this.appendDelta(state, subtaskId, 'text', completedText)
     const completedUsage = responseUsage(data)
-    if (completedUsage) state.usage = completedUsage
+    if (!state.usage && completedUsage) state.usage = completedUsage
     this.closeTurn(state, event, data)
   }
 
@@ -260,13 +302,48 @@ function tokenUsage(value) {
   const output = nonNegativeInteger(total.outputTokens)
   if (input === null || output === null) return null
   const cached = nonNegativeInteger(total.cachedInputTokens) ?? 0
+  const cacheWrite = nonNegativeInteger(total.cacheWriteInputTokens) ?? 0
   const reasoning = nonNegativeInteger(total.reasoningOutputTokens)
   return {
     inputTokens: Math.max(0, input - cached),
     outputTokens: output,
     ...(cached ? { cacheReadTokens: cached } : {}),
+    ...(cacheWrite ? { cacheWriteTokens: cacheWrite } : {}),
     ...(reasoning === null ? {} : { reasoningTokens: reasoning }),
   }
+}
+
+function usageIncrement(total, previousTotal, last) {
+  if (!total) return null
+  if (!previousTotal) return last ?? total
+  const keys = usageKeys(total, previousTotal)
+  if (keys.some(key => usageValue(total, key) < usageValue(previousTotal, key))) {
+    return last ?? total
+  }
+  return Object.fromEntries(
+    keys.map(key => [key, usageValue(total, key) - usageValue(previousTotal, key)])
+  )
+}
+
+function addUsage(current, increment) {
+  const keys = usageKeys(current, increment)
+  return Object.fromEntries(
+    keys.map(key => [key, usageValue(current, key) + usageValue(increment, key)])
+  )
+}
+
+function usageKeys(...values) {
+  return [
+    'inputTokens',
+    'outputTokens',
+    'cacheReadTokens',
+    'cacheWriteTokens',
+    'reasoningTokens',
+  ].filter(key => values.some(value => value && Object.hasOwn(value, key)))
+}
+
+function usageValue(usage, key) {
+  return usage?.[key] ?? 0
 }
 
 function responseUsage(data) {
@@ -283,6 +360,13 @@ function responseUsage(data) {
       recordField(usage, 'output_tokens_details').reasoning_tokens ??
       recordField(usage, 'outputTokensDetails').reasoningTokens,
   })
+}
+
+function projectedBlockKind(block) {
+  const processKind = stringField(block, 'process_kind') ?? stringField(block, 'processKind')
+  if (processKind === 'assistant_message') return 'text'
+  if (processKind === 'reasoning') return 'reasoning'
+  return null
 }
 
 function responseText(data) {

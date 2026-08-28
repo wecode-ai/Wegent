@@ -56,7 +56,6 @@ from app.schemas.delivery import (
     LoopItemUpdate,
     MyWorkItemResponse,
     MyWorkListResponse,
-    RuntimeTaskStatusUpdate,
 )
 from app.schemas.issue_workflow import (
     WorkflowNodeDecisionRequest,
@@ -87,7 +86,6 @@ from app.services.project_automations import (
     project_automation_service,
 )
 from app.services.project_board_snapshot import project_board_snapshot_service
-from app.services.project_workflow_projection import update_workflow_task_status
 from app.services.workflow_stage_context import workflow_stage_context_resolver
 
 router = APIRouter()
@@ -384,54 +382,6 @@ def find_runtime_task_cloud_context(
             ),
         }
     )
-
-
-@router.patch(
-    "/runtime-tasks/cloud-context/status",
-    response_model=LoopItemResponse | None,
-)
-async def update_runtime_task_cloud_status(
-    values: RuntimeTaskStatusUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> LoopItemResponse | None:
-    current_item = loop_item_service.find_for_runtime_task(
-        db,
-        current_user.id,
-        values.device_id,
-        values.task_id,
-    )
-    ready_before = issue_workflow_start_service.ready_robot_stage_ids(current_item)
-    item = update_workflow_task_status(
-        db,
-        user_id=current_user.id,
-        device_id=values.device_id,
-        task_id=values.task_id,
-        execution_status=values.status,
-    )
-    if item is None:
-        return None
-    db.commit()
-    db.refresh(item)
-    newly_ready = (
-        issue_workflow_start_service.ready_robot_stage_ids(item) - ready_before
-    )
-    if newly_ready:
-        started = await issue_workflow_start_service.continue_ready_stages(
-            db,
-            item=item,
-            user_id=current_user.id,
-            stage_ids=newly_ready,
-        )
-        if started:
-            db.refresh(item)
-    publish_loop_item_changed(
-        db,
-        item=item,
-        reason="runtime_status",
-        actor_user_id=current_user.id,
-    )
-    return _loop_item_response(db, item, current_user)
 
 
 @router.post(
