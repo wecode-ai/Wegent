@@ -240,11 +240,14 @@ export function DocumentDetailDialog({
   const handleSourceDownload = useCallback(async () => {
     if (!document?.attachment_id) return
     try {
-      await downloadAttachment(document.attachment_id, document.name)
+      await downloadAttachment(
+        document.attachment_id,
+        document.source_type === 'external' ? undefined : document.name
+      )
     } catch {
       toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
     }
-  }, [document?.attachment_id, document?.name, t])
+  }, [document?.attachment_id, document?.name, document?.source_type, t])
 
   const handleEdit = useCallback(async () => {
     if (!isEditable) return

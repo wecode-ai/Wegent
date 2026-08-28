@@ -416,6 +416,38 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(sourceActions).not.toHaveClass('invisible')
   })
 
+  it.each(['pptx', 'xlsx'])(
+    'previews and downloads an imported %s without replacing its filename',
+    async extension => {
+      const user = userEvent.setup()
+      render(
+        <DocumentDetailDialog
+          open
+          onOpenChange={jest.fn()}
+          document={{
+            ...officeDocument,
+            source_type: 'external',
+            name: '导入资料',
+            file_extension: extension,
+          }}
+          knowledgeBaseId={21}
+        />
+      )
+
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-active',
+        'true'
+      )
+      await user.click(screen.getByTestId('knowledge-source-preview-download'))
+      expect(mockDownloadAttachment).toHaveBeenCalledWith(32, undefined)
+      await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveClass('hidden')
+      expect(
+        screen.queryByRole('button', { name: 'document.document.detail.edit' })
+      ).not.toBeInTheDocument()
+    }
+  )
+
   it('hides the source preview tab for non-file documents', () => {
     render(
       <DocumentDetailDialog
