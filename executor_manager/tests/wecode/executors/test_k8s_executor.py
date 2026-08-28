@@ -711,7 +711,7 @@ def test_non_git_online_task_is_executor_warmpool_eligible(mocker):
     assert reason is None
 
 
-def test_non_git_online_task_skips_warmpool_by_default(mocker):
+def test_non_git_online_task_skips_warmpool_when_disabled(mocker):
     executor = object.__new__(K8sExecutor)
     module = "executor_manager.wecode.executors.k8s.k8s_executor"
     mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", "registry/executor:1.0.214")
@@ -725,7 +725,7 @@ def test_non_git_online_task_skips_warmpool_by_default(mocker):
     assert reason == "non_git_warmpool_disabled"
 
 
-def test_executor_warmpool_is_enabled_by_default(monkeypatch):
+def test_executor_warmpool_default_rollout_flags(monkeypatch):
     from executor_manager.wecode.config import config
 
     with monkeypatch.context() as patch:
@@ -734,7 +734,7 @@ def test_executor_warmpool_is_enabled_by_default(monkeypatch):
         patch.delenv("EXECUTOR_GIT_WARMPOOL_ENABLED", raising=False)
         reloaded_config = importlib.reload(config)
         assert reloaded_config.EXECUTOR_WARMPOOL_ENABLED is True
-        assert reloaded_config.EXECUTOR_NON_GIT_WARMPOOL_ENABLED is False
+        assert reloaded_config.EXECUTOR_NON_GIT_WARMPOOL_ENABLED is True
         assert reloaded_config.EXECUTOR_GIT_WARMPOOL_ENABLED is False
 
     importlib.reload(config)
