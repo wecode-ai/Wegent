@@ -5,12 +5,13 @@
 """add knowledge document external identity
 
 Revision ID: c5d6e7f8a9b0
-Revises: 1e1d81b7b5f0
+Revises: 7a4c2e9f1b30
 Create Date: 2026-08-26
 
 Adds external_provider / external_resource_id to knowledge_documents so an
 imported external document carries its provider identity. The two columns are
-both NULL (regular documents) or both set (external documents); together with
+both NULL (regular documents) or both set (external documents), enforced by
+the document creation service rather than a database CHECK; together with
 kind_id they form the unique identity of an external document inside one
 knowledge base. No import-task table is introduced — external imports reuse
 the existing document indexing state machine.
@@ -36,12 +37,6 @@ def upgrade() -> None:
         "knowledge_documents",
         sa.Column("external_resource_id", sa.String(255), nullable=True),
     )
-    with op.batch_alter_table("knowledge_documents") as batch_op:
-        batch_op.create_check_constraint(
-            "ck_knowledge_documents_external_identity_pair",
-            "(external_provider IS NULL AND external_resource_id IS NULL) OR "
-            "(external_provider IS NOT NULL AND external_resource_id IS NOT NULL)",
-        )
     op.create_index(
         "uq_knowledge_documents_external",
         "knowledge_documents",
@@ -52,9 +47,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("uq_knowledge_documents_external", table_name="knowledge_documents")
-    with op.batch_alter_table("knowledge_documents") as batch_op:
-        batch_op.drop_constraint(
-            "ck_knowledge_documents_external_identity_pair", type_="check"
-        )
     op.drop_column("knowledge_documents", "external_resource_id")
     op.drop_column("knowledge_documents", "external_provider")

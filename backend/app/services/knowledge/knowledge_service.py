@@ -1648,9 +1648,12 @@ class KnowledgeService:
         creation serializes with deletion.
 
         Raises:
-            ValueError: If the knowledge base is missing or inactive
+            ValueError: If the external identity is missing or the KB is inactive
             IntegrityError: On a concurrent duplicate external identity
         """
+        if not external_provider or not external_resource_id:
+            raise ValueError("External provider and resource ID are required")
+
         kb = (
             db.query(Kind)
             .filter(

@@ -101,6 +101,7 @@ def test_upgrade_downgrade_cycle_runs_against_real_engine(
         migration.upgrade()
         assert {"external_provider", "external_resource_id"} <= _columns(connection)
         assert "uq_knowledge_documents_external" in _index_names(connection)
+        assert not sa_inspect(connection).get_check_constraints("knowledge_documents")
         # Legacy rows keep the regular-document identity: both columns NULL.
         row = connection.execute(
             sa.text(
@@ -169,31 +170,6 @@ def test_unique_index_rejects_duplicate_external_identity(
         )
 
 
-def test_identity_constraint_rejects_partial_external_identity(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    migration = _load_migration()
-    engine = _legacy_engine()
-    with engine.begin() as connection:
-        _bind_migration_to_connection(migration, monkeypatch, connection)
-        migration.upgrade()
-
-        insert = sa.text(
-            "INSERT INTO knowledge_documents (kind_id, name, external_provider, "
-            "external_resource_id) VALUES (1, :name, :provider, :resource_id)"
-        )
-        with pytest.raises(sa.exc.IntegrityError):
-            connection.execute(
-                insert,
-                {"name": "provider-only", "provider": "dingtalk", "resource_id": None},
-            )
-        with pytest.raises(sa.exc.IntegrityError):
-            connection.execute(
-                insert,
-                {"name": "resource-only", "provider": None, "resource_id": "doc-1"},
-            )
-
-
 def test_no_external_snapshot_mapping_table_or_dual_write_path() -> None:
     """The final implementation must not reintroduce the snapshot mapping design."""
     backend_root = Path(__file__).parents[2]
@@ -212,12 +188,6 @@ def test_upgrade_adds_identity_columns_and_unique_index(
 
     added_columns = [call.args[1].name for call in op.add_column.call_args_list]
     assert added_columns == ["external_provider", "external_resource_id"]
-    batch_op = op.batch_alter_table.return_value.__enter__.return_value
-    batch_op.create_check_constraint.assert_called_once_with(
-        "ck_knowledge_documents_external_identity_pair",
-        "(external_provider IS NULL AND external_resource_id IS NULL) OR "
-        "(external_provider IS NOT NULL AND external_resource_id IS NOT NULL)",
-    )
     op.create_index.assert_called_once_with(
         "uq_knowledge_documents_external",
         "knowledge_documents",
@@ -233,10 +203,6 @@ def test_downgrade_reverses_upgrade(monkeypatch: MonkeyPatch) -> None:
 
     op.drop_index.assert_called_once_with(
         "uq_knowledge_documents_external", table_name="knowledge_documents"
-    )
-    batch_op = op.batch_alter_table.return_value.__enter__.return_value
-    batch_op.drop_constraint.assert_called_once_with(
-        "ck_knowledge_documents_external_identity_pair", type_="check"
     )
     dropped_columns = [call.args[1] for call in op.drop_column.call_args_list]
     assert dropped_columns == ["external_resource_id", "external_provider"]

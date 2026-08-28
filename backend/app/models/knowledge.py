@@ -15,7 +15,6 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
-    CheckConstraint,
     Column,
     DateTime,
 )
@@ -158,10 +157,9 @@ class KnowledgeDocument(Base):
         server_default=ContentOrigin.USER.value,
     )
     # External identity of an imported provider document. Both columns are NULL
-    # together (regular documents) or set together (external documents); the
-    # a database check constraint enforces the pairing, and (kind_id, external_provider,
-    # external_resource_id) is the unique identity of an external document
-    # within one knowledge base.
+    # together (regular documents) or set together (external documents).
+    # The creation service enforces the pairing; the unique index below
+    # enforces one external identity per knowledge base.
     external_provider = Column(String(32), nullable=True)
     external_resource_id = Column(String(255), nullable=True)
 
@@ -258,11 +256,6 @@ class KnowledgeDocument(Base):
     )
 
     __table_args__ = (
-        CheckConstraint(
-            "(external_provider IS NULL AND external_resource_id IS NULL) OR "
-            "(external_provider IS NOT NULL AND external_resource_id IS NOT NULL)",
-            name="ck_knowledge_documents_external_identity_pair",
-        ),
         # Index for listing documents in a knowledge base
         Index(
             "ix_knowledge_documents_kind_active_created",

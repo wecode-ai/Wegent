@@ -253,6 +253,39 @@ class TestImportDocument:
         assert external.external_provider == "dingtalk"
         assert external.external_resource_id == node.dingtalk_node_id
 
+    @pytest.mark.parametrize(
+        ("provider", "resource_id"),
+        [
+            (None, "doc-1"),
+            ("dingtalk", None),
+            (None, None),
+            ("", "doc-1"),
+            ("dingtalk", ""),
+        ],
+    )
+    def test_create_external_document_rejects_missing_identity(
+        self,
+        test_db: Session,
+        test_user: User,
+        provider: str | None,
+        resource_id: str | None,
+    ) -> None:
+        kb_id = _create_kb(test_db, test_user.id)
+
+        with pytest.raises(
+            ValueError, match="External provider and resource ID are required"
+        ):
+            KnowledgeService.create_external_document(
+                db=test_db,
+                knowledge_base_id=kb_id,
+                user_id=test_user.id,
+                name="Invalid external document",
+                external_provider=provider,
+                external_resource_id=resource_id,
+                folder_id=0,
+                external_meta={},
+            )
+
     def test_rejects_unknown_provider(
         self,
         test_db: Session,
