@@ -603,13 +603,15 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     refreshGenerationRef.current += 1
     refreshPromiseRef.current = null
     clearStoredCloudConnection()
-    void clearDesktopCloudCredentials().catch(error => {
-      console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
-    })
+    setSnapshot(DISCONNECTED_STATE)
     void updateAppPreferences({ cloudConnection: null }).catch(error => {
       console.error('[CloudConnection] Failed to clear desktop cloud connection', error)
     })
-    setSnapshot(DISCONNECTED_STATE)
+    void Promise.resolve()
+      .then(clearDesktopCloudCredentials)
+      .catch(error => {
+        console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
+      })
     track('cloud_connection_changed', { connected: false })
   }, [])
 

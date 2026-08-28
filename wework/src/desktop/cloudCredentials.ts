@@ -86,8 +86,8 @@ export async function refreshDesktopCloudAccessToken(
   return unwrap(await bridge().refreshAccessToken(apiBaseUrl))
 }
 
-export function clearDesktopCloudCredentials(): Promise<void> {
-  return bridge().clear()
+export async function clearDesktopCloudCredentials(): Promise<void> {
+  await bridge().clear()
 }
 
 function unwrap<Value>(result: CloudCredentialResult<Value>): Value {

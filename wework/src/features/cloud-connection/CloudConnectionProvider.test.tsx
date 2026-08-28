@@ -323,6 +323,31 @@ describe('CloudConnectionProvider', () => {
     expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
   })
 
+  it('disconnects when the desktop credential bridge throws synchronously', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-08-28T00:00:00.000Z',
+    })
+    credentialMocks.clear.mockImplementation(() => {
+      throw new Error('Desktop cloud credential service is unavailable')
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
   it('does not reconnect when an in-flight credential refresh completes after disconnecting', async () => {
     const storedConnection = {
       backendUrl: 'https://cloud.example.com',
