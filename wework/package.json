@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prepare:electron": "pnpm --dir electron install --frozen-lockfile && node electron/node_modules/electron/install.js",
+    "prepare:electron": "node scripts/prepare-electron.mjs",
     "dev:desktop": "pnpm run prepare:electron && pnpm --dir electron dev",
     "dev:mac": "bash scripts/dev-mac-app.sh",
     "dev:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/dev-windows-app.ps1",
@@ -15,7 +15,7 @@
     "build:dsh-app": "vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir",
     "build": "tsc -b && vite build",
     "build:desktop": "pnpm run ai:verify:electron:build",
-    "build:release": "pnpm run prepare:electron && pnpm run prepare:codex --materialize && pnpm run prepare:dws && pnpm --dir electron build:release",
+    "build:release": "pnpm run prepare:electron && pnpm --dir electron build:release",
     "build:mac": "pnpm run build:desktop",
     "build:windows": "pnpm run build:desktop",
     "build:mac:devtools": "WEWORK_RELEASE_DEVTOOLS=1 pnpm run build:desktop",

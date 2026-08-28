@@ -15,6 +15,7 @@ const scripts = [
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
+  'scripts/prepare-electron.mjs',
   'scripts/prepare-harness-runtime.mjs',
 ]
 
@@ -29,9 +30,7 @@ describe('desktop resource migration', () => {
     )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
-    expect(packageJson.scripts['prepare:electron']).toBe(
-      'pnpm --dir electron install --frozen-lockfile && node electron/node_modules/electron/install.js'
-    )
+    expect(packageJson.scripts['prepare:electron']).toBe('node scripts/prepare-electron.mjs')
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
     expect(packageJson.scripts['dev:windows']).toContain('scripts/dev-windows-app.ps1')
@@ -39,6 +38,9 @@ describe('desktop resource migration', () => {
       'node scripts/prepare-ai-verify-electron.mjs'
     )
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['build:release']).toBe(
+      'pnpm run prepare:electron && pnpm --dir electron build:release'
+    )
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
     expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
     expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
@@ -71,6 +73,18 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("'install', '--omit=dev'")
   })
 
+  test('serializes Electron installation and packaging across worktrees', async () => {
+    const [prepareElectron, packageApp] = await Promise.all([
+      readFile(join(weworkRoot, 'scripts/prepare-electron.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+    ])
+
+    expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(packageApp).toContain('await releaseToolchainLock()')
+  })
+
   test('packages CUA native libraries and license outside ASAR', async () => {
     const [packageApp, builderConfig, electronWorkspace, asarPatch, license] = await Promise.all([
       readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
@@ -100,7 +114,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
-    expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
+    expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
+    expect(source).toContain("['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain('resolveDesktopPackageTargets(process.env)')
+    expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
+    expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
     expect(source).toContain("path: 'bundled-plugins'")
     expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
     expect(source).toContain('version: weworkRuntimeVersion')
@@ -189,6 +208,8 @@ describe('desktop resource migration', () => {
 
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('electronInstallScript')
+    expect(source).not.toContain("['run', 'prepare:codex']")
+    expect(source).not.toContain("['run', 'prepare:dws']")
     expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
     expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
