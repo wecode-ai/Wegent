@@ -1265,19 +1265,20 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await captureScreenshot(control, 'harness-apps-12-direct-add-stopped.png', 'body')
 
-      await control.command('click', '[data-testid="smart-apps-section-marketplace"]')
+      const marketplaceSectionSelector = `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-marketplace"]`
+      await control.command('click', marketplaceSectionSelector)
+      await control.command('waitFor', `${marketplaceSectionSelector}[aria-current="page"]`, {
+        stableMs: 1000,
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command(
         'waitFor',
-        '[data-testid="smart-apps-section-marketplace"][aria-current="page"]',
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-marketplace-page"]`,
         {
           stableMs: 1000,
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', '[data-testid="smart-apps-marketplace-page"]', {
-        stableMs: 1000,
-        timeoutMs: uiTimeoutMs,
-      })
       const marketplaceActionsSelector = `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
       await control.command('waitFor', marketplaceActionsSelector, {
         timeoutMs: uiTimeoutMs,

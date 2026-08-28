@@ -133,6 +133,42 @@ describe('DeviceFolderPicker', () => {
     })
   })
 
+  test('does not overwrite a typed Windows directory when the home lookup finishes later', async () => {
+    const onConfirm = vi.fn()
+    let resolveHomeDirectory: (path: string) => void = () => undefined
+    const homeDirectory = new Promise<string>(resolve => {
+      resolveHomeDirectory = resolve
+    })
+
+    render(
+      <DeviceFolderPicker
+        device={device}
+        mode="select"
+        onGetDeviceHomeDirectory={vi.fn().mockReturnValue(homeDirectory)}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const pathInput = screen.getByTestId('device-folder-path-input')
+    fireEvent.change(pathInput, {
+      target: { value: 'D:\\a\\Wegent\\Wegent\\workspace' },
+    })
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
+    resolveHomeDirectory('C:\\Users\\alice')
+
+    await waitFor(() => expect(pathInput).toHaveValue('D:\\a\\Wegent\\Wegent\\workspace'))
+    fireEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+
+    expect(onConfirm).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      path: 'D:\\a\\Wegent\\Wegent\\workspace',
+      action: 'select',
+    })
+  })
+
   test('shows directory creation errors without closing', async () => {
     render(
       <DeviceFolderPicker
