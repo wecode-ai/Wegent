@@ -5,7 +5,7 @@ import { createHttpClient } from '@/api/http'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import type { OpenCloudAuthorizationUrl } from './CloudConnectionContext'
 import { CloudConnectionProvider } from './CloudConnectionProvider'
-import { saveStoredCloudConnection } from './cloudConnectionStorage'
+import { getJwtExpiry, saveStoredCloudConnection } from './cloudConnectionStorage'
 import { useCloudConnection } from './useCloudConnection'
 
 const httpMocks = vi.hoisted(() => ({
@@ -163,6 +163,7 @@ describe('CloudConnectionProvider', () => {
       accessToken: token,
       tokenType: 'bearer',
       username: 'alice',
+      credentialMode: 'desktop_refresh',
     })
     httpMocks.get.mockResolvedValueOnce({
       id: 7,
@@ -201,6 +202,100 @@ describe('CloudConnectionProvider', () => {
     expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
       'token'
     )
+  })
+
+  it('stores the access token when the Backend does not support refresh tokens', async () => {
+    const onError = vi.fn()
+    const token = tokenWithExp()
+    httpMocks.get
+      .mockResolvedValueOnce({ status: 'healthy' })
+      .mockResolvedValueOnce({
+        web_url: 'https://legacy.example.com',
+        socket_url: 'wss://legacy.example.com',
+      })
+      .mockResolvedValueOnce({
+        id: 7,
+        user_name: 'alice',
+        email: 'alice@example.com',
+      })
+    httpMocks.post.mockResolvedValueOnce({
+      session_id: 'session-1',
+      poll_token: 'poll-1',
+      authorize_url: 'https://legacy.example.com/auth/wework/authorize?session_id=session-1',
+      web_url: 'https://legacy.example.com',
+      expires_at: Math.floor(Date.now() / 1000) + 30,
+      poll_interval_seconds: 0.001,
+    })
+    credentialMocks.claimAuthorization.mockResolvedValueOnce({
+      status: 'success',
+      accessToken: token,
+      tokenType: 'bearer',
+      username: 'alice',
+      credentialMode: 'legacy_access_token',
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudConnectProbe onError={onError} />
+      </CloudConnectionProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('connect-cloud-button'))
+
+    await waitFor(() => expect(onError).not.toHaveBeenCalled())
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
+        credentialMode: 'legacy_access_token',
+        token,
+      })
+    })
+    expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
+  })
+
+  it('restores a legacy access-token connection without the desktop refresh service', async () => {
+    const token = tokenWithExp()
+    saveStoredCloudConnection({
+      backendUrl: 'https://legacy.example.com',
+      apiBaseUrl: 'https://legacy.example.com/api',
+      socketBaseUrl: 'wss://legacy.example.com',
+      socketPath: '/socket.io',
+      webUrl: 'https://legacy.example.com',
+      credentialMode: 'legacy_access_token',
+      token,
+      tokenExpiresAt: getJwtExpiry(token),
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-08-28T00:00:00.000Z',
+    })
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') {
+        return Promise.resolve({
+          web_url: 'https://legacy.example.com',
+          socket_url: 'wss://legacy.example.com',
+        })
+      }
+      if (endpoint === '/users/me') {
+        return Promise.resolve({
+          id: 7,
+          user_name: 'alice',
+          email: 'alice@example.com',
+        })
+      }
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(httpMocks.get).toHaveBeenCalledWith('/users/me', {
+        redirectOnUnauthorized: false,
+      })
+    )
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
   })
 
   it('does not initialize application plugins when restoring a cloud connection', async () => {
@@ -651,6 +746,7 @@ describe('CloudConnectionProvider', () => {
       accessToken: token,
       tokenType: 'bearer',
       username: 'alice',
+      credentialMode: 'desktop_refresh',
     })
     httpMocks.get.mockResolvedValueOnce({
       id: 7,

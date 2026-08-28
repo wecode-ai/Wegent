@@ -22,6 +22,7 @@ export function useOptionalCloudConnection(): CloudConnectionContextValue {
       apiBaseUrl: runtimeConfig.apiBaseUrl,
       socketBaseUrl: runtimeConfig.socketBaseUrl,
       socketPath: runtimeConfig.socketPath,
+      credentialMode: 'legacy_access_token',
       token: fallbackToken,
       tokenExpiresAt: null,
       user: fallbackUser,
