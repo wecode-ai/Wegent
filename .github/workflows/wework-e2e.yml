@@ -570,6 +570,11 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Set up Python and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
         id: windows-local-harness-clis-cache
