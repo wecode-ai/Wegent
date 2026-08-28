@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! [[ "${VERSION}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+          if ! [[ "${VERSION}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,121}$ ]]; then
             echo "Invalid image tag '${VERSION}'." >&2
             exit 1
           fi
