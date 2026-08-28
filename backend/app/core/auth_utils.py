@@ -154,11 +154,12 @@ def verify_jwt_token_with_db(db: Session, token: str) -> Optional[User]:
     from jose.exceptions import JWTError
 
     from app.core.jwt_compat import decode_jose_jwt
+    from app.core.session_token import is_user_session_payload
 
     try:
         payload = decode_jose_jwt(token)
-        if payload.get("scope"):
-            logger.debug("[auth_utils] Scoped JWT is not a session token")
+        if not is_user_session_payload(payload):
+            logger.debug("[auth_utils] JWT is not a user session token")
             return None
         user_name = payload.get("sub")
         if not user_name:

@@ -1270,19 +1270,21 @@ async function main() {
       }
     }
     if (RUNS_PLUGIN_E2E) {
-      await writeCodexConfig(
-        codexHome,
-        control.url,
-        `[features]
+      const configureCodex = () =>
+        writeCodexConfig(
+          codexHome,
+          control.url,
+          `[features]
 plugins = true
 
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
 last_updated = "2026-07-30T00:00:00Z"`
-      )
+        )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        configureCodex,
         control,
         restartDesktopApp,
       })

@@ -28,6 +28,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'running-conversation-history': './scenarios/running-conversation-history.scenario.mjs',
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
+  'computer-use': './scenarios/computer-use.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
   'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
   'component-update': './scenarios/component-update.scenario.mjs',
@@ -38,6 +39,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'project-automation': './scenarios/project-automation.scenario.mjs',
   'project-assignment-notification': './scenarios/project-assignment-notification.scenario.mjs',
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
+  'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
@@ -48,6 +50,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'local-harness',
   'harness-apps',
   'offline-local-project-space',
+  'cloud-context-resilience',
   'task-attachments',
   'project-assignment-notification',
   'runtime-task-queue',
@@ -56,6 +59,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'running-conversation-history',
   'codex-notification-isolation',
   'context-compaction',
+  'computer-use',
   'split-workbench',
   'release-package-startup',
   'component-update',

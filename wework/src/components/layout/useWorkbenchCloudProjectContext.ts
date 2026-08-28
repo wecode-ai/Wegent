@@ -4,7 +4,6 @@ import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
-  loadDefaultWorkItemProject,
   publishProjectSpaceTaskBindingChanged,
   projectSpaceKey,
   projectSpaceRef,
@@ -75,7 +74,6 @@ const boundProjectSpaceContextListeners = new Set<
 >()
 const PENDING_BINDING_CONTEXT_RETRY_MS = 100
 const PENDING_BINDING_CONTEXT_RETRY_LIMIT = 50
-const DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS = 1_500
 
 function runtimeTaskKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
@@ -261,8 +259,6 @@ export function useWorkbenchCloudProjectContext({
       (api, index): api is ProjectSpaceApi => Boolean(api) && candidates.indexOf(api) === index
     )
   }, [cloudProjectSpaceApi, deliveryApi, localProjectSpaceApi])
-  const defaultWorkItemProjectApi =
-    localProjectSpaceApi ?? cloudProjectSpaceApi ?? deliveryApi ?? null
   const currentRuntimeDeviceId = currentRuntimeTask?.deviceId
   const currentRuntimeTaskId = currentRuntimeTask?.taskId
   const contextRuntimeTask = useMemo<RuntimeTaskAddress | null>(
@@ -667,22 +663,30 @@ export function useWorkbenchCloudProjectContext({
         active = false
       }
     }
-    const projectRequests = apis.map(async api => {
-      const result = await api.listCloudProjects()
-      return result.items
-    })
-    void Promise.allSettled(projectRequests).then(results => {
+    const projectsByApi: Array<CloudProject[] | undefined> = new Array(apis.length)
+    const publishSettledProjects = () => {
       if (!active) return
-      const candidates = results.flatMap(result =>
-        result.status === 'fulfilled' ? result.value : []
+      const candidates = projectsByApi.flatMap(projects => projects ?? [])
+      setCloudProjects(
+        candidates.filter(
+          (candidate, index) =>
+            candidates.findIndex(
+              other => other.id === candidate.id && other.project_store === candidate.project_store
+            ) === index
+        )
       )
-      const uniqueProjects = candidates.filter(
-        (candidate, index) =>
-          candidates.findIndex(
-            other => other.id === candidate.id && other.project_store === candidate.project_store
-          ) === index
-      )
-      setCloudProjects(uniqueProjects)
+    }
+    apis.forEach((api, index) => {
+      void Promise.resolve()
+        .then(() => api.listCloudProjects())
+        .then(result => {
+          projectsByApi[index] = result.items
+          publishSettledProjects()
+        })
+        .catch(() => {
+          projectsByApi[index] = []
+          publishSettledProjects()
+        })
     })
     return () => {
       active = false
@@ -712,8 +716,6 @@ export function useWorkbenchCloudProjectContext({
       pendingAutoJoinResolutionRef.current = null
       setPendingCloudProject(defaultProject)
       setPendingTodoItem(null)
-    } else if (!defaultProject && pendingAutoJoin) {
-      pendingAutoJoinResolutionRef.current = null
     }
   }, [
     contextRuntimeTask,
@@ -803,7 +805,6 @@ export function useWorkbenchCloudProjectContext({
     )
       ? deliveryItem
       : null
-
   const openBoundProjectSpaceTask = useCallback(() => {
     if (!boundCloudProject || !boundCloudItem) return
     const params = new URLSearchParams()
@@ -861,7 +862,7 @@ export function useWorkbenchCloudProjectContext({
   }, [activeDeliveryItem, userId, t])
 
   const prepareSubmission = useCallback(
-    async (description: string): Promise<CloudSubmissionContext> => {
+    (description: string): CloudSubmissionContext => {
       let submissionProject = contextRuntimeTask ? null : pendingCloudProject
       if (
         !contextRuntimeTask &&
@@ -870,24 +871,12 @@ export function useWorkbenchCloudProjectContext({
       ) {
         submissionProject = defaultProject
       }
-      if (!contextRuntimeTask && !submissionProject) {
-        submissionProject =
-          defaultWorkItemProject ??
-          (defaultWorkItemProjectApi
-            ? await Promise.race([
-                loadDefaultWorkItemProject(defaultWorkItemProjectApi).catch(() => null),
-                new Promise<null>(resolve => {
-                  window.setTimeout(() => resolve(null), DEFAULT_WORK_ITEM_LOOKUP_TIMEOUT_MS)
-                }),
-              ])
-            : null)
-      }
+      if (!contextRuntimeTask && !submissionProject) submissionProject = defaultWorkItemProject
       const submissionItem = submissionProject ? pendingTodoItem : null
       if (!contextRuntimeTask) {
         setPendingCloudContext(submissionProject, submissionItem)
         pendingAutoJoinResolutionRef.current =
           !submissionProject &&
-          Boolean(defaultProjectSpace) &&
           dismissedDefaultCloudProjectKey !== defaultCloudProjectSelectionKey &&
           todoBindingApis.length > 0
             ? { target: null, description }
@@ -930,9 +919,7 @@ export function useWorkbenchCloudProjectContext({
       contextRuntimeTask,
       defaultCloudProjectSelectionKey,
       defaultProject,
-      defaultProjectSpace,
       defaultWorkItemProject,
-      defaultWorkItemProjectApi,
       dismissedDefaultCloudProjectKey,
       pendingCloudProject,
       pendingTodoItem,
@@ -943,6 +930,7 @@ export function useWorkbenchCloudProjectContext({
   )
 
   const clearPendingProjectContext = useCallback(() => {
+    pendingAutoJoinResolutionRef.current = null
     setDismissedDefaultCloudProjectKey(defaultCloudProjectSelectionKey)
     setPendingCloudContext(null, null)
   }, [defaultCloudProjectSelectionKey, setPendingCloudContext])

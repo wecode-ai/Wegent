@@ -1,9 +1,11 @@
 import { describe, expect, test, vi } from 'vitest'
 import {
+  connectorAuthMessageText,
   enrichInstalledPluginsForLocalAuth,
   extractConnectorAuthConnectorSlug,
   filterLocalRequirements,
   findLocalConnectorsForMessage,
+  latestConnectorAuthMessage,
   listLocalConnectors,
   listMentionedPluginNames,
   messageNeedsConnectorPreflight,
@@ -11,6 +13,7 @@ import {
   resolveLocalConnectorAuthHint,
 } from '@/features/plugins/localConnectorAuthGate'
 import type { InstalledPlugin } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 
 function pluginWithLocalQr(overrides?: Partial<InstalledPlugin>): InstalledPlugin {
   return {
@@ -165,6 +168,80 @@ describe('localConnectorAuthGate', () => {
         '账号信息显示你有 2 个公开项目，但 GitHub 连接器的项目搜索结果暂时返回 0 个项目。可能是项目索引同步延迟或连接器查询异常。'
       )
     ).toBe(false)
+  })
+
+  test('only checks the latest assistant or system message for auth resume', () => {
+    const messages: WorkbenchMessage[] = [
+      {
+        id: 'assistant-old',
+        role: 'assistant',
+        content: 'weibo-wiki Connector needs login',
+      },
+      {
+        id: 'user-latest',
+        role: 'user',
+        content: 'continue',
+      },
+      {
+        id: 'assistant-latest',
+        role: 'assistant',
+        content: 'done',
+      },
+    ]
+
+    expect(latestConnectorAuthMessage(messages)).toBeNull()
+  })
+
+  test('bounds connector auth text and keeps auth details at the end of large tool output', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-large-output',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        {
+          id: 'tool-1',
+          type: 'tool',
+          status: 'error',
+          toolOutput: `${'x'.repeat(200_000)} connector_auth_required connectorSlug=weibo-wiki`,
+          renderPayload: { content: 'y'.repeat(200_000) },
+        },
+      ],
+    }
+
+    const text = connectorAuthMessageText(message)
+
+    expect(text.length).toBeLessThanOrEqual(64 * 1024 + 2)
+    expect(text).toContain('connector_auth_required')
+    expect(text).toContain('connectorSlug=weibo-wiki')
+    expect(text).not.toContain('yyyy')
+    expect(latestConnectorAuthMessage([message])?.message.id).toBe(message.id)
+  })
+
+  test('extracts structured auth fields without serializing arbitrary tool payloads', () => {
+    const message: WorkbenchMessage = {
+      id: 'assistant-structured-output',
+      role: 'assistant',
+      content: '',
+      blocks: [
+        {
+          id: 'tool-1',
+          type: 'tool',
+          status: 'error',
+          toolOutput: {
+            error: 'connector_auth_required',
+            pluginKey: 'weibo-api-wiki',
+            connectorSlug: 'weibo-wiki',
+            unrelated: 'x'.repeat(200_000),
+          },
+        },
+      ],
+    }
+
+    const candidate = latestConnectorAuthMessage([message])
+
+    expect(candidate?.text).toContain('pluginKey=weibo-api-wiki')
+    expect(candidate?.text).toContain('connectorSlug=weibo-wiki')
+    expect(candidate?.text).not.toContain('xxxx')
   })
 
   test('extracts connector slug and filters requirements', () => {

@@ -25,7 +25,6 @@ class RuntimeTaskCreateProtocolError(ValueError):
 
 FEATURE_FIELDS: dict[str, tuple[str, ...]] = {
     "attachments": ("attachments",),
-    "deviceProjectBinding": ("runtimeProjectKey",),
     "goal": ("initialGoal",),
     "permissionMode": ("runtimePermissionMode",),
     "projectPlugins": ("projectPlugins",),

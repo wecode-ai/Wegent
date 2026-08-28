@@ -45,7 +45,7 @@ module.exports = {
     : {}),
   files: ['dist/**/*', 'package.json'],
   asar: true,
-  asarUnpack: ['**/*.node'],
+  asarUnpack: ['**/*.{node,dylib,so,dll}'],
   extraResources: [
     { from: 'resources/harness-runtime', to: 'harness-runtime' },
     { from: 'resources/bin', to: 'bin' },
@@ -54,6 +54,7 @@ module.exports = {
     { from: 'resources/components.json', to: 'components.json' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
+    { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
     { from: 'resources/vnc', to: 'vnc' },
   ],

@@ -12,6 +12,11 @@ vi.mock('@/hooks/useConfiguredKeybinding', () => ({
   useConfiguredKeybinding: configuredKeybindingMock,
 }))
 
+const navigateToMock = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: navigateToMock,
+}))
+
 const modelExecutionMock = vi.hoisted(() => ({
   supportsResponsesApi: vi.fn().mockReturnValue(false),
 }))
@@ -101,6 +106,7 @@ describe('ModelSelector desktop layout', () => {
   beforeEach(() => {
     isMobileMock.mockReturnValue(false)
     configuredKeybindingMock.mockReturnValue(null)
+    navigateToMock.mockReset()
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: WINDOW_INNER_WIDTH,
@@ -198,6 +204,35 @@ describe('ModelSelector desktop layout', () => {
     )
     expect(screen.queryByTestId('model-selector-family-submenu')).not.toBeInTheDocument()
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
+  })
+
+  test('opens setup destinations from the empty model menu', async () => {
+    createShellElement({ hidden: true })
+
+    render(
+      <ModelSelector
+        models={[]}
+        selectedModel={null}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={vi.fn()}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    expect(await screen.findByTestId('model-selector-empty-state')).toHaveTextContent(
+      'Add a custom model, or sign in to Wegent to sync cloud models.'
+    )
+
+    fireEvent.click(screen.getByTestId('model-selector-add-custom-model'))
+    expect(navigateToMock).toHaveBeenCalledWith('/settings/personal/models')
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('model-selector-button'))
+    fireEvent.click(await screen.findByTestId('model-selector-login-cloud'))
+    expect(navigateToMock).toHaveBeenCalledWith('/settings/connections')
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
   test('shows models from every family in the second-level menu', async () => {

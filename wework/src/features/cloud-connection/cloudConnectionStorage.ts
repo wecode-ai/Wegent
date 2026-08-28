@@ -5,6 +5,7 @@ const DEFAULT_SOCKET_PATH = '/socket.io'
 
 export type CloudConnectionStatus =
   | 'disconnected'
+  | 'restoring'
   | 'connecting'
   | 'connected'
   | 'expired'
@@ -20,8 +21,6 @@ export interface CloudConnectionRuntimeConfig {
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
   socketBaseUrlOverride?: string
   webUrl?: string
-  token: string
-  tokenExpiresAt: number | null
   user: User
   connectedAt: string
 }
@@ -133,10 +132,6 @@ export function getJwtExpiry(token: string): number | null {
   }
 }
 
-export function isCloudTokenExpired(tokenExpiresAt: number | null): boolean {
-  return typeof tokenExpiresAt === 'number' && Date.now() >= tokenExpiresAt
-}
-
 export function readStoredCloudConnection(): StoredCloudConnection | null {
   try {
     const value = localStorage.getItem(CLOUD_CONNECTION_STORAGE_KEY)
@@ -157,7 +152,6 @@ export function normalizeStoredCloudConnection(value: unknown): StoredCloudConne
     typeof parsed.socketPath !== 'string' ||
     (parsed.socketBaseUrlOverride !== undefined &&
       typeof parsed.socketBaseUrlOverride !== 'string') ||
-    typeof parsed.token !== 'string' ||
     !parsed.user ||
     typeof parsed.user !== 'object' ||
     typeof parsed.connectedAt !== 'string'

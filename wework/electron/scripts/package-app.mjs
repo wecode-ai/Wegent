@@ -80,7 +80,7 @@ const applications = await packager({
   out: output,
   overwrite: true,
   asar: {
-    unpack: '**/*.node',
+    unpack: '**/*.{node,dylib,so,dll}',
   },
   extraResource: [
     join(electronRoot, 'resources', 'harness-runtime'),
@@ -90,6 +90,7 @@ const applications = await packager({
     join(electronRoot, 'resources', 'components.json'),
     join(electronRoot, 'resources', 'bundled-plugins'),
     join(electronRoot, 'resources', 'bundled-hooks'),
+    join(sharedResourcesRoot, 'licenses'),
     join(sharedResourcesRoot, 'icons'),
     join(electronRoot, 'resources', 'vnc'),
   ],

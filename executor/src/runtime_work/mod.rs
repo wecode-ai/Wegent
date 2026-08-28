@@ -33,7 +33,6 @@ pub(crate) fn runtime_features() -> serde_json::Value {
             "schemaVersions": [1, 2],
             "features": {
                 "attachments": true,
-                "deviceProjectBinding": true,
                 "goal": true,
                 "supervisor": true,
                 "permissionMode": true,
