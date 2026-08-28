@@ -27,6 +27,7 @@ import {
   removeOptimisticRuntimeConversationGuidance,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   markRuntimeConversationAssistantStarted,
+  resetRuntimeConversationTurnForRetry,
   runtimeConversationSnapshotSettlesLatestTurn,
   subscribeRuntimeConversation,
   settleRuntimeConversationAcceptedMessage,
@@ -516,6 +517,109 @@ describe('runtimeConversationCache', () => {
         },
       ])
     ).toBe(true)
+  })
+
+  test('keeps the original user message while a failed turn waits for its retry start', () => {
+    const userMessage = {
+      id: 'client-user-1',
+      role: 'user' as const,
+      content: 'retry this prompt',
+      status: 'done' as const,
+      createdAt: '2026-08-28T00:00:00.000Z',
+    }
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: userMessage,
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'failed-turn',
+      clientUserMessageId: userMessage.id,
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_error',
+      subtaskId: 'failed-turn',
+      error: 'temporary failure',
+    })
+
+    resetRuntimeConversationTurnForRetry(address, 'failed-turn', userMessage)
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: userMessage.id,
+        role: 'user',
+        content: userMessage.content,
+      }),
+    ])
+
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'retry-turn',
+      clientUserMessageId: userMessage.id,
+    })
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: userMessage.id,
+        role: 'user',
+        content: userMessage.content,
+        turnId: 'retry-turn',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        status: 'streaming',
+        turnId: 'retry-turn',
+      }),
+    ])
+  })
+
+  test('does not reset a retry turn whose start event arrived before send acknowledgement', () => {
+    const userMessage = {
+      id: 'client-user-1',
+      role: 'user' as const,
+      content: 'retry this prompt',
+      status: 'done' as const,
+      createdAt: '2026-08-28T00:00:00.000Z',
+    }
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: userMessage,
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'failed-turn',
+      clientUserMessageId: userMessage.id,
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_error',
+      subtaskId: 'failed-turn',
+      error: 'temporary failure',
+    })
+    applyRuntimeConversationAction(address, {
+      type: 'assistant_started',
+      taskId: address.taskId,
+      subtaskId: 'retry-turn',
+      clientUserMessageId: userMessage.id,
+    })
+
+    resetRuntimeConversationTurnForRetry(address, 'failed-turn', userMessage)
+
+    expect(getRuntimeConversationMessages(address)).toEqual([
+      expect.objectContaining({
+        id: userMessage.id,
+        role: 'user',
+        content: userMessage.content,
+        turnId: 'retry-turn',
+      }),
+      expect.objectContaining({
+        role: 'assistant',
+        status: 'streaming',
+        turnId: 'retry-turn',
+      }),
+    ])
   })
 
   test('settles a bound turn only when the same real turn id is complete', () => {

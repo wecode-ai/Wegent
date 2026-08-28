@@ -1097,6 +1097,18 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`
   )
   await waitForScenarioRequestCount(control, 'retry', 2)
+  const retryPendingSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.ok(
+    retryPendingSnapshot.text.includes(RETRY_PROMPT),
+    'Retry removed the original user prompt while waiting for the replacement response'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'retry-02-pending-preserves-user-message.png',
+    ACTIVE_WORKBENCH_SELECTOR
+  )
   control.releaseRetryResponse()
   await control.command(
     'waitFor',
@@ -1156,7 +1168,7 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   )
   await captureVerificationScreenshot(
     control,
-    'retry-02-success-restored-without-failed-turn.png',
+    'retry-03-success-restored-without-failed-turn.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(

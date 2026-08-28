@@ -372,6 +372,34 @@ export function removeRuntimeConversationTurn(
   )
 }
 
+export function resetRuntimeConversationTurnForRetry(
+  address: RuntimeTaskAddress,
+  turnId: string | undefined,
+  message: WorkbenchMessage
+): WorkbenchMessage[] {
+  if (!turnId || message.role !== 'user') return getRuntimeConversationMessages(address)
+  return updateRuntimeConversationTurns(address, turns => {
+    const sourceTurnIndex = turns.findIndex(turn => turn.id === turnId)
+    if (sourceTurnIndex < 0 || turns[sourceTurnIndex].status !== 'failed') return turns
+
+    const sourceTurn = turns[sourceTurnIndex]
+    const retryMessage: WorkbenchMessage & { role: 'user' } = {
+      ...message,
+      role: 'user',
+      subtaskId: undefined,
+      turnId: undefined,
+    }
+    const retryTurn: RuntimeConversationTurn = {
+      id: null,
+      clientUserMessageId: retryMessage.id,
+      runtimeMessageIndex: sourceTurn.runtimeMessageIndex,
+      items: [{ id: retryMessage.id, type: 'user_message', message: retryMessage }],
+      status: 'pending',
+    }
+    return turns.map((turn, index) => (index === sourceTurnIndex ? retryTurn : turn))
+  })
+}
+
 export function replaceRuntimeConversationFromUserMessage(
   address: RuntimeTaskAddress,
   sourceClientUserMessageId: string,

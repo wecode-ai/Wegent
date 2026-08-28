@@ -10446,6 +10446,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
     )
+    expect(screen.getByTestId('message-roles')).toHaveTextContent('user:修复 CI')
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         address: expect.objectContaining({ taskId: 'runtime-restored' }),

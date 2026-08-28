@@ -99,6 +99,7 @@ import {
   removeRuntimeConversationTurn,
   reconcileRuntimeConversationSnapshot,
   replaceRuntimeConversationFromUserMessage,
+  resetRuntimeConversationTurnForRetry,
   runtimeConversationMessageHasStartedTurn,
   runtimeConversationSnapshotSettlesLatestTurn,
   runtimeConversationKey,
@@ -1297,11 +1298,21 @@ export function useWorkbenchPaneSession({
           retryUserMessageOverride ?? undefined
         )
         if (sent) {
-          setMessages(
-            removeRuntimeConversationTurn(currentRuntimeTask, {
-              turnId: message.turnId ?? message.subtaskId,
-            })
-          )
+          const retryUserMessage =
+            retryUserMessageOverride ??
+            [...currentMessages]
+              .slice(0, failedMessageIndex)
+              .reverse()
+              .find(currentMessage => currentMessage.role === 'user')
+          if (retryUserMessage) {
+            setMessages(
+              resetRuntimeConversationTurnForRetry(
+                currentRuntimeTask,
+                message.turnId ?? message.subtaskId,
+                retryUserMessage
+              )
+            )
+          }
         }
         return sent
       } catch (error) {
