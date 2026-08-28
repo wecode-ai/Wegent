@@ -13,3 +13,4 @@ def test_chat_shell_image_precaches_tiktoken_encoding() -> None:
 
     assert 'ENV TIKTOKEN_CACHE_DIR="/app/.cache/tiktoken"' in dockerfile
     assert 'tiktoken.get_encoding("cl100k_base")' in dockerfile
+    assert 'tiktoken.get_encoding("o200k_base")' in dockerfile
