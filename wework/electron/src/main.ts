@@ -1288,8 +1288,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
           }
         : {}),
       WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-        componentResourcesRoot,
-        'bundled-plugins',
+        components?.bundledPlugins ?? join(componentResourcesRoot, 'bundled-plugins'),
         'wework-personal'
       ),
       ...(process.env.WEWORK_EXECUTOR_PATH?.trim() || !components
@@ -1300,6 +1299,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
+      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
+        ? {}
+        : { DWS_BINARY_PATH: components.dws }),
     },
     packageMetadata,
     app.getPath('home')

@@ -303,6 +303,10 @@ assert_case "executor dependency setup changes run executor and platform E2E" \
   "$executor_dependency_expected" \
   ".github/scripts/install-executor-rust-system-dependencies.sh"
 
+assert_case "executor E2E resolver changes run platform E2E" \
+  "$platform_e2e_expected" \
+  ".github/scripts/resolve-executor-e2e-runtime.sh"
+
 wework_e2e_expected="${all_false/wework_e2e=false/wework_e2e=true}"
 assert_case "Wework workflow changes run Wework E2E" "$wework_e2e_expected" \
   ".github/workflows/wework-e2e.yml"

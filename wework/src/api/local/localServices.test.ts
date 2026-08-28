@@ -3950,6 +3950,7 @@ describe('createLocalAppServices', () => {
           label: 'Project',
           workspaceSource: 'local',
           projectSource: 'local_project',
+          projectSidebarOrder: 3,
           projectAiSettings: {
             instructions: 'Run focused project tests.',
             modelSelection: {
@@ -4012,6 +4013,7 @@ describe('createLocalAppServices', () => {
             source: 'local_project',
             stateDeviceId: 'device-uuid',
             roots: [{ kind: 'local', path: '/Users/me/project' }],
+            sidebarOrder: 3,
             pinned: false,
             pinnedOrder: null,
             active: false,

@@ -1589,6 +1589,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
     })
+    await control.command('select', '[data-testid^="execution-node-workspace-"]', {
+      value: 'composer',
+    })
     await control.command('click', '[data-testid^="execution-node-add-deliverable-"]', {
       visible: true,
     })
@@ -1672,6 +1675,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.roleSource, 'generic')
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
+    assert.deepEqual(
+      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
+        .workspace_binding,
+      { type: 'standalone' }
+    )
     const unifiedGraphNodes = unifiedRule.eventConfig.wework_flow.graph.nodes
     assert.equal(unifiedGraphNodes.length, 2)
     const unifiedDeliverable = unifiedGraphNodes[0].deliverables[0]
