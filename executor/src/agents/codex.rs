@@ -55,9 +55,6 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_SOURCE_DIR",
     "WEWORK_EXECUTOR_SIDECAR",
 ];
-const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
-    "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
@@ -3004,7 +3001,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .extend(global_mcp_config_overrides());
     launch_config
         .config_overrides
-        .extend(cdp_browser_mcp_config_overrides(request));
+        .extend(cdp_browser_mcp_config_overrides(request)?);
     launch_config
         .config_overrides
         .extend(project_space_mcp_config_overrides(request)?);
@@ -3771,14 +3768,9 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
-fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    let command =
-        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let bridge_runtime_file = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("runtime/embedded-browser-bridge.json"));
+fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+    let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3795,68 +3787,40 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
+    ];
+    if !crate::browser_mcp::bridge_is_available() {
+        return Ok(overrides);
+    }
+    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
+        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    overrides.extend([
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
-            toml_value(&command.display().to_string())
+            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization"]),
+            toml_value(&format!("Bearer {}", endpoint.token))
         ),
+        format!("{key}.tool_timeout_sec=60"),
         format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["browser-mcp-server"]))
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "startup_timeout_sec"
-            ]),
-            15
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "tool_timeout_sec"
-            ]),
-            60
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "default_tools_approval_mode"
-            ]),
+            "{key}.default_tools_approval_mode={}",
             toml_value("approve")
         ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV
-            ]),
-            toml_value(&bridge_runtime_file.display().to_string())
-        ),
-    ];
+    ]);
 
     if let Some(label) = embedded_browser_label(request) {
         overrides.push(format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_EMBEDDED_BROWSER_LABEL"
+                server_name,
+                "http_headers",
+                "X-Wework-Browser-Label"
             ]),
             toml_value(&label)
         ));
     }
-    overrides
+    Ok(overrides)
 }
 
 fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
@@ -4028,9 +3992,17 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
 
 async fn prepare_codex_execution_request(
     request: ExecutionRequest,
-    cancellation: Option<&mut oneshot::Receiver<()>>,
+    mut cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if let Some(cancellation) = cancellation.as_deref_mut() {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            result = ensure_codex_mcp_endpoints() => result?,
+        }
+    } else {
+        ensure_codex_mcp_endpoints().await?;
+    }
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
@@ -4144,6 +4116,14 @@ async fn prepare_codex_execution_request(
         request,
         generated_files,
     })
+}
+
+async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
+    if crate::browser_mcp::bridge_is_available() {
+        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    Ok(())
 }
 
 fn ensure_codex_turn_not_cancelled(

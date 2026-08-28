@@ -10,6 +10,8 @@
   "document_count": "{{count}} document",
   "documents_count": "{{count}} documents",
   "picker": {
+    "selectContent": "Select content",
+    "selectedCount": "{{count}} selected",
     "columns": {
       "sources": "Primary Group",
       "knowledgeBases": "Secondary Group"
@@ -35,6 +37,10 @@
     "loading": "Loading knowledge bases...",
     "loadingDocuments": "Loading documents...",
     "retry": "Retry",
+    "selectGroup": "Select a group",
+    "selectCategory": "Select a content type",
+    "selectScope": "Select a scope",
+    "changeSelection": "Change {{name}}",
     "empty": "No content",
     "emptyGroups": "No groups",
     "emptyKnowledgeBases": "No knowledge bases",
