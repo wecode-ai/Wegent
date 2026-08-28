@@ -109,6 +109,8 @@ describe('desktop resource migration', () => {
 
     expect(source).toContain("'node_modules/electron-builder/cli.js'")
     expect(source).toContain('resolveNodeRuntime()')
+    expect(source).toContain('WEWORK_RELEASE_DIR_ONLY')
+    expect(source).toContain("...(directoryOnly ? ['--dir'] : [])")
     expect(source).not.toContain("'pnpm'")
     expect(source).not.toContain('wrapWindowsScriptCommand')
   })

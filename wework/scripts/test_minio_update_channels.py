@@ -581,6 +581,10 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
     assert "--resume-signed-app" in script
+    assert "--signed-app-only" in script
+    assert "--upload-existing" in script
+    assert "WEWORK_RELEASE_DIR_ONLY" in script
+    assert "WEWORK_SKIP_MACOS_NOTARIZATION" in script
     assert "package-prebuilt-macos-release.mjs" in script
     assert "wework_configure_internal_updater_key" in script
     assert "sync-desktop-release-version.mjs" not in script

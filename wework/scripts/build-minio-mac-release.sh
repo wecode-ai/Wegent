@@ -67,6 +67,8 @@ MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-aarch64-apple-darwin}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
 RESUME_SIGNED_APP=""
+SIGNED_APP_ONLY="false"
+UPLOAD_EXISTING="false"
 
 usage() {
   cat <<'EOF'
@@ -93,6 +95,10 @@ Options:
   --resume-signed-app <path>
                             Resume from an existing signed .app after a
                             notarization upload failure.
+  --signed-app-only         Build and Developer ID sign the application, then
+                            stop before notarization and installer packaging.
+  --upload-existing        Upload and verify an existing release output
+                            directory without rebuilding or repackaging.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
@@ -143,6 +149,13 @@ legacy_platform() {
   case "$MACOS_BUILD_TARGET" in
     aarch64-apple-darwin) printf 'darwin-aarch64\n' ;;
     x86_64-apple-darwin) printf 'darwin-x86_64\n' ;;
+  esac
+}
+
+installer_arch() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin) printf 'mac-arm64\n' ;;
+    x86_64-apple-darwin) printf 'mac\n' ;;
   esac
 }
 
@@ -232,6 +245,8 @@ while [ "$#" -gt 0 ]; do
     --macos-build-target) MACOS_BUILD_TARGET="$2"; shift 2 ;;
     --brand-config) BRAND_CONFIG="$2"; shift 2 ;;
     --resume-signed-app) RESUME_SIGNED_APP="$2"; shift 2 ;;
+    --signed-app-only) SIGNED_APP_ONLY="true"; shift ;;
+    --upload-existing) UPLOAD_EXISTING="true"; shift ;;
     --upload) UPLOAD="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -256,6 +271,30 @@ if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
 fi
 if [ "$RELEASE_KIND" != "full" ] && [ "$RELEASE_KIND" != "component" ]; then
   echo "--release-kind must be full or component." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ -n "$RESUME_SIGNED_APP" ]; then
+  echo "--signed-app-only cannot be combined with --resume-signed-app." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ "$UPLOAD" = "true" ]; then
+  echo "--signed-app-only cannot be combined with --upload." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ "$RELEASE_KIND" != "full" ]; then
+  echo "--signed-app-only requires --release-kind full." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ "$UPLOAD" != "true" ]; then
+  echo "--upload-existing requires --upload." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ "$SIGNED_APP_ONLY" = "true" ]; then
+  echo "--upload-existing cannot be combined with --signed-app-only." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ -n "$RESUME_SIGNED_APP" ]; then
+  echo "--upload-existing cannot be combined with --resume-signed-app." >&2
   exit 1
 fi
 if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
@@ -302,7 +341,9 @@ UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
 COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
 UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$UPDATE_MANIFEST_S3_PREFIX"
-if [ -z "$RELEASE_NOTES" ]; then
+if [ "$SIGNED_APP_ONLY" != "true" ] &&
+  [ "$UPLOAD_EXISTING" != "true" ] &&
+  [ -z "$RELEASE_NOTES" ]; then
   RELEASE_NOTES="$(
     cd "$PROJECT_DIR"
     GH_REPO='' RELEASE_SHA="$(git rev-parse HEAD)" RELEASE_VERSION="$VERSION" \
@@ -311,12 +352,31 @@ if [ -z "$RELEASE_NOTES" ]; then
 fi
 
 require_command node
-require_command pnpm
 require_command uv
-wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+if [ "$UPLOAD_EXISTING" = "true" ]; then
+  require_command curl
+  if [ ! -d "$OUTPUT_DIR" ]; then
+    echo "Existing release output directory not found: $OUTPUT_DIR" >&2
+    exit 1
+  fi
+  upload_artifacts
+  verify_uploaded_artifacts
+  echo "Published existing MinIO $RELEASE_KIND release assets and update channels."
+  exit 0
+fi
+
+require_command pnpm
+if [ "$SIGNED_APP_ONLY" != "true" ]; then
+  wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+fi
 
 export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_PASSWORD:-}}"
-export WEWORK_CUSTOM_MACOS_NOTARIZATION=true
+if [ "$SIGNED_APP_ONLY" = "true" ]; then
+  export WEWORK_RELEASE_DIR_ONLY=true
+  export WEWORK_SKIP_MACOS_NOTARIZATION=true
+else
+  export WEWORK_CUSTOM_MACOS_NOTARIZATION=true
+fi
 export WEWORK_NOTARYTOOL_S3_ACCELERATION="${WEWORK_NOTARYTOOL_S3_ACCELERATION:-true}"
 CSC_NAME="$(
   wework_normalize_macos_signing_identity \
@@ -352,6 +412,16 @@ else
   VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
   VITE_WEWORK_RUNTIME_MODE=local-first \
     pnpm --filter wework build:release
+  if [ "$SIGNED_APP_ONLY" = "true" ]; then
+    signed_app="$WEWORK_DIR/electron/release-installer/$(installer_arch)/Weibo WeWork.app"
+    if [ ! -d "$signed_app" ]; then
+      echo "Signed macOS application was not produced: $signed_app" >&2
+      exit 1
+    fi
+    codesign --verify --deep --strict --verbose=2 "$signed_app"
+    echo "Signed macOS application is ready: $signed_app"
+    exit 0
+  fi
 fi
 
 node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
@@ -366,6 +436,7 @@ WEWORK_RELEASE_TARGETS="macos-$arch" \
     internal/minio "minio-$VERSION" "$notes_path" "$SOURCE_SHA"
 
 if [ "$UPLOAD" = "true" ]; then
+  require_command curl
   upload_artifacts
   verify_uploaded_artifacts
   echo "Published MinIO $RELEASE_KIND release assets and component update channels."

@@ -10,8 +10,11 @@ const identity = resolveBuildIdentity()
 const releaseVersion = resolveReleaseVersion(require('./package.json').version)
 const packagePrebuiltMacosRelease =
   process.env.WEWORK_PREPACKAGED_MACOS_RELEASE?.trim().toLowerCase() === 'true'
+const skipMacosNotarization =
+  process.env.WEWORK_SKIP_MACOS_NOTARIZATION?.trim().toLowerCase() === 'true'
 const useCustomMacosNotarization =
   !packagePrebuiltMacosRelease &&
+  !skipMacosNotarization &&
   process.env.WEWORK_CUSTOM_MACOS_NOTARIZATION?.trim().toLowerCase() === 'true'
 
 module.exports = {
@@ -58,7 +61,9 @@ module.exports = {
     category: 'public.app-category.developer-tools',
     electronLanguages: ['en', 'zh_CN'],
     hardenedRuntime: true,
-    ...(useCustomMacosNotarization || packagePrebuiltMacosRelease ? { notarize: false } : {}),
+    ...(useCustomMacosNotarization || packagePrebuiltMacosRelease || skipMacosNotarization
+      ? { notarize: false }
+      : {}),
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
     signIgnore: ['/Contents/Resources/wework-core-plugins/'],
     target: ['dmg', 'zip'],
