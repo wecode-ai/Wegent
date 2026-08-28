@@ -157,6 +157,23 @@ function embeddedBrowserStorageInput(command: DesktopControlCommand) {
   }
 }
 
+function reloadMainWindowLocalStorageInput(
+  command: DesktopControlCommand
+): { key: string; value: string } | null {
+  if (!command.value || command.value === 'capture') return null
+  const input = JSON.parse(command.value) as {
+    localStorage?: { key?: string; value?: string }
+  }
+  if (!input.localStorage) return null
+  if (!input.localStorage.key) {
+    throw new Error('reloadMainWindow localStorage requires a key')
+  }
+  return {
+    key: input.localStorage.key,
+    value: input.localStorage.value ?? '',
+  }
+}
+
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
   return evalEmbeddedBrowserJson<string>(
@@ -1325,8 +1342,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
-    case 'reloadMainWindow':
-      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
+    case 'reloadMainWindow': {
+      if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
+      reloadMainWindowLocalStorageInput(command)
+      return ''
+    }
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':
@@ -2142,6 +2162,10 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
         } else if (command.action === 'reloadMainWindow') {
+          const storageInput = reloadMainWindowLocalStorageInput(command)
+          if (storageInput) {
+            window.localStorage.setItem(storageInput.key, storageInput.value)
+          }
           window.location.reload()
           return
         }

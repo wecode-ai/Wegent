@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 
@@ -27,6 +28,7 @@ const sections: Array<{
 
 export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
   const { t } = useTranslation('common')
+  const workspaceTabs = useOptionalWorkspaceTabs()
 
   return (
     <nav
@@ -53,7 +55,12 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
                 : 'text-text-secondary hover:bg-background/60 hover:text-text-primary'
             )}
             onClick={() => {
-              if (!selected) navigateTo(section.path)
+              if (selected) return
+              if (workspaceTabs) {
+                workspaceTabs.updateActiveTab({ contentRoute: section.path })
+                return
+              }
+              navigateTo(section.path)
             }}
           >
             {label}

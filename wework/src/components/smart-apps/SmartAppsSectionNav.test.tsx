@@ -2,7 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { SmartAppsSectionNav } from './SmartAppsSectionNav'
 
-const navigateTo = vi.fn()
+const mocks = vi.hoisted(() => ({
+  navigateTo: vi.fn(),
+  updateActiveTab: vi.fn(),
+  workspaceTabs: null as { updateActiveTab: (updates: { contentRoute: string }) => void } | null,
+}))
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -11,15 +15,22 @@ vi.mock('@/hooks/useTranslation', () => ({
 }))
 
 vi.mock('@/lib/navigation', () => ({
-  navigateTo: (path: string) => navigateTo(path),
+  navigateTo: (path: string) => mocks.navigateTo(path),
+}))
+
+vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
+  useOptionalWorkspaceTabs: () => mocks.workspaceTabs,
 }))
 
 describe('SmartAppsSectionNav', () => {
   beforeEach(() => {
-    navigateTo.mockReset()
+    mocks.navigateTo.mockReset()
+    mocks.updateActiveTab.mockReset()
+    mocks.workspaceTabs = null
   })
 
-  test('opens My apps from the marketplace', () => {
+  test('updates the active workspace tab when opening My apps', () => {
+    mocks.workspaceTabs = { updateActiveTab: mocks.updateActiveTab }
     render(<SmartAppsSectionNav active="marketplace" />)
 
     expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
@@ -28,16 +39,20 @@ describe('SmartAppsSectionNav', () => {
     )
     fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
 
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
+    expect(mocks.updateActiveTab).toHaveBeenCalledWith({
+      contentRoute: '/sites?app_type=smart_app&view=owned',
+    })
+    expect(mocks.navigateTo).not.toHaveBeenCalled()
   })
 
-  test('returns to the Smart app marketplace', () => {
+  test('falls back to standalone navigation outside workspace tabs', () => {
     render(<SmartAppsSectionNav active="owned" />)
 
     expect(screen.getByTestId('smart-apps-section-owned')).toHaveAttribute('aria-current', 'page')
     fireEvent.click(screen.getByTestId('smart-apps-section-marketplace'))
 
-    expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
+    expect(mocks.navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
+    expect(mocks.updateActiveTab).not.toHaveBeenCalled()
   })
 
   test('exposes exactly Marketplace and My as peer sections', () => {

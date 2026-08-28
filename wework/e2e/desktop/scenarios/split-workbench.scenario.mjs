@@ -465,19 +465,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           },
         },
       })
-      assert.equal(
-        await control.command('setLocalStorageItem', 'body', {
-          value: JSON.stringify({
-            key: 'wework:workbench-split-groups:v3:fixed-task',
-            value: restoredSplitState,
-          }),
-        }),
-        restoredSplitState,
-        'The completed task pane state could not be persisted before reload'
-      )
 
       const readyCountBeforeCompletedTaskReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
+      await control.command('reloadMainWindow', 'body', {
+        value: JSON.stringify({
+          localStorage: {
+            key: 'wework:workbench-split-groups:v3:fixed-task',
+            value: restoredSplitState,
+          },
+        }),
+      })
       await control.awaitReadyAfter(readyCountBeforeCompletedTaskReload)
       await waitForWorkbenchDebugState(
         control,
