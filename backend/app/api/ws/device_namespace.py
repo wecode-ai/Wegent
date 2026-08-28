@@ -826,6 +826,47 @@ def _project_bound_runtime_event_status(
         )
         return None
     if not binding.workflow_node_id:
+        raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
+        if isinstance(raw_event_seq, bool):
+            raw_event_seq = None
+        try:
+            event_seq = int(raw_event_seq)
+        except (TypeError, ValueError):
+            event_seq = 0
+        binding_metadata = (
+            dict(binding.metadata_json)
+            if isinstance(binding.metadata_json, dict)
+            else {}
+        )
+        raw_last_event_seq = binding_metadata.get("runtime_status_event_seq")
+        try:
+            last_event_seq = int(raw_last_event_seq)
+        except (TypeError, ValueError):
+            last_event_seq = 0
+        if event_seq <= 0:
+            logger.warning(
+                "[IssueTaskRuntimeSync] rejected unsequenced direct binding event "
+                "user=%s device=%s task=%s event=%s",
+                user_id,
+                device_id,
+                task_id,
+                event_name,
+            )
+            return None
+        if event_seq <= last_event_seq:
+            logger.info(
+                "[IssueTaskRuntimeSync] ignored reordered direct binding event "
+                "user=%s device=%s task=%s event=%s current_seq=%s incoming_seq=%s",
+                user_id,
+                device_id,
+                task_id,
+                event_name,
+                last_event_seq,
+                event_seq,
+            )
+            return None
+        binding_metadata["runtime_status_event_seq"] = event_seq
+        binding.metadata_json = binding_metadata
         next_status = (
             "in_progress"
             if projected_status == "running"

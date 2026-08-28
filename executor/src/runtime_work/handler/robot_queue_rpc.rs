@@ -7,7 +7,22 @@ use crate::runtime_work::automations::AutomationRunStatus;
 use crate::task_runtime::LocalTaskStore;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn project_bound_task_status(&self, local_task_id: &str, execution_status: &str) {
+    pub(crate) async fn reconcile_bound_task_statuses(&self) {
+        let observed_at_ms = now_ms();
+        for link in self.collect_links(false).await {
+            self.project_runtime_link_status_at(
+                &link,
+                observed_at_ms.max(link.updated_at.saturating_add(1)),
+            );
+        }
+    }
+
+    pub(super) fn project_bound_task_status(
+        &self,
+        local_task_id: &str,
+        execution_status: &str,
+        observed_at_ms: i64,
+    ) {
         let store = match LocalTaskStore::from_env_if_exists() {
             Ok(Some(store)) => store,
             Ok(None) => return,
@@ -22,13 +37,19 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         };
-        match store.project_bound_task_status(&self.device_id, local_task_id, execution_status) {
+        match store.project_bound_task_status(
+            &self.device_id,
+            local_task_id,
+            execution_status,
+            observed_at_ms,
+        ) {
             Ok(0) => {}
             Ok(changed) => log_executor_event(
                 "runtime task Issue status projected",
                 &[
                     ("local_task_id", local_task_id.to_owned()),
                     ("execution_status", execution_status.to_owned()),
+                    ("observed_at_ms", observed_at_ms.to_string()),
                     ("changed", changed.to_string()),
                 ],
             ),
@@ -37,6 +58,7 @@ impl RuntimeWorkRpcHandler {
                 &[
                     ("local_task_id", local_task_id.to_owned()),
                     ("execution_status", execution_status.to_owned()),
+                    ("observed_at_ms", observed_at_ms.to_string()),
                     ("error", error.to_string()),
                 ],
             ),
@@ -44,6 +66,10 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn project_runtime_link_status(&self, link: &RuntimeTaskLink) {
+        self.project_runtime_link_status_at(link, link.updated_at);
+    }
+
+    fn project_runtime_link_status_at(&self, link: &RuntimeTaskLink, observed_at_ms: i64) {
         let execution_status = if link.status == "archived" {
             Some("archived")
         } else if link.running || link.status == "running" {
@@ -59,7 +85,7 @@ impl RuntimeWorkRpcHandler {
             }
         };
         if let Some(execution_status) = execution_status {
-            self.project_bound_task_status(&link.local_task_id, execution_status);
+            self.project_bound_task_status(&link.local_task_id, execution_status, observed_at_ms);
         }
     }
 

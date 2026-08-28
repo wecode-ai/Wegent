@@ -2219,7 +2219,40 @@ def test_device_runtime_event_projects_directly_bound_issue_status(
 
     test_db.refresh(task)
     assert task.status == "in_review"
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 1,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_review"
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 3,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_progress"
     assert published == [
+        (task.id, "runtime_execution_status"),
         (task.id, "runtime_execution_status"),
         (task.id, "runtime_execution_status"),
     ]

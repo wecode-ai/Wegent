@@ -785,8 +785,11 @@ impl RuntimeWorkRpcHandler {
         self.store.update_task(&local_task_id, |link| {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
+            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
         });
-        self.project_bound_task_status(&local_task_id, "running");
+        if let Some(link) = self.local_task_link(&local_task_id) {
+            self.project_runtime_link_status(&link);
+        }
         Ok(execution_id)
     }
 
@@ -882,7 +885,7 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            link.updated_at = now_ms();
+            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
             link.completed_at = Some(link.updated_at);
             link.status = status.to_owned();
             apply_local_execution_state(link, false, None);
@@ -890,7 +893,9 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
-        self.project_bound_task_status(local_task_id, status);
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status(&link);
+        }
         self.schedule_worktree_prune();
         log_executor_event(
             "runtime work local execution force settled",
@@ -926,12 +931,14 @@ impl RuntimeWorkRpcHandler {
             active.remove(local_task_id);
         }
         self.store.update_task(local_task_id, |link| {
-            link.updated_at = now_ms();
+            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
             link.completed_at = Some(link.updated_at);
             link.status = "cancelled".to_owned();
             apply_local_execution_state(link, false, None);
         });
-        self.project_bound_task_status(local_task_id, "cancelled");
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status(&link);
+        }
         self.schedule_worktree_prune();
         true
     }
@@ -1135,7 +1142,7 @@ impl RuntimeWorkRpcHandler {
             if thread_id.is_some() {
                 link.thread_id = thread_id;
             }
-            link.updated_at = now_ms();
+            link.updated_at = now_ms().max(link.updated_at.saturating_add(1));
             if status != "running" {
                 link.completed_at = Some(link.updated_at);
                 link.status = status.to_owned();
@@ -1145,7 +1152,9 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
-        self.project_bound_task_status(local_task_id, status);
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status(&link);
+        }
         if status != "running" {
             self.schedule_worktree_prune();
         }

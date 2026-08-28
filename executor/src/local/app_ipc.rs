@@ -352,6 +352,10 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 
+    fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
     fn handle_codex_app_server_rpc<'a>(
         &'a self,
         _data: Value,
@@ -782,7 +786,20 @@ impl AppIpcServer {
             || method.starts_with("chat_agents.")
             || method.starts_with("executions.")
         {
-            return handle_task_runtime_request(method, params).await;
+            let should_reconcile_before = method == "todos.list";
+            let should_reconcile_after = matches!(method, "todos.bind" | "projects.bind_task");
+            if should_reconcile_before {
+                if let Some(handler) = &self.runtime_work_handler {
+                    handler.reconcile_bound_task_statuses().await;
+                }
+            }
+            let result = handle_task_runtime_request(method, params).await?;
+            if should_reconcile_after {
+                if let Some(handler) = &self.runtime_work_handler {
+                    handler.reconcile_bound_task_statuses().await;
+                }
+            }
+            return Ok(result);
         }
 
         if method.starts_with("runtime.") {

@@ -431,6 +431,64 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
 }
 
 #[tokio::test]
+async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let reconciliations = Arc::new(Mutex::new(0));
+    let server = AppIpcServer::new().with_runtime_work_handler(ProjectionRuntimeHandler {
+        reconciliations: Arc::clone(&reconciliations),
+    });
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Runtime",
+                "project_key": "BOUND",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Track running task"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "device_id": "local-device",
+                    "task_id": "runtime-running-1",
+                    "task_title": "Track running task"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch("todos.list", json!({"project_id": project["id"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(*reconciliations.lock().unwrap(), 2);
+}
+
+#[tokio::test]
 async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();
@@ -1879,6 +1937,27 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct ProjectionRuntimeHandler {
+    reconciliations: Arc<Mutex<usize>>,
+}
+
+impl RuntimeWorkHandler for ProjectionRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async { Ok(json!({})) })
+    }
+
+    fn reconcile_bound_task_statuses<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            *self.reconciliations.lock().unwrap() += 1;
         })
     }
 }

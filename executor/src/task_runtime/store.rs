@@ -2170,7 +2170,13 @@ impl LocalTaskStore {
         device_id: &str,
         task_id: &str,
         execution_status: &str,
+        observed_at_ms: i64,
     ) -> Result<usize, TaskRuntimeError> {
+        if observed_at_ms <= 0 {
+            return Err(TaskRuntimeError::Invalid(
+                "runtime task status observation requires a positive timestamp".to_owned(),
+            ));
+        }
         let next_status = match execution_status {
             "queued" | "pending" => "pending",
             "running" => "in_progress",
@@ -2183,7 +2189,8 @@ impl LocalTaskStore {
                 )));
             }
         };
-        let connection = self.connection()?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let timestamp = now();
         let preserve_reviewed = matches!(
             execution_status,
@@ -2196,7 +2203,7 @@ impl LocalTaskStore {
                 | "interrupted"
                 | "error"
         );
-        let changed = connection.execute(
+        let changed = transaction.execute(
             "UPDATE loop_items
              SET status = ?1,
                  completed_at = CASE WHEN ?1 = 'completed' THEN ?2 ELSE NULL END,
@@ -2209,6 +2216,10 @@ impl LocalTaskStore {
                      AND device_id = ?3 AND task_id = ?4
                      AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
                      AND json_extract(metadata, '$.workflow_node_id') IS NULL
+                     AND CAST(COALESCE(
+                         json_extract(metadata, '$.runtime_status_observed_at_ms'),
+                         0
+                     ) AS INTEGER) < ?6
                )
                AND status != ?1
                AND (NOT ?5 OR status NOT IN ('completed', 'in_review'))",
@@ -2217,9 +2228,30 @@ impl LocalTaskStore {
                 timestamp,
                 device_id,
                 task_id,
-                preserve_reviewed
+                preserve_reviewed,
+                observed_at_ms
             ],
         )?;
+        transaction.execute(
+            "UPDATE loop_items
+             SET metadata = json_set(
+                     COALESCE(metadata, '{}'),
+                     '$.runtime_status_observed_at_ms',
+                     ?1
+                 ),
+                 version = version + 1,
+                 updated_at = ?2
+             WHERE resource_type = 'execution'
+               AND device_id = ?3 AND task_id = ?4
+               AND unlinked_at IS NULL AND loop_item_id IS NOT NULL
+               AND json_extract(metadata, '$.workflow_node_id') IS NULL
+               AND CAST(COALESCE(
+                   json_extract(metadata, '$.runtime_status_observed_at_ms'),
+                   0
+               ) AS INTEGER) < ?1",
+            params![observed_at_ms, timestamp, device_id, task_id],
+        )?;
+        transaction.commit()?;
         Ok(changed)
     }
 
@@ -6127,7 +6159,7 @@ mod tests {
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "running")
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 100,)
                 .unwrap(),
             1
         );
@@ -6142,7 +6174,7 @@ mod tests {
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "succeeded")
+                .project_bound_task_status("local-device", "runtime-status-1", "succeeded", 200,)
                 .unwrap(),
             1
         );
@@ -6157,7 +6189,43 @@ mod tests {
 
         assert_eq!(
             store
-                .project_bound_task_status("local-device", "runtime-status-1", "archived")
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 150,)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "queued", 175,)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_review")
+        );
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "running", 300,)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store
+                .get_task(DEFAULT_WORK_ITEM_PROJECT_ID, &task.id)
+                .unwrap()
+                .status
+                .as_deref(),
+            Some("in_progress")
+        );
+
+        assert_eq!(
+            store
+                .project_bound_task_status("local-device", "runtime-status-1", "archived", 400,)
                 .unwrap(),
             1
         );
