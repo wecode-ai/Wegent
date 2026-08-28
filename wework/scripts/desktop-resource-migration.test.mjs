@@ -103,10 +103,10 @@ describe('desktop resource migration', () => {
   })
 
   test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
-    const source = await readFile(
-      join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'),
-      'utf8'
-    )
+    const [source, harnessRuntimeSource] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'scripts/prepare-harness-runtime.mjs'), 'utf8'),
+    ])
 
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
@@ -123,6 +123,10 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+    expect(harnessRuntimeSource).toContain("import { create, extract } from 'tar'")
+    expect(harnessRuntimeSource).toContain('await extract({')
+    expect(harnessRuntimeSource).toContain('await create(')
+    expect(harnessRuntimeSource).not.toContain("run('tar'")
   })
 
   test('does not include a separate Node runtime in desktop packages', async () => {
