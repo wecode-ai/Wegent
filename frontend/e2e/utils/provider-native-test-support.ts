@@ -185,7 +185,7 @@ export async function deleteProviderNativeResources(
 export async function configureDingTalkService(
   request: APIRequestContext,
   token: string,
-  serviceId: 'docs' | 'wikispace' | 'ai_table',
+  serviceId: 'docs' | 'wikispace' | 'ai_table' | 'table',
   enabled: boolean
 ): Promise<void> {
   const response = await request.put(

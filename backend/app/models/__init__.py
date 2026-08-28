@@ -31,7 +31,7 @@ from app.models.delivery import (
 from app.models.dingtalk_doc import DingtalkSyncedNode
 from app.models.im_session import IMPrivateSession, IMSessionMode, IMSessionState
 from app.models.kind import Kind
-from app.models.knowledge import KnowledgeDocument
+from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentExternalSource
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.marketplace_resource import MarketplaceResource
@@ -107,6 +107,7 @@ __all__ = [
     "NamespaceMember",
     "APIKey",
     "KnowledgeDocument",
+    "KnowledgeDocumentExternalSource",
     "KnowledgeArtifactRecord",
     "Project",
     "ProjectChatMessage",

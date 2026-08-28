@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.models.knowledge import DocumentIndexStatus
 from app.tasks.knowledge_tasks import (
     _build_stale_processing_error,
+    _delete_late_index_if_document_was_deleted,
     index_document_task,
 )
 
@@ -335,3 +336,88 @@ def test_index_document_task_enqueues_summary_after_finalize(
     )
     assert result["status"] == "success"
     assert result["index_generation"] == 5
+
+
+def test_index_document_task_deletes_late_index_after_document_deletion():
+    start_decision = MagicMock(should_execute=True, reason="started")
+    cleanup_mock = MagicMock(return_value=True)
+
+    with _task_request_context(retries=0), ExitStack() as stack:
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.distributed_lock.acquire_watchdog_context",
+                return_value=_lock_context(True),
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_started",
+                return_value=start_decision,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.index_state_machine.mark_document_index_succeeded",
+                return_value=False,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.knowledge.indexing.run_document_indexing",
+                return_value={"status": "success", "chunks_data": []},
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks._delete_late_index_if_document_was_deleted",
+                cleanup_mock,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.tasks.knowledge_tasks.SessionLocal",
+                side_effect=_session_factory(),
+            )
+        )
+        result = index_document_task.run(**_task_kwargs())
+
+    cleanup_mock.assert_called_once()
+    assert result["reason"] == "stale_or_already_finalized"
+
+
+def test_delete_late_index_uses_deleted_document_ref():
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    gateway = MagicMock()
+    gateway.delete_document_index = AsyncMock(return_value={"status": "deleted"})
+    delete_spec = object()
+
+    with (
+        patch(
+            "app.services.knowledge.indexing.get_kb_index_info",
+            return_value=SimpleNamespace(index_owner_user_id=9),
+        ),
+        patch(
+            "app.services.rag.runtime_resolver.RagRuntimeResolver.build_delete_runtime_spec",
+            return_value=delete_spec,
+        ) as build_spec,
+        patch(
+            "app.services.rag.gateway_factory.get_delete_gateway",
+            return_value=gateway,
+        ),
+    ):
+        deleted = _delete_late_index_if_document_was_deleted(
+            db=db,
+            document_id=4,
+            knowledge_base_id="1",
+            user_id=3,
+        )
+
+    assert deleted is True
+    build_spec.assert_called_once_with(
+        db=db,
+        knowledge_base_id=1,
+        document_ref="4",
+        index_owner_user_id=9,
+    )
+    gateway.delete_document_index.assert_awaited_once_with(delete_spec, db=db)
