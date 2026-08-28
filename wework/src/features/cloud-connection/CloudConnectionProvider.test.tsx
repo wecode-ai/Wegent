@@ -13,6 +13,13 @@ const httpMocks = vi.hoisted(() => ({
   post: vi.fn(),
 }))
 
+const credentialMocks = vi.hoisted(() => ({
+  getDevicePublicKey: vi.fn(),
+  claimAuthorization: vi.fn(),
+  refreshAccessToken: vi.fn(),
+  clear: vi.fn(),
+}))
+
 vi.mock('@/api/http', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/http')>()
   return {
@@ -25,6 +32,21 @@ vi.mock('@/api/http', async importOriginal => {
     })),
   }
 })
+
+vi.mock('@/desktop/cloudCredentials', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/cloudCredentials')>()
+  return {
+    ...actual,
+    getDesktopDevicePublicKey: credentialMocks.getDevicePublicKey,
+    claimDesktopCloudAuthorization: credentialMocks.claimAuthorization,
+    refreshDesktopCloudAccessToken: credentialMocks.refreshAccessToken,
+    clearDesktopCloudCredentials: credentialMocks.clear,
+  }
+})
+
+function tokenWithExp(exp = Math.floor(Date.now() / 1000) + 3600): string {
+  return `header.${btoa(JSON.stringify({ exp })).replace(/=/g, '')}.sig`
+}
 
 function CloudConnectProbe({
   onError,
@@ -58,6 +80,16 @@ function CloudSocketProbe() {
       <span data-testid="cloud-connection-status">{cloud.status}</span>
       <span data-testid="cloud-socket-base-url">{cloud.socketBaseUrl}</span>
       <span data-testid="cloud-web-url">{cloud.webUrl}</span>
+      <button type="button" data-testid="disconnect-cloud-button" onClick={cloud.disconnect}>
+        disconnect
+      </button>
+      <button
+        type="button"
+        data-testid="refresh-cloud-button"
+        onClick={() => void cloud.refreshUser()}
+      >
+        refresh
+      </button>
     </>
   )
 }
@@ -66,6 +98,18 @@ describe('CloudConnectionProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     localStorage.clear()
+    credentialMocks.getDevicePublicKey.mockResolvedValue({
+      kty: 'EC',
+      crv: 'P-256',
+      x: 'x',
+      y: 'y',
+    })
+    credentialMocks.refreshAccessToken.mockResolvedValue({
+      accessToken: tokenWithExp(),
+      tokenType: 'bearer',
+      expiresIn: 3600,
+    })
+    credentialMocks.clear.mockResolvedValue(undefined)
     vi.spyOn(console, 'info').mockImplementation(() => undefined)
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
   })
@@ -94,13 +138,13 @@ describe('CloudConnectionProvider', () => {
     expect(httpMocks.post).not.toHaveBeenCalled()
   })
 
-  it('opens the cloud authorization page and stores the claimed token', async () => {
+  it('opens the cloud authorization page and stores connection metadata without the token', async () => {
     const onError = vi.fn()
     const closeAuthorizationWindow = vi.fn()
     const openAuthorizationUrl = vi.fn(() => ({
       close: closeAuthorizationWindow,
     }))
-    const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
+    const token = tokenWithExp()
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
     httpMocks.get.mockResolvedValueOnce({
       web_url: 'https://cloud.example.com',
@@ -114,10 +158,10 @@ describe('CloudConnectionProvider', () => {
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
-    httpMocks.get.mockResolvedValueOnce({
+    credentialMocks.claimAuthorization.mockResolvedValueOnce({
       status: 'success',
-      access_token: token,
-      token_type: 'bearer',
+      accessToken: token,
+      tokenType: 'bearer',
       username: 'alice',
     })
     httpMocks.get.mockResolvedValueOnce({
@@ -141,10 +185,21 @@ describe('CloudConnectionProvider', () => {
       ).toBe('alice')
     })
     expect(createHttpClient).toHaveBeenCalled()
-    expect(httpMocks.post).toHaveBeenCalledWith('/auth/wework/sessions')
+    expect(credentialMocks.refreshAccessToken).not.toHaveBeenCalled()
+    expect(httpMocks.post).toHaveBeenCalledWith('/auth/wework/sessions', {
+      device_public_key: {
+        kty: 'EC',
+        crv: 'P-256',
+        x: 'x',
+        y: 'y',
+      },
+    })
     expect(closeAuthorizationWindow).toHaveBeenCalled()
     expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').socketBaseUrl).toBe(
       'wss://backend-socket.example.com'
+    )
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
+      'token'
     )
   })
 
@@ -155,8 +210,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrl: 'wss://backend-socket.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://cloud.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -202,8 +255,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrl: 'wss://backend-socket.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://cloud.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     }
@@ -230,12 +281,143 @@ describe('CloudConnectionProvider', () => {
       expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
     )
     expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).toMatchObject({
-      token: 'cloud-token',
       user: { id: 7, user_name: 'alice' },
     })
+    expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
+      'token'
+    )
   })
 
-  it('keeps the cached cloud connection when the initial refresh times out', async () => {
+  it('does not restore stale desktop preferences after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    await updateAppPreferences({ cloudConnection: storedConnection })
+    saveStoredCloudConnection(storedConnection)
+    httpMocks.get.mockImplementation((endpoint: string) => {
+      if (endpoint === '/auth/wework/config') return Promise.resolve({})
+      if (endpoint === '/users/me') return Promise.resolve(storedConnection.user)
+      return Promise.reject(new Error(`Unexpected GET ${endpoint}`))
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+    )
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    )
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+    expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
+  })
+
+  it('disconnects when the desktop credential bridge throws synchronously', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'https://cloud.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-08-28T00:00:00.000Z',
+    })
+    credentialMocks.clear.mockImplementation(() => {
+      throw new Error('Desktop cloud credential service is unavailable')
+    })
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
+  it('does not reconnect when an in-flight credential refresh completes after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    let resolveRefresh: (value: {
+      accessToken: string
+      tokenType: string
+      expiresIn: number
+    }) => void = () => undefined
+    credentialMocks.refreshAccessToken.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
+    )
+    await updateAppPreferences({ cloudConnection: storedConnection })
+    saveStoredCloudConnection(storedConnection)
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+    resolveRefresh({
+      accessToken: tokenWithExp(),
+      tokenType: 'bearer',
+      expiresIn: 3600,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    )
+    expect(httpMocks.get).not.toHaveBeenCalled()
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
+  it('does not let a stale refresh callback reconnect after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    saveStoredCloudConnection(storedConnection)
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+    await userEvent.click(screen.getByTestId('refresh-cloud-button'))
+
+    expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
+  it('keeps stored connection metadata while the initial credential refresh is pending', async () => {
     vi.useFakeTimers()
     try {
       saveStoredCloudConnection({
@@ -244,12 +426,10 @@ describe('CloudConnectionProvider', () => {
         socketBaseUrl: 'wss://backend-socket.example.com',
         socketPath: '/socket.io',
         webUrl: 'https://cloud.example.com',
-        token: 'cloud-token',
-        tokenExpiresAt: null,
         user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
         connectedAt: '2026-07-20T00:00:00.000Z',
       })
-      httpMocks.get.mockReturnValue(new Promise(() => undefined))
+      credentialMocks.refreshAccessToken.mockReturnValue(new Promise(() => undefined))
 
       render(
         <CloudConnectionProvider>
@@ -257,15 +437,15 @@ describe('CloudConnectionProvider', () => {
         </CloudConnectionProvider>
       )
 
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('restoring')
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(8000)
       })
 
-      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('connected')
-      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}').token).toBe(
-        'cloud-token'
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('restoring')
+      expect(JSON.parse(localStorage.getItem('wework.cloudConnection') || '{}')).not.toHaveProperty(
+        'token'
       )
     } finally {
       vi.useRealTimers()
@@ -283,8 +463,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrl: 'https://wss-cloud.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://cloud.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -328,8 +506,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrl: 'https://cloud.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://cloud.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -367,8 +543,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrlOverride: 'wss://user-socket.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://app.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -405,8 +579,6 @@ describe('CloudConnectionProvider', () => {
       socketBaseUrl: 'https://api.example.com',
       socketPath: '/socket.io',
       webUrl: 'https://wework.example.com',
-      token: 'cloud-token',
-      tokenExpiresAt: null,
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-07-20T00:00:00.000Z',
     })
@@ -439,8 +611,6 @@ describe('CloudConnectionProvider', () => {
         apiBaseUrl: 'https://cloud.example.com/api',
         socketBaseUrl: 'https://cloud.example.com',
         socketPath: '/socket.io',
-        token: 'cloud-token',
-        tokenExpiresAt: null,
         user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
         connectedAt: '2026-07-20T00:00:00.000Z',
       })
@@ -462,7 +632,7 @@ describe('CloudConnectionProvider', () => {
     const openAuthorizationUrl = vi.fn(() => ({
       close: vi.fn(() => Promise.reject(new Error('close failed'))),
     }))
-    const token = `header.${btoa(JSON.stringify({ exp: 2_000_000_000 })).replace(/=/g, '')}.sig`
+    const token = tokenWithExp()
     httpMocks.get.mockResolvedValueOnce({ status: 'healthy' })
     httpMocks.get.mockResolvedValueOnce({
       web_url: 'https://cloud.example.com',
@@ -476,10 +646,10 @@ describe('CloudConnectionProvider', () => {
       expires_at: Math.floor(Date.now() / 1000) + 30,
       poll_interval_seconds: 0.001,
     })
-    httpMocks.get.mockResolvedValueOnce({
+    credentialMocks.claimAuthorization.mockResolvedValueOnce({
       status: 'success',
-      access_token: token,
-      token_type: 'bearer',
+      accessToken: token,
+      tokenType: 'bearer',
       username: 'alice',
     })
     httpMocks.get.mockResolvedValueOnce({
