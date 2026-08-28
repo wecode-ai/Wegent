@@ -1,7 +1,9 @@
+import { execFileSync } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { expect, test } from 'vitest'
 
@@ -10,6 +12,7 @@ import identityModule from '../scripts/build-identity.cjs'
 const { DEFAULT_IDENTITY, resolveBuildIdentity } = identityModule
 const require = createRequire(import.meta.url)
 const builderConfig = require('../electron-builder.config.cjs')
+const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 test('uses the public Electron identity by default', () => {
   expect(resolveBuildIdentity({})).toEqual(DEFAULT_IDENTITY)
@@ -111,4 +114,31 @@ test('packages only product locales and skips individual static plugin signing',
   expect(builderConfig.mac.signIgnore).toEqual(['/Contents/Resources/wework-core-plugins/'])
   expect(builderConfig.win.electronLanguages).toEqual(['en-US', 'zh-CN'])
   expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
+})
+
+test('uses the configured Electron mirror with a normalized trailing slash', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const config = require(process.argv[1])
+process.stdout.write(JSON.stringify(config.electronDownload))
+`,
+        resolve(electronRoot, 'electron-builder.config.cjs'),
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WEWORK_ELECTRON_MIRROR: 'https://mirror.example.com/electron',
+        },
+      }
+    )
+  )
+
+  expect(config).toEqual({
+    mirror: 'https://mirror.example.com/electron/',
+  })
 })

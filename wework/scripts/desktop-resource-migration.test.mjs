@@ -115,6 +115,35 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('wrapWindowsScriptCommand')
   })
 
+  test('prebuilt macOS packaging requires the installed Electron workspace toolchain', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'electron/scripts/package-prebuilt-macos-release.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("'node_modules/electron-builder/cli.js'")
+    expect(source).toContain('resolveNodeRuntime()')
+    expect(source).toContain('install --frozen-lockfile')
+    expect(source).toContain("'--prepackaged'")
+  })
+
+  test('keeps macOS release build caches outside the disposable workspace', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/build-minio-mac-release.sh'), 'utf8')
+
+    expect(source).toContain('$HOME/Library/Caches/wegent/release-build')
+    expect(source).toContain('ELECTRON_CACHE=')
+    expect(source).toContain('ELECTRON_BUILDER_CACHE=')
+    expect(source).toContain('ELECTRON_DOWNLOAD_CACHE_MODE=')
+    expect(source).toContain('WEGENT_CODEX_CACHE_DIR=')
+    expect(source).toContain('WEWORK_HARNESS_RUNTIME_CACHE_ROOT=')
+    expect(source).toContain('WEGENT_CARGO_TARGET_ROOT=')
+    expect(source).toContain('pnpm_config_store_dir=')
+    expect(source).toContain('configure_wegent_sccache_s3')
+    expect(source).toContain('SCCACHE_SERVER_PORT=')
+    expect(source).toContain('sccache --stop-server')
+    expect(source).toContain('wework-release-executor-$MACOS_BUILD_TARGET')
+  })
+
   test('collects the electron-builder Linux x64 artifact name', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
