@@ -60,7 +60,7 @@ export function DocumentSourceWorkspaceHeader({
     <>
       {canUpload && (
         <Button
-          variant="outline"
+          variant="primary"
           className="h-11 w-full"
           onClick={onAddMaterials}
           data-testid="document-add-source-full-width"

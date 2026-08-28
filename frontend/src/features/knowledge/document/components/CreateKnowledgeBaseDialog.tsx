@@ -49,7 +49,7 @@ export interface AvailableGroup {
   id: string
   name: string
   displayName: string
-  type: 'personal' | 'group' | 'organization' | 'dingtalk'
+  type: 'personal' | 'group' | 'organization'
   canCreate: boolean
 }
 
@@ -80,14 +80,12 @@ interface CreateKnowledgeBaseDialogProps {
 }
 
 /** Get icon for group type */
-function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' | 'dingtalk' }) {
+function GroupTypeIcon({ type }: { type: 'personal' | 'group' | 'organization' }) {
   switch (type) {
     case 'personal':
       return <User className="w-4 h-4" />
     case 'organization':
       return <Building2 className="w-4 h-4" />
-    case 'dingtalk':
-      return <FileText className="w-4 h-4" />
     case 'group':
     default:
       return <Users className="w-4 h-4" />
@@ -175,14 +173,8 @@ export function CreateKnowledgeBaseDialog({
 
   // Get the selected group for retrieval scope
   const selectedGroup = availableGroups?.find(g => g.id === selectedGroupId)
-  // Map dingtalk to personal scope since KBs cannot be created in dingtalk scope
-  const mapScope = (
-    t: 'personal' | 'group' | 'organization' | 'dingtalk' | 'all' | undefined
-  ): 'personal' | 'organization' | 'group' | 'all' => {
-    if (t === 'dingtalk') return 'personal'
-    return t || 'personal'
-  }
-  const effectiveScope = mapScope(showGroupSelector && selectedGroup ? selectedGroup.type : scope)
+  const effectiveScope =
+    showGroupSelector && selectedGroup ? selectedGroup.type : scope || 'personal'
   const effectiveGroupName =
     showGroupSelector && selectedGroup && selectedGroup.type === 'group'
       ? selectedGroup.name

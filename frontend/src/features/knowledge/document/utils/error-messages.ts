@@ -39,5 +39,9 @@ export function mapKnowledgeDocumentErrorMessage(
     return t('document.folder.documentPlacementDepthExceeded')
   }
 
+  if (error.message.startsWith('DingTalk Table MCP is not configured or not enabled.')) {
+    return t('document.upload.dingtalk.tableNotConfigured')
+  }
+
   return error.message
 }

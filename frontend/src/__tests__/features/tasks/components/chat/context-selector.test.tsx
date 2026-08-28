@@ -319,57 +319,90 @@ describe('ContextSelector organization grouping', () => {
     await waitFor(() => {
       expect(screen.getByTestId('context-selector-drawer')).toBeInTheDocument()
     })
-    expect(screen.getByTestId('context-selector-knowledge-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('context-selector-knowledge-tab').querySelector('svg')).toHaveClass(
+      'lucide-book-open'
+    )
     expect(screen.getByTestId('context-selector-table-tab')).toBeInTheDocument()
     expect(screen.getByTestId('context-selector-selected-count')).toHaveTextContent(
       'knowledge:picker.selectedCount:1'
     )
 
+    fireEvent.click(await screen.findByTestId('knowledge-picker-dingtalk-parent'))
+    expect(
+      screen.getByTestId('knowledge-picker-responsive-dingtalk-wikispace').querySelector('svg')
+    ).toHaveClass('lucide-book-open')
+
     fireEvent.click(screen.getByTestId('context-selector-done-button'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it('opens an internal knowledge base without selecting it and uses a separate scope control', async () => {
-    const onSelect = jest.fn()
+  it.each([
+    ['notebook', 'lucide-book-open', 'text-primary'],
+    ['classic', 'lucide-database', 'text-text-secondary'],
+    ['code_wiki', 'lucide-code-xml', 'text-primary'],
+  ] as const)(
+    'shows the %s icon and keeps navigation separate from selection',
+    async (kbType, icon, color) => {
+      const onSelect = jest.fn()
+      mockGetAllGroupedKnowledgeBases.mockResolvedValue(
+        createAllGroupedResponse({
+          organization: [
+            {
+              ...createGroupedKnowledgeBase({ id: 1, name: 'Org KB', namespace: 'acme-corp' }),
+              kb_type: kbType,
+            },
+          ],
+        })
+      )
 
-    render(
-      <ContextSelector
-        open={true}
-        onOpenChange={jest.fn()}
-        selectedContexts={[]}
-        onSelect={onSelect}
-        onDeselect={jest.fn()}
-      >
-        <button>trigger</button>
-      </ContextSelector>
-    )
+      render(
+        <ContextSelector
+          open={true}
+          onOpenChange={jest.fn()}
+          selectedContexts={[]}
+          onSelect={onSelect}
+          onDeselect={jest.fn()}
+        >
+          <button>trigger</button>
+        </ContextSelector>
+      )
 
-    await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
-    await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
-      await Promise.resolve()
-    })
-
-    expect(onSelect).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 1,
-        name: 'Org KB',
-        type: 'knowledge_base',
+      await waitFor(() => {
+        expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
       })
-    )
-    await waitFor(() => {
-      expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
-    })
-  })
+
+      fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+      await waitFor(() => {
+        expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
+      })
+      expect(
+        screen.getByRole('button', { name: 'knowledge:title' }).querySelector('svg')
+      ).toHaveClass('lucide-book-open', 'w-3.5', 'h-3.5')
+      expect(screen.getByTestId('knowledge-picker-kb-1').querySelector('svg')).toHaveClass(
+        icon,
+        color,
+        'h-4',
+        'w-4'
+      )
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+        await Promise.resolve()
+      })
+
+      expect(onSelect).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByTestId('knowledge-picker-kb-select-1'))
+      expect(onSelect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 1,
+          name: 'Org KB',
+          type: 'knowledge_base',
+        })
+      )
+      await waitFor(() => {
+        expect(mockListDocuments).toHaveBeenCalledWith(1, { limit: 200, offset: 0 })
+      })
+    }
+  )
 
   it('uses a drill-down document view on narrow screens', async () => {
     mockIsMobile = true
@@ -1128,6 +1161,8 @@ describe('ContextSelector organization grouping', () => {
         {
           id: 101,
           name: 'API.md',
+          file_extension: '.PDF',
+          source_type: 'external',
           folder_id: 10,
         },
       ],
@@ -1158,6 +1193,10 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeInTheDocument()
     })
 
+    expect(
+      screen.getByTestId('knowledge-picker-document-node-document-101').querySelector('svg')
+    ).toHaveClass('lucide-file-text', 'text-error')
+
     fireEvent.change(screen.getByTestId('context-selector-knowledge-search-input'), {
       target: { value: 'Specs' },
     })
@@ -1166,6 +1205,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-document-node-document-101')).toBeInTheDocument()
     })
     expect(screen.getByText('API.md')).toBeInTheDocument()
+    expect(
+      screen.getByTestId('knowledge-picker-document-node-document-101').querySelector('svg')
+    ).toHaveClass('lucide-file-text', 'text-error')
     expect(screen.getAllByText('Specs').length).toBeGreaterThan(0)
   })
 
@@ -1448,7 +1490,11 @@ describe('ContextSelector organization grouping', () => {
     })
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-parent'))
-    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-wikispace'))
+    const wikiSource = screen.getByTestId('knowledge-picker-dingtalk-wikispace')
+    expect(wikiSource.querySelector('svg')).toHaveClass('lucide-book-open', 'text-text-muted')
+    fireEvent.click(wikiSource)
+    expect(wikiSource.querySelector('svg')).toHaveClass('lucide-book-open', 'text-primary')
+    expect(wikiSource.querySelector('svg')).not.toHaveClass('text-text-muted')
 
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-dingtalk-space-space-1')).toBeInTheDocument()
