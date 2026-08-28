@@ -236,6 +236,12 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     timeoutMs,
   })
+  await control.command('waitFor', '[data-testid^="project-row-"]', {
+    text: 'claude-remote-workspace',
+    stableMs: 1000,
+    timeoutMs,
+    visible: true,
+  })
   let remoteProjectRow = null
   await waitFor(
     async () => {
@@ -260,12 +266,11 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
     timeoutMs
   )
   assert.ok(remoteProjectRow, 'The remote Claude project identity was unavailable')
-  await control.command('clickDescendantInElementWithText', '[data-testid^="project-row-"]', {
-    text: 'claude-remote-workspace',
-    target: '[data-testid="project-new-conversation-button"]',
-    timeoutMs,
-    visible: true,
-  })
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="${remoteProjectRow}"] [data-testid="project-new-conversation-button"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-remote-workspace',
     stableMs: 300,

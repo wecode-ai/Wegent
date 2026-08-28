@@ -182,11 +182,16 @@ export function DeviceFolderPicker({
     setError(null)
 
     if (mode === 'select') {
+      const normalizedInput = normalizePath(pathInput)
+      const path =
+        normalizedInput && normalizedInput !== currentPath
+          ? normalizedInput
+          : selectedPath || currentPath
       setSubmitting(true)
       try {
         await onConfirm({
           deviceId: device.device_id,
-          path: selectedPath || currentPath,
+          path,
           action: mode,
         })
       } catch (confirmError) {
@@ -274,6 +279,7 @@ export function DeviceFolderPicker({
             disabled={pickerDisabled || submitting}
             onChange={event => {
               setPathInput(event.target.value)
+              setSelectedPath('')
               setError(null)
             }}
             onBlur={confirmPathInput}

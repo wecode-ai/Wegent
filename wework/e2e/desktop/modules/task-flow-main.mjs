@@ -726,6 +726,7 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
     setPhase(`local-model-switch-${switchCase.id}`)
     const sourceModel = LOCAL_MODEL_CASES.find(
@@ -756,7 +757,7 @@ async function verifyLocalModelRouting({
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: initialResponseTimeoutMs,
     })
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
     await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {

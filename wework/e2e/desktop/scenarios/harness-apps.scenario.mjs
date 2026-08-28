@@ -1278,6 +1278,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         stableMs: 1000,
         timeoutMs: uiTimeoutMs,
       })
+      const marketplaceActionsSelector = `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
+      await control.command('waitFor', marketplaceActionsSelector, {
+        timeoutMs: uiTimeoutMs,
+      })
       const returnedMarketplaceSnapshot = JSON.parse(await control.command('snapshot', 'body'))
       assert.ok(
         returnedMarketplaceSnapshot.location.includes('/sites?app_type=smart_app') &&
@@ -1286,10 +1290,7 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       )
       await captureScreenshot(control, 'harness-apps-15-returned-to-marketplace.png', 'body')
 
-      await control.command(
-        'click',
-        `${activeWorkspaceContentSelector} [data-testid="smart-app-marketplace-actions-1"]`
-      )
+      await control.command('click', marketplaceActionsSelector)
       await control.command('waitFor', '[data-testid="smart-app-remove-local-market-1"]', {
         timeoutMs: uiTimeoutMs,
       })
