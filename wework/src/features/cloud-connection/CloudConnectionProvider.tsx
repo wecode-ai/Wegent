@@ -363,28 +363,50 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     if (desktopRestoreStartedRef.current) return
     desktopRestoreStartedRef.current = true
     if (snapshot.status !== 'disconnected') return
+    const restoreGeneration = refreshGenerationRef.current
     void getAppPreferences()
       .then(preferences => {
-        if (disconnectRequestedRef.current) return
+        if (disconnectRequestedRef.current || refreshGenerationRef.current !== restoreGeneration) {
+          return
+        }
         const stored = normalizeStoredCloudConnection(preferences.cloudConnection)
         if (!stored) return
-        saveStoredCloudConnection(stored)
-        setSnapshot(current =>
-          current.status === 'disconnected' ? snapshotFromConnection(stored) : current
-        )
+        setSnapshot(current => {
+          if (
+            disconnectRequestedRef.current ||
+            refreshGenerationRef.current !== restoreGeneration ||
+            current.status !== 'disconnected'
+          ) {
+            return current
+          }
+          saveStoredCloudConnection(stored)
+          return snapshotFromConnection(stored)
+        })
       })
       .catch(error => {
         console.error('[CloudConnection] Failed to restore desktop cloud connection', error)
       })
   }, [snapshot.status])
 
-  const applyConnectedSnapshot = useCallback((nextSnapshot: CloudConnectionSnapshot) => {
-    persistSnapshot(nextSnapshot)
-    setSnapshot(nextSnapshot)
-  }, [])
+  const applyConnectedSnapshot = useCallback(
+    (nextSnapshot: CloudConnectionSnapshot, connectionGeneration: number) => {
+      setSnapshot(current => {
+        if (
+          disconnectRequestedRef.current ||
+          refreshGenerationRef.current !== connectionGeneration
+        ) {
+          return current
+        }
+        persistSnapshot(nextSnapshot)
+        return nextSnapshot
+      })
+    },
+    []
+  )
 
   useEffect(() => {
     if (snapshot.status !== 'connected' || !snapshot.backendUrl) return
+    const configGeneration = refreshGenerationRef.current
     const backendUrl = snapshot.backendUrl
     const config = resolveCloudRuntimeConfig(backendUrl, snapshot.socketBaseUrlOverride)
     void fetchCloudConfig(config, CLOUD_STARTUP_REQUEST_TIMEOUT_MS)
@@ -395,6 +417,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
           metadata.socketUrl
         )
         setSnapshot(current => {
+          if (disconnectRequestedRef.current || refreshGenerationRef.current !== configGeneration) {
+            return current
+          }
           const nextSnapshot = {
             ...current,
             ...resolvedConfig,
@@ -416,6 +441,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       socketBaseUrlOverride?: string
     ): Promise<User> => {
       disconnectRequestedRef.current = false
+      const connectionGeneration = refreshGenerationRef.current + 1
+      refreshGenerationRef.current = connectionGeneration
       let config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride)
       setSnapshot(current => ({
         ...current,
@@ -427,6 +454,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
       try {
         await checkCloudHealth(config)
         const metadata = await fetchCloudConfig(config)
+        if (refreshGenerationRef.current !== connectionGeneration) {
+          throw new Error('Cloud connection was cancelled')
+        }
         config = resolveCloudRuntimeConfig(backendUrl, socketBaseUrlOverride, metadata.socketUrl)
         setSnapshot(current => ({
           ...current,
@@ -472,7 +502,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
               pollResult.accessToken,
               user,
               socketBaseUrlOverride
-            )
+            ),
+            connectionGeneration
           )
           track('cloud_connection_changed', { connected: true })
           return user
@@ -481,13 +512,17 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         throw new Error('云端授权已超时，请重新连接')
       } catch (error) {
         track('operation_failed', { operation: 'cloud_connect' })
-        setSnapshot(current => ({
-          ...current,
-          ...config,
-          status: 'error',
-          token: null,
-          error: getCloudErrorMessage(error),
-        }))
+        setSnapshot(current =>
+          disconnectRequestedRef.current || refreshGenerationRef.current !== connectionGeneration
+            ? current
+            : {
+                ...current,
+                ...config,
+                status: 'error',
+                token: null,
+                error: getCloudErrorMessage(error),
+              }
+        )
         throw error
       }
     },
