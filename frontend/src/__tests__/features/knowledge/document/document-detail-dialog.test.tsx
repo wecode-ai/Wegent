@@ -101,15 +101,18 @@ jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () 
     active,
     allowDownload,
     className,
+    protectedKnowledgeBaseId,
   }: {
     active: boolean
     allowDownload?: boolean
     className?: string
+    protectedKnowledgeBaseId?: number
   }) => (
     <div
       className={className}
       data-active={String(active)}
       data-allow-download={String(allowDownload)}
+      data-protected-knowledge-base-id={protectedKnowledgeBaseId}
       data-testid="mock-knowledge-source-preview"
     />
   ),
@@ -433,24 +436,66 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(sourceActions).not.toHaveClass('invisible')
   })
 
-  it('hides original-file download actions for organization knowledge bases', () => {
-    render(
-      <DocumentDetailDialog
-        open={true}
-        onOpenChange={jest.fn()}
-        document={officeDocument}
-        knowledgeBaseId={21}
-        isOrganization={true}
-      />
-    )
+  it.each(['file', 'external'] as const)(
+    'hides original-file download actions for organization %s documents',
+    sourceType => {
+      render(
+        <DocumentDetailDialog
+          open={true}
+          onOpenChange={jest.fn()}
+          document={{ ...officeDocument, source_type: sourceType }}
+          knowledgeBaseId={21}
+          isOrganization={true}
+        />
+      )
 
-    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
-    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
-      'data-allow-download',
-      'false'
-    )
-  })
+      expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-allow-download',
+        'false'
+      )
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-protected-knowledge-base-id',
+        '21'
+      )
+    }
+  )
+
+  it.each(['pptx', 'xlsx'])(
+    'previews and downloads an imported %s without replacing its filename',
+    async extension => {
+      const user = userEvent.setup()
+      render(
+        <DocumentDetailDialog
+          open
+          onOpenChange={jest.fn()}
+          document={{
+            ...officeDocument,
+            source_type: 'external',
+            name: '导入资料',
+            file_extension: extension,
+          }}
+          knowledgeBaseId={21}
+        />
+      )
+
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-active',
+        'true'
+      )
+      await user.click(screen.getByTestId('knowledge-source-preview-download'))
+      expect(mockDownloadAttachment).toHaveBeenCalledWith(32)
+      await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-active',
+        'false'
+      )
+      expect(
+        screen.queryByRole('button', { name: 'document.document.detail.edit' })
+      ).not.toBeInTheDocument()
+    }
+  )
 
   it('shows derived summaries while protecting organization document content', async () => {
     const user = userEvent.setup()
