@@ -7,6 +7,14 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
 #[test]
+fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
+    let config = CodexRuntimeProxyConfig::default();
+
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url, None);
+}
+
+#[test]
 fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(
         RuntimeSettings::default().max_concurrent_tasks,

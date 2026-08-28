@@ -145,6 +145,7 @@ export class TerminalRuntime {
       snapshot: '',
       initialInput,
       initialInputReadinessMarker,
+      initialInputWriteScheduled: false,
       dataSubscription: null,
       exitSubscription: null,
     }
@@ -228,19 +229,26 @@ export class TerminalRuntime {
   }
 
   #writePendingInitialInput(session) {
-    if (!session.pty || !session.initialInput) return
+    if (!session.pty || !session.initialInput || session.initialInputWriteScheduled) return
     if (
       session.initialInputReadinessMarker &&
       !session.snapshot.includes(session.initialInputReadinessMarker)
     ) {
       return
     }
-    try {
-      session.pty.write(session.initialInput)
-      session.initialInput = null
-    } catch {
-      // Keep the input pending so a later output can trigger another attempt.
-    }
+    session.initialInputWriteScheduled = true
+    setImmediate(() => {
+      session.initialInputWriteScheduled = false
+      if (this.#sessions.get(session.id) !== session || !session.pty || !session.initialInput) {
+        return
+      }
+      try {
+        session.pty.write(session.initialInput)
+        session.initialInput = null
+      } catch {
+        // Keep the input pending so a later output can trigger another attempt.
+      }
+    })
   }
 
   #handleExit(session, event) {

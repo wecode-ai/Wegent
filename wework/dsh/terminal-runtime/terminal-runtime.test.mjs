@@ -45,6 +45,10 @@ class FakePty {
   }
 }
 
+function waitForImmediate() {
+  return new Promise(resolve => setImmediate(resolve))
+}
+
 test('owns PTY sessions, snapshots, events and cleanup inside Core DSH', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-terminal-runtime-'))
   const pty = new FakePty()
@@ -168,8 +172,11 @@ test('starts an explicit Harness executable with arguments and initial input', a
     assert.equal(spawns[0].options.env.HARNESS_FIXTURE, '1')
     assert.deepEqual(pty.written, [])
     pty.emitData('harness ready\r\n')
+    assert.deepEqual(pty.written, [])
+    await waitForImmediate()
     assert.deepEqual(pty.written, ['inspect this project\r'])
     pty.emitData('next output\r\n')
+    await waitForImmediate()
     assert.deepEqual(pty.written, ['inspect this project\r'])
   } finally {
     runtime.dispose()
@@ -201,8 +208,11 @@ test('waits for the Harness readiness marker before writing initial input once',
     pty.emitData('No session')
     assert.deepEqual(pty.written, [])
     pty.emitData(' yet\r\n')
+    assert.deepEqual(pty.written, [])
+    await waitForImmediate()
     assert.deepEqual(pty.written, ['\u001b[200~inspect this project\u001b[201~\r'])
     pty.emitData('Working\r\n')
+    await waitForImmediate()
     assert.deepEqual(pty.written, ['\u001b[200~inspect this project\u001b[201~\r'])
   } finally {
     runtime.dispose()

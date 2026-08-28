@@ -489,10 +489,18 @@ pub struct RuntimeWorkRpcHandler {
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
-#[derive(Default)]
 struct CodexRuntimeProxyConfig {
     initialized: bool,
     proxy_url: Option<String>,
+}
+
+impl Default for CodexRuntimeProxyConfig {
+    fn default() -> Self {
+        Self {
+            initialized: true,
+            proxy_url: None,
+        }
+    }
 }
 
 #[derive(Default)]
