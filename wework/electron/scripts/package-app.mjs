@@ -4,6 +4,8 @@ import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
+import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
@@ -67,42 +69,48 @@ await writeFile(
     2
   )}\n`
 )
-const applications = await packager({
-  dir: staging,
-  name: identity.productName,
-  electronVersion: '43.4.1',
-  electronZipDir,
-  appBundleId: identity.identifier,
-  appVersion: sourcePackage.version,
-  buildVersion: sourcePackage.version,
-  executableName: identity.executableName,
-  out: output,
-  overwrite: true,
-  asar: {
-    unpack: '**/*.{node,dylib,so,dll}',
-  },
-  extraResource: [
-    join(electronRoot, 'resources', 'harness-runtime'),
-    join(electronRoot, 'resources', 'bin'),
-    join(electronRoot, 'resources', 'codex'),
-    join(electronRoot, 'resources', 'wework-core-plugins'),
-    join(electronRoot, 'resources', 'components.json'),
-    join(electronRoot, 'resources', 'bundled-plugins'),
-    join(sharedResourcesRoot, 'licenses'),
-    join(sharedResourcesRoot, 'icons'),
-  ],
-  icon,
-  prune: false,
-})
+const releaseToolchainLock = await acquireProcessLock(electronToolchainLockPath)
+let applications
+try {
+  applications = await packager({
+    dir: staging,
+    name: identity.productName,
+    electronVersion: '43.4.1',
+    electronZipDir,
+    appBundleId: identity.identifier,
+    appVersion: sourcePackage.version,
+    buildVersion: sourcePackage.version,
+    executableName: identity.executableName,
+    out: output,
+    overwrite: true,
+    asar: {
+      unpack: '**/*.{node,dylib,so,dll}',
+    },
+    extraResource: [
+      join(electronRoot, 'resources', 'harness-runtime'),
+      join(electronRoot, 'resources', 'bin'),
+      join(electronRoot, 'resources', 'codex'),
+      join(electronRoot, 'resources', 'wework-core-plugins'),
+      join(electronRoot, 'resources', 'components.json'),
+      join(electronRoot, 'resources', 'bundled-plugins'),
+      join(sharedResourcesRoot, 'licenses'),
+      join(sharedResourcesRoot, 'icons'),
+    ],
+    icon,
+    prune: false,
+  })
 
-if (process.platform === 'darwin') {
-  for (const application of applications) {
-    await run(
-      'codesign',
-      ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
-      electronRoot
-    )
+  if (process.platform === 'darwin') {
+    for (const application of applications) {
+      await run(
+        'codesign',
+        ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
+        electronRoot
+      )
+    }
   }
+} finally {
+  await releaseToolchainLock()
 }
 
 await rm(staging, { recursive: true, force: true })
