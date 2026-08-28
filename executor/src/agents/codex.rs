@@ -3987,10 +3987,22 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
 
 async fn prepare_codex_execution_request(
     request: ExecutionRequest,
-    cancellation: Option<&mut oneshot::Receiver<()>>,
+    mut cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
-    crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if let Some(cancellation) = cancellation.as_deref_mut() {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            result = async {
+                crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+                crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+                Ok::<(), String>(())
+            } => result?,
+        }
+    } else {
+        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    }
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
