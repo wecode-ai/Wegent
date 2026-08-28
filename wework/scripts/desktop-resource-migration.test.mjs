@@ -15,6 +15,7 @@ const scripts = [
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
+  'scripts/prepare-electron.mjs',
   'scripts/prepare-harness-runtime.mjs',
 ]
 
@@ -29,9 +30,7 @@ describe('desktop resource migration', () => {
     )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
-    expect(packageJson.scripts['prepare:electron']).toBe(
-      'pnpm --dir electron install --frozen-lockfile && node electron/node_modules/electron/install.js'
-    )
+    expect(packageJson.scripts['prepare:electron']).toBe('node scripts/prepare-electron.mjs')
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
     expect(packageJson.scripts['dev:windows']).toContain('scripts/dev-windows-app.ps1')
@@ -72,6 +71,18 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("'--legacy'")
     expect(source).not.toContain("'npm',")
     expect(source).not.toContain("'install', '--omit=dev'")
+  })
+
+  test('serializes Electron installation and packaging across worktrees', async () => {
+    const [prepareElectron, packageApp] = await Promise.all([
+      readFile(join(weworkRoot, 'scripts/prepare-electron.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+    ])
+
+    expect(prepareElectron).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
+    expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
+    expect(packageApp).toContain('await releaseToolchainLock()')
   })
 
   test('packages CUA native libraries and license outside ASAR', async () => {
