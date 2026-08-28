@@ -1406,14 +1406,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         const files = Array.from(clipboardData.files)
         if (files.length > 0) {
           event.preventDefault()
-          void resolveDataTransferWorkspacePaths(
-            clipboardData,
-            'clipboard',
-            workspaceTarget?.workspaceSource
-          ).then(({ attachmentFiles, referenceEntries }) => {
-            insertPathReferences(referenceEntries)
-            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-          })
+          void resolveDataTransferWorkspacePaths(clipboardData, 'clipboard').then(
+            ({ attachmentFiles, referenceEntries }) => {
+              insertPathReferences(referenceEntries)
+              if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+            }
+          )
           return true
         }
         if (!onPasteFiles) return false
@@ -1423,7 +1421,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         onPasteFiles([textAttachment])
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [insertPathReferences, onPasteFiles]
     )
 
     const handleDrop = useCallback(
@@ -1432,17 +1430,15 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
         event.preventDefault()
         event.stopPropagation()
-        void resolveDataTransferWorkspacePaths(
-          dataTransfer,
-          'drop',
-          workspaceTarget?.workspaceSource
-        ).then(({ attachmentFiles, referenceEntries }) => {
-          insertPathReferences(referenceEntries)
-          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-        })
+        void resolveDataTransferWorkspacePaths(dataTransfer, 'drop').then(
+          ({ attachmentFiles, referenceEntries }) => {
+            insertPathReferences(referenceEntries)
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          }
+        )
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [insertPathReferences, onPasteFiles]
     )
 
     return (

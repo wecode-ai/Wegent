@@ -2,18 +2,12 @@ import { createHash, generateKeyPairSync, randomUUID, sign as signBytes } from '
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-interface EncryptionProvider {
-  isEncryptionAvailable(): boolean
-  encryptString(value: string): Buffer
-  decryptString(value: Buffer): string
-}
-
 interface StoredCloudCredential {
-  version: 1
+  version: 2
   apiBaseUrl: string
   publicKey: DevicePublicKey
-  encryptedPrivateKey: string
-  encryptedRefreshToken: string
+  privateKey: string
+  refreshToken: string
 }
 
 export interface DevicePublicKey {
@@ -60,7 +54,6 @@ export class CloudCredentialService {
 
   constructor(
     private readonly dataDirectory: string,
-    private readonly encryption: EncryptionProvider,
     private readonly request: typeof fetch = fetch
   ) {}
 
@@ -112,7 +105,7 @@ export class CloudCredentialService {
       await this.writeCredential({
         ...credential,
         apiBaseUrl,
-        encryptedRefreshToken: this.encrypt(refreshToken),
+        refreshToken,
       })
       return {
         status,
@@ -134,7 +127,7 @@ export class CloudCredentialService {
           'Desktop cloud credentials are unavailable'
         )
       }
-      const refreshToken = this.decrypt(credential.encryptedRefreshToken)
+      const refreshToken = credential.refreshToken
       if (!refreshToken) {
         throw new CloudCredentialError(
           'credentials_unavailable',
@@ -143,7 +136,7 @@ export class CloudCredentialService {
       }
       const endpoint = `${normalizedApiBaseUrl}/auth/wework/refresh`
       const proof = createDeviceProof(
-        this.decrypt(credential.encryptedPrivateKey),
+        credential.privateKey,
         credential.publicKey,
         refreshToken,
         new URL(endpoint).pathname
@@ -175,18 +168,15 @@ export class CloudCredentialService {
   }
 
   private generateCredential(apiBaseUrl = ''): StoredCloudCredential {
-    this.requireEncryption()
     const { publicKey, privateKey } = generateKeyPairSync('ec', {
       namedCurve: 'prime256v1',
     })
     return {
-      version: 1,
+      version: 2,
       apiBaseUrl,
       publicKey: normalizePublicKey(publicKey.export({ format: 'jwk' })),
-      encryptedPrivateKey: this.encrypt(
-        privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
-      ),
-      encryptedRefreshToken: this.encrypt(''),
+      privateKey: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
+      refreshToken: '',
     }
   }
 
@@ -206,25 +196,6 @@ export class CloudCredentialService {
     const temporary = `${path}.${process.pid}.tmp`
     await writeFile(temporary, `${JSON.stringify(credential, null, 2)}\n`, { mode: 0o600 })
     await rename(temporary, path)
-  }
-
-  private encrypt(value: string): string {
-    this.requireEncryption()
-    return this.encryption.encryptString(value).toString('base64')
-  }
-
-  private decrypt(value: string): string {
-    this.requireEncryption()
-    return this.encryption.decryptString(Buffer.from(value, 'base64'))
-  }
-
-  private requireEncryption(): void {
-    if (!this.encryption.isEncryptionAvailable()) {
-      throw new CloudCredentialError(
-        'credentials_unavailable',
-        'Operating system credential encryption is unavailable'
-      )
-    }
   }
 
   private path(): string {
@@ -309,20 +280,20 @@ function normalizeStoredCredential(value: unknown): StoredCloudCredential | null
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Partial<StoredCloudCredential>
   if (
-    record.version !== 1 ||
+    record.version !== 2 ||
     typeof record.apiBaseUrl !== 'string' ||
-    typeof record.encryptedPrivateKey !== 'string' ||
-    typeof record.encryptedRefreshToken !== 'string' ||
+    typeof record.privateKey !== 'string' ||
+    typeof record.refreshToken !== 'string' ||
     !record.publicKey
   ) {
     return null
   }
   return {
-    version: 1,
+    version: 2,
     apiBaseUrl: record.apiBaseUrl,
     publicKey: normalizePublicKey(record.publicKey),
-    encryptedPrivateKey: record.encryptedPrivateKey,
-    encryptedRefreshToken: record.encryptedRefreshToken,
+    privateKey: record.privateKey,
+    refreshToken: record.refreshToken,
   }
 }
 

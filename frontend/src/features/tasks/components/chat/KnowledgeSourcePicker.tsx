@@ -6,6 +6,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  BookOpen,
   Building2,
   ChevronRight,
   Cloud,
@@ -24,6 +25,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { TruncatedText } from '@/components/common/long-text'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
+import { KnowledgeBaseIcon } from '@/features/knowledge/document/components/KnowledgeBaseIcon'
+import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { getFolderTree, listDocuments } from '@/apis/knowledge'
 import type { BoundKnowledgeBaseDetail } from '@/types/task-knowledge-base'
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeFolder } from '@/types/knowledge'
@@ -1219,7 +1222,7 @@ export function KnowledgeSourcePicker({
       key: 'dingtalk:wikispace' as const,
       label: tChat('dingtalkDocs.wikispaceTab'),
       count: dingtalkTrees.wikispaceTotalCount,
-      icon: Database,
+      icon: BookOpen,
     },
   ]
 
@@ -1614,7 +1617,12 @@ export function KnowledgeSourcePicker({
                       }
                     >
                       <span className="flex min-w-0 items-center gap-2">
-                        <SectionIcon className="h-4 w-4 shrink-0 text-text-muted" />
+                        <SectionIcon
+                          className={cn(
+                            'h-4 w-4 shrink-0',
+                            sectionActive ? 'text-primary' : 'text-text-muted'
+                          )}
+                        />
                         <TruncatedText
                           text={section.label}
                           focusable={false}
@@ -1875,7 +1883,7 @@ function KnowledgeBaseRows({
               onClick={() => onOpen(item)}
               data-testid={`knowledge-picker-kb-${item.id}`}
             >
-              <Database className="h-4 w-4 shrink-0 text-text-muted" />
+              <KnowledgeBaseIcon kbType={item.kb_type} className="h-4 w-4 shrink-0" />
               <span className="min-w-0">
                 <TruncatedText
                   text={item.name}
@@ -2037,7 +2045,6 @@ function InternalDocumentSearchResults({
           isFolder && node.folderId !== undefined
             ? inheritedSelected || selectedFolderIds.has(node.folderId)
             : inheritedSelected || Boolean(document && selectedDocIds.has(document.id))
-        const Icon = isFolder ? Folder : FileText
         const folderPartiallySelected =
           isFolder && selectedDocumentCount > 0 && selectedDocumentCount < node.documentCount
         const folderSelected =
@@ -2070,7 +2077,15 @@ function InternalDocumentSearchResults({
             }
           >
             <span className="flex min-w-0 items-start gap-2">
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+              {isFolder ? (
+                <Folder className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+              ) : (
+                <DocumentFormatIcon
+                  extension={document?.file_extension}
+                  sourceType={document?.source_type}
+                  className="mt-0.5"
+                />
+              )}
               <span className="min-w-0">
                 <TruncatedText
                   text={node.name}
@@ -2207,7 +2222,7 @@ function InternalDocumentNode({
   }, [containsSelected])
   const selected =
     inheritedSelected || Boolean(node.document && selectedDocIds.has(node.document.id))
-  const Icon = isFolder ? (open ? FolderOpen : Folder) : FileText
+  const FolderIcon = open ? FolderOpen : Folder
 
   return (
     <div>
@@ -2231,7 +2246,7 @@ function InternalDocumentNode({
                 open ? 'rotate-90' : ''
               )}
             />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <FolderIcon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
             <span className="min-w-0">
               <TruncatedText text={node.name} focusable={false} className="text-text-primary" />
             </span>
@@ -2267,7 +2282,11 @@ function InternalDocumentNode({
         >
           <span className="flex min-w-0 items-start gap-2">
             <span className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <Icon className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" />
+            <DocumentFormatIcon
+              extension={node.document?.file_extension}
+              sourceType={node.document?.source_type}
+              className="mt-0.5"
+            />
             <span className="min-w-0">
               <TruncatedText
                 text={node.name}
