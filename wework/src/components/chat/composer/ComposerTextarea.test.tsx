@@ -1142,14 +1142,14 @@ describe('ComposerTextarea', () => {
     expect(screen.queryByTestId('composer-path-chip-preview-png')).not.toBeInTheDocument()
   })
 
-  test('drops local files and folders as path references without uploading them', async () => {
+  test('drops Finder files as path references in remote workspaces without uploading them', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onPasteFiles = vi.fn()
     const workspaceTarget: WorkspaceTarget = {
-      deviceId: 'local-device',
+      deviceId: 'remote-device',
       path: '/workspace/project',
       source: 'project',
-      workspaceSource: 'local',
+      workspaceSource: 'remote',
     }
     nativeClipboardPathMocks.resolve.mockResolvedValue({
       attachmentFiles: [],
@@ -1205,7 +1205,7 @@ describe('ComposerTextarea', () => {
         'file'
       )
     })
-    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
+    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledWith(dropEvent.dataTransfer, 'drop')
     expect(onPasteFiles).not.toHaveBeenCalled()
   })
 

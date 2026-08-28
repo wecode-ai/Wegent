@@ -145,7 +145,7 @@ describe('workspace path transfer', () => {
       { path: '/Users/alice/project/context.md', isDirectory: false },
     ])
 
-    await expect(resolveDataTransferWorkspacePaths(data, 'drop', 'local')).resolves.toEqual({
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
       attachmentFiles: [],
       referenceEntries: [{ path: '/Users/alice/project/context.md', isDirectory: false }],
     })
@@ -154,12 +154,35 @@ describe('workspace path transfer', () => {
     })
   })
 
+  test('keeps dropped images as attachments', async () => {
+    const file = new File(['image'], 'preview.png', { type: 'image/png' })
+    const data = clipboardData({}, [file])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('keeps pathless pasted images as attachments', async () => {
+    const file = new File(['image'], 'clipboard.png', { type: 'image/png' })
+    const data = clipboardData({}, [file])
+    mocks.desktopHost.mockResolvedValue([])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
   test('keeps pasted files as attachments when no native path can be resolved', async () => {
     const file = new File(['archive'], 'feedback.zip', { type: 'application/zip' })
     const data = clipboardData({}, [file])
     mocks.desktopHost.mockResolvedValue([])
 
-    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard', 'local')).resolves.toEqual({
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard')).resolves.toEqual({
       attachmentFiles: [file],
       referenceEntries: [],
     })
