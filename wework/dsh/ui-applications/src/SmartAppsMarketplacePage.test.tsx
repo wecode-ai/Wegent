@@ -45,13 +45,18 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     services: { localHarnessModelApi: null },
   }),
 }))
-vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useWorkspaceTabs: () => ({
-    tabs: [],
-    openTab: vi.fn(),
-    closeTab: vi.fn(),
-  }),
-}))
+vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', async importOriginal => {
+  const original =
+    await importOriginal<typeof import('@/features/workspace-tabs/workspaceTabsContextValue')>()
+  return {
+    ...original,
+    useWorkspaceTabs: () => ({
+      tabs: [],
+      openTab: vi.fn(),
+      closeTab: vi.fn(),
+    }),
+  }
+})
 vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
   harnessAppRoute: (id: string) => `/app/harness-${id}`,
   openHarnessAppTab: vi.fn(),
