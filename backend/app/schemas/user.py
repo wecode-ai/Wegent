@@ -238,9 +238,9 @@ class WeworkAuthSessionCreateResponse(BaseModel):
 
 
 class WeworkAuthSessionCreateRequest(BaseModel):
-    """Device public key bound to a Wework desktop authorization session."""
+    """Optional device key for refresh-capable Wework desktop clients."""
 
-    device_public_key: dict[str, str]
+    device_public_key: Optional[dict[str, str]] = None
 
 
 class WeworkWebConfigResponse(BaseModel):
