@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build base stage: Rust toolchain and native build dependencies.
-FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-add-go AS builder-base
+ARG BASE_IMAGE=registry.api.weibo.com/ci/wegent-runtime:0.0.2-fix-base-image
+
+FROM ${BASE_IMAGE} AS builder-base
 WORKDIR /app
 
 ENV RUSTUP_DIST_SERVER=https://rsproxy.cn
@@ -52,7 +54,7 @@ RUN cd /app/executor \
     && APP_VERSION="${APP_VERSION}" cargo build --release --locked --bin wegent-executor
 
 # Runtime stage: internal executor environment plus the Rust binary.
-FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-add-go
+FROM ${BASE_IMAGE}
 ARG APP_VERSION=dev
 
 WORKDIR /app
