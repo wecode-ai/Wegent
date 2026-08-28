@@ -68,6 +68,7 @@ export interface ComponentPaths {
   executor: string
   codex: string
   dws: string
+  contentSha256: Record<ManagedComponentId, string>
 }
 
 export interface ComponentUpdateManagerOptions {
@@ -225,24 +226,40 @@ export class ComponentUpdateManager {
     packaged: PackagedComponentManifest,
     current?: ComponentSet
   ): Promise<ComponentPaths> {
-    const entries = await Promise.all(
+    const resolved = await Promise.all(
       MANAGED_COMPONENT_IDS.map(async id => {
         const packagedComponent = packaged.components[id]
         const active = current?.components[id]
+        const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
+        let path: string
         if (!active || active.contentSha256 === packagedComponent.sha256) {
-          const path = join(this.resourcesRoot, packagedComponent.path)
+          path = join(this.resourcesRoot, packagedComponent.path)
           await stat(path)
-          return [id, path] as const
+        } else {
+          const root = this.componentRoot(id, active.archiveSha256)
+          path = active.entryPath === '.' ? root : join(root, active.entryPath)
+          if (!(await componentMatches(path, active.contentSha256))) {
+            throw new Error(`Managed component checksum mismatch: ${id}`)
+          }
         }
-        const root = this.componentRoot(id, active.archiveSha256)
-        const path = active.entryPath === '.' ? root : join(root, active.entryPath)
-        if (!(await componentMatches(path, active.contentSha256))) {
-          throw new Error(`Managed component checksum mismatch: ${id}`)
-        }
-        return [id, path] as const
+        return { id, path, contentSha256 }
       })
     )
-    return Object.fromEntries(entries) as unknown as ComponentPaths
+    const paths = {} as Record<ManagedComponentId, string>
+    const fingerprints = {} as Record<ManagedComponentId, string>
+    for (const entry of resolved) {
+      paths[entry.id] = entry.path
+      fingerprints[entry.id] = entry.contentSha256
+    }
+    return {
+      coreDsh: paths.coreDsh,
+      weworkCorePlugins: paths.weworkCorePlugins,
+      bundledPlugins: paths.bundledPlugins,
+      executor: paths.executor,
+      codex: paths.codex,
+      dws: paths.dws,
+      contentSha256: fingerprints,
+    }
   }
 
   private async ensureComponent(id: ManagedComponentId, component: RemoteComponent): Promise<void> {

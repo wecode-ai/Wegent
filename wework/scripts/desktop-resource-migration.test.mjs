@@ -123,6 +123,21 @@ describe('desktop resource migration', () => {
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
   })
 
+  test('creates macOS component archives from the requested packaged application', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
+    expect(source).toContain(
+      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
+    )
+    expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
+    expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
+    expect(source).not.toContain('async function findDirectory')
+  })
+
   test('signs legacy updater assets through the Windows command interpreter', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
