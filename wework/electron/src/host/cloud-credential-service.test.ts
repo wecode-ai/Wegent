@@ -60,6 +60,7 @@ describe('CloudCredentialService', () => {
       accessToken: 'access-1',
       tokenType: 'bearer',
       username: 'alice',
+      credentialMode: 'desktop_refresh',
     })
     expect(refreshed.accessToken).toBe('access-2')
     const refreshRequest = JSON.parse(String(request.mock.calls[1][1]?.body))
@@ -68,6 +69,41 @@ describe('CloudCredentialService', () => {
     const stored = await readFile(join(root, 'cloud-credentials.json'), 'utf8')
     expect(stored).not.toContain('refresh-secret')
     expect(stored).not.toContain('PRIVATE KEY')
+  })
+
+  test('returns a legacy access token without retaining desktop credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    const request = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          status: 'success',
+          access_token: 'legacy-access',
+          token_type: 'bearer',
+          username: 'alice',
+        }),
+        { status: 200 }
+      )
+    )
+    const service = new CloudCredentialService(root, encryption, request)
+
+    await service.devicePublicKey()
+    const claimed = await service.claimAuthorization({
+      apiBaseUrl: 'https://legacy.example.com/api',
+      sessionId: 'session-1',
+      pollToken: 'poll-1',
+    })
+
+    expect(claimed).toEqual({
+      status: 'success',
+      accessToken: 'legacy-access',
+      tokenType: 'bearer',
+      username: 'alice',
+      credentialMode: 'legacy_access_token',
+    })
+    await expect(readFile(join(root, 'cloud-credentials.json'), 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 
   test('serializes concurrent refresh requests through one credential file', async () => {

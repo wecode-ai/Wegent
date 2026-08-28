@@ -64,4 +64,24 @@ describe('cloudConnectionStorage', () => {
     expect(readStoredCloudConnection()).toBeNull()
     expect(localStorage.getItem('auth_token')).toBe('local-token')
   })
+
+  it('restores legacy access-token connections created by older Backends', () => {
+    const token = 'header.payload.signature'
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        ...normalizeCloudBackendUrl('https://legacy.example.com'),
+        token,
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-08-28T00:00:00.000Z',
+      })
+    )
+
+    expect(readStoredCloudConnection()).toMatchObject({
+      credentialMode: 'legacy_access_token',
+      token,
+      tokenExpiresAt: null,
+    })
+  })
 })

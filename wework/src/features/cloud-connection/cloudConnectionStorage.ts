@@ -11,6 +11,8 @@ export type CloudConnectionStatus =
   | 'expired'
   | 'error'
 
+export type CloudCredentialMode = 'desktop_refresh' | 'legacy_access_token'
+
 export interface CloudConnectionRuntimeConfig {
   backendUrl: string
   apiBaseUrl: string
@@ -21,6 +23,9 @@ export interface CloudConnectionRuntimeConfig {
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
   socketBaseUrlOverride?: string
   webUrl?: string
+  credentialMode?: CloudCredentialMode
+  token?: string
+  tokenExpiresAt?: number | null
   user: User
   connectedAt: string
 }
@@ -29,6 +34,7 @@ export interface CloudConnectionSnapshot extends Partial<CloudConnectionRuntimeC
   socketBaseUrlOverride?: string
   webUrl?: string
   status: CloudConnectionStatus
+  credentialMode?: CloudCredentialMode | null
   token: string | null
   tokenExpiresAt: number | null
   user: User | null
@@ -152,13 +158,35 @@ export function normalizeStoredCloudConnection(value: unknown): StoredCloudConne
     typeof parsed.socketPath !== 'string' ||
     (parsed.socketBaseUrlOverride !== undefined &&
       typeof parsed.socketBaseUrlOverride !== 'string') ||
+    (parsed.credentialMode !== undefined &&
+      !['desktop_refresh', 'legacy_access_token'].includes(parsed.credentialMode)) ||
+    (parsed.token !== undefined && (typeof parsed.token !== 'string' || !parsed.token.trim())) ||
+    (parsed.tokenExpiresAt !== undefined &&
+      parsed.tokenExpiresAt !== null &&
+      (typeof parsed.tokenExpiresAt !== 'number' || !Number.isFinite(parsed.tokenExpiresAt))) ||
     !parsed.user ||
     typeof parsed.user !== 'object' ||
     typeof parsed.connectedAt !== 'string'
   ) {
     return null
   }
-  return parsed as StoredCloudConnection
+  const credentialMode =
+    parsed.credentialMode ?? (parsed.token ? 'legacy_access_token' : 'desktop_refresh')
+  if (credentialMode === 'legacy_access_token' && !parsed.token) return null
+  return {
+    backendUrl: parsed.backendUrl,
+    apiBaseUrl: parsed.apiBaseUrl,
+    socketBaseUrl: parsed.socketBaseUrl,
+    socketPath: parsed.socketPath,
+    socketBaseUrlOverride: parsed.socketBaseUrlOverride,
+    webUrl: parsed.webUrl,
+    credentialMode,
+    token: credentialMode === 'legacy_access_token' ? parsed.token : undefined,
+    tokenExpiresAt:
+      credentialMode === 'legacy_access_token' ? (parsed.tokenExpiresAt ?? null) : undefined,
+    user: parsed.user,
+    connectedAt: parsed.connectedAt,
+  }
 }
 
 export function saveStoredCloudConnection(connection: StoredCloudConnection): void {

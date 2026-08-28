@@ -1,7 +1,16 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { exposeStartupShellBridge } from './host/startup-shell-bridge.js'
 
-exposeStartupShellBridge(location.protocol, contextBridge, ipcRenderer)
+if (location.protocol === 'file:') {
+  contextBridge.exposeInMainWorld('weworkElectron', {
+    getRuntimeState: () => ipcRenderer.invoke('runtime:get-state'),
+    onRuntimeChanged: (listener: () => void) => {
+      const handler = () => listener()
+      ipcRenderer.on('runtime:changed', handler)
+      return () => ipcRenderer.off('runtime:changed', handler)
+    },
+    reloadDsh: () => ipcRenderer.invoke('runtime:reload-dsh'),
+  })
+}
 
 contextBridge.exposeInMainWorld('weworkElectronFiles', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),

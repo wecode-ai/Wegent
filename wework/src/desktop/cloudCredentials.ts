@@ -10,6 +10,7 @@ export interface AuthorizationPollResult {
   accessToken?: string
   tokenType?: string
   username?: string
+  credentialMode?: 'desktop_refresh' | 'legacy_access_token'
   error?: string
 }
 
