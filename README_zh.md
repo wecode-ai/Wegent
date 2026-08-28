@@ -10,7 +10,7 @@
 
 Wegent 包含桌面工作台和可自托管的 Web 平台。Wegent Desktop 用于处理本地项目、文件、命令、测试和代码变更；Wegent Web 提供网页端智能体、知识库、自动化和管理功能；Wegent Backend 为这些应用提供共享项目空间、模型和执行设备。
 
-[下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
+[下载最新版 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
 
 ## Wegent Desktop
 
@@ -99,7 +99,7 @@ Wework 也可以连接 Wegent Backend 使用共享项目空间、模型和远程
 
 ### Wegent Desktop
 
-1. 从 [Releases 下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) 并安装。
+1. 从 [最新版本页下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) 并安装。
 2. 打开应用，添加或选择一个本地项目。
 3. 创建任务并描述需要执行的工作。
 4. 查看智能体活动、命令输出和文件变更。

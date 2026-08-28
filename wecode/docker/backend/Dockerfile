@@ -82,7 +82,6 @@ RUN PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright playwright
 COPY backend /app
 # Also copy shared to /app/shared for PYTHONPATH imports
 COPY shared /app/shared
-COPY resource.yaml /app/init_data/new_user/resource.yaml
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 

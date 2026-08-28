@@ -682,7 +682,9 @@ function executionConfigFromUiNode(node: AutomationUiStep): WorkflowExecutionCon
     model_options: { ...node.modelOptions },
     workspace_binding:
       node.workspacePolicy === 'composer'
-        ? preserved.workspace_binding
+        ? (preserved.workspace_binding ?? {
+            type: 'standalone',
+          })
         : {
             type: 'standalone',
           },

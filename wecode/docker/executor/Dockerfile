@@ -60,7 +60,7 @@ WORKDIR /app
 # Configure npm registry for China.
 RUN npm config set registry https://registry.npmmirror.com
 
-RUN npm install -g @anthropic-ai/claude-code@2.1.199 @openai/codex@0.137.0 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.247 @openai/codex@0.137.0 \
     --registry=https://registry.npmmirror.com
 
 # Keep uv available for skills that invoke Python tooling at runtime.

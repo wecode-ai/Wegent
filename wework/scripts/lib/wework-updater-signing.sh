@@ -32,7 +32,8 @@ wework_configure_internal_updater_key() {
   chmod 600 "$updater_key_path"
   TAURI_SIGNING_PRIVATE_KEY="$(< "$updater_key_path")"
   export TAURI_SIGNING_PRIVATE_KEY
-  export TAURI_SIGNING_PRIVATE_KEY_PATH="$updater_key_path"
+  unset TAURI_SIGNING_PRIVATE_KEY_PATH
+  unset TAURI_KEY_PASSWORD
   export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
   TAURI_UPDATER_PUBKEY="$(< "$public_key_path")"
   export TAURI_UPDATER_PUBKEY

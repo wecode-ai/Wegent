@@ -10,6 +10,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/wework-release-notes.sh
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -41,6 +43,8 @@ else
 fi
 if [ -n "$EXPLICIT_VITE_WEGENT_SOCKET_URL" ]; then
   export VITE_WEGENT_SOCKET_URL="$EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE"
+else
+  export VITE_WEGENT_SOCKET_URL="${VITE_WEGENT_SOCKET_URL:-wss://wss-wegent.intra.weibo.com}"
 fi
 if [ -n "$EXPLICIT_VITE_WEWORK_FEEDBACK_URL" ]; then
   export VITE_WEWORK_FEEDBACK_URL="$EXPLICIT_VITE_WEWORK_FEEDBACK_URL_VALUE"
@@ -50,28 +54,34 @@ fi
 
 VERSION=""
 CHANNEL="stable"
+RELEASE_KIND="${WEWORK_RELEASE_KIND:-full}"
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-}"
+COMPONENT_S3_PREFIX="${WEWORK_COMPONENT_S3_PREFIX:-wework/components}"
 UPDATE_MANIFEST_S3_PREFIX="${WEWORK_UPDATE_MANIFEST_S3_PREFIX:-${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}}"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-aarch64-apple-darwin}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
-VERSION_BACKUP_DIR=""
+RESUME_SIGNED_APP=""
+SIGNED_APP_ONLY="false"
+UPLOAD_EXISTING="false"
 
 usage() {
   cat <<'EOF'
 Usage: bash wework/scripts/build-minio-mac-release.sh --version <version> [options]
 
-Build the same signed Electron macOS release used by GitHub CI, generate both
-Electron updater YAML and a Tauri-signed migration bridge, and optionally
-publish them to MinIO.
+Build the same signed Electron macOS release used by GitHub CI and optionally
+publish either the full app update or only its independently updatable
+components to MinIO.
 
 Options:
   --version <version>       Release version. Required.
   --channel <stable|beta>   Update channel. Default: stable.
+  --release-kind <kind>     full or component. Default: full.
   --beta                    Shorthand for --channel beta.
   --notes <text>            Release notes.
   --endpoint <url>          S3 API endpoint.
@@ -80,6 +90,15 @@ Options:
   --output-dir <path>       Local artifact directory.
   --macos-build-target <target>
                             aarch64-apple-darwin or x86_64-apple-darwin.
+  --brand-config <path>     Brand identity and internal runtime defaults.
+                            Default: wework/branding/weibo.json.
+  --resume-signed-app <path>
+                            Resume from an existing signed .app after a
+                            notarization upload failure.
+  --signed-app-only         Build and Developer ID sign the application, then
+                            stop before notarization and installer packaging.
+  --upload-existing        Upload and verify an existing release output
+                            directory without rebuilding or repackaging.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
@@ -133,6 +152,13 @@ legacy_platform() {
   esac
 }
 
+installer_arch() {
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin) printf 'mac-arm64\n' ;;
+    x86_64-apple-darwin) printf 'mac\n' ;;
+  esac
+}
+
 default_s3_prefix() {
   case "$MACOS_BUILD_TARGET" in
     aarch64-apple-darwin)
@@ -142,14 +168,6 @@ default_s3_prefix() {
       printf '%s\n' "${WEWORK_MAC_X64_RELEASE_S3_PREFIX:-wework/mac-x64}"
       ;;
   esac
-}
-
-restore_version_files() {
-  if [ -n "$VERSION_BACKUP_DIR" ]; then
-    cp -f "$VERSION_BACKUP_DIR/wework-package.json" "$WEWORK_DIR/package.json"
-    cp -f "$VERSION_BACKUP_DIR/electron-package.json" "$WEWORK_DIR/electron/package.json"
-    rm -rf "$VERSION_BACKUP_DIR"
-  fi
 }
 
 upload_artifacts() {
@@ -166,13 +184,16 @@ upload_artifacts() {
   ATTACHMENT_S3_ENDPOINT="$S3_ENDPOINT" \
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
+  WEWORK_COMPONENT_S3_PREFIX="$COMPONENT_S3_PREFIX" \
   WEWORK_UPDATE_MANIFEST_S3_PREFIX="$UPDATE_MANIFEST_S3_PREFIX" \
   WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
   WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
   WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
   UPDATER_PLATFORMS="$(legacy_platform)" \
   RELEASE_VERSION="$VERSION" \
+  RELEASE_SOURCE_SHA="$SOURCE_SHA" \
   RELEASE_CHANNEL="$CHANNEL" \
+  RELEASE_KIND="$RELEASE_KIND" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
     uv run --project "$PROJECT_DIR/backend" \
       python "$SCRIPT_DIR/upload-mac-release-to-s3.py"
@@ -180,10 +201,21 @@ upload_artifacts() {
 
 verify_uploaded_artifacts() {
   local arch
+  local component_manifest
   local electron_channel="$CHANNEL"
   local legacy_manifest
 
   arch="$(release_arch)"
+  component_manifest="components-$CHANNEL-macos-$arch.json"
+  if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$component_manifest"; then
+    echo "Published component manifest is not publicly readable: $UPDATE_BASE_URL/$component_manifest" >&2
+    exit 1
+  fi
+  node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
+    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" macos "$arch"
+  if [ "$RELEASE_KIND" = "component" ]; then
+    return
+  fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   legacy_manifest="$CHANNEL-$(legacy_platform).json"
   for url in \
@@ -202,6 +234,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
+    --release-kind) RELEASE_KIND="$2"; shift 2 ;;
     beta|--beta) CHANNEL="beta"; shift ;;
     stable|--stable) CHANNEL="stable"; shift ;;
     --notes) RELEASE_NOTES="$(wework_decode_release_notes "$2")"; shift 2 ;;
@@ -210,6 +243,10 @@ while [ "$#" -gt 0 ]; do
     --prefix) S3_PREFIX="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --macos-build-target) MACOS_BUILD_TARGET="$2"; shift 2 ;;
+    --brand-config) BRAND_CONFIG="$2"; shift 2 ;;
+    --resume-signed-app) RESUME_SIGNED_APP="$2"; shift 2 ;;
+    --signed-app-only) SIGNED_APP_ONLY="true"; shift ;;
+    --upload-existing) UPLOAD_EXISTING="true"; shift ;;
     --upload) UPLOAD="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -232,6 +269,34 @@ if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
   echo "--channel must be stable or beta." >&2
   exit 1
 fi
+if [ "$RELEASE_KIND" != "full" ] && [ "$RELEASE_KIND" != "component" ]; then
+  echo "--release-kind must be full or component." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ -n "$RESUME_SIGNED_APP" ]; then
+  echo "--signed-app-only cannot be combined with --resume-signed-app." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ "$UPLOAD" = "true" ]; then
+  echo "--signed-app-only cannot be combined with --upload." >&2
+  exit 1
+fi
+if [ "$SIGNED_APP_ONLY" = "true" ] && [ "$RELEASE_KIND" != "full" ]; then
+  echo "--signed-app-only requires --release-kind full." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ "$UPLOAD" != "true" ]; then
+  echo "--upload-existing requires --upload." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ "$SIGNED_APP_ONLY" = "true" ]; then
+  echo "--upload-existing cannot be combined with --signed-app-only." >&2
+  exit 1
+fi
+if [ "$UPLOAD_EXISTING" = "true" ] && [ -n "$RESUME_SIGNED_APP" ]; then
+  echo "--upload-existing cannot be combined with --resume-signed-app." >&2
+  exit 1
+fi
 if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
   echo "A beta version must be published to the beta channel." >&2
   exit 1
@@ -240,8 +305,17 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS Electron releases must be built on a macOS host." >&2
   exit 1
 fi
+if [ ! -f "$BRAND_CONFIG" ]; then
+  echo "Brand config not found: $BRAND_CONFIG" >&2
+  exit 1
+fi
 
 arch="$(release_arch)"
+BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
+SOURCE_SHA="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+export WEWORK_BRAND_CONFIG="$BRAND_CONFIG"
+export WEWORK_RELEASE_VERSION="$VERSION"
+export WEWORK_SOURCE_SHA="$SOURCE_SHA"
 if [ -z "$S3_PREFIX" ]; then
   S3_PREFIX="$(default_s3_prefix)"
 fi
@@ -262,10 +336,14 @@ fi
 
 S3_ENDPOINT="${S3_ENDPOINT%/}"
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
+COMPONENT_S3_PREFIX="$(normalize_prefix "$COMPONENT_S3_PREFIX")"
 UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
+COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
 UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$UPDATE_MANIFEST_S3_PREFIX"
-if [ -z "$RELEASE_NOTES" ]; then
+if [ "$SIGNED_APP_ONLY" != "true" ] &&
+  [ "$UPLOAD_EXISTING" != "true" ] &&
+  [ -z "$RELEASE_NOTES" ]; then
   RELEASE_NOTES="$(
     cd "$PROJECT_DIR"
     GH_REPO='' RELEASE_SHA="$(git rev-parse HEAD)" RELEASE_VERSION="$VERSION" \
@@ -274,49 +352,94 @@ if [ -z "$RELEASE_NOTES" ]; then
 fi
 
 require_command node
-require_command pnpm
 require_command uv
-wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+if [ "$UPLOAD_EXISTING" = "true" ]; then
+  require_command curl
+  if [ ! -d "$OUTPUT_DIR" ]; then
+    echo "Existing release output directory not found: $OUTPUT_DIR" >&2
+    exit 1
+  fi
+  upload_artifacts
+  verify_uploaded_artifacts
+  echo "Published existing MinIO $RELEASE_KIND release assets and update channels."
+  exit 0
+fi
+
+require_command pnpm
+if [ "$SIGNED_APP_ONLY" != "true" ]; then
+  wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
+fi
 
 export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_PASSWORD:-}}"
-export CSC_NAME="${CSC_NAME:-${APPLE_SIGNING_IDENTITY:-}}"
+if [ "$SIGNED_APP_ONLY" = "true" ]; then
+  export WEWORK_RELEASE_DIR_ONLY=true
+  export WEWORK_SKIP_MACOS_NOTARIZATION=true
+else
+  export WEWORK_CUSTOM_MACOS_NOTARIZATION=true
+fi
+export WEWORK_NOTARYTOOL_S3_ACCELERATION="${WEWORK_NOTARYTOOL_S3_ACCELERATION:-true}"
+CSC_NAME="$(
+  wework_normalize_macos_signing_identity \
+    "${CSC_NAME:-${APPLE_SIGNING_IDENTITY:-}}"
+)"
+export CSC_NAME
 if [ -z "${CSC_LINK:-}" ] && [ -z "$CSC_NAME" ]; then
   echo "CSC_LINK or APPLE_SIGNING_IDENTITY is required for a signed macOS release." >&2
   exit 1
 fi
 
-VERSION_BACKUP_DIR="$(mktemp -d)"
-trap restore_version_files EXIT
-cp "$WEWORK_DIR/package.json" "$VERSION_BACKUP_DIR/wework-package.json"
-cp "$WEWORK_DIR/electron/package.json" "$VERSION_BACKUP_DIR/electron-package.json"
-node "$SCRIPT_DIR/sync-desktop-release-version.mjs" "$VERSION"
-
-echo "Building Wework Electron macOS $arch release $VERSION ($CHANNEL)"
-CARGO_BUILD_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_CODEX_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_RELEASE_PLATFORM=macos \
-WEWORK_RELEASE_ARCH="$arch" \
-WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
-VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
-VITE_WEWORK_RUNTIME_MODE=local-first \
-  pnpm --filter wework build:release
+if [ -n "$RESUME_SIGNED_APP" ]; then
+  if [ ! -d "$RESUME_SIGNED_APP" ] || [[ "$RESUME_SIGNED_APP" != *.app ]]; then
+    echo "Signed macOS application not found: $RESUME_SIGNED_APP" >&2
+    exit 1
+  fi
+  RESUME_SIGNED_APP="$(cd "$(dirname "$RESUME_SIGNED_APP")" && pwd)/$(basename "$RESUME_SIGNED_APP")"
+  echo "Resuming Wework Electron macOS $arch release $VERSION from signed app"
+  node "$WEWORK_DIR/electron/scripts/notarize-macos.cjs" "$RESUME_SIGNED_APP"
+  WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
+    node "$WEWORK_DIR/electron/scripts/package-prebuilt-macos-release.mjs" \
+      "$RESUME_SIGNED_APP" "$arch"
+else
+  echo "Building Wework Electron macOS $arch release $VERSION ($CHANNEL)"
+  CARGO_BUILD_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_CODEX_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_RELEASE_PLATFORM=macos \
+  WEWORK_RELEASE_ARCH="$arch" \
+  WEWORK_SOURCE_SHA="$SOURCE_SHA" \
+  WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
+  VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
+  VITE_WEWORK_RUNTIME_MODE=local-first \
+    pnpm --filter wework build:release
+  if [ "$SIGNED_APP_ONLY" = "true" ]; then
+    signed_app="$WEWORK_DIR/electron/release-installer/$(installer_arch)/Weibo WeWork.app"
+    if [ ! -d "$signed_app" ]; then
+      echo "Signed macOS application was not produced: $signed_app" >&2
+      exit 1
+    fi
+    codesign --verify --deep --strict --verbose=2 "$signed_app"
+    echo "Signed macOS application is ready: $signed_app"
+    exit 0
+  fi
+fi
 
 node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
   macos "$arch" "$VERSION" "$OUTPUT_DIR"
 notes_path="$OUTPUT_DIR/WeWork_${VERSION}_macos_${arch}.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
+WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
 WEWORK_RELEASE_TARGETS="macos-$arch" \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \
-    internal/minio "minio-$VERSION" "$notes_path"
+    internal/minio "minio-$VERSION" "$notes_path" "$SOURCE_SHA"
 
 if [ "$UPLOAD" = "true" ]; then
+  require_command curl
   upload_artifacts
   verify_uploaded_artifacts
-  echo "Published MinIO Electron and legacy Tauri update channels."
+  echo "Published MinIO $RELEASE_KIND release assets and component update channels."
 else
   echo "Release artifacts are ready in: $OUTPUT_DIR"
 fi

@@ -339,6 +339,141 @@ class TestThrottledTransport:
         # Should have sent immediately due to buffer size
         mock_transport.send.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_tool_argument_coalescing_preserves_every_character_once(self):
+        """Large tool arguments should be compacted without loss or duplication."""
+        mock_transport = AsyncMock(spec=EventTransport)
+        event_type = "response.function_call_arguments.delta"
+        throttled = ThrottledTransport(
+            mock_transport,
+            ThrottleConfig(
+                default_interval=60.0,
+                max_buffer_size=4096,
+                throttled_events={event_type},
+            ),
+        )
+        content = "".join(str(index % 10) for index in range(100_000))
+        chunks = [content[index : index + 97] for index in range(0, len(content), 97)]
+
+        emitted_length = 0
+        for chunk in chunks:
+            emitted_length += len(chunk)
+            await throttled.send(
+                event_type,
+                1,
+                2,
+                {
+                    "item_id": "call_write",
+                    "delta": chunk,
+                    "arguments_summary": {
+                        "file_path": "/tmp/report.md",
+                        "content": {"omitted": True, "length": emitted_length},
+                    },
+                },
+            )
+
+        await throttled.send(
+            "response.function_call_arguments.done",
+            1,
+            2,
+            {
+                "item_id": "call_write",
+                "arguments": "",
+                "arguments_summary": {
+                    "file_path": "/tmp/report.md",
+                    "content": {"omitted": True, "length": len(content)},
+                },
+            },
+        )
+
+        delta_calls = [
+            call
+            for call in mock_transport.send.call_args_list
+            if call.args[0] == event_type
+        ]
+        streamed_content = "".join(call.args[3]["delta"] for call in delta_calls)
+
+        assert streamed_content == content
+        assert len(delta_calls) < len(chunks) // 10
+        assert delta_calls[-1].args[3]["arguments_summary"]["content"]["length"] == len(
+            content
+        )
+        assert mock_transport.send.call_args_list[-1].args[0] == (
+            "response.function_call_arguments.done"
+        )
+
+    @pytest.mark.asyncio
+    async def test_parallel_tool_argument_streams_are_not_merged(self):
+        """Parallel calls must retain independent ordered argument streams."""
+        mock_transport = AsyncMock(spec=EventTransport)
+        event_type = "response.function_call_arguments.delta"
+        throttled = ThrottledTransport(
+            mock_transport,
+            ThrottleConfig(
+                default_interval=60.0,
+                max_buffer_size=100_000,
+                throttled_events={event_type},
+            ),
+        )
+
+        for call_id, delta in [
+            ("call_a", "A1"),
+            ("call_b", "B1"),
+            ("call_a", "A2"),
+            ("call_b", "B2"),
+        ]:
+            await throttled.send(
+                event_type,
+                1,
+                2,
+                {
+                    "item_id": call_id,
+                    "delta": delta,
+                    "arguments_summary": {"call_id": call_id, "latest": delta},
+                },
+            )
+        await throttled.flush_all()
+
+        streamed_by_call = {"call_a": "", "call_b": ""}
+        for transport_call in mock_transport.send.call_args_list:
+            data = transport_call.args[3]
+            streamed_by_call[data["item_id"]] += data["delta"]
+            assert data["arguments_summary"]["call_id"] == data["item_id"]
+
+        assert streamed_by_call == {
+            "call_a": "A1A2",
+            "call_b": "B1B2",
+        }
+
+    @pytest.mark.asyncio
+    async def test_failed_flush_keeps_buffer_for_retry(self):
+        """A failed underlying send must not discard buffered events."""
+        mock_transport = AsyncMock(spec=EventTransport)
+        mock_transport.send.side_effect = RuntimeError("transport failed")
+        event_type = "response.function_call_arguments.delta"
+        throttled = ThrottledTransport(
+            mock_transport,
+            ThrottleConfig(
+                default_interval=60.0,
+                throttled_events={event_type},
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="transport failed"):
+            await throttled.send(
+                event_type,
+                1,
+                2,
+                {"item_id": "call_write", "delta": "payload"},
+            )
+
+        mock_transport.send.side_effect = None
+        mock_transport.reset_mock()
+        await throttled.flush_all()
+
+        mock_transport.send.assert_awaited_once()
+        assert mock_transport.send.await_args.args[3]["delta"] == "payload"
+
 
 class TestRedisTransport:
     """Tests for RedisTransport."""

@@ -3,11 +3,19 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-const [assetsDirectory, outputDirectory, version, channel, repository, releaseTag, notesPath] =
-  process.argv.slice(2)
+const [
+  assetsDirectory,
+  outputDirectory,
+  version,
+  channel,
+  repository,
+  releaseTag,
+  notesPath,
+  sourceSha,
+] = process.argv.slice(2)
 
 if (
   !assetsDirectory ||
@@ -16,14 +24,18 @@ if (
   !channel ||
   !repository ||
   !releaseTag ||
-  !notesPath
+  !notesPath ||
+  !sourceSha
 ) {
   throw new Error(
-    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file>'
+    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file> <source-sha>'
   )
 }
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
+}
+if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
 }
 
 const assets = resolve(assetsDirectory)
@@ -34,10 +46,11 @@ const releaseBaseUrl = (
   process.env.WEWORK_RELEASE_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/${releaseTag}`
 ).replace(/\/+$/, '')
-const componentBaseUrl = (
+const sharedComponentBaseUrl = (
   process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
+const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -159,7 +172,7 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
       contentSha256: component.contentSha256,
       archiveSha256,
       archiveBytes: archive.size,
-      downloadUrl: `${componentBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
     }
   }
@@ -170,6 +183,7 @@ for (const [platform, architecture] of hasComponentRelease ? componentTargets : 
         {
           schemaVersion: 1,
           appVersion: version,
+          sourceSha,
           channel: targetChannel,
           platform,
           arch: architecture,

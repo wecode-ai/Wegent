@@ -349,6 +349,26 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 
 消息区按 `conversationKey` 保存每个任务的阅读位置。任务切换时，恢复流程会在布局稳定窗口内重复对齐已保存的消息锚点；这段时间由程序触发的 `scroll` 事件不能覆盖快照。用户主动滚轮或触摸滚动时则应立即退出恢复状态。修改这条链路时，必须覆盖“滚到长回复中部 → 切到另一任务 → 切回原任务”的真实桌面 E2E，并保留切换前、切换后和恢复后的截图。
 
+## 项目任务状态同步
+
+Wework runtime task 与项目空间任务绑定后，状态同步只保留一条前端主链路：
+
+1. `RuntimeTaskLifecycleStore` 产出当前 runtime task 的生命周期快照。
+2. `WorkbenchProvider` 将快照转换为 `runtimeTaskTrackingStatus`，并调用 `reconcileProjectTaskTrackingStatus`。
+3. `reconcileProjectTaskTrackingStatus` 根据绑定的项目任务当前状态和执行状态计算唯一目标状态，再通过项目空间存储所有者更新任务。
+4. 固定“任务”标签是这条同步链路的唯一 UI 所有者；切换绑定任务时，仍然重新运行同一个 reconciler，不能直接写状态。
+
+运行态映射到 `in_progress`。成功、失败或取消等终态统一映射到 `in_review`，等待用户确认；归档动作也复用同一个 reconciler 完成最终状态收敛。项目自动化工作流由 Backend runtime event projection 维护，前端不能再调用独立状态 PATCH 与其竞争。
+
+以下路径已经废弃，不得恢复：
+
+- renderer 启动时扫描并回放任务状态；
+- Wework、Backend 或 Executor 暴露 `runtime.tasks.status.replay` 一类回放 RPC；
+- 云端工作流由 renderer 调用 `cloud-context/status` 直接写任务状态；
+- 看板、详情页或其他标签根据局部消息、runtime 列表自行补写任务状态。
+
+修改这条链路后，运行 `pnpm --filter wework e2e:desktop -- --segment task-status-sync`。该真实 Electron checkpoint 会绑定固定任务，分别断言运行中任务只出现在“进行中”列，执行结束后只出现在“等待确认”列。
+
 ## 审核结果
 
 - 桌面和移动布局不再直接扫描 `messages` 判断是否 streaming，统一读取 `paneSession.status.isAssistantStreaming`。

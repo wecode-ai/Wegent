@@ -80,10 +80,12 @@ import type {
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
+import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
@@ -98,6 +100,10 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import {
+  resolveAutomaticModel,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
 import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import {
@@ -154,7 +160,7 @@ import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
 import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
-import { requestBoardTaskStatusRecovery } from './taskStatusRecovery'
+import { rememberProjectTaskStore } from '@/features/workbench/projectTaskTracking'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import {
@@ -1670,6 +1676,45 @@ export function CloudTodoWorkspace({
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
   }
+  async function sendBoardTaskMessage(
+    binding: CloudTodoBoardTaskBinding,
+    message: string
+  ): Promise<boolean> {
+    if (!workbench || !selectedProject) return false
+    const address = hydrateRuntimeTaskAddress(runtimeWork, {
+      deviceId: binding.device_id,
+      taskId: binding.task_id,
+    })
+    const scopeKey = getRuntimeTaskChatScopeKey(address)
+    const projectChat = workbench.projectChat
+    const attachmentState = projectChat.attachmentStateByScope[scopeKey]
+    if (attachmentState?.uploadingFiles.size) return false
+
+    const selectedModel =
+      projectChat.getSelectedModel?.() ??
+      projectChat.selectedModel ??
+      resolveAutomaticModel(projectChat.models)
+    const selectedModelOptions =
+      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
+    const selectedAttachments = attachmentState?.attachments ?? []
+    const attachmentIds = remoteAttachmentIds(selectedAttachments)
+    const attachments = localRuntimeAttachments(selectedAttachments)
+    const optimisticUserMessage = createRuntimeUserMessage(message, selectedAttachments)
+    const accepted = await workbench.sendRuntimePaneMessage(
+      {
+        address,
+        message,
+        ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
+        ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      },
+      { optimisticUserMessage }
+    )
+    if (accepted) projectChat.resetAttachmentsForScope(scopeKey)
+    return accepted
+  }
   const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
     if (item.project_store) {
       return projects.find(project =>
@@ -2454,7 +2499,6 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
-    let recoveryRequested = false
     const refreshItems = () => {
       const prepare =
         selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
@@ -2486,15 +2530,6 @@ export function CloudTodoWorkspace({
       void readBoard()
         .then(response => {
           if (!active) return
-          if (!recoveryRequested && services.runtimeWorkApi?.replayRuntimeTaskStatuses) {
-            recoveryRequested = true
-            void requestBoardTaskStatusRecovery({
-              api: services.runtimeWorkApi,
-              projectKey: selectedProjectKey,
-              items: response.items,
-              bindings: response.task_bindings ?? [],
-            })
-          }
           setDingtalkAuthPrompt(false)
           const boardContext = response.task_bindings
             ? {
@@ -2606,7 +2641,6 @@ export function CloudTodoWorkspace({
     runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
-    services.runtimeWorkApi,
   ])
   useEffect(
     () =>
@@ -3411,6 +3445,7 @@ export function CloudTodoWorkspace({
           ? taskComposerRequest.workflowNodeId
           : undefined
       await itemApi.bindTask(latest.id, address, latest.title, workflowNodeId)
+      rememberProjectTaskStore(address, selectedItem.project_store ?? 'backend')
       publishProjectSpaceTaskBindingChanged(address)
       setBoardRefreshNonce(value => value + 1)
       return async () => {
@@ -4622,6 +4657,7 @@ export function CloudTodoWorkspace({
                                       onContinueChangeRequestRepair={
                                         workbench ? continueChangeRequestRepair : undefined
                                       }
+                                      onSendMessage={workbench ? sendBoardTaskMessage : undefined}
                                     />
                                   ))}
                                   {columnItems.length === 0 &&

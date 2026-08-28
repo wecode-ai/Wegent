@@ -994,11 +994,11 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test.each([
-    ['minimax', 'https://api.minimaxi.com/anthropic'],
-    ['minimax-global', 'https://api.minimax.io/anthropic'],
+    ['minimax', 'https://api.minimaxi.com/anthropic', 'https://api.minimaxi.com'],
+    ['minimax-global', 'https://api.minimax.io/anthropic', 'https://api.minimax.io'],
   ] as const)(
     'configures %s through the managed Anthropic-compatible profile',
-    async (providerProfileId, baseUrl) => {
+    async (providerProfileId, baseUrl, modelsBaseUrl) => {
       api.getAllDevices.mockResolvedValue([localDevice()])
       const originalFetch = globalThis.fetch
       const fetchMock = vi.fn().mockResolvedValue(
@@ -1033,8 +1033,8 @@ describe('ConnectionsSettingsPage', () => {
         await userEvent.click(screen.getByTestId('local-model-save-button'))
 
         expect(fetchMock).toHaveBeenCalledWith(
-          `${baseUrl}/v1/models`,
-          expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
+          `${modelsBaseUrl}/v1/models`,
+          expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } })
         )
         const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
         expect(stored[0]).toMatchObject({

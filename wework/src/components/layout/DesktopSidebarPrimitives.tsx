@@ -1,6 +1,6 @@
-import type { LucideIcon } from 'lucide-react'
+import type { LucideProps } from 'lucide-react'
 import { ChevronRight } from 'lucide-react'
-import type { ReactNode } from 'react'
+import type { ComponentType, ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 interface DesktopSidebarHeaderProps {
@@ -29,7 +29,8 @@ export function DesktopSidebarHeader({
 }
 
 interface DesktopSidebarNavItemProps {
-  icon: LucideIcon
+  icon?: ComponentType<LucideProps>
+  iconElement?: ReactNode
   label: string
   onClick: () => void
   selected?: boolean
@@ -39,6 +40,7 @@ interface DesktopSidebarNavItemProps {
 
 export function DesktopSidebarNavItem({
   icon: Icon,
+  iconElement,
   label,
   onClick,
   selected,
@@ -59,7 +61,7 @@ export function DesktopSidebarNavItem({
           : 'text-[rgb(var(--color-sidebar-text-primary))] hover:bg-[rgb(var(--color-sidebar-hover))]'
       )}
     >
-      <Icon className="h-4 w-4 text-current" />
+      {iconElement ?? (Icon ? <Icon className="h-4 w-4 text-current" /> : null)}
       <span>{label}</span>
     </button>
   )

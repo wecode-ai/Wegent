@@ -11,6 +11,12 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
+from minio_release_assets import (
+    load_component_assets,
+    publish_component_assets,
+    publish_component_manifest,
+    publish_immutable_file,
+)
 
 MACOS_PLATFORM_PREFIXES = {
     "darwin-aarch64": "WEWORK_MAC_ARM64_RELEASE_S3_PREFIX",
@@ -241,9 +247,14 @@ def publish_channel(
     output_dir: Path,
     channel: str,
     platform: str,
+    publish_components,
 ) -> bool:
     operating_system, architecture = platform.split("-", 1)
     channel_manifest = output_dir / f"{channel}-{operating_system}-{architecture}.json"
+    component_arch = "arm64" if architecture == "aarch64" else "x64"
+    component_manifest = (
+        output_dir / f"components-{channel}-macos-{component_arch}.json"
+    )
     electron_channel = "latest" if channel == "stable" else "beta"
     electron_manifest = output_dir / f"{electron_channel}-mac.yml"
     if not release_advances_channel(
@@ -251,9 +262,13 @@ def publish_channel(
         bucket,
         manifest_prefix,
         channel_manifest,
-        ((release_prefix, electron_manifest.name),),
+        (
+            (release_prefix, electron_manifest.name),
+            (release_prefix, component_manifest.name),
+        ),
     ):
         return False
+    publish_components()
     upload_electron_manifest(client, bucket, release_prefix, electron_manifest)
     upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
     return True
@@ -337,25 +352,92 @@ def main() -> None:
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/macos")
     manifest_prefix = os.environ.get("WEWORK_UPDATE_MANIFEST_S3_PREFIX", prefix)
     version = require_env("RELEASE_VERSION")
+    source_sha = require_env("RELEASE_SOURCE_SHA")
+    release_kind = os.environ.get("RELEASE_KIND", "full")
+    if release_kind not in {"full", "component"}:
+        raise SystemExit(f"Unsupported Wework release kind: {release_kind}")
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
         raise SystemExit(f"Unsupported Wework update channel: {channel}")
     expected_platforms = set(require_env("UPDATER_PLATFORMS").split(","))
     output_dir = Path(require_env("RELEASE_OUTPUT_DIR"))
+    component_prefix = os.environ.get("WEWORK_COMPONENT_S3_PREFIX", "wework/components")
 
     if not client.bucket_exists(bucket):
         raise SystemExit(f"S3 bucket does not exist: {bucket}")
+
+    platform_details = {
+        "darwin-aarch64": ("macos", "arm64"),
+        "darwin-x86_64": ("macos", "x64"),
+    }
+    component_targets = [platform_details[platform] for platform in expected_platforms]
+    component_assets = []
+    for platform, arch in component_targets:
+        component_assets.extend(
+            load_component_assets(output_dir, platform, arch, version)
+        )
+    publish_component_assets(
+        client,
+        bucket,
+        prefix,
+        component_prefix,
+        component_assets,
+        lambda path, target_prefix: upload_file(
+            client,
+            bucket,
+            target_prefix,
+            path,
+            "public, max-age=31536000, immutable",
+        ),
+    )
+
+    def upload_component_channel(
+        target_channel: str,
+        platform: str,
+        arch: str,
+        component_only: bool,
+        allow_different_app_version: bool,
+    ) -> bool:
+        return publish_component_manifest(
+            client,
+            bucket,
+            prefix,
+            output_dir,
+            target_channel,
+            platform,
+            arch,
+            version,
+            source_sha,
+            component_only,
+            allow_different_app_version,
+            lambda path, target_prefix: upload_file(
+                client, bucket, target_prefix, path, "no-cache, no-store"
+            ),
+        )
+
+    if release_kind == "component":
+        for platform, arch in component_targets:
+            upload_component_channel(channel, platform, arch, True, False)
+            if channel == "stable":
+                upload_component_channel("beta", platform, arch, True, True)
+        return
 
     artifacts = sorted(output_dir.glob(f"WeWork_{version}_*"))
     if not artifacts:
         raise SystemExit(f"No release artifacts found for version {version}")
     for artifact in artifacts:
-        upload_file(
+        publish_immutable_file(
             client,
             bucket,
             prefix,
             artifact,
-            "public, max-age=31536000, immutable",
+            lambda path: upload_file(
+                client,
+                bucket,
+                prefix,
+                path,
+                "public, max-age=31536000, immutable",
+            ),
         )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
@@ -364,6 +446,7 @@ def main() -> None:
 
     stable_advanced = False
     for platform in expected_platforms:
+        component_platform, component_arch = platform_details[platform]
         advanced = publish_channel(
             client,
             bucket,
@@ -372,10 +455,17 @@ def main() -> None:
             output_dir,
             channel,
             platform,
+            lambda: upload_component_channel(
+                channel,
+                component_platform,
+                component_arch,
+                False,
+                False,
+            ),
         )
         if channel == "stable":
             stable_advanced = stable_advanced or advanced
-            publish_channel(
+            beta_advanced = publish_channel(
                 client,
                 bucket,
                 prefix,
@@ -383,6 +473,13 @@ def main() -> None:
                 output_dir,
                 "beta",
                 platform,
+                lambda: upload_component_channel(
+                    "beta",
+                    component_platform,
+                    component_arch,
+                    False,
+                    False,
+                ),
             )
 
     if channel != "stable" or not stable_advanced:

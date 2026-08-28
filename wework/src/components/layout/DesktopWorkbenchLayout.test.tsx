@@ -5949,8 +5949,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    expect(document.body).toHaveAttribute('data-wework-panel-resizing', 'true')
     fireEvent.pointerMove(document, { clientX: 582 })
     fireEvent.pointerUp(document)
+    expect(document.body).not.toHaveAttribute('data-wework-panel-resizing')
 
     expect(content).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })

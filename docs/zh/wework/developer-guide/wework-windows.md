@@ -64,6 +64,19 @@ pnpm --dir wework/electron build:release
 正式安装器、代码签名、Electron YAML 更新清单和旧 Tauri JSON/签名桥接清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
 
+内网 Windows 发布在原生 Windows 主机执行：
+
+```powershell
+bash wework/scripts/build-minio-windows-release.sh `
+  --version <version> `
+  --brand-config wework/branding/weibo.json `
+  --beta `
+  --upload
+```
+
+该脚本与 macOS 内网发布共用品牌配置、完整离线安装包、内容寻址组件资产和 MinIO
+滚动清单规则，不再发布旧 Node/Harness runtime sidecar。
+
 ## 常见问题
 
 - **Electron 找不到 Executor**：确认打包前成功执行 sidecar 准备步骤，并检查产物

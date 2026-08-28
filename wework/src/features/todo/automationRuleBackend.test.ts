@@ -205,6 +205,38 @@ describe('automationRuleBackend', () => {
     expect(input.cronExpression).toBe('30 9 * * 1-5')
   })
 
+  test('uses a standalone conversation when scheduled automation has no project workspace', () => {
+    const rule = uiRule()
+    rule.trigger = {
+      ...rule.trigger,
+      type: 'schedule',
+    }
+    rule.steps = [
+      {
+        ...rule.steps[0],
+        workspacePolicy: 'composer',
+        executionConfig: {
+          agent_id: null,
+          runtime_profile_id: null,
+          execution_device_id: 'device-1',
+          model: 'codex-runtime',
+          model_type: 'runtime',
+          model_options: { reasoning: 'high' },
+          workspace_binding: null,
+        },
+      },
+    ]
+
+    const input = automationInputFromUi(rule, 7)
+    const runtimeWorkflow = input.eventConfig.runtime_workflow_definition as {
+      nodes: Array<{ execution_config: { workspace_binding: { type: string } } }>
+    }
+
+    expect(runtimeWorkflow.nodes[0].execution_config.workspace_binding).toEqual({
+      type: 'standalone',
+    })
+  })
+
   test('persists empty AI dynamic allocation as unconstrained Issue planning', () => {
     const rule = uiRule()
     rule.steps = [

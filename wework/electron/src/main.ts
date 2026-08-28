@@ -1249,11 +1249,8 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
       WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
-      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
-        componentResourcesRoot,
-        'bundled-plugins',
-        'wework-personal'
-      ),
+      WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
+      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(components.bundledPlugins, 'wework-personal'),
       WEGENT_BUNDLED_HOOKS_DIR: join(componentResourcesRoot, 'bundled-hooks'),
       ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
         ? {}
@@ -1263,6 +1260,9 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
+      ...(process.env.DWS_BINARY_PATH?.trim() || !existsSync(components.dws)
+        ? {}
+        : { DWS_BINARY_PATH: components.dws }),
     },
     packageMetadata,
     app.getPath('home')
