@@ -282,11 +282,7 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
       if (disabled) return
 
       const currentValue = getLiveValue()
-      void resolveDataTransferWorkspacePaths(
-        event.dataTransfer,
-        'drop',
-        workspaceTarget?.workspaceSource
-      ).then(transfer =>
+      void resolveDataTransferWorkspacePaths(event.dataTransfer, 'drop').then(transfer =>
         applyWorkspacePathTransfer(currentValue, transfer, handleComposerChange, onFileSelect)
       )
     }
