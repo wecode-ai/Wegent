@@ -44,7 +44,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v6'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -382,7 +382,7 @@ async function buildRuntime(runtime) {
       const destination = path.join(staging, entry.name)
       await mkdir(path.dirname(destination), { recursive: true })
       const content =
-        crossTargetRequested() && entry.name === 'pnpm-workspace.yaml'
+        entry.name === 'pnpm-workspace.yaml'
           ? targetWorkspaceConfiguration(entry.content)
           : entry.content
       await writeFile(destination, content)
