@@ -33,6 +33,9 @@ export default function AigcVideoCard({
   const buttons = useMemo(() => (Array.isArray(data.buttons) ? data.buttons : []), [data.buttons])
   const detailUrl = safeCardUrl(data.link)
   const canOpenPanel = Boolean(detailUrl || previewText)
+  const opensTimeline = detailUrl
+    ? new URL(detailUrl).searchParams.get('openPanel') === 'timeline'
+    : false
   const videoUrl = safeCardUrl(data.video_url)
   const coverUrl = safeCardUrl(data.cover_url)
   const progress = Math.min(100, Math.max(0, Number(card.card_preview_data?.progress) || 0))
@@ -83,20 +86,28 @@ export default function AigcVideoCard({
     [card]
   )
 
-  const openPanel = useCallback(() => {
-    if (!canOpenPanel) return
-    openTaskRightPanel({
-      panelType: 'aigc-video',
-      panelProps: {
-        link: detailUrl || undefined,
-        title,
-        fallbackTaskId: taskId,
-        previewText,
-        buttons,
-        onChatButtonClick,
-      } satisfies AigcVideoPanelPayload,
-    })
-  }, [buttons, canOpenPanel, detailUrl, onChatButtonClick, previewText, taskId, title])
+  const openPanel = useCallback(
+    (autoOpenOpenCut = false) => {
+      if (!canOpenPanel) return
+      openTaskRightPanel({
+        panelType: 'aigc-video',
+        panelProps: {
+          link: detailUrl || undefined,
+          title,
+          fallbackTaskId: taskId,
+          previewText,
+          buttons,
+          onChatButtonClick,
+          autoOpenOpenCut,
+        } satisfies AigcVideoPanelPayload,
+      })
+    },
+    [buttons, canOpenPanel, detailUrl, onChatButtonClick, previewText, taskId, title]
+  )
+
+  const openPanelFromClick = useCallback(() => {
+    openPanel(opensTimeline)
+  }, [openPanel, opensTimeline])
 
   useEffect(() => {
     const previous = previousStatusRef.current
@@ -106,7 +117,7 @@ export default function AigcVideoCard({
       canOpenPanel &&
       !document.querySelector('[data-task-right-panel]')
     ) {
-      openPanel()
+      openPanel(false)
     }
     previousStatusRef.current = card.card_status
   }, [canOpenPanel, card.card_status, openPanel])
@@ -114,7 +125,7 @@ export default function AigcVideoCard({
   const handleButton = async (button: AigcVideoButton) => {
     const buttonId = button.button_id || button.button_name
     if (button.button_type === 'link') {
-      openPanel()
+      openPanelFromClick()
       return
     }
     if (!onChatButtonClick) return
@@ -166,7 +177,7 @@ export default function AigcVideoCard({
         <button
           type="button"
           className="flex min-h-[72px] w-full items-center gap-3 rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:bg-muted/30"
-          onClick={openPanel}
+          onClick={openPanelFromClick}
           data-testid="card-video-director-detail"
         >
           <span className="rounded-lg bg-primary/10 p-2 text-primary">
@@ -233,7 +244,7 @@ export default function AigcVideoCard({
           block={mediaCard}
           taskId={taskId}
           onChatButtonClick={onChatButtonClick}
-          onDetailOpen={openPanel}
+          onDetailOpen={openPanelFromClick}
         />
       ) : (
         compactCard

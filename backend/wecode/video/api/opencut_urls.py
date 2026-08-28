@@ -56,16 +56,22 @@ def create_opencut_urls(
         f"{callback_base}/api/aigc-video/material-video/opencut/save/"
         f"{encoded_session}?token={encoded_token}"
     )
+    bgm_url = (
+        f"{callback_base}/api/aigc-video/material-video/opencut/bgm/"
+        f"{encoded_session}?token={encoded_token}"
+    )
     open_url = (
         f"{_opencut_public_url()}/storycut/import"
         f"?url={quote(import_url, safe='')}"
         f"&returnUrl={quote(return_url, safe='')}"
+        f"&bgmUrl={quote(bgm_url, safe='')}"
         "&embed=wegent"
     )
     return {
         "open_url": open_url,
         "import_url": import_url,
         "return_url": return_url,
+        "bgm_url": bgm_url,
         "token": token,
     }
 

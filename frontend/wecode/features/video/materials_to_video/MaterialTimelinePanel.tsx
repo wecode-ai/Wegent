@@ -22,6 +22,8 @@ import { milliseconds, timelineTracks, updateTrack } from './utils'
 interface MaterialTimelinePanelProps {
   sessionId: string
   onContinue?: (buttonName?: string) => void
+  autoOpenOpenCut?: boolean
+  onOpenCutClose?: () => void
 }
 
 type TimelineTab = 'video' | 'subtitles' | 'music'
@@ -65,7 +67,12 @@ function trackSource(track: TimelineTrack): string {
   )
 }
 
-export function MaterialTimelinePanel({ sessionId, onContinue }: MaterialTimelinePanelProps) {
+export function MaterialTimelinePanel({
+  sessionId,
+  onContinue,
+  autoOpenOpenCut,
+  onOpenCutClose,
+}: MaterialTimelinePanelProps) {
   const { t } = useTranslation('video')
   const { toast } = useToast()
   const [record, setRecord] = useState<MaterialTimelineRecord | null>(null)
@@ -381,6 +388,8 @@ export function MaterialTimelinePanel({ sessionId, onContinue }: MaterialTimelin
           sessionId={sessionId}
           artifactId={record.task_id}
           onSaved={() => void load(false)}
+          autoOpen={autoOpenOpenCut}
+          onDialogClose={autoOpenOpenCut ? onOpenCutClose : undefined}
         />
         <Button
           variant="outline"

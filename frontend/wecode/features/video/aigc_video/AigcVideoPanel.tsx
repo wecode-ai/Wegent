@@ -102,6 +102,7 @@ export interface AigcVideoPanelPayload {
   previewText?: string
   buttons?: AigcVideoButton[]
   onChatButtonClick?: (message: string) => void | Promise<void>
+  autoOpenOpenCut?: boolean
 }
 
 export function parseVideoPanelTarget(link?: string): VideoPanelTarget {
@@ -153,6 +154,7 @@ export function AigcVideoPanel({
     previewText = '',
     buttons = [],
     onChatButtonClick,
+    autoOpenOpenCut = false,
   } = panelProps
   const target = parseVideoPanelTarget(link)
   const taskId = target.taskId ?? fallbackTaskId
@@ -253,6 +255,8 @@ export function AigcVideoPanel({
                 sessionId={sessionId}
                 taskUuid={target.taskUuid}
                 onContinue={onChatButtonClick ? handleContinue : undefined}
+                autoOpenOpenCut={autoOpenOpenCut && target.panel === 'timeline'}
+                onOpenCutClose={autoOpenOpenCut ? onClose : undefined}
               />
             ) : isEntity ? (
               <EntityPanel

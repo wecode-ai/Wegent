@@ -122,6 +122,29 @@ describe('AigcVideoCard', () => {
     window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
   })
 
+  it('requests OpenCut auto-open when the timeline card is clicked', () => {
+    const handleOpen = jest.fn()
+    window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+    render(
+      <AigcVideoCard
+        block={buildCard({
+          card_data: {
+            title: '视频剪辑规划',
+            link: 'http://localhost:3030/chat?taskId=53&openPanel=timeline',
+          },
+        })}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('card-video-director-detail'))
+
+    const event = handleOpen.mock.calls[0][0] as CustomEvent<
+      TaskRightPanelRequest<AigcVideoPanelPayload>
+    >
+    expect(event.detail.panelProps.autoOpenOpenCut).toBe(true)
+    window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+  })
+
   it('sends the workflow action label back to the chat agent', async () => {
     const onChatButtonClick = jest.fn().mockResolvedValue(undefined)
     render(

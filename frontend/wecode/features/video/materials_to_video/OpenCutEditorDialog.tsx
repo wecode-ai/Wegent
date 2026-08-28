@@ -15,15 +15,24 @@ interface OpenCutEditorDialogProps {
   sessionId: string
   artifactId: string
   onSaved?: () => void
+  autoOpen?: boolean
+  onDialogClose?: () => void
 }
 
-export function OpenCutEditorDialog({ sessionId, artifactId, onSaved }: OpenCutEditorDialogProps) {
+export function OpenCutEditorDialog({
+  sessionId,
+  artifactId,
+  onSaved,
+  autoOpen,
+  onDialogClose,
+}: OpenCutEditorDialogProps) {
   const { t } = useTranslation('video')
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [openUrl, setOpenUrl] = useState('')
   const [error, setError] = useState('')
   const requestIdRef = useRef(0)
+  const autoOpenedTargetRef = useRef('')
 
   const closeEditor = useCallback(() => {
     requestIdRef.current += 1
@@ -31,7 +40,8 @@ export function OpenCutEditorDialog({ sessionId, artifactId, onSaved }: OpenCutE
     setLoading(false)
     setOpenUrl('')
     setError('')
-  }, [])
+    onDialogClose?.()
+  }, [onDialogClose])
 
   const openEditor = useCallback(async () => {
     const requestId = requestIdRef.current + 1
@@ -57,6 +67,14 @@ export function OpenCutEditorDialog({ sessionId, artifactId, onSaved }: OpenCutE
       if (requestIdRef.current === requestId) setLoading(false)
     }
   }, [artifactId, sessionId, t])
+
+  useEffect(() => {
+    if (!autoOpen) return
+    const target = `${sessionId}:${artifactId}`
+    if (autoOpenedTargetRef.current === target) return
+    autoOpenedTargetRef.current = target
+    void openEditor()
+  }, [artifactId, autoOpen, openEditor, sessionId])
 
   useEffect(() => {
     if (!open) return
