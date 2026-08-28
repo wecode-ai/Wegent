@@ -109,6 +109,20 @@ If the agent supports skills:
 3. **Press Enter to send** - Or click the send button
 4. **Wait for response** - Agent starts processing and streams results
 
+#### Add Files and Selected Text from the Workspace
+
+In Wework desktop, you can reuse context directly from the right workspace and
+bottom terminal:
+
+- Drag a file or folder from the right file tree into the composer to add it to
+  the current conversation as a workspace path reference.
+- Select text in a file preview, file editor, or terminal to show the **Add to
+  conversation** action beside the selection. Click it to insert the text into
+  the current composer.
+- You can also drag selected text into the composer. The desktop system drag
+  panel appears only after dragging starts and closes when the drag ends or is
+  cancelled.
+
 ---
 
 ## Task Execution Flow

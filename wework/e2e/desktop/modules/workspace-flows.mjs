@@ -927,6 +927,55 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
     'workspace-02-running-task-synchronized.png',
     activeBoardContentSelector
   )
+
+  const boardCardSelector = [
+    `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
+    ':not([data-testid^="cloud-todo-card-task-"])',
+    ':not([data-testid^="cloud-todo-card-more-"])',
+    ':not([data-testid^="cloud-todo-card-archive-"])',
+    ':not([data-testid^="cloud-todo-card-add-child-"])',
+  ].join('')
+  await control.command('markElementWithText', boardCardSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    value: 'running-work-item-card',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'drag',
+    `${activeBoardContentSelector} [data-e2e-anchor-id="running-work-item-card"]`,
+    {
+      target: `${activeBoardContentSelector} [data-testid="cloud-todo-column-dropzone-in_review"]`,
+    }
+  )
+  await control.command('waitFor', reviewColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    'workspace-02a-running-task-stale-review.png',
+    activeBoardContentSelector
+  )
+
+  await reloadMainWindow(
+    control,
+    'The Wework WebView did not reconnect while restoring a running My Tasks Issue'
+  )
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('waitFor', runningColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', reviewColumnSelector),
+    /WEWORK_DESKTOP_E2E_TASK/,
+    'Reloading left the active task Issue in the review column'
+  )
+
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -970,11 +1019,6 @@ async function verifyTrackedTaskSettledStatus(control) {
     await control.command('getText', runningColumnSelector),
     /WEWORK_DESKTOP_E2E_TASK/,
     'The settled task remained in the running column'
-  )
-  await captureVerificationScreenshot(
-    control,
-    'workspace-03-settled-task-synchronized.png',
-    activeBoardContentSelector
   )
 }
 

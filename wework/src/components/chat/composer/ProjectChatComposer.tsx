@@ -36,10 +36,12 @@ import { debugComposerEvent, textMetrics } from './composerDebug'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import type { CloudProject } from '@/api/deliveries'
 import {
+  hasWorkspacePathDragData,
   resolveDataTransferWorkspacePaths,
   resolveStoredWorkspacePaths,
 } from '@/lib/workspace-path-transfer'
 import { mergePopoutWorkspaceProjects } from '@/features/workbench/popoutWorkspaceContext'
+import { hasSelectedTextDragData } from '@/lib/selected-text-drag'
 import type {
   ComposerCloudMentionCandidate,
   ComposerConversationMentionCandidate,
@@ -123,7 +125,11 @@ interface ProjectChatComposerProps {
 }
 
 function hasDraggedFiles(dataTransfer: DataTransfer): boolean {
-  return Array.from(dataTransfer.types).includes('Files')
+  return Array.from(dataTransfer.types).includes('Files') || hasWorkspacePathDragData(dataTransfer)
+}
+
+function hasComposerDragData(dataTransfer: DataTransfer): boolean {
+  return hasDraggedFiles(dataTransfer) || hasSelectedTextDragData(dataTransfer)
 }
 
 export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectChatComposerProps>(
@@ -268,20 +274,26 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     )
 
     const handleDragOver: DragEventHandler<HTMLFormElement> = event => {
-      if (!hasDraggedFiles(event.dataTransfer)) return
+      if (!hasComposerDragData(event.dataTransfer)) return
 
       event.preventDefault()
       event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'
-      setIsDraggingFiles(!disabled)
+      setIsDraggingFiles(!disabled && hasDraggedFiles(event.dataTransfer))
     }
     const handleDrop: DragEventHandler<HTMLFormElement> = event => {
-      if (!hasDraggedFiles(event.dataTransfer)) return
+      if (!hasComposerDragData(event.dataTransfer)) return
 
       event.preventDefault()
       setIsDraggingFiles(false)
       if (disabled) return
 
       const currentValue = getLiveValue()
+      if (hasSelectedTextDragData(event.dataTransfer)) {
+        const text = event.dataTransfer.getData('text/plain')
+        if (!text) return
+        handleComposerChange(currentValue ? `${currentValue}\n${text}` : text)
+        return
+      }
       void resolveDataTransferWorkspacePaths(event.dataTransfer, 'drop').then(transfer =>
         applyWorkspacePathTransfer(currentValue, transfer, handleComposerChange, onFileSelect)
       )

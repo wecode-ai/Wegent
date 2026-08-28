@@ -10,6 +10,8 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -1526,6 +1528,71 @@ describe('ChatInput', () => {
     })
 
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([imageFile]))
+  })
+
+  test('adds workspace files dragged from the right sidebar as path references', async () => {
+    const onChange = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    fireEvent.drop(screen.getByTestId('chat-message-input'), {
+      dataTransfer: {
+        types: [WORKSPACE_PATH_DRAG_TYPE],
+        files: [],
+        getData: (type: string) =>
+          type === WORKSPACE_PATH_DRAG_TYPE
+            ? JSON.stringify([
+                {
+                  path: '/workspace/project/docs/requirements.md',
+                  isDirectory: false,
+                },
+              ])
+            : '',
+      },
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-path-chip-requirements-md')).toHaveAttribute(
+        'data-composer-path',
+        '/workspace/project/docs/requirements.md'
+      )
+    )
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('requirements.md'))
+  })
+
+  test('accepts selected workspace text dragged into the desktop composer', () => {
+    const onChange = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    const composer = screen.getByTestId('project-chat-composer-form')
+    const dataTransfer = {
+      types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+      dropEffect: 'none',
+      getData: (type: string) =>
+        type === 'text/plain' ? 'export const selectedTextDrag = true' : 'true',
+    }
+    fireEvent.dragOver(composer, { dataTransfer })
+    expect(dataTransfer.dropEffect).toBe('copy')
+    fireEvent.drop(composer, { dataTransfer })
+
+    expect(onChange).toHaveBeenCalledWith('export const selectedTextDrag = true')
   })
 
   test('highlights the desktop composer while files are dragged over it', () => {

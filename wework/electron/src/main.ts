@@ -129,6 +129,8 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
+let pendingSystemDragWindow: BrowserWindow | null = null
+let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
@@ -479,13 +481,20 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   }
 })
 
+function disposeSystemDragWindow(): void {
+  systemDragWindow?.destroy()
+  pendingSystemDragWindow?.destroy()
+  systemDragWindow = null
+  pendingSystemDragWindow = null
+  systemDragWindowCreationPromise = null
+}
+
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -578,11 +587,23 @@ async function ensureAuxiliaryWindow(
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
   if (existing && !existing.isDestroyed()) return existing
+  if (kind === 'system-drag-panel' && systemDragWindowCreationPromise) {
+    return systemDragWindowCreationPromise
+  }
   if (kind === 'popout-window' && popoutWindowCreationPromise) {
     return popoutWindowCreationPromise
   }
   const creationPromise = createAuxiliaryWindow(kind)
-  if (kind === 'system-drag-panel') return creationPromise
+  if (kind === 'system-drag-panel') {
+    systemDragWindowCreationPromise = creationPromise
+    try {
+      return await creationPromise
+    } finally {
+      if (systemDragWindowCreationPromise === creationPromise) {
+        systemDragWindowCreationPromise = null
+      }
+    }
+  }
   popoutWindowCreationPromise = creationPromise
   try {
     return await creationPromise
@@ -605,6 +626,9 @@ async function createAuxiliaryWindow(
   const auxiliaryWindow = new BrowserWindow({
     width: isSystemDrag ? 440 : 470,
     height: isSystemDrag ? 60 : 112,
+    parent: isSystemDrag
+      ? (BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined)
+      : undefined,
     resizable: false,
     frame: false,
     transparent: true,
@@ -612,6 +636,7 @@ async function createAuxiliaryWindow(
     alwaysOnTop: true,
     skipTaskbar: isSystemDrag,
     show: false,
+    type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
       backgroundThrottling: false,
@@ -621,6 +646,7 @@ async function createAuxiliaryWindow(
       sandbox: true,
     },
   })
+  if (isSystemDrag) pendingSystemDragWindow = auxiliaryWindow
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
@@ -635,8 +661,10 @@ async function createAuxiliaryWindow(
     console.error('[auxiliary-window] renderer process exited', { kind, ...details })
   })
   auxiliaryWindow.on('closed', () => {
-    if (kind === 'system-drag-panel') systemDragWindow = null
-    else {
+    if (kind === 'system-drag-panel') {
+      if (systemDragWindow === auxiliaryWindow) systemDragWindow = null
+      if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
+    } else {
       if (popoutWindow === auxiliaryWindow) popoutWindow = null
       if (popoutWindowReadyPromise === readinessPromise) {
         popoutWindowReadyPromise = null
@@ -649,6 +677,15 @@ async function createAuxiliaryWindow(
       extraHeaders: `X-Wework-Window-Label: ${kind}`,
     })
     if (isSystemDrag) {
+      readinessPromise = waitForRendererSelector(
+        auxiliaryWindow.webContents,
+        '[data-testid="system-drag-panel"]'
+      )
+      await readinessPromise
+      if (pendingSystemDragWindow !== auxiliaryWindow || auxiliaryWindow.isDestroyed()) {
+        throw new Error('System drag panel creation was disposed')
+      }
+      pendingSystemDragWindow = null
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
@@ -663,6 +700,7 @@ async function createAuxiliaryWindow(
     }
     return auxiliaryWindow
   } catch (error) {
+    if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
@@ -670,10 +708,22 @@ async function createAuxiliaryWindow(
 
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
+  const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (owner && owner !== target && target.getParentWindow() !== owner) {
+    target.setParentWindow(owner)
+  }
+  target.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'darwin') {
+    target.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    })
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const x = Math.round(display.workArea.x + (display.workArea.width - 440) / 2)
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
+  target.moveTop()
 }
 
 async function showPopoutWindow(): Promise<void> {
@@ -981,8 +1031,7 @@ async function shutdown(): Promise<void> {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1172,7 +1221,10 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel,
+          showSystemDragPanel: () =>
+            showSystemDragPanel().catch(error => {
+              console.error('Failed to show system drag panel:', error)
+            }),
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()

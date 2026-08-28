@@ -3,6 +3,7 @@ import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } fr
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { readWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 
 type DropAction = 'new-chat' | 'follow-up' | 'stash'
 type DropStatus = { kind: 'success' | 'error'; action: DropAction } | null
@@ -56,15 +57,16 @@ export function SystemDragPanel() {
 
   const handleTextDrop = (action: DropAction, event: DragEvent<HTMLDivElement>) => {
     const text = event.dataTransfer.getData('text/plain').trim()
+    const paths = readWorkspacePathDragData(event.dataTransfer)?.map(entry => entry.path) ?? []
     event.preventDefault()
     setActiveAction(action)
-    if (!text) return
-    const key = `${action}:${text}`
+    if (!text && paths.length === 0) return
+    const key = `${action}:${text}:${paths.join('\0')}`
     const now = performance.timeOrigin + event.timeStamp
     const previous = lastTextDropRef.current
     if (previous?.key === key && now - previous.timestamp < DROP_DEDUP_WINDOW_MS) return
     lastTextDropRef.current = { key, timestamp: now }
-    void complete(action, text, [])
+    void complete(action, text || null, paths)
   }
 
   const zones = [
@@ -141,6 +143,7 @@ export function SystemDragPanel() {
                     className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2 after:h-[calc(100%-1rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-text-primary/15 bg-muted shadow-sm' : 'border-transparent'}`}
                     onDragOver={event => {
                       event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
                       setActiveAction(action)
                     }}
                     onDrop={event => handleTextDrop(action, event)}

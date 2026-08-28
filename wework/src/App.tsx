@@ -433,7 +433,6 @@ export function WorkspaceTabSurface({
                 isElectronRuntime() &&
                 getDesktopWindowLabel() === 'main'
               }
-              syncProjectTaskTracking={tab.fixed && tab.kind === 'task'}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -618,7 +617,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           services={services}
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
-          syncProjectTaskTracking={false}
         >
           {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
