@@ -3918,7 +3918,12 @@ last_updated = "2026-07-30T00:00:00Z"`
     await stopDesktopAppProcess(app)
     await control.close()
     await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, { recursive: true, force: true })
+    await rm(codexSqliteHome, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 20 : 0,
+      retryDelay: 100,
+    })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }

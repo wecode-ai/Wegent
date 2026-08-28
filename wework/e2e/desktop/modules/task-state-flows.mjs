@@ -39,7 +39,7 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
-const PRIORITY_FILTER_SHORTCUT = process.platform === 'darwin' ? 'Meta+Alt+U' : 'Control+Alt+U'
+const PRIORITY_FILTER_SHORTCUT = process.platform === 'win32' ? 'Control+Alt+U' : 'Meta+Alt+U'
 
 async function verifyPriorityFilter({ composerSelector, control }) {
   let requestInputResponseReleased = false

@@ -232,6 +232,7 @@ class RealCloudEnvironment {
   }
 
   async startBackend() {
+    const backendDirectory = join(repoDir, 'backend')
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -264,7 +265,6 @@ class RealCloudEnvironment {
       CHAT_SHELL_URL: this.modelServerUrl,
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
-      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
       ...remoteDeviceE2EExtension.backendEnv,
       DB_AUTO_MIGRATE: 'false',
@@ -277,14 +277,32 @@ class RealCloudEnvironment {
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
-      cwd: join(repoDir, 'backend'),
+      cwd: backendDirectory,
       env: backendEnv,
     })
+    const backendPython =
+      process.platform === 'win32'
+        ? join(backendDirectory, '.venv', 'Scripts', 'python.exe')
+        : join(backendDirectory, '.venv', 'bin', 'python')
+    assert.equal(
+      await pathExists(backendPython),
+      true,
+      `Real cloud backend Python is missing after migration: ${backendPython}`
+    )
     this.backend = spawn(
-      'uv',
-      ['run', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.backendPort)],
+      backendPython,
+      [
+        '-u',
+        '-m',
+        'uvicorn',
+        'app.main:app',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(this.backendPort),
+      ],
       {
-        cwd: join(repoDir, 'backend'),
+        cwd: backendDirectory,
         env: backendEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       }
