@@ -23,7 +23,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
-from shared.models import ExecutionRequest, OpenAIRequestConverter, ResponsesAPIEmitter
+from shared.models import (
+    ExecutionRequest,
+    OpenAIRequestConverter,
+    ResponsesAPIEmitter,
+    ThrottleConfig,
+    ThrottledTransport,
+)
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 
@@ -31,6 +37,8 @@ router = APIRouter(prefix="/v1", tags=["responses"])
 logger = logging.getLogger(__name__)
 
 _start_time = time.time()
+TOOL_ARGUMENT_DELTA_FLUSH_INTERVAL_SECONDS = 0.5
+TOOL_ARGUMENT_DELTA_MAX_BUFFER_SIZE = 4096
 
 
 # ============================================================
@@ -80,6 +88,32 @@ class SSETransport(EventTransport):
     def is_done(self) -> bool:
         """Check if transport is done and queue is empty."""
         return self._done and self._queue.empty()
+
+
+def _create_sse_emitter(
+    *,
+    task_id: int,
+    subtask_id: int,
+    model: str,
+    transport: SSETransport,
+) -> ResponsesAPIEmitter:
+    """Create an emitter that coalesces streamed tool argument deltas."""
+    throttled_transport = ThrottledTransport(
+        transport,
+        ThrottleConfig(
+            default_interval=TOOL_ARGUMENT_DELTA_FLUSH_INTERVAL_SECONDS,
+            max_buffer_size=TOOL_ARGUMENT_DELTA_MAX_BUFFER_SIZE,
+            throttled_events={
+                ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value
+            },
+        ),
+    )
+    return ResponsesAPIEmitter(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        transport=throttled_transport,
+        model=model,
+    )
 
 
 # ============================================================
@@ -348,11 +382,11 @@ async def _stream_response(
 
     # Create SSE transport and emitter
     transport = SSETransport()
-    emitter = ResponsesAPIEmitter(
+    emitter = _create_sse_emitter(
         task_id=task_id,
         subtask_id=subtask_id,
-        transport=transport,
         model=request.model,
+        transport=transport,
     )
 
     # Convert OpenAI format to ExecutionRequest
