@@ -35,6 +35,8 @@ const [executorPath] = await Promise.all([
   configuredExecutorPath
     ? Promise.resolve(resolve(configuredExecutorPath))
     : buildExecutor(executorProfile),
+  run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot),
+  run(pnpmCommand, ['prepare:dws'], weworkRoot),
   run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
   buildDshApp(),
 ])

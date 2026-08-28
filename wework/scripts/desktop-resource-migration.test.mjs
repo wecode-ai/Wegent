@@ -39,6 +39,9 @@ describe('desktop resource migration', () => {
       'node scripts/prepare-ai-verify-electron.mjs'
     )
     expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['build:release']).toBe(
+      'pnpm run prepare:electron && pnpm --dir electron build:release'
+    )
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
     expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
     expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
@@ -100,6 +103,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain("profile === 'release' ? ['--release'] : []")
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
+    expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
     expect(source).toContain("path: 'bundled-plugins'")
     expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
@@ -189,6 +194,8 @@ describe('desktop resource migration', () => {
 
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('electronInstallScript')
+    expect(source).not.toContain("['run', 'prepare:codex']")
+    expect(source).not.toContain("['run', 'prepare:dws']")
     expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
     expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
