@@ -1148,7 +1148,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
+      const managedAppCard = `${activeWorkspaceContentSelector} [data-testid="smart-app-created-item-${INSTALLATION_ID}"]`
+      const managedAppOpen = `${managedAppCard} [data-testid="harness-app-open-${INSTALLATION_ID}"]`
+      const managedAppStart = `${managedAppCard} [data-testid="harness-app-start-${INSTALLATION_ID}"]`
+      const managedAppActions = `${managedAppCard} [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
+      await control.command('waitFor', managedAppOpen, {
         timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(control, 'harness-apps-09-running.png', 'body')
@@ -1160,7 +1164,13 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         uiTimeoutMs,
         'Closing a running Harness app tab left its app surface mounted'
       )
-      await control.command('click', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`)
+      await control.command('waitFor', managedAppStart, {
+        enabled: true,
+        timeoutMs: 30_000,
+      })
+      await control.command('clickWhenEnabled', managedAppStart, {
+        timeoutMs: 30_000,
+      })
       await control.command('waitFor', appSurface, {
         timeoutMs: 30_000,
       })
@@ -1177,10 +1187,11 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
           timeoutMs: uiTimeoutMs,
         }
       )
-      await control.command(
-        'click',
-        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
-      )
+      await control.command('waitFor', managedAppOpen, {
+        visible: true,
+        timeoutMs: 30_000,
+      })
+      await control.command('click', managedAppActions)
       await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })
@@ -1241,13 +1252,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
       })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
       await control.command('click', '[data-testid="smart-apps-section-owned"]')
-      await control.command('waitFor', `[data-testid="harness-app-open-${INSTALLATION_ID}"]`, {
+      await control.command('waitFor', managedAppOpen, {
         timeoutMs: uiTimeoutMs,
       })
-      await control.command(
-        'click',
-        `[data-testid="smart-app-created-item-${INSTALLATION_ID}"]:has([data-testid="harness-app-open-${INSTALLATION_ID}"]) [data-testid="smart-app-actions-${INSTALLATION_ID}"]`
-      )
+      await control.command('click', managedAppActions)
       await control.command('waitFor', `[data-testid="smart-app-stop-menu-${INSTALLATION_ID}"]`, {
         timeoutMs: uiTimeoutMs,
       })

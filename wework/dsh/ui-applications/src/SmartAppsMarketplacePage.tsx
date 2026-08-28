@@ -56,6 +56,11 @@ import {
   type SmartAppDevelopmentInput,
 } from '@/features/harness-apps/SmartAppDevelopmentDialog'
 import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
+import {
+  HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
+  notifyHarnessAppInstallationsChanged,
+  type HarnessAppInstallationsChangedDetail,
+} from '@/features/harness-apps/harnessAppInstallationsChanged'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
@@ -89,17 +94,6 @@ interface OwnedSmartAppCard {
 // Keep successful local removals authoritative across route remounts. A new install
 // of the same package clears the marker below.
 const locallyRemovedInstallationIds = new Set<string>()
-const HARNESS_APP_INSTALLATIONS_CHANGED_EVENT = 'wework:harness-app-installations-changed'
-
-interface HarnessAppInstallationsChangedDetail {
-  type: 'installed' | 'removed' | 'restored'
-  installationId: string
-  installation?: HarnessAppInstallation
-}
-
-function notifyHarnessAppInstallationsChanged(detail: HarnessAppInstallationsChangedDetail) {
-  window.dispatchEvent(new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, { detail }))
-}
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
@@ -383,6 +377,16 @@ export function SmartAppsMarketplacePage({
         setInstalled(current => current.filter(item => item.id !== detail.installationId))
         return
       }
+      if (detail.type === 'stopped') {
+        setInstalled(current =>
+          current.map(item =>
+            item.id === detail.installationId
+              ? { ...item, state: 'installed', webUrl: null, error: null }
+              : item
+          )
+        )
+        return
+      }
 
       locallyRemovedInstallationIds.delete(detail.installationId)
       setRemovedInstallationIds(current => {
@@ -390,12 +394,10 @@ export function SmartAppsMarketplacePage({
         next.delete(detail.installationId)
         return next
       })
-      if (detail.installation) {
-        setInstalled(current => [
-          ...current.filter(item => item.id !== detail.installationId),
-          detail.installation as HarnessAppInstallation,
-        ])
-      }
+      setInstalled(current => [
+        ...current.filter(item => item.id !== detail.installationId),
+        detail.installation,
+      ])
     }
     window.addEventListener(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, syncLocalInstallationChange)
     return () =>

@@ -947,6 +947,7 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
       target: `${activeBoardContentSelector} [data-testid="cloud-todo-column-dropzone-in_review"]`,
     }
   )
+  await control.command('scrollIntoView', reviewColumnSelector)
   await control.command('waitFor', reviewColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,

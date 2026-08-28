@@ -828,6 +828,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     const configureExecution = `${activeBoard} [data-testid="cloud-todo-card-configure-execution-${inheritedWorkflowIssue.id}"]`
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
@@ -859,6 +860,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The execution configuration dialog did not close',
       uiTimeoutMs
     )
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
