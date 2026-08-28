@@ -28,8 +28,12 @@ test('rejects an explicit non-Node runtime instead of silently falling back', ()
 
 test('fails when no plain Node.js runtime is available', () => {
   expect(() =>
-    resolveNodeRuntime({
-      PATH: ['/missing/one', '/missing/two'].join(delimiter),
-    })
+    resolveNodeRuntime(
+      {
+        PATH: ['/missing/one', '/missing/two'].join(delimiter),
+      },
+      process.platform,
+      '/missing/current-node'
+    )
   ).toThrow('A plain Node.js runtime is required')
 })

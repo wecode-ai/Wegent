@@ -2,7 +2,11 @@ const { existsSync } = require('node:fs')
 const { delimiter, join } = require('node:path')
 const { spawnSync } = require('node:child_process')
 
-function resolveNodeRuntime(environment = process.env, platform = process.platform) {
+function resolveNodeRuntime(
+  environment = process.env,
+  platform = process.platform,
+  currentExecutable = process.execPath
+) {
   const configured = environment.WEWORK_NODE_BINARY?.trim()
   if (configured) {
     if (isPlainNodeRuntime(configured, environment)) return configured
@@ -11,7 +15,7 @@ function resolveNodeRuntime(environment = process.env, platform = process.platfo
 
   const executableName = platform === 'win32' ? 'node.exe' : 'node'
   const candidates = [
-    process.execPath,
+    currentExecutable,
     ...(environment.PATH || '')
       .split(delimiter)
       .filter(Boolean)
