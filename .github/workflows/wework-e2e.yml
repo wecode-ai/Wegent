@@ -470,6 +470,7 @@ jobs:
           test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
+          test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
@@ -527,6 +528,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+          include-hidden-files: true
 
       - name: Upload Windows Redis E2E tools
         uses: actions/upload-artifact@v4
@@ -633,6 +635,7 @@ jobs:
           test -f "$WEWORK_E2E_APP_BIN"
           test -f "$WEWORK_E2E_EXECUTOR_BIN"
           test -f "$WEWORK_E2E_CODEX_BIN"
+          test -f "$(dirname "$WEWORK_E2E_APP_BIN")/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$WEWORK_E2E_SEGMENTS"
 
