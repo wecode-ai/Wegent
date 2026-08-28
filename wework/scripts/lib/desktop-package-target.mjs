@@ -41,3 +41,7 @@ export function resolveDesktopPackageTargets(
     dwsTarget: explicitTargets.dwsTarget || derivedTarget,
   }
 }
+
+export function targetExecutableName(target, name) {
+  return target.includes('windows') ? `${name}.exe` : name
+}

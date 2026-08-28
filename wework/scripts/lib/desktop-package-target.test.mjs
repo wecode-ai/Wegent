@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { resolveDesktopPackageTargets } from './desktop-package-target.mjs'
+import { resolveDesktopPackageTargets, targetExecutableName } from './desktop-package-target.mjs'
 
 describe('resolveDesktopPackageTargets', () => {
   test.each([
@@ -74,5 +74,19 @@ describe('resolveDesktopPackageTargets', () => {
         WEWORK_RELEASE_PLATFORM: 'windows',
       })
     ).toThrow('Unsupported Wework package target: win32-arm64')
+  })
+
+  test('uses target-specific executable names when the host platform differs', () => {
+    const targets = resolveDesktopPackageTargets(
+      {
+        WEWORK_RELEASE_ARCH: 'x64',
+        WEWORK_RELEASE_PLATFORM: 'windows',
+      },
+      { platform: 'darwin', arch: 'arm64' }
+    )
+
+    expect(targetExecutableName(targets.cargoTarget, 'wegent-executor')).toBe('wegent-executor.exe')
+    expect(targetExecutableName(targets.dwsTarget, 'dws')).toBe('dws.exe')
+    expect(targetExecutableName('aarch64-apple-darwin', 'dws')).toBe('dws')
   })
 })

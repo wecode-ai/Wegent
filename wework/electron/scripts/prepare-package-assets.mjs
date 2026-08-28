@@ -7,7 +7,10 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
-import { resolveDesktopPackageTargets } from '../../scripts/lib/desktop-package-target.mjs'
+import {
+  resolveDesktopPackageTargets,
+  targetExecutableName,
+} from '../../scripts/lib/desktop-package-target.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -87,16 +90,17 @@ const codexTarget = packageTargets.codexTarget
 const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
 const codexResources = join(resourcesRoot, 'codex')
 await cp(codexSource, codexResources, { recursive: true })
-const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-executor')
 const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 const executorSha256 = await sha256(packagedExecutor)
-const dwsName = process.platform === 'win32' ? 'dws.exe' : 'dws'
+const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
-const dwsSourceName = `dws-${packageTargets.dwsTarget}${
-  packageTargets.dwsTarget.includes('windows') ? '.exe' : ''
-}`
+const dwsSourceName = targetExecutableName(
+  packageTargets.dwsTarget,
+  `dws-${packageTargets.dwsTarget}`
+)
 await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
 if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
 const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
@@ -243,7 +247,7 @@ async function buildExecutor(profile, target) {
     metadata.target_directory,
     ...(target ? [target] : []),
     profile,
-    process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+    targetExecutableName(target, 'wegent-executor')
   )
 }
 
