@@ -422,10 +422,12 @@ describe('CloudTodoBoardCard', () => {
     const fullResponse = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
     expect(fullResponse).toHaveTextContent('第一行：完成布局')
     expect(fullResponse).toHaveTextContent('第六行：等待确认')
-    expect(fullResponse).toHaveClass('max-h-72', 'overflow-hidden')
+    expect(fullResponse).toHaveClass('max-h-[min(68vh,42rem)]', 'overflow-hidden')
   })
 
-  it('keeps repeated task text out of the card and makes the hover preview read-only', async () => {
+  it('keeps repeated task text out of the card and restores the full hover conversation', async () => {
+    const onSendMessage = vi.fn(async () => true)
+
     render(
       <CloudTodoBoardCard
         item={{ ...item, description: 'This description must be hidden from the card' }}
@@ -455,6 +457,7 @@ describe('CloudTodoBoardCard', () => {
           showTags: false,
           showDate: false,
         }}
+        onSendMessage={onSendMessage}
       />
     )
 
@@ -466,14 +469,29 @@ describe('CloudTodoBoardCard', () => {
 
     fireEvent.mouseEnter(card)
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
-    expect(popup).toHaveClass('w-[400px]', 'overflow-hidden')
-    expect(popup).toHaveAttribute('role', 'tooltip')
+    expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
+    expect(popup).toHaveAttribute('role', 'dialog')
     expect(popup).toHaveTextContent('Fix the board popup')
     expect(popup).toHaveTextContent('Verify the hover behavior')
-    expect(screen.queryByTestId('cloud-todo-card-popup-input-WEG-85-86')).not.toBeInTheDocument()
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-task-WEG-85-86'))
+    expect(screen.queryByText('Fix the board popup')).not.toBeInTheDocument()
+    expect(screen.getByText('Verify the hover behavior')).toBeInTheDocument()
+
+    const input = screen.getByTestId('cloud-todo-card-popup-input-WEG-85-86')
+    const composer = screen.getByTestId('project-chat-composer-form')
+    expect(composer).toHaveAttribute('data-short-expanded', 'false')
+    fireEvent.click(input)
+    expect(composer).toHaveAttribute('data-short-expanded', 'true')
+
+    await userEvent.type(input, '继续检查 hover 交互{enter}')
+    expect(onSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 86, task_id: 'task-86' }),
+      '继续检查 hover 交互'
+    )
   })
 
-  it('shows only the latest user and assistant round in the read-only preview', async () => {
+  it('shows the latest user and assistant round first, then loads older transcript pages', async () => {
     const loadRuntimeTranscriptForPane = vi.fn(
       async (
         _address,
@@ -550,13 +568,25 @@ describe('CloudTodoBoardCard', () => {
     expect(await popupQueries.findByText('最新一轮用户消息')).toBeInTheDocument()
     expect(popupQueries.getByText('最新一轮 AI 回复')).toBeInTheDocument()
     expect(popupQueries.queryByText('上一轮用户消息')).not.toBeInTheDocument()
+
+    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
     expect(
-      popupQueries.queryByTestId('load-older-runtime-transcript-button')
+      popupQueries.queryByTestId('cloud-todo-card-progress-popup-WEG-85-close')
     ).not.toBeInTheDocument()
-    expect(loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
+    expect((await popupQueries.findAllByText('上一轮用户消息')).length).toBeGreaterThan(0)
+    expect(popupQueries.getAllByText('上一轮 AI 回复').length).toBeGreaterThan(0)
+
+    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
+    expect((await popupQueries.findAllByText('最早一轮用户消息')).length).toBeGreaterThan(0)
+    expect(popupQueries.getAllByText('最早一轮 AI 回复').length).toBeGreaterThan(0)
+    expect(loadRuntimeTranscriptForPane).toHaveBeenCalledTimes(1)
+    expect(loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(
+      expect.objectContaining({ deviceId: 'local', taskId: 'task-history' }),
+      { limit: 50, beforeCursor: 'older-page' }
+    )
   })
 
-  it('shows fallback conversation without interactive history controls before prefetch completes', async () => {
+  it('shows fallback conversation and the loading-older control before prefetch completes', async () => {
     const loadRuntimeTranscriptForPane = vi.fn()
     const workbench = {
       state: {
@@ -599,9 +629,7 @@ describe('CloudTodoBoardCard', () => {
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveTextContent('立即显示的用户消息')
     expect(popup).toHaveTextContent('立即显示的 AI 回复')
-    expect(
-      within(popup).queryByTestId('load-older-runtime-transcript-button')
-    ).not.toBeInTheDocument()
+    expect(within(popup).getByTestId('load-older-runtime-transcript-button')).toBeDisabled()
     expect(loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 })

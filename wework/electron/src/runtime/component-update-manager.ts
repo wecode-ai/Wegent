@@ -6,7 +6,14 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 
-export const MANAGED_COMPONENT_IDS = ['coreDsh', 'weworkCorePlugins', 'executor', 'codex'] as const
+export const MANAGED_COMPONENT_IDS = [
+  'coreDsh',
+  'weworkCorePlugins',
+  'bundledPlugins',
+  'executor',
+  'codex',
+  'dws',
+] as const
 
 export type ManagedComponentId = (typeof MANAGED_COMPONENT_IDS)[number]
 
@@ -57,8 +64,10 @@ interface ComponentState {
 export interface ComponentPaths {
   coreDsh: string
   weworkCorePlugins: string
+  bundledPlugins: string
   executor: string
   codex: string
+  dws: string
 }
 
 export interface ComponentUpdateManagerOptions {

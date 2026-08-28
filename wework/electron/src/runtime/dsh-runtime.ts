@@ -14,6 +14,7 @@ export interface DshRuntimeOptions {
   logDirectory?: string
   logFileName?: string
   hostPipe?: HostPipeServer
+  startTimeoutMs?: number
 }
 
 export class DshRuntime {
@@ -35,6 +36,7 @@ export class DshRuntime {
               }
             : {}),
           ...(options.hostPipe ? { extraPipeCount: 2 } : {}),
+          startTimeoutMs: options.startTimeoutMs,
           probe: (_child, signal) => waitForHttpEndpoints(runtimeProbeUrls(options), signal),
         })
       : null

@@ -83,6 +83,12 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain("path: 'bundled-plugins'")
+    expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
+    expect(source).toContain('version: weworkRuntimeVersion')
+    expect(source).toContain('sourceSha,')
+    expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
@@ -165,6 +171,8 @@ describe('desktop resource migration', () => {
 
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('electronInstallScript')
+    expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
+    expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
 
   test.each([
