@@ -17,6 +17,10 @@ import { flushSync } from 'react-dom'
 import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
+import {
+  isAbsoluteWorkspacePath,
+  normalizeAbsoluteWorkspacePath,
+} from '@/lib/workspace-file-contract'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import {
@@ -127,7 +131,13 @@ function mimeTypeForFileName(name: string): string {
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
   const normalizedPath = decodeMarkdownFilePath(path.trim()).replace(/\\/g, '/')
   if (!normalizedPath) return null
-  if (normalizedPath.startsWith('/')) return normalizedPath
+  if (isAbsoluteWorkspacePath(normalizedPath)) {
+    try {
+      return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
+    } catch {
+      return null
+    }
+  }
 
   const segments: string[] = []
   for (const segment of normalizedPath.split('/')) {
@@ -137,7 +147,7 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
   }
   if (segments.length === 0) return null
 
-  const root = target.path.replace(/\/+$/, '') || '/'
+  const root = target.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
   const child = segments.join('/')
   return root === '/' ? `/${child}` : `${root}/${child}`
 }

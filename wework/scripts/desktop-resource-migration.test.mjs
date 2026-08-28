@@ -12,6 +12,7 @@ const scripts = [
   'electron/scripts/prepare-package-assets.mjs',
   'scripts/dev-mac-app.sh',
   'scripts/dev-windows-app.ps1',
+  'scripts/build-ai-verify-electron.mjs',
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
@@ -27,6 +28,10 @@ describe('desktop resource migration', () => {
       join(weworkRoot, 'scripts/dev-wework-app-watch.mjs'),
       'utf8'
     )
+    const aiVerifyBuildScript = await readFile(
+      join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'),
+      'utf8'
+    )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe(
@@ -38,10 +43,18 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['ai:verify:electron:prepare']).toBe(
       'node scripts/prepare-ai-verify-electron.mjs'
     )
-    expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['ai:verify:electron:build']).toBe(
+      'node scripts/build-ai-verify-electron.mjs'
+    )
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
+    expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
+    expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
     expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
-    expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
+    expect(aiVerifyBuildScript).not.toContain("['run', 'build:dsh-app']")
     expect(packageJson.scripts['build:dsh-app']).toBe(
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'
     )

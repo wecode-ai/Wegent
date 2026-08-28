@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
+import { createWorkspaceTreeModel } from './workspaceFileTreeModel'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
 function createFileEntry(index: number): WorkspaceFileEntry {
@@ -66,5 +67,27 @@ describe('WorkspaceFileTree', () => {
     )
 
     expect(await screen.findByTestId('workspace-file-tree-pierre')).toBeInTheDocument()
+  })
+
+  test('renders Windows entries relative to the workspace root', async () => {
+    const model = createWorkspaceTreeModel({
+      rootPath: String.raw`c:\work\Wegent`,
+      activeDirectoryPath: String.raw`c:\work\Wegent`,
+      entriesByPath: {
+        [String.raw`C:\work\Wegent`]: [
+          {
+            name: 'src',
+            path: String.raw`C:\work\Wegent\src`,
+            isDirectory: true,
+            size: 0,
+            modifiedAt: null,
+          },
+        ],
+      },
+      expandedPaths: new Set(),
+      selectedPath: null,
+    })
+
+    expect(model.paths).toEqual(['src/'])
   })
 })
