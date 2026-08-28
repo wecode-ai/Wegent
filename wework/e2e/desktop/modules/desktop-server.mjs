@@ -238,6 +238,8 @@ const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
 const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
 const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
+const EMBEDDED_BROWSER_SETUP_SEARCH_ID = 'wework-embedded-browser-setup-search'
+const EMBEDDED_BROWSER_SETUP_OPEN_ID = 'wework-embedded-browser-setup-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
@@ -2134,9 +2136,57 @@ class DesktopE2EServer {
 
     if (this.scenario === 'embedded_browser_setup') {
       this.recordScenarioRequest('embedded_browser_setup', modelRequest)
+      const requestNumber = this.scenarioRequests.get('embedded_browser_setup').length
+      const serialized = JSON.stringify(body)
       assert.ok(
-        JSON.stringify(body).includes(EMBEDDED_BROWSER_SETUP_PROMPT),
+        serialized.includes(EMBEDDED_BROWSER_SETUP_PROMPT),
         'The embedded-browser setup request lost its local-task prompt'
+      )
+
+      if (requestNumber === 1) {
+        const search = selectToolSearch(body, 'Wework browser open')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(EMBEDDED_BROWSER_SETUP_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_SEARCH_ID),
+          true,
+          'The embedded-browser tool search output did not return to the model'
+        )
+        const browserTool = selectMcpTool(body, 'wework_browser', 'browser_open', {
+          url: new URL('/embedded-browser-agent-fixture', this.url).href,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            EMBEDDED_BROWSER_SETUP_OPEN_ID,
+            browserTool.namespace,
+            browserTool.name,
+            browserTool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected embedded-browser setup request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_OPEN_ID),
+        true,
+        'The embedded-browser open output did not return to the model'
+      )
+      assert.ok(
+        findNestedString(
+          body,
+          value => value.includes('"ok": true') || value.includes('\\"ok\\": true')
+        ),
+        'The real Codex browser_open call did not complete successfully'
       )
       this.writeSse(response, [
         responseCreated(responseId),

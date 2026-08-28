@@ -15,6 +15,7 @@ use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 mod bridge_identity;
+pub(crate) mod http;
 mod payload;
 mod result_text;
 mod tools;
@@ -36,9 +37,29 @@ const BROWSER_SESSION_ID_ENV: &str = "WEWORK_EMBEDDED_BROWSER_SESSION_ID";
 const BRIDGE_CONNECT_TIMEOUT_SECONDS: u64 = 5;
 const BRIDGE_REQUEST_TIMEOUT_SECONDS: u64 = 45;
 const BROWSER_MCP_LOG_FILE: &str = "wework-browser-mcp.log";
+pub const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static LOG_WRITE_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 static BROWSER_SESSION_ID: OnceLock<String> = OnceLock::new();
+
+#[derive(Clone)]
+pub(crate) struct BrowserMcpRequestContext {
+    label: Option<String>,
+    browser_session_id: String,
+}
+
+impl BrowserMcpRequestContext {
+    pub(crate) fn new(label: Option<String>, browser_session_id: String) -> Self {
+        Self {
+            label,
+            browser_session_id,
+        }
+    }
+
+    fn from_env() -> Self {
+        Self::new(browser_label(), browser_session_id())
+    }
+}
 
 pub fn is_browser_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("browser-mcp-server")
@@ -64,6 +85,7 @@ async fn run_inner() -> Result<(), String> {
         .map_err(|error| format!("Failed to build embedded browser bridge client: {error}"))?;
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
+    let context = BrowserMcpRequestContext::from_env();
     write_browser_log(&format!(
         "[wework-browser-mcp] lifecycle=start pid={} bridge_url={} label={} request_timeout_seconds={BRIDGE_REQUEST_TIMEOUT_SECONDS} log_path={}",
         std::process::id(),
@@ -91,7 +113,7 @@ async fn run_inner() -> Result<(), String> {
                 let method = request_method(&request);
                 let tool = request_tool(&request);
                 log_request(sequence, "received", method, tool, started, None);
-                handle_request(&client, &request, sequence, started).await
+                handle_request_with_context(&client, &request, &context, sequence, started).await
             }
             Err(error) => {
                 log_request(
@@ -147,9 +169,10 @@ async fn run_inner() -> Result<(), String> {
     Ok(())
 }
 
-async fn handle_request(
+pub(crate) async fn handle_request_with_context(
     client: &reqwest::Client,
     request: &Value,
+    context: &BrowserMcpRequestContext,
     sequence: u64,
     started: Instant,
 ) -> Option<Value> {
@@ -180,17 +203,35 @@ async fn handle_request(
             let arguments = request.pointer("/params/arguments").cloned().unwrap_or_else(|| json!({}));
             Some(result_response(
                 id,
-                execute_tool(client, name, &arguments, sequence, started).await,
+                execute_tool(client, name, &arguments, context, sequence, started).await,
             ))
         }
         _ => id.map(|id| error_response(id, -32601, format!("Unknown method: {method}"))),
     }
 }
 
+#[cfg(test)]
+async fn handle_request(
+    client: &reqwest::Client,
+    request: &Value,
+    sequence: u64,
+    started: Instant,
+) -> Option<Value> {
+    handle_request_with_context(
+        client,
+        request,
+        &BrowserMcpRequestContext::new(None, "browser-test-session".to_owned()),
+        sequence,
+        started,
+    )
+    .await
+}
+
 async fn execute_tool(
     client: &reqwest::Client,
     name: &str,
     arguments: &Value,
+    context: &BrowserMcpRequestContext,
     sequence: u64,
     started: Instant,
 ) -> Value {
@@ -252,7 +293,7 @@ async fn execute_tool(
         | "browser_fill_and_inspect"
         | "browser_type_and_inspect"
         | "browser_wait_and_inspect" => {
-            return execute_combined_tool(client, name, arguments, sequence, started).await
+            return execute_combined_tool(client, name, arguments, context, sequence, started).await
         }
         "browser_press_key" => action_target_payload("press", arguments),
         "browser_wait_for" => json!({
@@ -301,7 +342,7 @@ async fn execute_tool(
         started,
         None,
     );
-    let result = match call_bridge(client, bridge_payload, sequence, name, started).await {
+    let result = match call_bridge(client, bridge_payload, context, sequence, name, started).await {
         Ok(value) => {
             let is_error = bridge_value_is_error(name, &value);
             text_result_with_options(
@@ -337,6 +378,7 @@ async fn execute_combined_tool(
     client: &reqwest::Client,
     name: &str,
     arguments: &Value,
+    context: &BrowserMcpRequestContext,
     sequence: u64,
     started: Instant,
 ) -> Value {
@@ -347,7 +389,7 @@ async fn execute_combined_tool(
     let mut error = None;
 
     if let Some(payload) = combined_action_payload(name, arguments) {
-        let result = call_bridge(client, payload, sequence, name, started).await;
+        let result = call_bridge(client, payload, context, sequence, name, started).await;
         match result {
             Ok(value) => {
                 collect_warnings(&mut warnings, value.get("warnings"));
@@ -373,6 +415,7 @@ async fn execute_combined_tool(
     let wait = match call_bridge(
         client,
         wait_payload(name, arguments),
+        context,
         sequence,
         name,
         started,
@@ -405,6 +448,7 @@ async fn execute_combined_tool(
     let inspect = match call_bridge(
         client,
         combined_inspect_payload(arguments),
+        context,
         sequence,
         name,
         started,
@@ -463,19 +507,20 @@ async fn execute_combined_tool(
 async fn call_bridge(
     client: &reqwest::Client,
     mut payload: Value,
+    context: &BrowserMcpRequestContext,
     sequence: u64,
     tool: &str,
     started: Instant,
 ) -> Result<Value, String> {
-    if let (Some(label), Some(object)) = (browser_label(), payload.as_object_mut()) {
+    if let (Some(label), Some(object)) = (context.label.as_ref(), payload.as_object_mut()) {
         if !label.trim().is_empty() {
-            object.insert("label".to_owned(), Value::String(label));
+            object.insert("label".to_owned(), Value::String(label.clone()));
         }
     }
     if let Some(object) = payload.as_object_mut() {
         object.insert(
             "browserSessionId".to_owned(),
-            Value::String(browser_session_id()),
+            Value::String(context.browser_session_id.clone()),
         );
     }
     let identity = current_bridge_identity();
