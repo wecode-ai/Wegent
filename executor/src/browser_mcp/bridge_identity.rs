@@ -28,13 +28,22 @@ pub(crate) fn current_bridge_identity() -> BridgeIdentity {
     bridge_identity_from_sources(environment_identity(), runtime_file_path())
 }
 
+pub(crate) fn bridge_is_available() -> bool {
+    available_bridge_identity(environment_identity(), runtime_file_path()).is_some()
+}
+
 fn bridge_identity_from_sources(
     environment: Option<BridgeIdentity>,
     runtime_path: Option<PathBuf>,
 ) -> BridgeIdentity {
-    environment
-        .or_else(|| read_runtime_identity(runtime_path))
-        .unwrap_or_else(default_identity)
+    available_bridge_identity(environment, runtime_path).unwrap_or_else(default_identity)
+}
+
+fn available_bridge_identity(
+    environment: Option<BridgeIdentity>,
+    runtime_path: Option<PathBuf>,
+) -> Option<BridgeIdentity> {
+    environment.or_else(|| read_runtime_identity(runtime_path))
 }
 
 fn read_runtime_identity(path: Option<PathBuf>) -> Option<BridgeIdentity> {
@@ -136,7 +145,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{bridge_identity_from_sources, parse_runtime_identity, BridgeIdentity};
+    use super::{
+        available_bridge_identity, bridge_identity_from_sources, parse_runtime_identity,
+        BridgeIdentity,
+    };
 
     #[test]
     fn runtime_identity_accepts_only_authenticated_loopback_bridges() {
@@ -190,9 +202,10 @@ mod tests {
         )
         .unwrap();
 
-        let identity = bridge_identity_from_sources(None, Some(runtime_path));
+        let identity = bridge_identity_from_sources(None, Some(runtime_path.clone()));
 
         assert_eq!(identity.base_url, "http://127.0.0.1:9231");
+        assert!(available_bridge_identity(None, Some(runtime_path)).is_none());
     }
 
     #[test]

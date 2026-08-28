@@ -85,27 +85,18 @@ test('core apps are contributed through wework.app', async () => {
     registrations.map(entry => entry.options.id),
     ['wework', 'todo', 'wegent']
   )
-  assert.equal(
-    registrations[0].component.wework.module,
-    'plugins/wework-ui-core-apps.js'
-  )
-  assert.equal(
-    registrations[1].component.wework.module,
-    'plugins/wework-ui-core-apps.js'
-  )
+  assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-apps.js')
+  assert.equal(registrations[1].component.wework.module, 'plugins/wework-ui-core-apps.js')
   assert.equal(registrations[2].component.wework.urlSource, 'cloud-web')
 })
 
 test('core settings are metadata-driven DSH pages', async () => {
   const { injections, registrations } = await registrationsOf('ui-core-settings')
   assert.deepEqual(injections, ['wework.settings.page'])
-  assert.equal(registrations.length, 19)
+  assert.equal(registrations.length, 20)
   assert.equal(registrations[0].component.wework.path, '/settings')
   assert.equal(registrations[0].component.wework.module, 'plugins/wework-ui-core-settings.js')
-  assert.equal(
-    registrations.at(-1).component.wework.module,
-    'plugins/wework-ui-core-settings.js'
-  )
+  assert.equal(registrations.at(-1).component.wework.module, 'plugins/wework-ui-core-settings.js')
   assert.equal('path' in registrations[0].options, false)
   assert.equal('module' in registrations[0].options, false)
 })

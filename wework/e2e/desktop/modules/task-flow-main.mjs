@@ -1168,6 +1168,7 @@ async function main() {
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
+      'WEWORK_CORE_PLUGINS_SHA256',
       'WEWORK_HARNESS_RESOURCE_ROOT',
       'WEWORK_HARNESS_RUNTIME_ROOT',
       'WEWORK_NODE_BIN',
@@ -1269,19 +1270,21 @@ async function main() {
       }
     }
     if (RUNS_PLUGIN_E2E) {
-      await writeCodexConfig(
-        codexHome,
-        control.url,
-        `[features]
+      const configureCodex = () =>
+        writeCodexConfig(
+          codexHome,
+          control.url,
+          `[features]
 plugins = true
 
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
 last_updated = "2026-07-30T00:00:00Z"`
-      )
+        )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        configureCodex,
         control,
         restartDesktopApp,
       })

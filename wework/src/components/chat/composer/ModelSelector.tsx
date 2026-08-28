@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
+import { Check, ChevronRight, Cloud, LogIn, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -14,6 +14,7 @@ import {
   isModelInterfaceModel,
   normalizeModelOptionValue,
 } from '@/lib/model-ui'
+import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { TOGGLE_MODEL_SELECTOR_COMMAND } from '@/lib/keybindings'
 import type { UnifiedModel } from '@/types/api'
@@ -153,6 +154,14 @@ export function ModelSelector({
     setActiveDesktopSubmenu(null)
     setPowerSliderInteracting(false)
   }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
+  const openModelSettings = useCallback(() => {
+    closeMenu()
+    navigateTo('/settings/personal/models')
+  }, [closeMenu])
+  const openCloudConnectionSettings = useCallback(() => {
+    closeMenu()
+    navigateTo('/settings/connections')
+  }, [closeMenu])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
       onSelectModelOption(optionId, value)
@@ -572,14 +581,6 @@ export function ModelSelector({
   }
 
   function renderDesktopModelOptions(modelsToRender: UnifiedModel[], indented = false) {
-    if (modelsToRender.length === 0) {
-      return (
-        <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
-          {t('workbench.no_models', 'No models available')}
-        </div>
-      )
-    }
-
     return modelsToRender.map(model => {
       const selected = model.name === selectedModel?.name && model.type === selectedModel?.type
       const modelDisabled = Boolean(model.compatibilityDisabled)
@@ -633,6 +634,59 @@ export function ModelSelector({
         </button>
       )
     })
+  }
+
+  function renderEmptyModelActions(mobile = false) {
+    return (
+      <div
+        data-testid="model-selector-empty-state"
+        className={cn('space-y-3 px-3 py-4', mobile && 'rounded-2xl bg-surface px-4 py-5')}
+      >
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-text-primary">
+            {t('workbench.no_models', 'No models available')}
+          </p>
+          <p className="text-xs leading-5 text-text-muted">
+            {t(
+              'workbench.no_models_guidance',
+              'Add a custom model, or sign in to Wegent to sync cloud models.'
+            )}
+          </p>
+        </div>
+        <div className={cn('space-y-1', mobile && 'space-y-2')}>
+          <button
+            type="button"
+            data-testid="model-selector-add-custom-model"
+            onClick={openModelSettings}
+            className={cn(
+              'flex w-full items-center gap-2 text-left text-sm font-medium text-text-primary hover:bg-muted',
+              mobile
+                ? 'h-11 rounded-xl border border-border bg-background px-3'
+                : 'h-8 rounded-lg px-2'
+            )}
+          >
+            <Plus className="h-4 w-4 shrink-0 text-text-secondary" />
+            {t('workbench.no_models_add_custom', 'Add custom model')}
+          </button>
+          <button
+            type="button"
+            data-testid="model-selector-login-cloud"
+            onClick={openCloudConnectionSettings}
+            className={cn(
+              'flex w-full items-center gap-2 text-left text-sm font-medium',
+              mobile
+                ? 'h-11 rounded-xl bg-text-primary px-3 text-background'
+                : 'h-8 rounded-lg px-2 text-text-primary hover:bg-muted'
+            )}
+          >
+            <LogIn
+              className={cn('h-4 w-4 shrink-0', mobile ? 'text-background' : 'text-text-secondary')}
+            />
+            {t('workbench.no_models_login_cloud', 'Sign in and sync cloud models')}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   function renderMobileControlSection(control: ModelControlConfig) {
@@ -829,9 +883,7 @@ export function ModelSelector({
                   })}
                 </div>
               ) : (
-                <div className="rounded-2xl bg-surface px-4 py-6 text-center text-sm text-text-muted">
-                  {t('workbench.no_models')}
-                </div>
+                renderEmptyModelActions(true)
               )}
             </section>
 
@@ -894,7 +946,8 @@ export function ModelSelector({
                 styles.mainMenu
               )}
             >
-              {!powerViewOpen ? (
+              {desktopModels.length === 0 && renderEmptyModelActions()}
+              {desktopModels.length > 0 && !powerViewOpen ? (
                 <>
                   <div className="space-y-0.5">
                     <button
@@ -952,46 +1005,47 @@ export function ModelSelector({
                   <div className="mx-2 my-1 border-t border-border" />
                 </>
               ) : null}
-              {advancedReasoningAvailable ? (
-                <ModelAdvancedHeader
-                  disabled={!reasoningControl}
-                  interacting={powerSliderInteracting}
-                  powerViewOpen={powerViewOpen}
-                  fastModeEnabled={fastModeState.enabled}
-                  showFastModeToggle={fastModeState.available}
-                  onClearSubmenu={clearDesktopSubmenu}
-                  onToggle={() => {
-                    const nextValue = !advancedOpen
-                    setAdvancedOpen(nextValue)
-                    writeModelSelectorPowerViewPreference(nextValue)
-                    setActiveDesktopSubmenu({ type: 'none' })
-                  }}
-                  onToggleFastMode={() => {
-                    handleSelectModelOption('speed', fastModeState.nextValue)
-                  }}
-                />
-              ) : (
-                <ModelResetDefaultRow
-                  disabled={!defaultModel}
-                  onClearSubmenu={clearDesktopSubmenu}
-                  onReset={() => {
-                    if (!defaultModel) return
-                    const defaultOptions = {
-                      reasoning: CODEX_DEFAULT_REASONING_EFFORT,
-                      speed: CODEX_DEFAULT_SPEED,
-                    }
-                    if (onSelectModelAndOptions) {
-                      onSelectModelAndOptions(defaultModel, defaultOptions)
-                    } else {
-                      handleSelectModel(defaultModel)
-                      handleSelectModelOption('reasoning', CODEX_DEFAULT_REASONING_EFFORT)
-                      handleSelectModelOption('speed', CODEX_DEFAULT_SPEED)
-                    }
-                    clearDesktopSubmenu()
-                  }}
-                />
-              )}
-              {powerViewOpen && desktopReasoningControl ? (
+              {desktopModels.length > 0 &&
+                (advancedReasoningAvailable ? (
+                  <ModelAdvancedHeader
+                    disabled={!reasoningControl}
+                    interacting={powerSliderInteracting}
+                    powerViewOpen={powerViewOpen}
+                    fastModeEnabled={fastModeState.enabled}
+                    showFastModeToggle={fastModeState.available}
+                    onClearSubmenu={clearDesktopSubmenu}
+                    onToggle={() => {
+                      const nextValue = !advancedOpen
+                      setAdvancedOpen(nextValue)
+                      writeModelSelectorPowerViewPreference(nextValue)
+                      setActiveDesktopSubmenu({ type: 'none' })
+                    }}
+                    onToggleFastMode={() => {
+                      handleSelectModelOption('speed', fastModeState.nextValue)
+                    }}
+                  />
+                ) : (
+                  <ModelResetDefaultRow
+                    disabled={!defaultModel}
+                    onClearSubmenu={clearDesktopSubmenu}
+                    onReset={() => {
+                      if (!defaultModel) return
+                      const defaultOptions = {
+                        reasoning: CODEX_DEFAULT_REASONING_EFFORT,
+                        speed: CODEX_DEFAULT_SPEED,
+                      }
+                      if (onSelectModelAndOptions) {
+                        onSelectModelAndOptions(defaultModel, defaultOptions)
+                      } else {
+                        handleSelectModel(defaultModel)
+                        handleSelectModelOption('reasoning', CODEX_DEFAULT_REASONING_EFFORT)
+                        handleSelectModelOption('speed', CODEX_DEFAULT_SPEED)
+                      }
+                      clearDesktopSubmenu()
+                    }}
+                  />
+                ))}
+              {desktopModels.length > 0 && powerViewOpen && desktopReasoningControl ? (
                 <div
                   data-testid="model-advanced-panel"
                   data-enter-animation="advanced"

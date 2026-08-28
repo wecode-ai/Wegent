@@ -8,6 +8,7 @@ import {
   nativeImage,
   nativeTheme,
   powerMonitor,
+  safeStorage,
   screen,
   session,
   shell,
@@ -44,6 +45,7 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { ComputerUseService } from './host/computer-use-service.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import {
   WorkbenchTabController,
@@ -66,6 +68,7 @@ import { createTrayIcon } from './host/tray-icon.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
   cleanupStaleTemporaryImages,
@@ -74,7 +77,10 @@ import {
   scheduleTemporaryImageCleanup,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
-import { ComponentUpdateManager } from './runtime/component-update-manager.js'
+import {
+  prepareDesktopComponents,
+  type DesktopComponentUpdateController,
+} from './runtime/desktop-components.js'
 import {
   prepareElectronNodeRuntime,
   resolveConfiguredNodePath,
@@ -117,6 +123,7 @@ let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let popoutWindow: BrowserWindow | null = null
@@ -138,9 +145,10 @@ let mainWindowCloseRequestRevision = 0
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
-let componentUpdates: ComponentUpdateManager | null = null
+let componentUpdates: DesktopComponentUpdateController | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
 let pendingTrayActions: TrayAction[] = []
@@ -828,6 +836,40 @@ function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
 }
 
 function installIpc(): void {
+  ipcMain.handle('cloud-credentials:get-device-public-key', () =>
+    requiredCloudCredentials().devicePublicKey()
+  )
+  ipcMain.handle('cloud-credentials:claim-authorization', async (_event, input: unknown) => {
+    try {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) {
+        throw new CloudCredentialError('request_failed', 'Authorization input is invalid')
+      }
+      const value = input as Record<string, unknown>
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().claimAuthorization({
+          apiBaseUrl: requiredText(value.apiBaseUrl, 'apiBaseUrl'),
+          sessionId: requiredText(value.sessionId, 'sessionId'),
+          pollToken: requiredText(value.pollToken, 'pollToken'),
+        }),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
+  ipcMain.handle('cloud-credentials:refresh-access-token', async (_event, apiBaseUrl: unknown) => {
+    try {
+      return {
+        ok: true,
+        value: await requiredCloudCredentials().refreshAccessToken(
+          requiredText(apiBaseUrl, 'apiBaseUrl')
+        ),
+      }
+    } catch (error) {
+      return cloudCredentialFailure(error)
+    }
+  })
+  ipcMain.handle('cloud-credentials:clear', () => requiredCloudCredentials().clear())
   ipcMain.handle('runtime:get-state', () => ({
     ...(desktopRuntime?.state() ?? {
       coreDshUrl: null,
@@ -901,8 +943,11 @@ async function shutdown(): Promise<void> {
   workbenchPlugins = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
+  const computerUseService = computerUse
+  computerUse = null
   await Promise.allSettled([
     browserBridge?.stop(),
+    computerUseService?.stop(),
     plugins?.shutdown(),
     workbenchTabs?.stop(),
     desktopRuntime?.stop(),
@@ -950,6 +995,11 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   environment.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE = await embeddedBrowserBridge.start()
+  computerUse = new ComputerUseService(
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+  )
+  const savedPreferences = await preferences.read()
+  await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -986,6 +1036,7 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         rendererStorage,
         embeddedBrowser,
+        computerUse,
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
@@ -1174,6 +1225,7 @@ if (hasSingleInstanceLock) {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
     preferences = new PreferencesStore(app.getPath('userData'))
+    cloudCredentials = new CloudCredentialService(app.getPath('userData'), safeStorage)
     installDshWindowLabelHeaders()
     installIpc()
     systemResume.start()
@@ -1209,13 +1261,17 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     !app.isPackaged && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
-  componentUpdates ??= new ComponentUpdateManager({
-    resourcesRoot: componentResourcesRoot,
-    dataDirectory: app.getPath('userData'),
-    updateBaseUrl,
-    currentAppVersion: app.getVersion(),
+  const preparedComponents = await prepareDesktopComponents({
+    isPackaged: app.isPackaged,
+    managerOptions: {
+      resourcesRoot: componentResourcesRoot,
+      dataDirectory: app.getPath('userData'),
+      updateBaseUrl,
+      currentAppVersion: app.getVersion(),
+    },
   })
-  const components = await componentUpdates.prepareStartup()
+  componentUpdates = preparedComponents.manager
+  const components = preparedComponents.paths
   const developmentRuntimeRoot = resolve(
     packageRoot,
     '..',
@@ -1226,7 +1282,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
   const configuredRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   const runtimeRoot = configuredRuntimeRoot
     ? configuredRuntimeRoot
-    : app.isPackaged
+    : components
       ? await materializeBundledRuntimes(components.coreDsh, packagedHarnessRuntimePaths().cache, [
           'core',
         ])
@@ -1236,18 +1292,26 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
     {
       ...nodeRuntime.environment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
-      WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
-      WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
-      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(components.bundledPlugins, 'wework-personal'),
-      ...(process.env.WEWORK_EXECUTOR_PATH?.trim()
+      ...(components
+        ? {
+            WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
+            WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+            WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
+          }
+        : {}),
+      WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(
+        components?.bundledPlugins ?? join(componentResourcesRoot, 'bundled-plugins'),
+        'wework-personal'
+      ),
+      ...(process.env.WEWORK_EXECUTOR_PATH?.trim() || !components
         ? {}
         : existsSync(components.executor)
           ? { WEWORK_EXECUTOR_PATH: components.executor }
           : {}),
-      ...(process.env.CODEX_BINARY_PATH?.trim() || !existsSync(components.codex)
+      ...(process.env.CODEX_BINARY_PATH?.trim() || !components || !existsSync(components.codex)
         ? {}
         : { CODEX_BINARY_PATH: components.codex, CODEX_BIN: components.codex }),
-      ...(process.env.DWS_BINARY_PATH?.trim() || !existsSync(components.dws)
+      ...(process.env.DWS_BINARY_PATH?.trim() || !components || !existsSync(components.dws)
         ? {}
         : { DWS_BINARY_PATH: components.dws }),
     },
@@ -1293,6 +1357,39 @@ async function readNodeVersion(path: string): Promise<string> {
 function requiredPreferences(): PreferencesStore {
   if (!preferences) throw new Error('Desktop preferences are unavailable')
   return preferences
+}
+
+function requiredCloudCredentials(): CloudCredentialService {
+  if (!cloudCredentials) throw new Error('Desktop cloud credentials are unavailable')
+  return cloudCredentials
+}
+
+function requiredText(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new CloudCredentialError('request_failed', `${name} must be a non-empty string`)
+  }
+  return value.trim()
+}
+
+function cloudCredentialFailure(error: unknown): {
+  ok: false
+  error: { code: string; message: string; status: number | null }
+} {
+  const credentialError =
+    error instanceof CloudCredentialError
+      ? error
+      : new CloudCredentialError(
+          'request_failed',
+          error instanceof Error ? error.message : String(error)
+        )
+  return {
+    ok: false,
+    error: {
+      code: credentialError.code,
+      message: credentialError.message,
+      status: credentialError.status,
+    },
+  }
 }
 
 function packagedHarnessRuntimePaths(): { cache: string } {

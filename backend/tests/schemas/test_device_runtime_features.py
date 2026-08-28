@@ -15,7 +15,6 @@ def _runtime_features():
             "features": {
                 "goal": True,
                 "supervisor": True,
-                "deviceProjectBinding": True,
             },
         },
         "worktrees": {

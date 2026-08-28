@@ -1190,6 +1190,7 @@ pub async fn serve_local_app_endpoint(
 }
 
 async fn local_app_ipc_server(config: DeviceConfig) -> Result<AppIpcServer, String> {
+    crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
     crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let backend_config = LocalBackendConfig::from_device_config(config.clone());
     let app_ipc_device_id = app_ipc_sidecar_device_id(&backend_config);
