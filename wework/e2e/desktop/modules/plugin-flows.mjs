@@ -285,12 +285,13 @@ async function waitForBundledMarketplaceRegistration(codexHome) {
 
 async function verifyStartupIgnoresBlockedCodexNetwork({
   blockingNetworkProxy,
+  configureCodex,
   control,
   restartDesktopApp,
 }) {
   const modelRequestCountBeforeRestart = control.modelRequests.length
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
-  await restartDesktopApp()
+  await restartDesktopApp({ afterStop: configureCodex })
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })

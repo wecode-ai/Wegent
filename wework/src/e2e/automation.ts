@@ -342,17 +342,10 @@ async function seedDesktopE2ECloudConnection(): Promise<void> {
   const localModelsCatalogReady =
     runtimeConfig.localModelsCatalogReady ??
     import.meta.env.VITE_WEWORK_E2E_LOCAL_MODELS_CATALOG_READY === 'true'
-  const token =
-    runtimeConfig.cloudToken ??
-    import.meta.env.VITE_WEWORK_E2E_CLOUD_TOKEN?.trim() ??
-    'wework-desktop-e2e-cloud-token'
-
   const config = normalizeCloudBackendUrl(backendUrl)
   saveStoredCloudConnection({
     ...config,
     webUrl: config.backendUrl,
-    token,
-    tokenExpiresAt: null,
     user: {
       id: 9001,
       user_name: 'wework-desktop-e2e-cloud-user',
