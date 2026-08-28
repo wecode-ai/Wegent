@@ -316,6 +316,49 @@ describe('CloudConnectionProvider', () => {
     expect(credentialMocks.clear).toHaveBeenCalledTimes(1)
   })
 
+  it('does not reconnect when an in-flight credential refresh completes after disconnecting', async () => {
+    const storedConnection = {
+      backendUrl: 'https://cloud.example.com',
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: 'wss://backend-socket.example.com',
+      socketPath: '/socket.io',
+      user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+      connectedAt: '2026-07-20T00:00:00.000Z',
+    }
+    let resolveRefresh: (value: {
+      accessToken: string
+      tokenType: string
+      expiresIn: number
+    }) => void = () => undefined
+    credentialMocks.refreshAccessToken.mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveRefresh = resolve
+      })
+    )
+    await updateAppPreferences({ cloudConnection: storedConnection })
+    saveStoredCloudConnection(storedConnection)
+
+    render(
+      <CloudConnectionProvider>
+        <CloudSocketProbe />
+      </CloudConnectionProvider>
+    )
+
+    await waitFor(() => expect(credentialMocks.refreshAccessToken).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('disconnect-cloud-button'))
+    resolveRefresh({
+      accessToken: tokenWithExp(),
+      tokenType: 'bearer',
+      expiresIn: 3600,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('cloud-connection-status')).toHaveTextContent('disconnected')
+    )
+    expect(httpMocks.get).not.toHaveBeenCalled()
+    expect(localStorage.getItem('wework.cloudConnection')).toBeNull()
+  })
+
   it('keeps stored connection metadata while the initial credential refresh is pending', async () => {
     vi.useFakeTimers()
     try {

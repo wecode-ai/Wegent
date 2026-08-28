@@ -356,6 +356,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const initialRefreshStartedRef = useRef(false)
   const desktopRestoreStartedRef = useRef(false)
   const refreshPromiseRef = useRef<Promise<User | null> | null>(null)
+  const refreshGenerationRef = useRef(0)
 
   useEffect(() => {
     if (desktopRestoreStartedRef.current) return
@@ -492,6 +493,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   const refreshUser = useCallback((): Promise<User | null> => {
     if (refreshPromiseRef.current) return refreshPromiseRef.current
     if (!snapshot.apiBaseUrl) return Promise.resolve(null)
+    const refreshGeneration = refreshGenerationRef.current
     const config = {
       backendUrl: snapshot.backendUrl ?? '',
       apiBaseUrl: snapshot.apiBaseUrl,
@@ -501,11 +503,13 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
     const refresh = (async () => {
       try {
         const refreshed = await refreshDesktopCloudAccessToken(config.apiBaseUrl)
+        if (refreshGenerationRef.current !== refreshGeneration) return null
         const user = await fetchCloudUser(
           config,
           refreshed.accessToken,
           CLOUD_STARTUP_REQUEST_TIMEOUT_MS
         )
+        if (refreshGenerationRef.current !== refreshGeneration) return null
         setSnapshot(current => {
           const nextSnapshot = {
             ...current,
@@ -520,6 +524,7 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         })
         return user
       } catch (error) {
+        if (refreshGenerationRef.current !== refreshGeneration) return null
         const authExpired =
           error instanceof DesktopCloudCredentialError &&
           ['cloud_auth_expired', 'credentials_unavailable'].includes(error.code)
@@ -539,7 +544,9 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         )
         return null
       } finally {
-        refreshPromiseRef.current = null
+        if (refreshGenerationRef.current === refreshGeneration) {
+          refreshPromiseRef.current = null
+        }
       }
     })()
     refreshPromiseRef.current = refresh
@@ -547,6 +554,8 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
   }, [snapshot.apiBaseUrl, snapshot.backendUrl, snapshot.socketBaseUrl, snapshot.socketPath])
 
   const disconnect = useCallback(() => {
+    refreshGenerationRef.current += 1
+    refreshPromiseRef.current = null
     clearStoredCloudConnection()
     void clearDesktopCloudCredentials().catch(error => {
       console.error('[CloudConnection] Failed to clear desktop cloud credentials', error)
