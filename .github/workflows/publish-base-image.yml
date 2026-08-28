@@ -1,0 +1,169 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Publish Base Image
+run-name: Publish base image ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Image tag to publish, for example 1.0.2 or test-0.'
+        type: string
+        required: true
+      promote_latest:
+        description: 'Also update the latest tag after verification.'
+        type: boolean
+        required: false
+        default: false
+
+env:
+  GIT_REF: main
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+  IMAGE_NAME: wegent-base-python3.12
+
+concurrency:
+  group: publish-base-image-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+
+    steps:
+      - name: Validate image version
+        id: version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "${VERSION}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,121}$ ]]; then
+            echo "Invalid image tag '${VERSION}'." >&2
+            exit 1
+          fi
+
+          echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            suffix: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            suffix: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ env.GIT_REF }}
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push base image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile
+          push: true
+          platforms: ${{ matrix.platform }}
+          tags: ${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.version }}-${{ matrix.suffix }}
+          cache-from: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.suffix }}
+          cache-to: type=registry,ref=${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:buildcache-${{ matrix.suffix }},mode=max
+
+      - name: Verify package manager remains usable
+        shell: bash
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/${{ env.IMAGE_NAME }}:${{ needs.prepare.outputs.version }}-${{ matrix.suffix }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+
+          docker run --rm --platform "${PLATFORM}" "${IMAGE}" bash -lc '
+            set -eux
+            sqlite3 --version
+            if ldd /usr/local/bin/sqlite3 | grep -q libsqlite3; then
+              exit 1
+            fi
+            rpm -V sqlite-libs
+            dnf install -y jq
+            dnf install -y zip
+            rpm -V sqlite-libs
+          '
+
+  publish-manifest:
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-platform image
+        shell: bash
+        env:
+          PROMOTE_LATEST: ${{ inputs.promote_latest }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          IMAGE="${IMAGE_PREFIX}/${IMAGE_NAME}"
+          TAGS=(--tag "${IMAGE}:${VERSION}")
+          if [[ "${PROMOTE_LATEST}" == "true" ]]; then
+            TAGS+=(--tag "${IMAGE}:latest")
+          fi
+
+          docker buildx imagetools create "${TAGS[@]}" \
+            "${IMAGE}:${VERSION}-amd64" \
+            "${IMAGE}:${VERSION}-arm64"
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          if [[ "${PROMOTE_LATEST}" == "true" ]]; then
+            docker buildx imagetools inspect "${IMAGE}:latest"
+          fi
+
+          {
+            echo "### Base image published"
+            echo
+            echo "- Image: \`${IMAGE}:${VERSION}\`"
+            echo "- Platforms: \`linux/amd64\`, \`linux/arm64\`"
+            echo "- Promoted to latest: \`${PROMOTE_LATEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
