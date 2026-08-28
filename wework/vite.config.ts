@@ -1,10 +1,16 @@
 import path from 'path'
 import fs from 'fs'
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
+
+const require = createRequire(import.meta.url)
+const { resolveReleaseVersion } = require('./electron/scripts/release-version.cjs') as {
+  resolveReleaseVersion: (defaultVersion?: string, environment?: NodeJS.ProcessEnv) => string
+}
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -28,6 +34,7 @@ const packageJson = JSON.parse(
 ) as {
   version?: string
 }
+const releaseVersion = resolveReleaseVersion(packageJson.version)
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(internalExtensionsDir)
   ? internalExtensionsDir
@@ -112,7 +119,7 @@ export default defineConfig({
     ...internalVitePlugins,
   ],
   define: {
-    __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
+    __WEWORK_APP_VERSION__: JSON.stringify(releaseVersion),
   },
   optimizeDeps: {
     // Test artifacts may contain standalone plugin apps with dependencies that

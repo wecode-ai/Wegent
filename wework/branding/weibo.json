@@ -1,4 +1,6 @@
 {
   "productName": "Weibo WeWork",
-  "identifier": "com.weibo.wework"
+  "identifier": "com.weibo.wework",
+  "backendUrl": "https://wegent.intra.weibo.com/api",
+  "socketUrl": "wss://wss-wegent.intra.weibo.com"
 }

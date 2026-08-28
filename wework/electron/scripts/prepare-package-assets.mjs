@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
+import releaseVersionModule from './release-version.cjs'
 
+const { resolveReleaseVersion } = releaseVersionModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const weworkRoot = resolve(electronRoot, '..')
 const repositoryRoot = resolve(weworkRoot, '..')
@@ -103,6 +105,7 @@ await cp(
 if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
 const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
+const releaseVersion = resolveReleaseVersion(electronPackage.version)
 const sourceSha =
   process.env.WEWORK_SOURCE_SHA?.trim() ||
   process.env.GITHUB_SHA?.trim() ||
@@ -119,7 +122,7 @@ await writeFile(
   `${JSON.stringify(
     {
       schemaVersion: 1,
-      appVersion: electronPackage.version,
+      appVersion: releaseVersion,
       sourceSha,
       channel: process.env.VITE_WEWORK_RELEASE_CHANNEL?.trim() || 'development',
       components: {

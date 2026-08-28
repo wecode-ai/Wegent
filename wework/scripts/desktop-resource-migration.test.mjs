@@ -104,11 +104,13 @@ describe('desktop resource migration', () => {
     expect(builderConfig).not.toContain('resources/node-runtime')
   })
 
-  test('launches the release builder through the Windows command interpreter', async () => {
+  test('launches the package-owned electron-builder CLI directly', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/build-release.mjs'), 'utf8')
 
-    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
-    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+    expect(source).toContain("'node_modules/electron-builder/cli.js'")
+    expect(source).toContain('resolveNodeRuntime()')
+    expect(source).not.toContain("'pnpm'")
+    expect(source).not.toContain('wrapWindowsScriptCommand')
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
