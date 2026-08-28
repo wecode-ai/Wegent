@@ -1,11 +1,15 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  hasWorkspacePathDragData,
   inspectNativeWorkspacePaths,
   readClipboardFileUriPaths,
   readNativeClipboardWorkspacePaths,
   readNativeDroppedWorkspacePaths,
+  readWorkspacePathDragData,
   resolveDataTransferWorkspacePaths,
   resolveStoredWorkspacePaths,
+  WORKSPACE_PATH_DRAG_TYPE,
+  writeWorkspacePathDragData,
 } from './workspace-path-transfer'
 
 const mocks = vi.hoisted(() => ({
@@ -38,6 +42,46 @@ describe('workspace path transfer', () => {
     mocks.desktopHost.mockReset()
     mocks.readDroppedFiles.mockReset()
     mocks.readDroppedFiles.mockResolvedValue([])
+  })
+
+  test('round trips internal workspace file tree drags', () => {
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      types: [] as string[],
+      getData: (type: string) => values.get(type) ?? '',
+      setData: (type: string, value: string) => {
+        values.set(type, value)
+        if (!dataTransfer.types.includes(type)) dataTransfer.types.push(type)
+      },
+    } as unknown as DataTransfer
+
+    writeWorkspacePathDragData(dataTransfer, [
+      { path: '/workspace/project/notes.md', isDirectory: false },
+    ])
+
+    expect(dataTransfer.types).toContain(WORKSPACE_PATH_DRAG_TYPE)
+    expect(hasWorkspacePathDragData(dataTransfer)).toBe(true)
+    expect(readWorkspacePathDragData(dataTransfer)).toEqual([
+      { path: '/workspace/project/notes.md', isDirectory: false },
+    ])
+  })
+
+  test('resolves internal workspace file tree drags as path references', async () => {
+    const dataTransfer = {
+      types: [WORKSPACE_PATH_DRAG_TYPE],
+      files: [] as unknown as FileList,
+      getData: (type: string) =>
+        type === WORKSPACE_PATH_DRAG_TYPE
+          ? JSON.stringify([{ path: '/workspace/project/docs', isDirectory: true }])
+          : '',
+    } as unknown as DataTransfer
+
+    await expect(resolveDataTransferWorkspacePaths(dataTransfer, 'drop', 'local')).resolves.toEqual(
+      {
+        attachmentFiles: [],
+        referenceEntries: [{ path: '/workspace/project/docs', isDirectory: true }],
+      }
+    )
   })
 
   test('parses file URI clipboard formats and ignores comments and duplicates', () => {

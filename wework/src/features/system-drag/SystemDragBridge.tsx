@@ -1,13 +1,29 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { getAppPreferences, updateAppPreferences } from '@/desktop/appPreferences'
+import {
+  APP_PREFERENCES_CHANGED_EVENT,
+  getAppPreferences,
+  updateAppPreferences,
+  type AppPreferences,
+} from '@/desktop/appPreferences'
 import {
   findRuntimeTask,
   findRuntimeTaskWorkspace,
 } from '@/features/workbench/workbenchRuntimeHelpers'
-import { resolveStoredWorkspacePaths } from '@/lib/workspace-path-transfer'
+import {
+  hasWorkspacePathDragData,
+  resolveStoredWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
 import { applyWorkspacePathTransfer } from '@/components/chat/composer/composerPathTransfer'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  prepareSelectedTextDrag,
+  SELECTED_TEXT_CHANGED_EVENT,
+  type SelectedTextChangedDetail,
+  type SelectedTextRect,
+  writeSelectedTextDragData,
+} from '@/lib/selected-text-drag'
+import { SelectionActionsPopover } from '@/components/chat/SelectionActionsPopover'
 
 interface SystemDropPayload {
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -15,9 +31,55 @@ interface SystemDropPayload {
   paths: string[]
 }
 
+interface ManagedTextSelection {
+  source: string
+  text: string
+  rect: SelectedTextRect
+}
+
+const SELECTION_ACTION_GAP = 8
+const WORKSPACE_SELECTION_ROOT_SELECTOR = [
+  '[data-testid="workspace-file-preview"]',
+  '[data-testid="workspace-file-editor"]',
+  '[data-testid="embedded-local-terminal"]',
+  '[data-testid="remote-terminal"]',
+].join(',')
+
+function selectionElement(node: Node | null): Element | null {
+  if (node instanceof Element) return node
+  return node?.parentElement ?? null
+}
+
+function closestComposed(element: Element | null, selector: string): Element | null {
+  let current = element
+  while (current) {
+    if (current.matches(selector)) return current
+    if (current.parentElement) {
+      current = current.parentElement
+      continue
+    }
+    const root = current.getRootNode()
+    current = root instanceof ShadowRoot ? root.host : null
+  }
+  return null
+}
+
+function selectionInsideWorkspace(selection: Selection): boolean {
+  const anchor = selectionElement(selection.anchorNode)
+  const focus = selectionElement(selection.focusNode)
+  return Boolean(
+    closestComposed(anchor, WORKSPACE_SELECTION_ROOT_SELECTOR) &&
+    closestComposed(focus, WORKSPACE_SELECTION_ROOT_SELECTOR)
+  )
+}
+
 export function SystemDragBridge() {
   const workbench = useWorkbench()
   const latest = useRef(workbench)
+  const systemDragEnabled = useRef(true)
+  const activePanelRequest = useRef<Promise<unknown> | null>(null)
+  const [managedSelection, setManagedSelection] = useState<ManagedTextSelection | null>(null)
+  const managedSelectionRef = useRef(managedSelection)
   const currentTask = findRuntimeTask(
     workbench.state.runtimeWork,
     workbench.state.currentRuntimeTask
@@ -28,9 +90,137 @@ export function SystemDragBridge() {
   }, [workbench])
 
   useEffect(() => {
+    managedSelectionRef.current = managedSelection
+  }, [managedSelection])
+
+  useEffect(() => {
     const context = { conversationTitle: currentTask?.title ?? null }
     void invokeDesktopHost('systemDrag.setContext', context)
   }, [currentTask?.title])
+
+  useEffect(() => {
+    let cancelled = false
+    void getAppPreferences().then(preferences => {
+      if (!cancelled) systemDragEnabled.current = preferences.systemDragEnabled
+    })
+    const handlePreferencesChanged = (event: Event) => {
+      systemDragEnabled.current = (event as CustomEvent<AppPreferences>).detail.systemDragEnabled
+      if (!systemDragEnabled.current) {
+        activePanelRequest.current = null
+        void invokeDesktopHost('systemDrag.dismissPanel')
+      }
+    }
+    window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
+    return () => {
+      cancelled = true
+      window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
+    }
+  }, [])
+
+  useEffect(() => {
+    const updateDocumentSelection = () => {
+      const selection = document.getSelection()
+      if (
+        !selection ||
+        selection.isCollapsed ||
+        selection.rangeCount === 0 ||
+        !selectionInsideWorkspace(selection)
+      ) {
+        setManagedSelection(current => (current?.source === 'workspace-document' ? null : current))
+        return
+      }
+      const text = selection.toString().trim()
+      const rect = selection.getRangeAt(0).getBoundingClientRect()
+      if (!text || rect.width <= 0 || rect.height <= 0) return
+      setManagedSelection({
+        source: 'workspace-document',
+        text,
+        rect: {
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+        },
+      })
+    }
+    const scheduleUpdate = () => requestAnimationFrame(updateDocumentSelection)
+    document.addEventListener('selectionchange', scheduleUpdate)
+    document.addEventListener('pointerup', updateDocumentSelection)
+    document.addEventListener('keyup', updateDocumentSelection)
+    return () => {
+      document.removeEventListener('selectionchange', scheduleUpdate)
+      document.removeEventListener('pointerup', updateDocumentSelection)
+      document.removeEventListener('keyup', updateDocumentSelection)
+    }
+  }, [])
+
+  useEffect(() => {
+    const showPanel = () => {
+      const request = invokeDesktopHost('systemDrag.showPanel').catch(error => {
+        console.error('[Wework] Failed to show system drag panel:', error)
+      })
+      activePanelRequest.current = request
+    }
+    const handleSelectedTextChanged = (event: Event) => {
+      const { source, text, rect } = (event as CustomEvent<SelectedTextChangedDetail>).detail
+      setManagedSelection(current => {
+        if (text && rect) return { source, text, rect }
+        return current?.source === source ? null : current
+      })
+    }
+    const handleDragStart = (event: DragEvent) => {
+      if (!systemDragEnabled.current || !event.dataTransfer) return
+      let selectedText = prepareSelectedTextDrag(event)?.trim() ?? ''
+      const source = selectionElement(event.target as Node | null)
+      if (
+        !selectedText &&
+        managedSelectionRef.current &&
+        closestComposed(source, WORKSPACE_SELECTION_ROOT_SELECTOR)
+      ) {
+        selectedText = managedSelectionRef.current.text
+        writeSelectedTextDragData(event.dataTransfer, selectedText)
+      }
+      const hasSelectedText = Boolean(selectedText)
+      if (!hasSelectedText && !hasWorkspacePathDragData(event.dataTransfer)) return
+      setManagedSelection(null)
+      showPanel()
+    }
+    const handleDragEnd = () => {
+      const request = activePanelRequest.current
+      if (!request) {
+        void invokeDesktopHost('systemDrag.dismissPanel')
+        return
+      }
+      activePanelRequest.current = null
+      void request.finally(() => invokeDesktopHost('systemDrag.dismissPanel'))
+    }
+    window.addEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelectedTextChanged)
+    document.addEventListener('dragstart', handleDragStart)
+    document.addEventListener('dragend', handleDragEnd)
+    return () => {
+      window.removeEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelectedTextChanged)
+      document.removeEventListener('dragstart', handleDragStart)
+      document.removeEventListener('dragend', handleDragEnd)
+    }
+  }, [])
+
+  const addSelectionToConversation = () => {
+    if (!managedSelection) return
+    const current = latest.current
+    const nextInput = current.projectChat.input
+      ? `${current.projectChat.input}\n${managedSelection.text}`
+      : managedSelection.text
+    current.projectChat.setInput(nextInput)
+    setManagedSelection(null)
+    document.getSelection()?.removeAllRanges()
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          '[data-testid="desktop-floating-composer-card"] [data-testid="chat-message-input"]'
+        )
+        ?.focus()
+    })
+  }
 
   const apply = async (payload: SystemDropPayload, input = latest.current.projectChat.input) => {
     const current = latest.current
@@ -105,5 +295,18 @@ export function SystemDragBridge() {
     }
   }, [])
 
-  return null
+  return managedSelection ? (
+    <SelectionActionsPopover
+      position={{
+        left: Math.min(
+          Math.max(managedSelection.rect.left + managedSelection.rect.width / 2, 120),
+          window.innerWidth - 120
+        ),
+        top: Math.max(managedSelection.rect.top - SELECTION_ACTION_GAP, 44),
+      }}
+      onAddToConversation={addSelectionToConversation}
+      testId="workspace-selection-actions"
+      addButtonTestId="add-workspace-selection-to-conversation-button"
+    />
+  ) : null
 }

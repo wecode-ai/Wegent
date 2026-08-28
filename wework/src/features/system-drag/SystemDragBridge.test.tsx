@@ -1,5 +1,8 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { publishSelectedTextSelection, SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
+import { WORKSPACE_PATH_DRAG_TYPE, writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import { SystemDragBridge } from './SystemDragBridge'
 
 const mocks = vi.hoisted(() => ({
@@ -43,6 +46,7 @@ vi.mock('@/lib/workspace-path-transfer', async importOriginal => ({
   resolveStoredWorkspacePaths: mocks.resolveStoredPaths,
 }))
 vi.mock('@/desktop/appPreferences', () => ({
+  APP_PREFERENCES_CHANGED_EVENT: 'wework:app-preferences-changed',
   getAppPreferences: mocks.getAppPreferences,
   updateAppPreferences: mocks.updateAppPreferences,
 }))
@@ -66,6 +70,10 @@ describe('SystemDragBridge', () => {
     mocks.startNewChat.mockReset()
     mocks.getAppPreferences.mockReset()
     mocks.updateAppPreferences.mockReset()
+    mocks.getAppPreferences.mockResolvedValue({
+      systemDragEnabled: true,
+      quickPhrases: [],
+    })
     mocks.resolveStoredPaths.mockReset()
     mocks.resolveStoredPaths.mockResolvedValue({
       attachmentFiles: [],
@@ -77,6 +85,167 @@ describe('SystemDragBridge', () => {
     mocks.invoke.mockImplementation(command =>
       Promise.resolve(command === 'systemDrag.takePending' ? mocks.pending.splice(0) : undefined)
     )
+  })
+
+  test('shows and dismisses the system panel for selected text drags', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const dataTransfer = {
+      types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+      getData: (type: string) => (type === 'text/plain' ? 'selected text' : 'true'),
+    }
+
+    act(() => {
+      const event = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      document.body.dispatchEvent(event)
+    })
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.showPanel'))
+
+    act(() => {
+      document.body.dispatchEvent(new Event('dragend', { bubbles: true }))
+    })
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel'))
+  })
+
+  test('does not open the system drag panel until a selected-text drag starts', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      publishSelectedTextSelection('workspace-editor:/workspace/index.ts', 'selected text', {
+        left: 100,
+        top: 200,
+        width: 80,
+        height: 20,
+      })
+    })
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.showPanel')
+  })
+
+  test('writes managed workspace selections when their drag source has no native selection data', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const source = document.createElement('div')
+    source.dataset.testid = 'workspace-file-preview'
+    document.body.append(source)
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      types: [] as string[],
+      effectAllowed: 'none',
+      getData: (type: string) => values.get(type) ?? '',
+      setData: (type: string, value: string) => {
+        values.set(type, value)
+        dataTransfer.types.push(type)
+      },
+    } as unknown as DataTransfer
+
+    act(() => {
+      publishSelectedTextSelection('workspace-preview:/workspace/index.ts', 'selected text', {
+        left: 100,
+        top: 200,
+        width: 80,
+        height: 20,
+      })
+    })
+    await screen.findByTestId('workspace-selection-actions')
+
+    act(() => {
+      const event = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      source.dispatchEvent(event)
+    })
+
+    expect(dataTransfer.getData('text/plain')).toBe('selected text')
+    expect(dataTransfer.types).toContain(SELECTED_TEXT_DRAG_TYPE)
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.showPanel'))
+  })
+
+  test('adds a managed text selection to the current composer draft', async () => {
+    const user = userEvent.setup()
+    mocks.input = 'existing draft'
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      publishSelectedTextSelection('workspace-editor:/workspace/index.ts', 'selected text', {
+        left: 100,
+        top: 200,
+        width: 80,
+        height: 20,
+      })
+    })
+
+    await user.click(await screen.findByTestId('add-workspace-selection-to-conversation-button'))
+    expect(mocks.setInput).toHaveBeenCalledWith('existing draft\nselected text')
+    expect(screen.queryByTestId('workspace-selection-actions')).not.toBeInTheDocument()
+  })
+
+  test('dismisses managed selection actions when their source clears', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      publishSelectedTextSelection('terminal:test', 'terminal text', {
+        left: 100,
+        top: 200,
+        width: 80,
+        height: 20,
+      })
+    })
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+
+    act(() => {
+      publishSelectedTextSelection('terminal:test', null)
+    })
+    expect(screen.queryByTestId('workspace-selection-actions')).not.toBeInTheDocument()
+  })
+
+  test('does not show the system panel when selected text drag is disabled', async () => {
+    mocks.getAppPreferences.mockResolvedValue({
+      systemDragEnabled: false,
+      quickPhrases: [],
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      const event = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(event, 'dataTransfer', {
+        value: {
+          types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+          getData: (type: string) => (type === 'text/plain' ? 'selected text' : 'true'),
+        },
+      })
+      document.body.dispatchEvent(event)
+    })
+
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.showPanel')
+  })
+
+  test('shows the system panel for workspace file drags', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      types: [] as string[],
+      getData: (type: string) => values.get(type) ?? '',
+      setData: (type: string, value: string) => {
+        values.set(type, value)
+        dataTransfer.types.push(type)
+      },
+    } as unknown as DataTransfer
+    writeWorkspacePathDragData(dataTransfer, [{ path: '/workspace/README.md', isDirectory: false }])
+
+    act(() => {
+      const event = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      document.body.dispatchEvent(event)
+    })
+
+    expect(dataTransfer.types).toContain(WORKSPACE_PATH_DRAG_TYPE)
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.showPanel'))
   })
 
   test('appends text to an existing new-chat draft', async () => {

@@ -437,6 +437,7 @@ export function WorkspaceTabSurface({
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
+              {isElectronRuntime() && active ? <SystemDragBridge /> : null}
               {workbenchContent}
             </WorkbenchProvider>
           ) : null}

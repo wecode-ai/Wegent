@@ -895,6 +895,9 @@ async function main() {
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
   ])
+  if (DROPPED_WORKSPACE_PATHS_ONLY) {
+    await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
+  }
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
     writeFile(
@@ -1632,12 +1635,13 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (DROPPED_WORKSPACE_PATHS_ONLY) {
-      phase = 'dropped-workspace-paths'
-      await control.command('click', '[data-testid="new-chat-button"]')
+      phase = 'dropped-workspace-paths-project'
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      phase = 'dropped-workspace-paths'
       await verifyDroppedWorkspacePaths({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,

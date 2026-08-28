@@ -129,6 +129,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
+let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
@@ -578,11 +579,23 @@ async function ensureAuxiliaryWindow(
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
   if (existing && !existing.isDestroyed()) return existing
+  if (kind === 'system-drag-panel' && systemDragWindowCreationPromise) {
+    return systemDragWindowCreationPromise
+  }
   if (kind === 'popout-window' && popoutWindowCreationPromise) {
     return popoutWindowCreationPromise
   }
   const creationPromise = createAuxiliaryWindow(kind)
-  if (kind === 'system-drag-panel') return creationPromise
+  if (kind === 'system-drag-panel') {
+    systemDragWindowCreationPromise = creationPromise
+    try {
+      return await creationPromise
+    } finally {
+      if (systemDragWindowCreationPromise === creationPromise) {
+        systemDragWindowCreationPromise = null
+      }
+    }
+  }
   popoutWindowCreationPromise = creationPromise
   try {
     return await creationPromise
@@ -605,6 +618,9 @@ async function createAuxiliaryWindow(
   const auxiliaryWindow = new BrowserWindow({
     width: isSystemDrag ? 440 : 470,
     height: isSystemDrag ? 60 : 112,
+    parent: isSystemDrag
+      ? (BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined)
+      : undefined,
     resizable: false,
     frame: false,
     transparent: true,
@@ -612,6 +628,7 @@ async function createAuxiliaryWindow(
     alwaysOnTop: true,
     skipTaskbar: isSystemDrag,
     show: false,
+    type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
       backgroundThrottling: false,
@@ -649,6 +666,11 @@ async function createAuxiliaryWindow(
       extraHeaders: `X-Wework-Window-Label: ${kind}`,
     })
     if (isSystemDrag) {
+      readinessPromise = waitForRendererSelector(
+        auxiliaryWindow.webContents,
+        '[data-testid="system-drag-panel"]'
+      )
+      await readinessPromise
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
@@ -670,10 +692,22 @@ async function createAuxiliaryWindow(
 
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
+  const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (owner && owner !== target && target.getParentWindow() !== owner) {
+    target.setParentWindow(owner)
+  }
+  target.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'darwin') {
+    target.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    })
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const x = Math.round(display.workArea.x + (display.workArea.width - 440) / 2)
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
+  target.moveTop()
 }
 
 async function showPopoutWindow(): Promise<void> {
@@ -1172,7 +1206,11 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel,
+          showSystemDragPanel: () => {
+            void showSystemDragPanel().catch(error => {
+              console.error('Failed to show system drag panel:', error)
+            })
+          },
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()

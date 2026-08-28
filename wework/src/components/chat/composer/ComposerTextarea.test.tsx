@@ -15,6 +15,7 @@ import {
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
 import { ComposerTextarea } from './ComposerTextarea'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -1208,6 +1209,51 @@ describe('ComposerTextarea', () => {
     expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
     expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledWith(dropEvent.dataTransfer, 'drop')
     expect(onPasteFiles).not.toHaveBeenCalled()
+  })
+
+  test('inserts Wework selected text drops at the current composer selection', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('existing draft')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const dropEvent = new Event('drop', {
+      bubbles: true,
+      cancelable: true,
+    }) as DragEvent
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        files: [],
+        items: [],
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain' ? 'export const selected = true' : 'true',
+      },
+    })
+
+    fireEvent(editor, dropEvent)
+
+    await waitFor(() => {
+      const paragraphs = editor.querySelectorAll('p')
+      expect(paragraphs[0]).toHaveTextContent('export const selected = true')
+      expect(paragraphs[1]).toHaveTextContent('existing draft')
+    })
+    expect(dropEvent.defaultPrevented).toBe(true)
   })
 
   test('shows the cloud space entries in the @ menu when cloud is enabled', async () => {
