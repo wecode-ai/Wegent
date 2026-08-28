@@ -643,7 +643,8 @@ def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> Non
     assert "archiveArtifacts" in pipeline
     assert "wegent-windows-signing-pfx" not in pipeline
     assert "wegent-windows-signing-password" not in pipeline
-    assert "powershell" not in pipeline
+    assert "pwsh.exe" in pipeline
+    assert "\n        powershell" not in pipeline.lower()
 
 
 @pytest.mark.parametrize(
@@ -675,8 +676,11 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v6" in script
+    assert "dsh-runtime-tar-gzip-v7" in script
     assert "supportedArchitectures" in script
+    assert (
+        "crossTargetRequested() && entry.name === 'pnpm-workspace.yaml'" not in script
+    )
     assert "--ignore-scripts" in script
     assert "prepareTargetSpawnHelpers" in script
 

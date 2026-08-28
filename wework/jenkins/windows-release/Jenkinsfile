@@ -33,7 +33,11 @@ pipeline {
 
   environment {
     ComSpec = 'C:\\Windows\\System32\\cmd.exe'
-    PATH = 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin;C:\\Program Files\\nodejs'
+    PNPM_HOME = 'C:\\Users\\video\\AppData\\Roaming\\npm'
+    CARGO_HOME = 'C:\\Users\\video\\.cargo'
+    RUSTUP_HOME = 'C:\\Users\\video\\.rustup'
+    POWERSHELL_HOME = 'C:\\Users\\video\\.local\\powershell\\7.6.5'
+    PATH = 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin;C:\\Program Files\\nodejs;C:\\Users\\video\\AppData\\Roaming\\npm;C:\\Users\\video\\.cargo\\bin;C:\\Users\\video\\.local\\bin;C:\\Users\\video\\.local\\powershell\\7.6.5'
   }
 
   options {
@@ -46,19 +50,6 @@ pipeline {
   stages {
     stage('Prepare Windows environment') {
       steps {
-        script {
-          env.PATH = [
-            'C:\\Windows\\System32',
-            'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
-            'C:\\Program Files\\Git\\cmd',
-            'C:\\Program Files\\Git\\bin',
-            'C:\\Program Files\\nodejs',
-            "${env.USERPROFILE}\\.cargo\\bin",
-            "${env.USERPROFILE}\\.local\\bin",
-            "${env.APPDATA}\\npm"
-          ].findAll { it?.trim() }.unique().join(';')
-        }
-
         bat '''
 @echo off
 setlocal
@@ -66,7 +57,15 @@ setlocal
 node -e "const major=Number(process.versions.node.split('.')[0]); if(process.platform!=='win32'||process.arch!=='x64'||major!==24){console.error('Expected Windows x64 Node.js 24, received', process.platform, process.arch, process.version); process.exit(1)}"
 if errorlevel 1 exit /b %errorlevel%
 
-for /f "delims=" %%V in ('pnpm --version') do set "PNPM_VERSION=%%V"
+if not exist "%PNPM_HOME%\\pnpm.cmd" (
+  echo pnpm was not found at %PNPM_HOME%\\pnpm.cmd
+  exit /b 1
+)
+
+call "%PNPM_HOME%\\pnpm.cmd" --version > "%TEMP%\\wework-pnpm-version.txt"
+if errorlevel 1 exit /b %errorlevel%
+set /p PNPM_VERSION=<"%TEMP%\\wework-pnpm-version.txt"
+del "%TEMP%\\wework-pnpm-version.txt"
 if not "%PNPM_VERSION%"=="11.7.0" (
   echo Expected pnpm 11.7.0, received %PNPM_VERSION%
   exit /b 1
@@ -78,17 +77,36 @@ if errorlevel 1 (
   exit /b 1
 )
 
-where rustup >nul 2>&1
-if errorlevel 1 (
-  echo rustup was not found on PATH
+if not exist "%POWERSHELL_HOME%\\pwsh.exe" (
+  echo PowerShell 7 was not found at %POWERSHELL_HOME%\\pwsh.exe
   exit /b 1
 )
 
-rustup target list --installed | findstr /x "x86_64-pc-windows-msvc" >nul
-if errorlevel 1 (
-  echo Rust target x86_64-pc-windows-msvc is not installed
+"%POWERSHELL_HOME%\\pwsh.exe" -NoLogo -NoProfile -Command "$PSVersionTable.PSVersion.ToString()"
+if errorlevel 1 exit /b %errorlevel%
+
+if not exist "%CARGO_HOME%\\bin\\rustup.exe" (
+  echo rustup was not found at %CARGO_HOME%\\bin\\rustup.exe
   exit /b 1
 )
+
+"%CARGO_HOME%\\bin\\rustup.exe" show active-toolchain
+if errorlevel 1 exit /b %errorlevel%
+
+"%CARGO_HOME%\\bin\\rustc.exe" -vV > "%TEMP%\\wework-rustc-version.txt"
+if errorlevel 1 exit /b %errorlevel%
+
+%SystemRoot%\\System32\\findstr.exe /c:"host: x86_64-pc-windows-msvc" "%TEMP%\\wework-rustc-version.txt" >nul
+if errorlevel 1 (
+  echo Expected Rust host x86_64-pc-windows-msvc, received:
+  type "%TEMP%\\wework-rustc-version.txt"
+  del "%TEMP%\\wework-rustc-version.txt"
+  exit /b 1
+)
+del "%TEMP%\\wework-rustc-version.txt"
+
+"%CARGO_HOME%\\bin\\cargo.exe" -V
+if errorlevel 1 exit /b %errorlevel%
 
 if not exist "C:\\Program Files\\Git\\bin\\bash.exe" (
   echo Git Bash was not found at C:\\Program Files\\Git\\bin\\bash.exe
@@ -241,6 +259,15 @@ if not defined VS_INSTALL (
 
 call "%VS_INSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64
 if errorlevel 1 exit /b %errorlevel%
+
+set "MSVC_LINKER=%VCToolsInstallDir%bin\\Hostx64\\x64\\link.exe"
+if exist "%MSVC_LINKER%" goto msvc_linker_ready
+echo Visual Studio MSVC linker was not found at %MSVC_LINKER%
+exit /b 1
+
+:msvc_linker_ready
+set "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=%MSVC_LINKER%"
+echo Using MSVC linker: %CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER%
 
 "C:\\Program Files\\Git\\bin\\bash.exe" .jenkins-release/build.sh
 exit /b %errorlevel%
