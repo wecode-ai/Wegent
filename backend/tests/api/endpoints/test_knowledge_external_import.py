@@ -16,7 +16,11 @@ from app.api.dependencies import get_db
 from app.api.endpoints.knowledge import document_router, router
 from app.core import security
 from app.models.dingtalk_doc import DingtalkSyncedNode
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
+)
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate, KnowledgeFolderCreate
 from app.services.knowledge.folder_service import KnowledgeFolderService
@@ -659,8 +663,15 @@ def _create_failed_external_document(
         file_size=0,
         user_id=user_id,
         source_type="external" if external else "file",
-        external_provider="dingtalk" if external else None,
-        external_resource_id="z" * 32 if external else None,
+        external_source=(
+            KnowledgeDocumentExternalSource(
+                kind_id=knowledge_base_id,
+                external_provider="dingtalk",
+                external_resource_id="z" * 32,
+            )
+            if external
+            else None
+        ),
         index_status=index_status,
         index_generation=0,
     )
@@ -737,7 +748,7 @@ class TestExternalImportStatus:
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
         document = _create_failed_external_document(test_db, test_user.id, kb_id)
-        document.external_provider = "other-provider"
+        document.external_source.external_provider = "other-provider"
         test_db.commit()
         response = import_client.post(
             f"/knowledge-bases/{kb_id}/documents/external-import-status",

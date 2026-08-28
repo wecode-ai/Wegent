@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
+)
 from app.models.subtask_context import SubtaskContext
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate
@@ -39,8 +43,11 @@ def external_document(test_db: Session, test_user: User) -> KnowledgeDocument:
         file_size=len(BODY.encode("utf-8")),
         attachment_id=attachment.id,
         source_type="external",
-        external_provider="dingtalk",
-        external_resource_id="preview-node",
+        external_source=KnowledgeDocumentExternalSource(
+            kind_id=kb_id,
+            external_provider="dingtalk",
+            external_resource_id="preview-node",
+        ),
         index_status=DocumentIndexStatus.FAILED,
         index_generation=2,
         is_active=False,

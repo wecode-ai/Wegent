@@ -7,7 +7,6 @@
 import importlib.util
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock
 
 import pytest
 import sqlalchemy as sa
@@ -37,15 +36,6 @@ def test_revision_extends_main_head() -> None:
 
     assert migration.revision == "c5d6e7f8a9b0"
     assert migration.down_revision == "7a4c2e9f1b30"
-
-
-def _migration_with_mock_op(
-    monkeypatch: MonkeyPatch,
-) -> tuple[ModuleType, MagicMock]:
-    migration = _load_migration()
-    op = MagicMock()
-    monkeypatch.setattr(migration, "op", op)
-    return migration, op
 
 
 def _legacy_engine() -> sa.engine.Engine:
@@ -99,18 +89,23 @@ def test_upgrade_downgrade_cycle_runs_against_real_engine(
         _bind_migration_to_connection(migration, monkeypatch, connection)
 
         migration.upgrade()
-        assert {"external_provider", "external_resource_id"} <= _columns(connection)
-        assert "uq_knowledge_documents_external" in _index_names(connection)
+        assert (
+            "knowledge_document_external_sources"
+            in sa_inspect(connection).get_table_names()
+        )
+        assert not {"external_provider", "external_resource_id"} & _columns(connection)
         assert not sa_inspect(connection).get_check_constraints("knowledge_documents")
-        # Legacy rows keep the regular-document identity: both columns NULL.
+        # Ordinary documents do not acquire an external identity.
         row = connection.execute(
-            sa.text(
-                "SELECT external_provider, external_resource_id FROM knowledge_documents"
-            )
+            sa.text("SELECT COUNT(*) FROM knowledge_document_external_sources")
         ).one()
-        assert row == (None, None)
+        assert row == (0,)
 
         migration.downgrade()
+        assert (
+            "knowledge_document_external_sources"
+            not in sa_inspect(connection).get_table_names()
+        )
         assert "external_provider" not in _columns(connection)
         assert "external_resource_id" not in _columns(connection)
         assert "uq_knowledge_documents_external" not in _index_names(connection)
@@ -126,14 +121,15 @@ def test_unique_index_rejects_duplicate_external_identity(
         migration.upgrade()
 
         insert = sa.text(
-            "INSERT INTO knowledge_documents (kind_id, name, external_provider, "
-            "external_resource_id) VALUES (:kind_id, :name, :provider, :resource_id)"
+            "INSERT INTO knowledge_document_external_sources "
+            "(document_id, kind_id, external_provider, external_resource_id) "
+            "VALUES (:document_id, :kind_id, :provider, :resource_id)"
         )
         connection.execute(
             insert,
             {
                 "kind_id": 1,
-                "name": "doc-a",
+                "document_id": 1,
                 "provider": "dingtalk",
                 "resource_id": "doc-1",
             },
@@ -144,7 +140,7 @@ def test_unique_index_rejects_duplicate_external_identity(
                 insert,
                 {
                     "kind_id": 1,
-                    "name": "doc-a-duplicate",
+                    "document_id": 2,
                     "provider": "dingtalk",
                     "resource_id": "doc-1",
                 },
@@ -154,19 +150,28 @@ def test_unique_index_rejects_duplicate_external_identity(
             insert,
             {
                 "kind_id": 2,
-                "name": "doc-b",
+                "document_id": 3,
                 "provider": "dingtalk",
                 "resource_id": "doc-1",
             },
         )
-        # Regular documents (both columns NULL) never conflict.
+        # A document cannot own a second identity, even for a different resource.
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                insert,
+                {
+                    "document_id": 1,
+                    "kind_id": 1,
+                    "provider": "dingtalk",
+                    "resource_id": "doc-2",
+                },
+            )
+        # Ordinary documents do not participate in the external identity index.
         connection.execute(
-            insert,
-            {"kind_id": 1, "name": "regular-1", "provider": None, "resource_id": None},
-        )
-        connection.execute(
-            insert,
-            {"kind_id": 1, "name": "regular-2", "provider": None, "resource_id": None},
+            sa.text(
+                "INSERT INTO knowledge_documents (kind_id, name) VALUES "
+                "(1, 'regular-1'), (1, 'regular-2')"
+            )
         )
 
 
@@ -179,30 +184,28 @@ def test_no_external_snapshot_mapping_table_or_dual_write_path() -> None:
         assert "ExternalKnowledgeSnapshot" not in path.read_text(), path.name
 
 
-def test_upgrade_adds_identity_columns_and_unique_index(
-    monkeypatch: MonkeyPatch,
-) -> None:
-    migration, op = _migration_with_mock_op(monkeypatch)
-
-    migration.upgrade()
-
-    added_columns = [call.args[1].name for call in op.add_column.call_args_list]
-    assert added_columns == ["external_provider", "external_resource_id"]
-    op.create_index.assert_called_once_with(
-        "uq_knowledge_documents_external",
-        "knowledge_documents",
-        ["kind_id", "external_provider", "external_resource_id"],
-        unique=True,
-    )
-
-
-def test_downgrade_reverses_upgrade(monkeypatch: MonkeyPatch) -> None:
-    migration, op = _migration_with_mock_op(monkeypatch)
-
-    migration.downgrade()
-
-    op.drop_index.assert_called_once_with(
-        "uq_knowledge_documents_external", table_name="knowledge_documents"
-    )
-    dropped_columns = [call.args[1] for call in op.drop_column.call_args_list]
-    assert dropped_columns == ["external_resource_id", "external_provider"]
+@pytest.mark.parametrize(
+    "column", ["kind_id", "external_provider", "external_resource_id"]
+)
+def test_identity_fields_reject_null(monkeypatch: MonkeyPatch, column: str) -> None:
+    migration = _load_migration()
+    engine = _legacy_engine()
+    with engine.begin() as connection:
+        _bind_migration_to_connection(migration, monkeypatch, connection)
+        migration.upgrade()
+        values = {
+            "document_id": 1,
+            "kind_id": 1,
+            "external_provider": "dingtalk",
+            "external_resource_id": "doc-1",
+        }
+        values[column] = None
+        with pytest.raises(sa.exc.IntegrityError):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO knowledge_document_external_sources "
+                    "(document_id, kind_id, external_provider, external_resource_id) "
+                    "VALUES (:document_id, :kind_id, :external_provider, :external_resource_id)"
+                ),
+                values,
+            )

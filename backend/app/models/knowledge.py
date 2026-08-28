@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     TypeDecorator,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm.attributes import flag_modified
@@ -102,6 +103,56 @@ class DocumentIndexStatusType(TypeDecorator):
             return value
 
 
+class KnowledgeDocumentExternalSource(Base):
+    """One external identity per document and per knowledge base.
+
+    References are maintained in the document transaction, without database FKs.
+    This table owns identity only; content and processing state belong to the document.
+    """
+
+    __tablename__ = "knowledge_document_external_sources"
+
+    document_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=False,
+        comment="知识文档ID，关联knowledge_documents.id",
+    )
+    kind_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="所属知识库ID，与知识文档的kind_id一致",
+    )
+    external_provider = Column(
+        String(32),
+        nullable=False,
+        server_default="",
+        comment="外部文档来源标识，如dingtalk；业务写入时不能为空",
+    )
+    external_resource_id = Column(
+        String(255),
+        nullable=False,
+        server_default="",
+        comment="外部来源中的文档资源ID；业务写入时不能为空",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "kind_id",
+            "external_provider",
+            "external_resource_id",
+            name="uq_knowledge_documents_external",
+        ),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+            "comment": "知识文档外部身份表，仅外部导入文档有记录",
+        },
+    )
+
+
 class KnowledgeDocument(Base):
     """
     Knowledge document model for storing document metadata.
@@ -156,23 +207,34 @@ class KnowledgeDocument(Base):
         default=ContentOrigin.USER.value,
         server_default=ContentOrigin.USER.value,
     )
-    # External identity of an imported provider document. Both columns are NULL
-    # together (regular documents) or set together (external documents).
-    # The creation service enforces the pairing; the unique index below
-    # enforces one external identity per knowledge base.
-    external_provider = Column(String(32), nullable=True)
-    external_resource_id = Column(String(255), nullable=True)
+    # Batch-load identities for document lists; ORM deletion removes the owned row.
+    external_source = relationship(
+        "KnowledgeDocumentExternalSource",
+        primaryjoin="KnowledgeDocument.id == foreign(KnowledgeDocumentExternalSource.document_id)",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+        lazy="selectin",
+    )
+
+    @property
+    def external_provider(self) -> str | None:
+        """Expose the provider from the single identity source to API consumers."""
+        return self.external_source.external_provider if self.external_source else None
+
+    @property
+    def external_resource_id(self) -> str | None:
+        """Expose the resource ID without duplicating its persisted value."""
+        return (
+            self.external_source.external_resource_id if self.external_source else None
+        )
 
     # --- Helper properties for converted attachment reference ---
 
     @property
     def has_external_identity(self) -> bool:
-        """Whether this document is an imported external provider document.
-
-        Both identity columns are always set together (see the column comment
-        above), so one truthy check covers the pairing.
-        """
-        return bool(self.external_provider and self.external_resource_id)
+        """Whether this document owns an external provider identity."""
+        return self.external_source is not None
 
     @property
     def external_source_config(self) -> dict:
@@ -265,14 +327,6 @@ class KnowledgeDocument(Base):
         ),
         # Index for attachment lookup
         Index("ix_knowledge_documents_attachment", "attachment_id"),
-        # Unique external identity: one provider document per knowledge base
-        Index(
-            "uq_knowledge_documents_external",
-            "kind_id",
-            "external_provider",
-            "external_resource_id",
-            unique=True,
-        ),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

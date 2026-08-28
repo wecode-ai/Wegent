@@ -15,6 +15,7 @@ from app.models.knowledge import (
     DocumentIndexStatus,
     DocumentSourceType,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
 )
 from app.models.user import User
 from app.schemas.knowledge import KnowledgeBaseCreate
@@ -55,8 +56,15 @@ def _create_placeholder(
         user_id=user_id,
         source_type=DocumentSourceType.EXTERNAL.value,
         source_config={"external": {"provider": "dingtalk"}},
-        external_provider="dingtalk" if with_identity else None,
-        external_resource_id="a" * 32 if with_identity else None,
+        external_source=(
+            KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="a" * 32,
+            )
+            if with_identity
+            else None
+        ),
         index_status=DocumentIndexStatus.QUEUED,
     )
     test_db.add(document)

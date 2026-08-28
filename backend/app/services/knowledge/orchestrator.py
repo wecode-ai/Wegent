@@ -1875,8 +1875,10 @@ class KnowledgeOrchestrator:
             db.query(KnowledgeDocument)
             .filter(
                 KnowledgeDocument.id == document_id,
-                KnowledgeDocument.external_provider == document.external_provider,
-                KnowledgeDocument.external_resource_id == document.external_resource_id,
+                KnowledgeDocument.external_source.has(
+                    external_provider=document.external_provider,
+                    external_resource_id=document.external_resource_id,
+                ),
                 KnowledgeDocument.index_generation == generation,
             )
             .update(update_fields, synchronize_session=False)

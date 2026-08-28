@@ -17,6 +17,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
 )
 from app.models.subtask_context import SubtaskContext
 from app.models.user import User
@@ -54,8 +55,11 @@ class TestRunExternalDocumentImport:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id="h" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="h" * 32,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
         )
         test_db.add(document)
@@ -348,8 +352,8 @@ class TestRunExternalDocumentImport:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         document = self._create_placeholder(test_db, test_user)
-        document.external_provider = "gone"
-        document.external_resource_id = "h" * 32
+        document.external_source.external_provider = "gone"
+        document.external_source.external_resource_id = "h" * 32
         test_db.commit()
 
         run_external_document_import(test_db, document, test_user, generation=0)
@@ -439,8 +443,11 @@ class TestRunExternalDocumentImport:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id="r" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="r" * 32,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
         )
         succeeding = KnowledgeDocument(
@@ -452,8 +459,11 @@ class TestRunExternalDocumentImport:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id="s" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="s" * 32,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
         )
         test_db.add_all([failing, succeeding])
@@ -518,8 +528,15 @@ class TestRetryDocumentImport:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk" if external else None,
-            external_resource_id="t" * 32 if external else None,
+            external_source=(
+                KnowledgeDocumentExternalSource(
+                    kind_id=kb_id,
+                    external_provider="dingtalk",
+                    external_resource_id="t" * 32,
+                )
+                if external
+                else None
+            ),
             index_status=index_status,
             index_generation=0,
         )
@@ -667,8 +684,15 @@ class TestExternalDocumentPreviewAndEnableGuards:
             user_id=test_user.id,
             source_type=(DocumentSourceType.EXTERNAL.value if external else "file"),
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk" if external else None,
-            external_resource_id="u" * 32 if external else None,
+            external_source=(
+                KnowledgeDocumentExternalSource(
+                    kind_id=kb_id,
+                    external_provider="dingtalk",
+                    external_resource_id="u" * 32,
+                )
+                if external
+                else None
+            ),
             index_status=index_status,
             is_active=is_active,
         )

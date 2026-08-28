@@ -24,6 +24,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
     KnowledgeFolder,
 )
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
@@ -1691,16 +1692,17 @@ class KnowledgeService:
             index_status=DocumentIndexStatus.QUEUED,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": dict(external_meta)},
-            external_provider=external_provider,
-            external_resource_id=external_resource_id,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=knowledge_base_id,
+                external_provider=external_provider,
+                external_resource_id=external_resource_id,
+            ),
             origin=ContentOrigin.USER.value,
         )
-        db.add(document)
-        db.flush()
-
-        KnowledgeService._update_document_count_cache(db, knowledge_base_id)
-
         try:
+            db.add(document)
+            db.flush()
+            KnowledgeService._update_document_count_cache(db, knowledge_base_id)
             db.commit()
         except IntegrityError:
             db.rollback()

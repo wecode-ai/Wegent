@@ -18,6 +18,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
 )
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -247,7 +248,10 @@ class TestImportDocument:
             external_resource_id=node.dingtalk_node_id,
         )
 
-        # Both columns are NULL together (regular) or set together (external).
+        # Only external copies own an identity row.
+        assert regular.external_source is None
+        assert external.external_source.document_id == external.id
+        assert external.external_source.kind_id == kb_id
         assert regular.external_provider is None
         assert regular.external_resource_id is None
         assert external.external_provider == "dingtalk"
@@ -541,6 +545,7 @@ class TestImportDocument:
             {"document_id": document.id, "expected_generation": 0}
         ]
 
+    @pytest.mark.parametrize("batch", [False, True])
     def test_reimport_after_delete_creates_new_document(
         self,
         test_db: Session,
@@ -548,6 +553,7 @@ class TestImportDocument:
         configured_dingtalk: None,
         dispatch_calls: list[dict],
         monkeypatch: pytest.MonkeyPatch,
+        batch: bool,
     ) -> None:
         import app.services.knowledge.knowledge_service as knowledge_service_module
 
@@ -568,9 +574,16 @@ class TestImportDocument:
             "app.services.context.context_service.delete_context",
             MagicMock(return_value=True),
         )
-        KnowledgeService.delete_document(
-            db=test_db, document_id=document.id, user_id=test_user.id
-        )
+        if batch:
+            result = KnowledgeService.batch_delete_documents(
+                db=test_db, document_ids=[document.id], user_id=test_user.id
+            )
+            assert result.result.success_count == 1
+        else:
+            assert KnowledgeService.delete_document(
+                db=test_db, document_id=document.id, user_id=test_user.id
+            ).success
+        assert test_db.get(KnowledgeDocumentExternalSource, document.id) is None
 
         recreated = external_document_import_service.import_document(
             db=test_db,
@@ -855,8 +868,11 @@ class TestAttachExternalDocumentContent:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id="k" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="k" * 32,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
         )
         test_db.add(document)

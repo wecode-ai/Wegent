@@ -18,6 +18,7 @@ from app.models.knowledge import (
     DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
 )
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -217,6 +218,20 @@ def test_moved_copy_refresh_uses_source_owner_and_target_index_owner(
         user_id=manager.id,
     )
     assert result.success
+    test_db.refresh(document)
+    assert document.external_source.kind_id == target_id
+    assert (
+        external_document_import_service.get_import_statuses(
+            test_db, manager, source_id, "dingtalk", [node.dingtalk_node_id]
+        )
+        == {}
+    )
+    assert (
+        node.dingtalk_node_id
+        in external_document_import_service.get_import_statuses(
+            test_db, manager, target_id, "dingtalk", [node.dingtalk_node_id]
+        )
+    )
     assert (
         KnowledgeService.get_knowledge_base(test_db, target_id, test_user.id)[1]
         is False
@@ -325,6 +340,7 @@ class TestExternalSourceUnavailable:
     ) -> None:
         engine = create_engine("sqlite:///:memory:")
         KnowledgeDocument.__table__.create(engine)
+        KnowledgeDocumentExternalSource.__table__.create(engine)
         provider = SimpleNamespace(
             fetch_content=AsyncMock(side_effect=ExternalSourceUnavailableError("gone"))
         )
@@ -340,8 +356,11 @@ class TestExternalSourceUnavailable:
                     name="Source",
                     file_extension="md",
                     source_type="external",
-                    external_provider="dingtalk",
-                    external_resource_id="source",
+                    external_source=KnowledgeDocumentExternalSource(
+                        kind_id=1,
+                        external_provider="dingtalk",
+                        external_resource_id="source",
+                    ),
                     index_generation=1,
                     index_status=DocumentIndexStatus.QUEUED,
                 )
@@ -399,8 +418,11 @@ class TestExternalSourceUnavailable:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk", "title": "Old"}},
-            external_provider="dingtalk",
-            external_resource_id="v" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="v" * 32,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
             index_generation=1,
             is_active=False,
@@ -513,8 +535,11 @@ class TestExternalDocumentBodyReadOnly:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id="q" * 32,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id="q" * 32,
+            ),
             index_status=DocumentIndexStatus.SUCCESS,
             is_active=True,
             status="enabled",
@@ -585,28 +610,23 @@ class TestConcurrentDuplicateIdentity:
         kb_id = _create_kb(test_db, test_user.id, "concurrent-external-kb")
 
         def _add(resource_suffix: str) -> None:
-            test_db.add(
-                KnowledgeDocument(
-                    kind_id=kb_id,
-                    attachment_id=0,
-                    name=f"Concurrent {resource_suffix}",
-                    file_extension="md",
-                    file_size=0,
-                    user_id=test_user.id,
-                    source_type=DocumentSourceType.EXTERNAL.value,
-                    source_config={"external": {"provider": "dingtalk"}},
-                    external_provider="dingtalk",
-                    external_resource_id="cc" * 16,
-                    index_status=DocumentIndexStatus.QUEUED,
-                )
+            KnowledgeService.create_external_document(
+                test_db,
+                kb_id,
+                test_user.id,
+                name=f"Concurrent {resource_suffix}",
+                external_provider="dingtalk",
+                external_resource_id="cc" * 16,
+                folder_id=0,
+                external_meta={},
             )
-            test_db.commit()
 
         _add("first")
         with pytest.raises(IntegrityError):
             _add("second")
-        test_db.rollback()
+        assert test_db.is_active
         assert test_db.query(KnowledgeDocument).count() == 1
+        assert test_db.query(KnowledgeDocumentExternalSource).count() == 1
 
     def test_import_reuses_identity_created_by_concurrent_request(
         self,
@@ -629,8 +649,11 @@ class TestConcurrentDuplicateIdentity:
             user_id=test_user.id,
             source_type=DocumentSourceType.EXTERNAL.value,
             source_config={"external": {"provider": "dingtalk"}},
-            external_provider="dingtalk",
-            external_resource_id=node.dingtalk_node_id,
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=kb_id,
+                external_provider="dingtalk",
+                external_resource_id=node.dingtalk_node_id,
+            ),
             index_status=DocumentIndexStatus.QUEUED,
             is_active=False,
         )

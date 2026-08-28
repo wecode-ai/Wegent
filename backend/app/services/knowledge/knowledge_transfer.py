@@ -17,6 +17,7 @@ from app.models.knowledge import (
     ContentOrigin,
     DocumentIndexStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
     KnowledgeFolder,
 )
 from app.models.user import User
@@ -519,13 +520,15 @@ class KnowledgeTransferService:
         target_identities = {
             (provider, resource_id)
             for provider, resource_id in db.query(
-                KnowledgeDocument.external_provider,
-                KnowledgeDocument.external_resource_id,
-            ).filter(
-                KnowledgeDocument.kind_id == target_kb_id,
-                KnowledgeDocument.external_provider.in_(providers),
-                KnowledgeDocument.external_resource_id.in_(resource_ids),
+                KnowledgeDocumentExternalSource.external_provider,
+                KnowledgeDocumentExternalSource.external_resource_id,
             )
+            .filter(
+                KnowledgeDocumentExternalSource.kind_id == target_kb_id,
+                KnowledgeDocumentExternalSource.external_provider.in_(providers),
+                KnowledgeDocumentExternalSource.external_resource_id.in_(resource_ids),
+            )
+            .with_for_update()
         }
         duplicate_names = sorted(
             document.name
@@ -557,6 +560,8 @@ class KnowledgeTransferService:
                 doc.folder_id = 0
 
             doc.kind_id = target_kb_id
+            if doc.external_source is not None:
+                doc.external_source.kind_id = target_kb_id
             doc.index_status = DocumentIndexStatus.NOT_INDEXED
             doc.is_active = False  # Will be set to True after successful reindexing
 

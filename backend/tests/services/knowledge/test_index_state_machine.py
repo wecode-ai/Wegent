@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
+)
 from app.models.user import User
 from app.schemas.knowledge import DocumentProcessingStage
 from app.services.knowledge.index_state_machine import (
@@ -402,6 +406,7 @@ def test_failed_old_attempt_does_not_overwrite_another_sessions_new_generation()
 ):
     engine = create_engine("sqlite:///:memory:")
     KnowledgeDocument.__table__.create(engine)
+    KnowledgeDocumentExternalSource.__table__.create(engine)
     try:
         with Session(engine, expire_on_commit=False) as old_worker:
             document = KnowledgeDocument(
@@ -410,8 +415,11 @@ def test_failed_old_attempt_does_not_overwrite_another_sessions_new_generation()
                 name="external.md",
                 file_extension="md",
                 source_type="external",
-                external_provider="dingtalk",
-                external_resource_id="source",
+                external_source=KnowledgeDocumentExternalSource(
+                    kind_id=1,
+                    external_provider="dingtalk",
+                    external_resource_id="source",
+                ),
                 index_status=DocumentIndexStatus.QUEUED,
                 index_generation=1,
             )
@@ -505,8 +513,15 @@ class TestBeginExternalImportAttempt:
             file_size=10,
             user_id=test_user.id,
             source_type="external",
-            external_provider="dingtalk" if with_identity else None,
-            external_resource_id="a" * 32 if with_identity else None,
+            external_source=(
+                KnowledgeDocumentExternalSource(
+                    kind_id=knowledge_base.id,
+                    external_provider="dingtalk",
+                    external_resource_id="a" * 32,
+                )
+                if with_identity
+                else None
+            ),
             index_status=index_status,
             index_generation=index_generation,
         )

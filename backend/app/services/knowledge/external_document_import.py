@@ -19,7 +19,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import ObjectDeletedError
 
-from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
+from app.models.knowledge import (
+    DocumentIndexStatus,
+    KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
+)
 from app.models.user import User
 from app.schemas.knowledge import ContentOrigin, DocumentProcessingStage
 from app.services.knowledge.external_document_providers import (
@@ -88,12 +92,17 @@ class ExternalDocumentImportService:
         )
         rows = (
             db.query(
-                KnowledgeDocument.external_resource_id, KnowledgeDocument.index_status
+                KnowledgeDocumentExternalSource.external_resource_id,
+                KnowledgeDocument.index_status,
             )
+            .join(KnowledgeDocument.external_source)
             .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.external_provider == provider.provider_id,
-                KnowledgeDocument.external_resource_id.in_(external_resource_ids),
+                KnowledgeDocumentExternalSource.kind_id == knowledge_base_id,
+                KnowledgeDocumentExternalSource.external_provider
+                == provider.provider_id,
+                KnowledgeDocumentExternalSource.external_resource_id.in_(
+                    external_resource_ids
+                ),
             )
             .all()
         )
@@ -298,10 +307,13 @@ class ExternalDocumentImportService:
         """
         existing = {
             document.external_resource_id: document
-            for document in db.query(KnowledgeDocument).filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.external_provider == provider.provider_id,
-                KnowledgeDocument.external_resource_id.in_(resource_ids),
+            for document in db.query(KnowledgeDocument)
+            .join(KnowledgeDocument.external_source)
+            .filter(
+                KnowledgeDocumentExternalSource.kind_id == knowledge_base_id,
+                KnowledgeDocumentExternalSource.external_provider
+                == provider.provider_id,
+                KnowledgeDocumentExternalSource.external_resource_id.in_(resource_ids),
             )
         }
         resolved: list[tuple[str, dict]] = []
@@ -423,10 +435,12 @@ class ExternalDocumentImportService:
         """Return the document already holding this external identity, if any."""
         return (
             db.query(KnowledgeDocument)
+            .join(KnowledgeDocument.external_source)
             .filter(
-                KnowledgeDocument.kind_id == knowledge_base_id,
-                KnowledgeDocument.external_provider == provider_id,
-                KnowledgeDocument.external_resource_id == external_resource_id,
+                KnowledgeDocumentExternalSource.kind_id == knowledge_base_id,
+                KnowledgeDocumentExternalSource.external_provider == provider_id,
+                KnowledgeDocumentExternalSource.external_resource_id
+                == external_resource_id,
             )
             .first()
         )
