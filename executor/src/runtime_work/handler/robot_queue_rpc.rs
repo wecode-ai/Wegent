@@ -6,14 +6,29 @@ use super::*;
 use crate::runtime_work::automations::AutomationRunStatus;
 use crate::task_runtime::LocalTaskStore;
 
+static LAST_RUNTIME_STATUS_OBSERVATION: AtomicU64 = AtomicU64::new(0);
+
+fn next_runtime_status_observation() -> i64 {
+    let wall_clock = now_ms().max(1) as u64;
+    let mut previous = LAST_RUNTIME_STATUS_OBSERVATION.load(Ordering::Relaxed);
+    loop {
+        let next = wall_clock.max(previous.saturating_add(1));
+        match LAST_RUNTIME_STATUS_OBSERVATION.compare_exchange_weak(
+            previous,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return next.min(i64::MAX as u64) as i64,
+            Err(actual) => previous = actual,
+        }
+    }
+}
+
 impl RuntimeWorkRpcHandler {
     pub(crate) async fn reconcile_bound_task_statuses(&self) {
-        let observed_at_ms = now_ms();
         for link in self.collect_links(false).await {
-            self.project_runtime_link_status_at(
-                &link,
-                observed_at_ms.max(link.updated_at.saturating_add(1)),
-            );
+            self.project_runtime_link_status_now(&link);
         }
     }
 
@@ -67,6 +82,10 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn project_runtime_link_status(&self, link: &RuntimeTaskLink) {
         self.project_runtime_link_status_at(link, link.updated_at);
+    }
+
+    pub(super) fn project_runtime_link_status_now(&self, link: &RuntimeTaskLink) {
+        self.project_runtime_link_status_at(link, next_runtime_status_observation());
     }
 
     fn project_runtime_link_status_at(&self, link: &RuntimeTaskLink, observed_at_ms: i64) {
