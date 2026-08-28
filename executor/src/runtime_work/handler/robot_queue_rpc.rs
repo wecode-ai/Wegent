@@ -7,6 +7,62 @@ use crate::runtime_work::automations::AutomationRunStatus;
 use crate::task_runtime::LocalTaskStore;
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn project_bound_task_status(&self, local_task_id: &str, execution_status: &str) {
+        let store = match LocalTaskStore::from_env_if_exists() {
+            Ok(Some(store)) => store,
+            Ok(None) => return,
+            Err(error) => {
+                log_executor_event(
+                    "runtime task Issue status store unavailable",
+                    &[
+                        ("local_task_id", local_task_id.to_owned()),
+                        ("error", error.to_string()),
+                    ],
+                );
+                return;
+            }
+        };
+        match store.project_bound_task_status(&self.device_id, local_task_id, execution_status) {
+            Ok(0) => {}
+            Ok(changed) => log_executor_event(
+                "runtime task Issue status projected",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("execution_status", execution_status.to_owned()),
+                    ("changed", changed.to_string()),
+                ],
+            ),
+            Err(error) => log_executor_event(
+                "runtime task Issue status projection failed",
+                &[
+                    ("local_task_id", local_task_id.to_owned()),
+                    ("execution_status", execution_status.to_owned()),
+                    ("error", error.to_string()),
+                ],
+            ),
+        }
+    }
+
+    pub(super) fn project_runtime_link_status(&self, link: &RuntimeTaskLink) {
+        let execution_status = if link.status == "archived" {
+            Some("archived")
+        } else if link.running || link.status == "running" {
+            Some("running")
+        } else {
+            match link.status.as_str() {
+                "queued" | "pending" => Some("queued"),
+                "failed" | "error" => Some("failed"),
+                "cancelled" | "canceled" | "interrupted" => Some("cancelled"),
+                "done" | "completed" | "succeeded" => Some("succeeded"),
+                _ if link.completed_at.is_some() => Some("succeeded"),
+                _ => None,
+            }
+        };
+        if let Some(execution_status) = execution_status {
+            self.project_bound_task_status(&link.local_task_id, execution_status);
+        }
+    }
+
     pub(super) fn start_queue_run(&self, local_task_id: &str) {
         let Ok(store) = LocalTaskStore::from_env() else {
             return;

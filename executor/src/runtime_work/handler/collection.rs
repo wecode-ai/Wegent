@@ -724,6 +724,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn upsert_local_task(&self, link: RuntimeTaskLink) {
+        self.project_runtime_link_status(&link);
         self.store.upsert_task(link);
     }
 
@@ -785,6 +786,7 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
         });
+        self.project_bound_task_status(&local_task_id, "running");
         Ok(execution_id)
     }
 
@@ -888,6 +890,7 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
+        self.project_bound_task_status(local_task_id, status);
         self.schedule_worktree_prune();
         log_executor_event(
             "runtime work local execution force settled",
@@ -928,6 +931,7 @@ impl RuntimeWorkRpcHandler {
             link.status = "cancelled".to_owned();
             apply_local_execution_state(link, false, None);
         });
+        self.project_bound_task_status(local_task_id, "cancelled");
         self.schedule_worktree_prune();
         true
     }
@@ -1141,6 +1145,7 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
+        self.project_bound_task_status(local_task_id, status);
         if status != "running" {
             self.schedule_worktree_prune();
         }

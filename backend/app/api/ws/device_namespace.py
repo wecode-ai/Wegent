@@ -804,7 +804,7 @@ def _project_bound_runtime_event_status(
         )
         .first()
     )
-    if binding is None or not binding.loop_item_id or not binding.workflow_node_id:
+    if binding is None or not binding.loop_item_id:
         logger.info(
             "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
             user_id,
@@ -825,6 +825,65 @@ def _project_bound_runtime_event_status(
             binding.loop_item_id,
         )
         return None
+    if not binding.workflow_node_id:
+        next_status = (
+            "in_progress"
+            if projected_status == "running"
+            else (
+                "in_review"
+                if projected_status in {"succeeded", "failed", "cancelled"}
+                and item_before.status not in {"completed", "in_review"}
+                else None
+            )
+        )
+        if next_status is None or item_before.status == next_status:
+            return None
+        from app.models.delivery import CloudProject
+        from app.services.loop_item_status_history import write_status_change
+
+        project = db.get(CloudProject, item_before.cloud_project_id)
+        metadata = (
+            dict(item_before.metadata_json)
+            if isinstance(item_before.metadata_json, dict)
+            else {}
+        )
+        if project is not None:
+            write_status_change(
+                metadata,
+                project=project,
+                from_status=item_before.status,
+                to_status=next_status,
+                trigger=f"runtime_{projected_status}",
+                by_user_id=None,
+            )
+        item_before.metadata_json = metadata
+        item_before.status = next_status
+        item_before.completed_at = project_chat_service._loop_unset_datetime(db)
+        item_before.sort_order = 0
+        item_before.version += 1
+        db.flush()
+        publish_loop_item_changed(
+            db,
+            item=item_before,
+            reason="runtime_execution_status",
+            actor_user_id=user_id,
+        )
+        logger.info(
+            "[IssueTaskRuntimeSync] projected source=direct_binding user=%s "
+            "device=%s task=%s event=%s status=%s item=%s",
+            user_id,
+            device_id,
+            task_id,
+            event_name,
+            projected_status,
+            item_before.id,
+        )
+        return {
+            "item_id": str(item_before.id),
+            "user_id": user_id,
+            "stage_ids": [],
+        }
+
     ready_before = issue_workflow_start_service.ready_robot_stage_ids(item_before)
     item = update_workflow_task_status(
         db,
