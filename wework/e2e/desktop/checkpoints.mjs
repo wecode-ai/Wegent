@@ -9,6 +9,7 @@ export const DESKTOP_CHECKPOINTS = [
   'project-automation',
   'project-assignment-notification',
   'offline-local-project-space',
+  'cloud-context-resilience',
   'core-dsh-plugin-management',
   'plugin-auto-update',
   'plugin-workspace-publication',

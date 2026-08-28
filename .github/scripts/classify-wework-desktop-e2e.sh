@@ -11,6 +11,7 @@ core_segments=(
   project-automation
   project-assignment-notification
   offline-local-project-space
+  cloud-context-resilience
   core-dsh-plugin-management
   project-ai-settings
   model-routing
@@ -113,7 +114,7 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
   task-status-sync,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
@@ -392,6 +393,7 @@ classify_wework_path() {
       wework/src/features/workbench/projectTaskTracking* | \
       wework/src/features/workbench/workbenchContextTypes*)
       select_target "core:task-status-sync"
+      select_target "core:cloud-context-resilience"
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
@@ -477,6 +479,16 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
+      if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:cloud-context-resilience"
+      fi
+      return
+      ;;
+
+    # Cloud project-space lookup must not block the local composer.
+    wework/src/features/todo/projectSpaceSelection* | \
+      wework/e2e/desktop/scenarios/cloud-context-resilience.scenario.mjs)
+      select_target "core:cloud-context-resilience"
       return
       ;;
 
