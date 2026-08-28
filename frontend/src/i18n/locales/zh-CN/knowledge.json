@@ -10,6 +10,8 @@
   "document_count": "{{count}} 篇文档",
   "documents_count": "{{count}} 篇文档",
   "picker": {
+    "selectContent": "选择内容",
+    "selectedCount": "已选择 {{count}} 项",
     "columns": {
       "sources": "一级分组",
       "knowledgeBases": "二级分组"
@@ -35,6 +37,10 @@
     "loading": "加载知识库中...",
     "loadingDocuments": "加载文档中...",
     "retry": "重试",
+    "selectGroup": "选择群组",
+    "selectCategory": "选择内容类型",
+    "selectScope": "选择范围",
+    "changeSelection": "更换{{name}}",
     "empty": "暂无内容",
     "emptyGroups": "暂无群组",
     "emptyKnowledgeBases": "暂无知识库",

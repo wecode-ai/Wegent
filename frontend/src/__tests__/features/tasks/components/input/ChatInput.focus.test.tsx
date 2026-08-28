@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 
 import ChatInput from '@/features/tasks/components/input/ChatInput'
 
@@ -40,6 +40,57 @@ jest.mock('@/features/tasks/components/chat/SkillFlyAnimation', () => ({
 }))
 
 describe('ChatInput external focus', () => {
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  test('auto focuses when no other control has focus', () => {
+    jest.useFakeTimers()
+    render(
+      <ChatInput
+        message=""
+        setMessage={jest.fn()}
+        handleSendMessage={jest.fn()}
+        isLoading={false}
+        autoFocus
+      />
+    )
+
+    const input = screen.getByTestId('message-input')
+    expect(input).not.toHaveFocus()
+
+    act(() => jest.advanceTimersByTime(100))
+
+    expect(input).toHaveFocus()
+  })
+
+  test('does not steal focus from another control after delayed auto focus was scheduled', () => {
+    jest.useFakeTimers()
+    render(
+      <>
+        <button type="button" data-testid="external-control">
+          External control
+        </button>
+        <ChatInput
+          message=""
+          setMessage={jest.fn()}
+          handleSendMessage={jest.fn()}
+          isLoading={false}
+          autoFocus
+        />
+      </>
+    )
+
+    const externalControl = screen.getByTestId('external-control')
+    const input = screen.getByTestId('message-input')
+    externalControl.focus()
+
+    act(() => jest.advanceTimersByTime(100))
+
+    expect(externalControl).toHaveFocus()
+    expect(input).not.toHaveFocus()
+  })
+
   test('moves the cursor to the end when focusAtEndSignal changes', async () => {
     const props = {
       setMessage: jest.fn(),
