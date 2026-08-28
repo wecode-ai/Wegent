@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
 import { uploadAttachment } from '@/apis/attachments'
 import { DocumentUpload } from '@/features/knowledge/document/components/DocumentUpload'
@@ -90,6 +90,55 @@ describe('DocumentUpload merged video and source workflows', () => {
     })
     fireEvent.click(screen.getByTestId('document-source-file'))
   }
+
+  it.each([60, null])(
+    'blocks conflicting actions until video preflight resolves to %s',
+    async duration => {
+      let resolveDuration!: (duration: number | null) => void
+      jest.mocked(readLocalVideoDuration).mockReturnValue(
+        new Promise(resolve => {
+          resolveDuration = resolve
+        })
+      )
+      mount()
+      addTextDraft()
+      selectVideo()
+
+      expect(screen.getByTestId('document-source-text')).toBeDisabled()
+      expect(screen.getByTestId('document-upload-close')).toBeDisabled()
+      expect(screen.getByTestId('document-upload-submit')).toBeDisabled()
+      expect(screen.getByTestId('document-upload-browse')).toBeDisabled()
+      fireEvent.click(screen.getByTestId('document-source-text'))
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape', code: 'Escape' })
+      expect(screen.getByTestId('document-source-file')).toHaveAttribute('aria-selected', 'true')
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(createDocuments).not.toHaveBeenCalled()
+
+      await act(async () => resolveDuration(duration))
+      await waitFor(() => expect(screen.getByTestId('document-upload-submit')).toBeEnabled())
+      expect(screen.getByText('recording.mp4')).toBeVisible()
+      fireEvent.click(screen.getByTestId('document-source-text'))
+      expect(screen.getByTestId('document-text-content')).toHaveValue('Keep this draft')
+    }
+  )
+
+  it('restores actions and shows the error when video preflight rejects', async () => {
+    jest
+      .mocked(readLocalVideoDuration)
+      .mockRejectedValueOnce(new Error('Cannot read video metadata'))
+    mount()
+    selectVideo()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot read video metadata')
+    expect(screen.getByTestId('document-source-text')).toBeEnabled()
+    expect(screen.getByTestId('document-upload-close')).toBeEnabled()
+    expect(screen.getByTestId('document-upload-browse')).toBeEnabled()
+    expect(uploadVideo).not.toHaveBeenCalled()
+
+    selectVideo()
+    await waitFor(() => expect(screen.getByTestId('document-upload-submit')).toBeEnabled())
+    expect(screen.getByText('recording.mp4')).toBeVisible()
+  })
 
   it('initializes internal upload extensions and cancels long videos before uploading', async () => {
     jest.mocked(readLocalVideoDuration).mockResolvedValue(1801)

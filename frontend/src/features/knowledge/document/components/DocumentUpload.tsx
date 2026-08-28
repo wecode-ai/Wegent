@@ -235,34 +235,46 @@ function DocumentUploadSession({
     [addFiles, filesBusy, canManageDocuments]
   )
 
-  const handleFilesAdded = useCallback(
-    async (files: File[]) => {
-      if (submissionLock.current || filesBusy || !canManageDocuments) return
-      const unsupported = files.filter(f =>
-        isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
-      )
-      const supported = files.filter(
-        f =>
-          !isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
-      )
-      setValidationError(null)
-      setNotice(null)
-      if (unsupported.length) {
-        setValidationError(
-          t(
-            unsupported.some(f =>
-              isVideoModelBlock(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
-            )
-              ? 'document.upload.videoModelNotSupported'
-              : 'document.upload.unsupportedFileType'
+  const handleFilesAdded = async (files: File[]) => {
+    if (submissionLock.current || filesBusy || !canManageDocuments) return
+    const unsupported = files.filter(f =>
+      isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+    )
+    const supported = files.filter(
+      f =>
+        !isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+    )
+    setValidationError(null)
+    setNotice(null)
+    if (unsupported.length) {
+      setValidationError(
+        t(
+          unsupported.some(f =>
+            isVideoModelBlock(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
           )
+            ? 'document.upload.videoModelNotSupported'
+            : 'document.upload.unsupportedFileType'
         )
-      }
-      if (!supported.length) return
-      const videoDurations = await Promise.all(
-        supported.filter(file => isVideoFileName(file.name)).map(readLocalVideoDuration)
       )
-      if (!mounted.current || submissionLock.current) return
+    }
+    if (!supported.length) return
+    const videos = supported.filter(file => isVideoFileName(file.name))
+    if (videos.length) {
+      if (!beginSubmit('file')) return
+      let videoDurations: (number | null)[]
+      try {
+        videoDurations = await Promise.all(videos.map(readLocalVideoDuration))
+      } catch (error) {
+        if (mounted.current) {
+          setValidationError(
+            mapKnowledgeDocumentErrorMessage(error, t, 'document.upload.status.error')
+          )
+        }
+        return
+      } finally {
+        endSubmit()
+      }
+      if (!mounted.current) return
       if (
         videoDurations.some(
           duration => duration !== null && exceedsRecommendedVideoDuration(duration)
@@ -271,17 +283,9 @@ function DocumentUploadSession({
         setFilesAwaitingLongVideoConfirmation(supported)
         return
       }
-      enqueueFiles(supported)
-    },
-    [
-      filesBusy,
-      canManageDocuments,
-      enqueueFiles,
-      t,
-      multimodalAnalysisEnabled,
-      multimodalModelSupportsVideo,
-    ]
-  )
+    }
+    enqueueFiles(supported)
+  }
 
   const close = () => {
     reset()
