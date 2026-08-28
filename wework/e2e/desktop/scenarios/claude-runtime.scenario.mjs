@@ -480,12 +480,12 @@ export async function createDesktopScenario({
         LOCAL_INITIAL_COMPLETION,
         runtimeTimeoutMs
       )
+      await waitForTaskIdle(control, localTaskRow, runtimeTimeoutMs)
       assert.equal(
         (await readFile(join(workspacePath, LOCAL_ARTIFACT), 'utf8')).trim(),
         LOCAL_ARTIFACT_CONTENT,
         'The local Claude Code executor did not create its artifact'
       )
-      await waitForTaskIdle(control, localTaskRow, runtimeTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: LOCAL_FOLLOW_UP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -543,6 +543,7 @@ export async function createDesktopScenario({
         REMOTE_INITIAL_COMPLETION,
         runtimeTimeoutMs
       )
+      await waitForTaskIdle(control, remoteTaskRow, runtimeTimeoutMs)
       await captureScreenshot(control, 'claude-runtime-remote-completed.png')
       assert.equal(
         (await readFile(join(remoteWorkspacePath, REMOTE_ARTIFACT), 'utf8')).trim(),
@@ -570,7 +571,6 @@ export async function createDesktopScenario({
         'The remote executor did not log its Claude Code command',
         runtimeTimeoutMs
       )
-      await waitForTaskIdle(control, remoteTaskRow, runtimeTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: REMOTE_FOLLOW_UP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
