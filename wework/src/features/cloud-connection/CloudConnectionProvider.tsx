@@ -515,6 +515,12 @@ export function CloudConnectionProvider({ children }: CloudConnectionProviderPro
         )
         if (refreshGenerationRef.current !== refreshGeneration) return null
         setSnapshot(current => {
+          if (
+            disconnectRequestedRef.current ||
+            refreshGenerationRef.current !== refreshGeneration
+          ) {
+            return current
+          }
           const nextSnapshot = {
             ...current,
             status: 'connected' as const,
