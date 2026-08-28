@@ -153,7 +153,7 @@ async def test_get_attachment_playback_uses_proxy_for_adapter_proxy_mode(monkeyp
     context = SimpleNamespace(
         id=42,
         user_id=7,
-        type_data={"storage_backend": "weibo_video_hosting"},
+        type_data={"storage_backend": "test_video_hosting"},
     )
     monkeypatch.setattr(
         attachments,

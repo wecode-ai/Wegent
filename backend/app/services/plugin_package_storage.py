@@ -5,6 +5,7 @@
 """Private object storage for immutable plugin release packages."""
 
 import io
+from collections.abc import Iterator
 from datetime import datetime
 
 from minio.error import S3Error
@@ -103,6 +104,27 @@ class PluginPackageStorage:
                 response.release_conn()
         except _STORAGE_ERRORS as exc:
             raise PluginPackageStorageError(str(exc)) from exc
+
+    def open_download(
+        self, object_key: str, *, chunk_size: int = 64 * 1024
+    ) -> Iterator[bytes]:
+        """Open an object and stream it without buffering the package in Backend."""
+        try:
+            response = self.client.get_object(self.bucket, object_key)
+        except _STORAGE_ERRORS as exc:
+            raise PluginPackageStorageError(str(exc)) from exc
+
+        def chunks() -> Iterator[bytes]:
+            try:
+                while chunk := response.read(chunk_size):
+                    yield chunk
+            except _STORAGE_ERRORS as exc:
+                raise PluginPackageStorageError(str(exc)) from exc
+            finally:
+                response.close()
+                response.release_conn()
+
+        return chunks()
 
     def presign_upload(self, object_key: str) -> tuple[str, datetime]:
         self.ensure_bucket()

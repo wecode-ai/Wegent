@@ -336,7 +336,11 @@ export function DiscoverResources({
       await loadListings()
       const teamId = install.installed_reference.team_id
       if (listing.resource_type === 'agent' && targetNamespace === 'default' && teamId) {
-        await refreshTeams()
+        try {
+          await refreshTeams()
+        } catch (error) {
+          console.error('Failed to refresh teams after marketplace install:', error)
+        }
         router.push(buildAgentUseHref(listing, teamId))
       }
     } catch (error) {

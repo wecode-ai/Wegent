@@ -1,5 +1,13 @@
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type DragEvent, type RefObject } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type DragEvent,
+  type RefObject,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -12,6 +20,9 @@ import { useWorkspaceTabs } from './workspaceTabsContextValue'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
+import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
 interface MenuPosition {
   left: number
@@ -30,8 +41,12 @@ interface WorkspaceTabStripProps {
 
 function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   const pathname = tab.contentRoute.split('?', 1)[0]
-  if (pathname === '/sites' || pathname.startsWith('/app/harness-')) {
+  const routeIcon = resolveDshRoute(pathname)?.icon
+  if (pathname.startsWith('/app/harness-')) {
     return <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
+  }
+  if (routeIcon !== undefined) {
+    return <DshIcon name={routeIcon} aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   if (tab.kind === 'board') {
     return <Columns3 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
@@ -226,6 +241,11 @@ export function WorkspaceTabStrip({
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
+  const registeredDshTabs = useSyncExternalStore(
+    dshWorkspaceTabs.subscribe,
+    dshWorkspaceTabs.getTabs,
+    dshWorkspaceTabs.getTabs
+  )
   const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
   const availableKindSet = useMemo(() => new Set(availableKinds), [availableKinds])
   const visibleTabs = useMemo(
@@ -320,6 +340,13 @@ export function WorkspaceTabStrip({
         contentRoute: route,
       })
     }
+    setAddMenuPosition(null)
+  }
+  const openDshWorkspaceTab = (id: string, title: string) => {
+    const route = dshWorkspaceTabRoute(id)
+    const existing = tabs.find(tab => tab.contentRoute === route)
+    if (existing) selectTab(existing.id)
+    else openTab('auxiliary', { title, contentRoute: route })
     setAddMenuPosition(null)
   }
   const contextTab = visibleTabs.find(tab => tab.id === contextMenu?.tabId) ?? null
@@ -455,6 +482,26 @@ export function WorkspaceTabStrip({
                   </button>
                 </>
               ) : null}
+              {availableKindSet.has('auxiliary')
+                ? [...registeredDshTabs]
+                    .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+                    .map(descriptor => (
+                      <button
+                        key={descriptor.id}
+                        type="button"
+                        role="menuitem"
+                        data-testid={`workspace-tab-add-dsh-${descriptor.id}`}
+                        onClick={() => openDshWorkspaceTab(descriptor.id, descriptor.title)}
+                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-black/[0.04] md:h-8"
+                      >
+                        <Boxes
+                          aria-hidden="true"
+                          className="h-4 w-4 shrink-0 text-text-secondary"
+                        />
+                        <span className="truncate">{descriptor.title}</span>
+                      </button>
+                    ))
+                : null}
             </div>,
             document.body
           )

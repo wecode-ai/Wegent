@@ -15,6 +15,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -64,6 +65,16 @@ logger = logging.getLogger(__name__)
 def _should_encrypt() -> bool:
     """Check if attachment encryption is enabled."""
     return os.environ.get("ATTACHMENT_ENCRYPTION_ENABLED", "false").lower() == "true"
+
+
+def _download_external_media(url: str) -> bytes:
+    """Download media returned by a trusted external playback resolver."""
+    with httpx.Client(timeout=120.0, follow_redirects=True, trust_env=False) as client:
+        response = client.get(url)
+        response.raise_for_status()
+    if not response.content:
+        raise ValueError("External media download returned empty content")
+    return response.content
 
 
 @dataclass
@@ -831,6 +842,7 @@ class ContextService:
             raise ValueError("target_user_id must be positive")
 
         if self.is_video_context(source_context):
+            self._promote_legacy_video_reference(db, source_context)
             return self._copy_video_metadata_for_user(
                 db=db,
                 source_context=source_context,
@@ -895,6 +907,85 @@ class ContextService:
             f"new_context_id={copied_context.id}"
         )
         return copied_context
+
+    @trace_sync(
+        span_name="promote_legacy_video_reference",
+        tracer_name="context_service",
+    )
+    def _promote_legacy_video_reference(
+        self,
+        db: Session,
+        source_context: SubtaskContext,
+    ) -> None:
+        """Convert a legacy fid-backed video into a cached media_id reference."""
+        type_data = dict(source_context.type_data or {})
+        reference = resolve_external_attachment_reference(type_data=type_data)
+        if reference is None or reference.name != "fid":
+            return
+
+        external_storage = find_external_attachment_storage_adapter(
+            source_context.mime_type,
+            "video_reference",
+        )
+        if external_storage is None:
+            logger.warning(
+                "Cannot promote legacy video attachment %s: "
+                "video reference storage is unavailable",
+                source_context.id,
+            )
+            return
+
+        playback = resolve_external_attachment_playback(
+            type_data=type_data,
+            user_id=source_context.user_id,
+        )
+        if playback is None:
+            raise VideoAttachmentResolutionError(
+                f"Failed to resolve legacy video attachment {source_context.id}"
+            )
+
+        try:
+            binary_data = _download_external_media(playback.url)
+            stored = external_storage.store(
+                db=db,
+                user_id=source_context.user_id,
+                filename=source_context.original_filename,
+                mime_type=source_context.mime_type,
+                data=binary_data,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Failed to promote legacy video attachment %s",
+                source_context.id,
+            )
+            raise VideoAttachmentResolutionError(
+                f"Failed to convert legacy video attachment {source_context.id}"
+            ) from exc
+
+        promoted_type_data = {
+            **type_data,
+            "storage_backend": stored.backend_type,
+            "storage_key": stored.storage_key,
+            "is_encrypted": False,
+            "encryption_version": 0,
+            **stored.type_data,
+        }
+        promoted_reference = resolve_external_attachment_reference(
+            type_data=promoted_type_data
+        )
+        if promoted_reference is None or promoted_reference.name != "media_id":
+            raise VideoAttachmentResolutionError(
+                f"Converted video attachment {source_context.id} has no media_id"
+            )
+
+        source_context.type_data = promoted_type_data
+        db.flush()
+        logger.info(
+            "Promoted legacy video attachment %s from fid=%s to media_id=%s",
+            source_context.id,
+            reference.value,
+            promoted_reference.value,
+        )
 
     def _copy_video_metadata_for_user(
         self,

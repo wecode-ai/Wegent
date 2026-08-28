@@ -47,6 +47,7 @@ import {
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
@@ -60,7 +61,6 @@ import { requestDesktopSidebarToggle } from './useDesktopSidebarCollapsed'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
 import { WorkspaceFilePreview } from './workspace-panels/WorkspaceFilePreview'
 import { FileWorkspacePanel } from './workspace-panels/FileWorkspacePanel'
-import { rightWorkspaceBetterSidebar } from './workspace-panels/rightWorkspaceSidebarRegistry'
 
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
@@ -666,7 +666,8 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     runtimeMocks.electron = false
     vi.clearAllMocks()
@@ -745,6 +746,7 @@ describe('DesktopWorkbenchLayout', () => {
     harnessAppMocks.start.mockReset()
     harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
     harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
     harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
@@ -5947,8 +5949,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    expect(document.body).toHaveAttribute('data-wework-panel-resizing', 'true')
     fireEvent.pointerMove(document, { clientX: 582 })
     fireEvent.pointerUp(document)
+    expect(document.body).not.toHaveAttribute('data-wework-panel-resizing')
 
     expect(content).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
@@ -6630,22 +6634,29 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
-  test('right workspace hosts a DSH better-sidebar tab in the existing Wework panel shell', async () => {
-    const onOpen = vi.fn()
-    const onClose = vi.fn()
-    const dispose = rightWorkspaceBetterSidebar.registerTab({
-      id: 'test:inspector',
-      title: 'DSH Inspector',
-      order: 5,
-      single: true,
-      onOpen,
-      onClose,
-      component: ({ tab, visible }) => (
-        <section data-testid="dsh-inspector-panel" data-visible={String(visible)}>
-          {tab.title}
-        </section>
-      ),
-    })
+  test('right workspace hosts a native DSH slot tab in the existing Wework panel shell', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container, props) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        panel.dataset.visible = String(props.visible)
+        panel.textContent = props.tab.title
+        container.append(panel)
+        return {
+          update(nextProps) {
+            panel.dataset.visible = String(nextProps.visible)
+            panel.textContent = nextProps.tab.title
+          },
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
 
     try {
       renderWorkspacePanelLayout()
@@ -6657,7 +6668,6 @@ describe('DesktopWorkbenchLayout', () => {
       expect(extensionTab).toHaveTextContent('DSH Inspector')
       expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
       expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
-      expect(onOpen).toHaveBeenCalledTimes(1)
 
       await userEvent.click(
         within(extensionTab).getByTestId(
@@ -6665,9 +6675,8 @@ describe('DesktopWorkbenchLayout', () => {
         )
       )
       expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
-      expect(onClose).toHaveBeenCalledTimes(1)
     } finally {
-      dispose()
+      delete window.__WEWORK_DSH_UI__
     }
   })
 
@@ -10704,6 +10713,86 @@ describe('DesktopWorkbenchLayout', () => {
       )
     )
     expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'task-scoped-workbench',
+      manifest: {
+        name: 'task-scoped-workbench',
+        displayName: '任务内工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'task-scoped-workbench',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/task-scoped-workbench',
+      sha256: 'c'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43125/',
+    }
+    const start = createDeferred<typeof running>()
+    harnessAppMocks.list.mockResolvedValue([installed])
+    harnessAppMocks.start.mockImplementation(() => start.promise)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('smart-app-development-preview-starting')).toBeInTheDocument()
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).queryByTestId(
+        'smart-app-development-preview'
+      )
+    ).not.toBeInTheDocument()
+
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
+    await act(async () => {
+      start.resolve(running)
+      await start.promise
+    })
+    await waitFor(() => expect(harnessAppTabMocks.register).toHaveBeenCalledWith(running))
+    expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).not.toHaveBeenCalled()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+          'right-workspace-browser-tab-1'
+        )
+      ).toHaveTextContent(installed.manifest.displayName)
+    )
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+        'right-workspace-browser-tab-1-close-button'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-reload')).toBeEnabled()
   })
 
   test('closes the Smart app browser and runtime when the development tab is disposed', async () => {

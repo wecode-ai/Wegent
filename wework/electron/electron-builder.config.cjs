@@ -1,14 +1,35 @@
 const path = require('node:path')
 
+const { resolveBuildIdentity } = require('./scripts/build-identity.cjs')
+const { resolveReleaseVersion } = require('./scripts/release-version.cjs')
+
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const identity = resolveBuildIdentity()
+const releaseVersion = resolveReleaseVersion(require('./package.json').version)
+const packagePrebuiltMacosRelease =
+  process.env.WEWORK_PREPACKAGED_MACOS_RELEASE?.trim().toLowerCase() === 'true'
+const skipMacosNotarization =
+  process.env.WEWORK_SKIP_MACOS_NOTARIZATION?.trim().toLowerCase() === 'true'
+const useCustomMacosNotarization =
+  !packagePrebuiltMacosRelease &&
+  !skipMacosNotarization &&
+  process.env.WEWORK_CUSTOM_MACOS_NOTARIZATION?.trim().toLowerCase() === 'true'
 
 module.exports = {
-  appId: 'io.wecode.wework',
-  productName: 'WeWork',
+  appId: identity.identifier,
+  productName: identity.productName,
+  executableName: identity.executableName,
   extraMetadata: {
+    version: releaseVersion,
     weworkUpdateBaseUrl: updateBaseUrl,
+    weworkAppId: identity.identifier,
+    weworkProductName: identity.productName,
+    weworkExecutableName: identity.executableName,
+    ...(identity.executorNamespace ? { weworkExecutorNamespace: identity.executorNamespace } : {}),
+    ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
+    ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
   },
   directories: {
     buildResources: 'build',
@@ -19,8 +40,10 @@ module.exports = {
   asarUnpack: ['**/*.node'],
   extraResources: [
     { from: 'resources/harness-runtime', to: 'harness-runtime' },
-    { from: 'resources/node-runtime', to: 'node-runtime' },
     { from: 'resources/bin', to: 'bin' },
+    { from: 'resources/codex', to: 'codex' },
+    { from: 'resources/wework-core-plugins', to: 'wework-core-plugins' },
+    { from: 'resources/components.json', to: 'components.json' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
     { from: '../resources/icons', to: 'icons' },
@@ -30,11 +53,19 @@ module.exports = {
     provider: 'generic',
     url: updateBaseUrl,
   },
+  ...(useCustomMacosNotarization
+    ? { afterSign: path.resolve(__dirname, 'scripts/notarize-macos.cjs') }
+    : {}),
   mac: {
     artifactName: 'WeWork_${version}_macos_${arch}.${ext}',
     category: 'public.app-category.developer-tools',
+    electronLanguages: ['en', 'zh_CN'],
     hardenedRuntime: true,
+    ...(useCustomMacosNotarization || packagePrebuiltMacosRelease || skipMacosNotarization
+      ? { notarize: false }
+      : {}),
     icon: path.resolve(__dirname, '../resources/icons/icon.icns'),
+    signIgnore: ['/Contents/Resources/wework-core-plugins/'],
     target: ['dmg', 'zip'],
   },
   dmg: {
@@ -42,6 +73,7 @@ module.exports = {
   },
   win: {
     artifactName: 'WeWork_${version}_windows_${arch}-setup.${ext}',
+    electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),
     target: ['nsis'],
   },
@@ -56,7 +88,7 @@ module.exports = {
   linux: {
     artifactName: 'WeWork_${version}_linux_${arch}.${ext}',
     category: 'Development',
-    executableName: 'wework',
+    electronLanguages: ['en-US', 'zh-CN'],
     target: ['AppImage'],
   },
 }

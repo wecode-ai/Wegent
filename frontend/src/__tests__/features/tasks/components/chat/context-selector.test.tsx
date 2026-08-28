@@ -35,12 +35,18 @@ const mockGetDingTalkDocs = jest.fn()
 const mockGetDingTalkSyncStatus = jest.fn()
 const mockGetDingTalkWikispaceNodes = jest.fn()
 const mockGetDingTalkWikispaceSyncStatus = jest.fn()
+let mockIsMobile = false
 
-const mockT = (key: string) => key
+const mockT = (key: string, options?: { count?: number }) =>
+  key === 'knowledge:picker.selectedCount' ? `${key}:${options?.count ?? 0}` : key
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
     t: mockT,
   }),
+}))
+
+jest.mock('@/features/layout/hooks/useMediaQuery', () => ({
+  useIsMobile: () => mockIsMobile,
 }))
 
 jest.mock('next/link', () => {
@@ -95,6 +101,15 @@ jest.mock('@/components/ui/popover', () => ({
   ),
 }))
 
+jest.mock('@/components/ui/drawer', () => ({
+  Drawer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DrawerTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DrawerContent: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="context-selector-drawer">{children}</div>
+  ),
+  DrawerTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}))
+
 jest.mock('@/components/ui/command', () => ({
   Command: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   CommandEmpty: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -121,7 +136,13 @@ jest.mock('@/components/ui/command', () => ({
 jest.mock('@/components/ui/tabs', () => ({
   Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsTrigger: ({ children }: { children: React.ReactNode }) => <button>{children}</button>,
+  TabsTrigger: ({
+    children,
+    value: _value,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }) => (
+    <button {...props}>{children}</button>
+  ),
   TabsContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
 
@@ -190,6 +211,7 @@ function createAllGroupedResponse({
 
 describe('ContextSelector organization grouping', () => {
   beforeEach(() => {
+    mockIsMobile = false
     mockListKnowledgeBases.mockResolvedValue({ items: [] })
     mockGetBoundKnowledgeBases.mockResolvedValue({ items: [] })
     mockGetAllGroupedKnowledgeBases.mockResolvedValue(
@@ -268,6 +290,45 @@ describe('ContextSelector organization grouping', () => {
     expect(screen.getByTestId('context-selector-popover')).toHaveAttribute('data-side', 'top')
   })
 
+  it('uses a bottom drawer on mobile while preserving knowledge and table access', async () => {
+    mockIsMobile = true
+    const onOpenChange = jest.fn()
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={onOpenChange}
+        selectedContexts={[
+          {
+            id: 'docs:file-1',
+            name: 'DingTalk document',
+            type: 'dingtalk_doc',
+            doc_url: 'https://alidocs.dingtalk.com/i/nodes/file-1',
+            node_type: 'file',
+            dingtalk_node_id: 'file-1',
+            source: 'docs',
+          },
+        ]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('context-selector-drawer')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('context-selector-knowledge-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('context-selector-table-tab')).toBeInTheDocument()
+    expect(screen.getByTestId('context-selector-selected-count')).toHaveTextContent(
+      'knowledge:picker.selectedCount:1'
+    )
+
+    fireEvent.click(screen.getByTestId('context-selector-done-button'))
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
   it('opens an internal knowledge base without selecting it and uses a separate scope control', async () => {
     const onSelect = jest.fn()
 
@@ -310,7 +371,51 @@ describe('ContextSelector organization grouping', () => {
     })
   })
 
-  it('expands group knowledge into first-level group rows before showing knowledge bases', async () => {
+  it('uses a drill-down document view on narrow screens', async () => {
+    mockIsMobile = true
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-organization')).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('knowledge-picker-source-column')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-knowledge-base-column')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-document-column')).toHaveClass('hidden')
+    expect(screen.queryByTestId('knowledge-picker-mobile-back')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-source-organization'))
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-kb-1')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('knowledge-picker-kb-1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-source-column')).toHaveClass('hidden')
+    })
+    expect(screen.getByTestId('knowledge-picker-knowledge-base-column')).toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-document-column')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-mobile-back')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-mobile-back'))
+
+    expect(screen.getByTestId('knowledge-picker-source-column')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-knowledge-base-column')).not.toHaveClass('hidden')
+    expect(screen.getByTestId('knowledge-picker-document-column')).toHaveClass('hidden')
+  })
+
+  it('drills into group knowledge before showing knowledge bases on narrow screens', async () => {
+    mockIsMobile = true
     mockGetAllGroupedKnowledgeBases.mockResolvedValue(
       createAllGroupedResponse({
         groups: [
@@ -349,15 +454,27 @@ describe('ContextSelector organization grouping', () => {
 
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-picker-group-dev-group')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-responsive-group-options')).toBeInTheDocument()
     })
-    expect(screen.getByText('Dev Experience')).toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-picker-responsive-group-dev-group')).toHaveTextContent(
+      'Dev Experience'
+    )
     expect(screen.queryByTestId('knowledge-picker-kb-2')).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByTestId('knowledge-picker-group-dev-group'))
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('knowledge-picker-responsive-group-dev-group'))
+      await Promise.resolve()
+    })
     await waitFor(() => {
       expect(screen.getByTestId('knowledge-picker-kb-2')).toBeInTheDocument()
     })
+    expect(screen.getByTestId('knowledge-picker-responsive-group-back')).toHaveTextContent(
+      'Dev Experience'
+    )
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-responsive-group-back'))
+    expect(screen.getByTestId('knowledge-picker-responsive-group-dev-group')).toBeInTheDocument()
+    expect(screen.queryByTestId('knowledge-picker-kb-2')).not.toBeInTheDocument()
   })
 
   it('keeps empty groups visible in the group knowledge section', async () => {
@@ -408,7 +525,9 @@ describe('ContextSelector organization grouping', () => {
       expect(screen.getByTestId('knowledge-picker-group-empty-group')).toBeInTheDocument()
     })
 
-    expect(screen.getByText('Empty Group')).toBeInTheDocument()
+    expect(screen.getByTestId('knowledge-picker-group-empty-group')).toHaveTextContent(
+      'Empty Group'
+    )
     expect(screen.getByTestId('knowledge-picker-group-empty-group')).toHaveTextContent('0')
 
     fireEvent.click(screen.getByTestId('knowledge-picker-group-empty-group'))
@@ -514,7 +633,9 @@ describe('ContextSelector organization grouping', () => {
 
     fireEvent.click(screen.getByTestId('knowledge-picker-source-group'))
     await waitFor(() => {
-      expect(screen.getByText('fallback-group')).toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-picker-group-fallback-group')).toHaveTextContent(
+        'fallback-group'
+      )
     })
   })
 

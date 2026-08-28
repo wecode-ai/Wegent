@@ -86,25 +86,25 @@ jest.mock('@/features/settings/components/TeamEditDrawer', () => ({
   default: () => null,
 }))
 
-const videoWorkflowTeam: AdminPublicTeam = {
+const testVideoTeam: AdminPublicTeam = {
   id: 1,
-  name: 'video-workflow-team',
+  name: 'test-video-team',
   namespace: 'default',
-  display_name: '创意视频工作流',
-  description: '使用分步工作流策划并生成创意视频。',
+  display_name: 'Test Video Team',
+  description: 'Test team configuration.',
   json: {
     apiVersion: 'agent.wecode.io/v1',
     kind: 'Team',
     metadata: {
-      name: 'video-workflow-team',
+      name: 'test-video-team',
       namespace: 'default',
-      displayName: '创意视频工作流',
+      displayName: 'Test Video Team',
     },
     spec: {
       members: [
         {
           botRef: {
-            name: 'video-workflow-bot',
+            name: 'test-video-bot',
             namespace: 'default',
           },
           role: 'leader',
@@ -136,7 +136,7 @@ describe('PublicTeamEditDialog video model configuration', () => {
     render(
       <PublicTeamEditDialog
         open
-        editingTeam={videoWorkflowTeam}
+        editingTeam={testVideoTeam}
         onClose={jest.fn()}
         onSuccess={jest.fn()}
         toast={jest.fn()}

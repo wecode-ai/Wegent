@@ -481,7 +481,7 @@ def test_merge_video_job_result_persists_card_block() -> None:
 def test_merge_video_job_result_preserves_incremental_card_data() -> None:
     current = {
         "video_job": {
-            "job_id": "https://qia.example.com/task/1",
+            "job_id": "https://test-workflow.example.com/task/123",
             "video_block_id": "card-1",
         },
         "blocks": [
@@ -493,12 +493,12 @@ def test_merge_video_job_result_preserves_incremental_card_data() -> None:
                 "card_type": "video_director_generation",
                 "card_status": "partial_ready",
                 "card_data": {
-                    "title": "分镜已生成",
-                    "link": "https://qia.example.com/detail/1",
+                    "title": "test-card-title",
+                    "link": "https://test-workflow.example.com/detail/123",
                 },
                 "card_preview_data": {
                     "progress": 60,
-                    "progress_text": "分镜已生成",
+                    "progress_text": "test-progress-existing",
                 },
                 "card_error": None,
                 "timestamp": 1000,
@@ -515,7 +515,7 @@ def test_merge_video_job_result_preserves_incremental_card_data() -> None:
         "card_data": {},
         "card_preview_data": {
             "progress": 70,
-            "progress_text": "正在生成视频",
+            "progress_text": "test-progress-updated",
         },
         "card_error": None,
         "timestamp": 2000,
@@ -529,12 +529,12 @@ def test_merge_video_job_result_preserves_incremental_card_data() -> None:
 
     block = result["blocks"][0]
     assert block["card_data"] == {
-        "title": "分镜已生成",
-        "link": "https://qia.example.com/detail/1",
+        "title": "test-card-title",
+        "link": "https://test-workflow.example.com/detail/123",
     }
     assert block["card_preview_data"] == {
         "progress": 70,
-        "progress_text": "正在生成视频",
+        "progress_text": "test-progress-updated",
     }
     assert block["timestamp"] == 1000
 
@@ -582,6 +582,8 @@ def test_async_card_poll_completion_persists_populated_card() -> None:
     assert result["status"] == "completed"
     assert persist.call_args.args[1]["status"] == "completed"
     assert persist.call_args.args[2]["card_status"] == "populated"
+    assert persist.call_args.args[2]["card_preview_data"]["title"] == ""
+    assert persist.call_args.args[2]["card_preview_data"]["progress_text"] == ""
     assert update_status.call_args.args[1] == "COMPLETED"
     emit_done.assert_called_once()
 
@@ -590,7 +592,7 @@ def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
     snapshot = AsyncCardSnapshot(
         status="partial_ready",
         progress=62,
-        progress_text="分镜已完成",
+        progress_text="test-progress-partial",
         card={"link": "https://workflow.example.com/task/1"},
     )
     with (
@@ -626,6 +628,10 @@ def test_async_card_poll_partial_ready_persists_progress_before_retry() -> None:
 
     assert persist.call_args.args[2]["card_status"] == "partial_ready"
     assert persist.call_args.args[2]["card_preview_data"]["progress"] == 62
+    assert (
+        persist.call_args.args[2]["card_preview_data"]["progress_text"]
+        == "test-progress-partial"
+    )
     assert schedule.call_args.kwargs["poll_count"] == 1
     assert schedule.call_args.kwargs["last_progress"] == 62
     emit.assert_called_once()

@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process'
-import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import identityModule from '../electron/scripts/build-identity.cjs'
 
+const { resolveBuildIdentity } = identityModule
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const installerRoot = join(weworkRoot, 'electron', 'release-installer')
+const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
+const identity = resolveBuildIdentity()
+let packagedComponentResourcesRoot = componentResourcesRoot
 
 if (!platform || !arch || !version || !outputDirectory) {
   throw new Error(
@@ -25,9 +33,12 @@ await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
 if (platform === 'macos') {
-  const appDirectory = await findDirectory(installerRoot, /^mac(?:-arm64)?$/)
-  const appPath = join(appDirectory, 'WeWork.app')
+  const appDirectory = join(installerRoot, arch === 'arm64' ? 'mac-arm64' : 'mac')
+  await requireDirectory(appDirectory)
+  const appName = `${identity.productName}.app`
+  const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
+  packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
@@ -37,7 +48,7 @@ if (platform === 'macos') {
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
-  await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, ['WeWork.app'])
+  await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await Promise.all([cp(dmg, join(output, basename(dmg))), cp(zip, join(output, basename(zip)))])
   await signBridge(bridge)
 } else if (platform === 'windows') {
@@ -59,6 +70,67 @@ if (platform === 'macos') {
 } else {
   throw new Error(`Unsupported desktop release platform: ${platform}`)
 }
+await prepareComponentAssets()
+
+async function prepareComponentAssets() {
+  const packaged = JSON.parse(
+    await readFile(join(packagedComponentResourcesRoot, 'components.json'), 'utf8')
+  )
+  const componentAssets = {}
+  for (const id of ['coreDsh', 'weworkCorePlugins', 'bundledPlugins', 'executor', 'codex', 'dws']) {
+    const component = packaged.components[id]
+    if (!component?.path || !component?.sha256 || !component?.version) {
+      throw new Error(`Packaged component metadata is incomplete: ${id}`)
+    }
+    const sourcePath = join(packagedComponentResourcesRoot, component.path)
+    const source = await stat(sourcePath)
+    const temporaryAssetPath = join(output, `.component-${id}.tar.gz`)
+    const archiveOptions = {
+      cwd: source.isDirectory() ? sourcePath : dirname(sourcePath),
+      file: temporaryAssetPath,
+      gzip: true,
+      mtime: new Date(0),
+      portable: true,
+    }
+    if (source.isDirectory()) {
+      await create(archiveOptions, ['.'])
+    } else if (source.isFile()) {
+      await create(archiveOptions, [basename(sourcePath)])
+    } else {
+      throw new Error(`Component source is unavailable: ${sourcePath}`)
+    }
+    const archiveSha256 = await sha256(temporaryAssetPath)
+    const assetName = `WeworkComponent_${id}_${archiveSha256}_${platform}_${arch}.tar.gz`
+    await rename(temporaryAssetPath, join(output, assetName))
+    componentAssets[id] = {
+      version: component.version,
+      contentSha256: component.sha256,
+      archiveSha256,
+      assetName,
+      entryPath: source.isDirectory() ? '.' : basename(sourcePath),
+    }
+  }
+  await writeFile(
+    join(output, `components-${platform}-${arch}.json`),
+    `${JSON.stringify(
+      {
+        schemaVersion: 1,
+        appVersion: packaged.appVersion,
+        platform,
+        arch,
+        components: componentAssets,
+      },
+      null,
+      2
+    )}\n`
+  )
+}
+
+async function sha256(path) {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(path), hash)
+  return hash.digest('hex')
+}
 
 async function signBridge(path) {
   if (!process.env.TAURI_SIGNING_PRIVATE_KEY?.trim()) {
@@ -69,13 +141,6 @@ async function signBridge(path) {
     ['--dir', join(weworkRoot, 'electron'), 'exec', 'tauri', 'signer', 'sign', path],
     weworkRoot
   )
-}
-
-async function findDirectory(root, pattern) {
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (entry.isDirectory() && pattern.test(entry.name)) return join(root, entry.name)
-  }
-  throw new Error(`No directory matching ${pattern} under ${root}`)
 }
 
 async function findFile(root, pattern) {

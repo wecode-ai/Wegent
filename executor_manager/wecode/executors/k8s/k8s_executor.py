@@ -2275,12 +2275,15 @@ class K8sExecutor(Executor):
 
         return K8sExecutor._user_task_limit_cache.get(user_name, MAX_USER_TASKS)
 
-    def cancel_task(self, task_id: int) -> Dict[str, Any]:
+    def cancel_task(
+        self, task_id: int, subtask_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Cancel a running task by calling the executor's cancel API.
 
         Args:
             task_id (int): Task ID to cancel.
+            subtask_id (Optional[int]): Subtask ID to cancel.
 
         Returns:
             Dict[str, Any]: Cancellation result with unified structure.
@@ -2321,6 +2324,8 @@ class K8sExecutor(Executor):
 
             # Call the executor's cancel API
             cancel_url = f"http://{pod_ip}:8080/api/tasks/cancel?task_id={task_id}"
+            if subtask_id is not None:
+                cancel_url += f"&subtask_id={subtask_id}"
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
 
             try:

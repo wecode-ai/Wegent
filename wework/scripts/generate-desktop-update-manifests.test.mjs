@@ -1,8 +1,9 @@
+import { createHash } from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { afterEach, expect, test } from 'vitest'
-import { spawn } from 'node:child_process'
 
 const temporaryDirectories = []
 
@@ -29,6 +30,40 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   ]) {
     await writeFile(resolve(assets, name), name)
   }
+  for (const [platform, arch] of [
+    ['macos', 'arm64'],
+    ['macos', 'x64'],
+    ['windows', 'x64'],
+    ['linux', 'x64'],
+  ]) {
+    const components = {}
+    for (const [id, componentVersion] of [
+      ['coreDsh', '0.1.1-rc.2'],
+      ['executor', 'wework-abc123'],
+    ]) {
+      const archive = `${platform}-${arch}-${id}`
+      const archiveSha256 = createHash('sha256').update(archive).digest('hex')
+      const assetName = `WeworkComponent_${id}_${archiveSha256}_${platform}_${arch}.tar.gz`
+      await writeFile(resolve(assets, assetName), archive)
+      components[id] = {
+        version: componentVersion,
+        contentSha256: 'a'.repeat(64),
+        archiveSha256,
+        assetName,
+        entryPath: '.',
+      }
+    }
+    await writeFile(
+      resolve(assets, `components-${platform}-${arch}.json`),
+      JSON.stringify({
+        schemaVersion: 1,
+        appVersion: version,
+        platform,
+        arch,
+        components,
+      })
+    )
+  }
   for (const name of [
     `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
     `WeWork_${version}_macos_x64.app.tar.gz.sig`,
@@ -47,6 +82,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     'wecode-ai/Wegent',
     'wework-v1.2.3',
     notes,
+    'a'.repeat(40),
   ])
 
   const electron = await readFile(resolve(output, 'latest-mac.yml'), 'utf8')
@@ -60,6 +96,41 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     signature: `signature-WeWork_${version}_macos_arm64.app.tar.gz.sig`,
     url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_macos_arm64.app.tar.gz`,
   })
+  const components = JSON.parse(
+    await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
+  )
+  expect(components.sourceSha).toBe('a'.repeat(40))
+  expect(components.components.coreDsh).toMatchObject({
+    version: '0.1.1-rc.2',
+    contentSha256: 'a'.repeat(64),
+    archiveBytes: 'macos-arm64-coreDsh'.length,
+    downloadUrl: `https://github.com/wecode-ai/Wegent/releases/download/wework-updater/WeworkComponent_coreDsh_${createHash('sha256').update('macos-arm64-coreDsh').digest('hex')}_macos_arm64.tar.gz`,
+  })
+  expect(components.components.coreDsh.archiveSha256).toMatch(/^[0-9a-f]{64}$/)
+  expect(components.components.executor.downloadUrl).toBe(
+    `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
+  )
+})
+
+test('rejects an invalid release source SHA', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-source-sha-'))
+  temporaryDirectories.push(root)
+  const notes = resolve(root, 'notes.md')
+  await writeFile(notes, '## Changes\n')
+
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      root,
+      resolve(root, 'output'),
+      '1.2.3',
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'not-a-source-sha',
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
 })
 
 test('generates a MinIO macOS architecture release without requiring other targets', async () => {
@@ -80,6 +151,30 @@ test('generates a MinIO macOS architecture release without requiring other targe
     resolve(assets, `WeWork_${version}_macos_arm64.app.tar.gz.sig`),
     'migration-signature'
   )
+  const components = {}
+  for (const id of ['coreDsh', 'executor']) {
+    const content = `minio-${id}`
+    const archiveSha256 = createHash('sha256').update(content).digest('hex')
+    const assetName = `WeworkComponent_${id}_${archiveSha256}_macos_arm64.tar.gz`
+    await writeFile(resolve(assets, assetName), content)
+    components[id] = {
+      version: 'fixture',
+      contentSha256: 'c'.repeat(64),
+      archiveSha256,
+      assetName,
+      entryPath: '.',
+    }
+  }
+  await writeFile(
+    resolve(assets, 'components-macos-arm64.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      appVersion: version,
+      platform: 'macos',
+      arch: 'arm64',
+      components,
+    })
+  )
   await writeFile(notes, 'MinIO migration')
 
   await run(
@@ -92,9 +187,11 @@ test('generates a MinIO macOS architecture release without requiring other targe
       'internal/minio',
       `minio-${version}`,
       notes,
+      'b'.repeat(40),
     ],
     {
       WEWORK_RELEASE_BASE_URL: 'https://minio.example/releases/wework/macos',
+      WEWORK_COMPONENT_BASE_URL: 'https://minio.example/releases/wework/components',
       WEWORK_RELEASE_TARGETS: 'macos-arm64',
     }
   )
@@ -110,6 +207,16 @@ test('generates a MinIO macOS architecture release without requiring other targe
       url: `https://minio.example/releases/wework/macos/WeWork_${version}_macos_arm64.app.tar.gz`,
     },
   })
+  const componentManifest = JSON.parse(
+    await readFile(resolve(output, 'components-beta-macos-arm64.json'), 'utf8')
+  )
+  expect(componentManifest.sourceSha).toBe('b'.repeat(40))
+  expect(componentManifest.components.coreDsh.downloadUrl).toContain(
+    'https://minio.example/releases/wework/components/'
+  )
+  expect(componentManifest.components.executor.downloadUrl).toContain(
+    'https://minio.example/releases/wework/macos/'
+  )
   await expect(readFile(resolve(output, 'beta.yml'), 'utf8')).rejects.toThrow()
 })
 

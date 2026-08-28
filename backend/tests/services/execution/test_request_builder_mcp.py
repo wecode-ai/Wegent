@@ -418,7 +418,13 @@ def test_board_task_auto_injects_mcp_for_chat_and_code_shell_contracts(test_db, 
         project_id=None,
     )
     user = SimpleNamespace(id=7, user_name="alice")
-    team = SimpleNamespace(id=5, name="team-a", namespace="default", json={})
+    team = SimpleNamespace(
+        id=5,
+        user_id=7,
+        name="team-a",
+        namespace="default",
+        json={},
+    )
     bot = SimpleNamespace(id=9)
 
     mocker.patch(

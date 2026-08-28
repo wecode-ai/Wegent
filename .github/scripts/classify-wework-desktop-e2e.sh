@@ -15,6 +15,7 @@ core_segments=(
   project-ai-settings
   model-routing
   permission-modes
+  task-status-sync
   core-task-flow
   task-attachments
   window-lifecycle
@@ -28,6 +29,8 @@ core_segments=(
   executor-stream-recovery
   context-compaction
   split-workbench
+  release-package-startup
+  component-update
   native-window-startup
   native-window-chrome
   renderer-storage
@@ -45,6 +48,7 @@ core_segments=(
   browser-toolbar-actions
 )
 plugin_segments=(
+  core-dsh-ui-plugin-composition
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
@@ -111,14 +115,14 @@ core_shards=(
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  core-task-flow,change-request-status,context-compaction
+  task-status-sync,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
   resilience
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,native-window-startup,renderer-storage
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing
@@ -282,6 +286,15 @@ classify_wework_path() {
       return
       ;;
 
+    # DSH UI composition verifies that Wework starts empty and gains each
+    # application, route, settings page, and navigation item from plugins.
+    wework/dsh/app-wework/* | \
+      wework/dsh/ui-*/* | \
+      wework/src/features/dsh-runtime/*)
+      select_target "plugins:core-dsh-ui-plugin-composition"
+      return
+      ;;
+
     # Core DSH plugin management owns an Electron-backed desktop checkpoint.
     wework/src/components/plugins/CoreDshPluginManagementSection* | \
       wework/src/features/dsh-plugins/* | \
@@ -373,6 +386,14 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       return
       ;;
+    wework/src/api/deliveries* | \
+      wework/src/components/layout/useWorkbenchCloudProjectContext* | \
+      wework/src/features/todo/CloudTodoWorkspace* | \
+      wework/src/features/workbench/projectTaskTracking* | \
+      wework/src/features/workbench/workbenchContextTypes*)
+      select_target "core:task-status-sync"
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -408,6 +429,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
+        select_target "core:task-status-sync"
       fi
       return
       ;;

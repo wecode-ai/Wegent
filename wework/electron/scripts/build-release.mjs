@@ -2,14 +2,17 @@ import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import nodeRuntimeModule from './node-runtime.cjs'
 
+const { resolveNodeRuntime } = nodeRuntimeModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const electronBuilderCli = resolve(electronRoot, 'node_modules/electron-builder/cli.js')
+const nodeRuntime = resolveNodeRuntime()
 const requestedPlatform = process.env.WEWORK_RELEASE_PLATFORM?.trim()
 const requestedArch = process.env.WEWORK_RELEASE_ARCH?.trim()
+const directoryOnly = process.env.WEWORK_RELEASE_DIR_ONLY?.trim().toLowerCase() === 'true'
 const platform = requestedPlatform || process.platform
 const arch = requestedArch || process.arch
-const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const platformFlag = {
   darwin: '--mac',
   macos: '--mac',
@@ -26,14 +29,14 @@ if (!['arm64', 'x64'].includes(arch)) {
 }
 
 await run(
-  pnpmCommand,
+  nodeRuntime,
   [
-    'exec',
-    'electron-builder',
+    electronBuilderCli,
     '--config',
     'electron-builder.config.cjs',
     platformFlag,
     `--${arch}`,
+    ...(directoryOnly ? ['--dir'] : []),
     '--publish',
     'never',
   ],
@@ -42,8 +45,7 @@ await run(
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const resolved = wrapWindowsScriptCommand(command, args)
-    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
+    const child = spawn(command, args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

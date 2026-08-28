@@ -35,7 +35,10 @@ class EmployeeInfo(BaseModel):
 class DepartmentInfo(BaseModel):
     """Department information returned by ERP search API."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(
+        populate_by_name=True,
+        coerce_numbers_to_str=True,
+    )
 
     id: Optional[str] = Field(default=None, validation_alias="department_id")
     name: Optional[str] = None
@@ -121,10 +124,10 @@ class ErpClient:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def _search(self, keyword: str) -> dict:
+    def _search(self, keyword: str) -> Optional[dict]:
         """Shared GET /api/open/search request used by department/employee search."""
         if not self.base_url or not keyword:
-            return {}
+            return None
         try:
             response = self._http_client.get(
                 f"{self.base_url}/api/open/search",
@@ -132,11 +135,12 @@ class ErpClient:
                 headers=self._get_headers(),
             )
             if response.status_code == 200:
-                return response.json().get("data", {}) or {}
+                data = response.json().get("data", {}) or {}
+                return data if isinstance(data, dict) else {}
             logger.error(f"ERP search error: {response.status_code}: {response.text}")
         except httpx.RequestError as e:
             logger.error(f"ERP search request failed: {e}")
-        return {}
+        return None
 
     def batch_check_membership(
         self, ssn: str, department_ids: list[str]
@@ -206,8 +210,21 @@ class ErpClient:
         Returns:
             List of department info objects with id, name, label, etc.
         """
-        data = self._search(keyword)
+        data = self._search(keyword) or {}
         return [DepartmentInfo.model_validate(d) for d in data.get("departments", [])]
+
+    def search_hidden_department_ids(self) -> Optional[set[str]]:
+        """Return department IDs marked as hidden by the ERP T2 search."""
+        data = self._search("T2")
+        if data is None:
+            return None
+
+        department_ids: set[str] = set()
+        for department in data.get("departments", []):
+            info = DepartmentInfo.model_validate(department)
+            if info.id:
+                department_ids.add(str(info.id).strip())
+        return department_ids
 
     def search_employee(self, keyword: str) -> Optional[EmployeeInfo]:
         """Search employee by keyword (username, email, or ssn).
@@ -221,7 +238,7 @@ class ErpClient:
         Returns:
             Employee info object with ssn, name, email, department, or None if not found
         """
-        data = self._search(keyword)
+        data = self._search(keyword) or {}
         employees = data.get("employees", [])
         if not employees:
             return None

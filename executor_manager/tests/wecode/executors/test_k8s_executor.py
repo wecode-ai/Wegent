@@ -33,6 +33,34 @@ from executor_manager.wecode.executors.warmpool.template_builder import (
 )
 
 
+def test_cancel_task_forwards_subtask_id_to_executor(mocker):
+    executor = object.__new__(K8sExecutor)
+    executor.requests = mocker.MagicMock()
+    response = mocker.MagicMock()
+    executor.requests.post.return_value = response
+
+    core_v1 = mocker.MagicMock()
+    core_v1.list_namespaced_pod.return_value = SimpleNamespace(
+        items=[
+            SimpleNamespace(
+                metadata=SimpleNamespace(name="executor-1"),
+                status=SimpleNamespace(pod_ip="10.0.0.8"),
+            )
+        ]
+    )
+    mocker.patch.object(executor, "_get_core_v1_api", return_value=core_v1)
+
+    result = executor.cancel_task(316109593137557, 316109593137560)
+
+    assert result["status"] == "success"
+    executor.requests.post.assert_called_once_with(
+        "http://10.0.0.8:8080/api/tasks/cancel"
+        "?task_id=316109593137557&subtask_id=316109593137560",
+        timeout=10,
+    )
+    response.raise_for_status.assert_called_once_with()
+
+
 def test_warm_pool_template_uses_dynamic_runtime_binding_metadata():
     pod = build_warm_pool_pod_config(
         executor_name="warmpool-test",

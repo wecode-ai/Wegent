@@ -29,6 +29,8 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'codex-notification-isolation': './scenarios/codex-notification-isolation.scenario.mjs',
   'context-compaction': './scenarios/context-compaction.scenario.mjs',
   'split-workbench': './scenarios/split-workbench.scenario.mjs',
+  'release-package-startup': './scenarios/release-package-startup.scenario.mjs',
+  'component-update': './scenarios/component-update.scenario.mjs',
   'native-window-startup': './scenarios/native-window-startup.scenario.mjs',
   'native-window-chrome': './scenarios/native-window-chrome.scenario.mjs',
   'renderer-storage': './scenarios/renderer-storage.scenario.mjs',
@@ -55,6 +57,8 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'codex-notification-isolation',
   'context-compaction',
   'split-workbench',
+  'release-package-startup',
+  'component-update',
   'native-window-startup',
   'native-window-chrome',
   'renderer-storage',
@@ -233,6 +237,9 @@ async function readBuildManifest(path) {
 
 function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'native-window-chrome') {
+    nextEnv.WEWORK_E2E_BACKGROUND_WINDOW = '0'
+  }
   const module = CHECKPOINT_SCENARIO_MODULES[checkpoint]
   if (module) {
     nextEnv.WEWORK_E2E_DESKTOP_SCENARIO_MODULE = module

@@ -61,6 +61,102 @@ Formal releases require the platform signing credentials plus
 key signs only the bridge artifacts consumed by legacy clients. Subsequent
 Electron updates use the SHA-512 values in the YAML manifests.
 
+## Initial package and component updates
+
+The initial Electron installer contains a complete runtime that can start
+offline:
+
+- Electron, whose embedded Node runtime is shared by the Electron main
+  process, Core DSH, plugin subprocesses, and Codex skill scripts;
+- Core DSH;
+- Wework core DSH plugins;
+- bundled personal plugins and Skills;
+- Executor;
+- Codex;
+- DWS.
+
+`components.json` records the application version, release channel, and each
+component's version, resource path, and content SHA-256. The Electron
+application itself continues to update through `electron-updater`; the other
+six components use independent
+`components-<channel>-<platform>-<arch>.json` manifests.
+
+Component archives are named by their archive SHA-256 and stored as immutable
+assets. Repository-built Wework core plugin/UI, bundled plugin, and Executor
+archives live in their corresponding version Release. External Core DSH,
+Codex, and DWS archives live centrally in `wework-updater` for reuse across
+versions. Every publication Release contains complete installers and its
+component manifests, and uploads only archive hashes that are not already
+available at the appropriate location.
+
+The version boundary follows whether an artifact must remain atomically
+compatible with the Electron host:
+
+- Application-versioned artifacts: Electron, Chromium, embedded Node, the main
+  process, preload, startup shell, Host capability implementations, native Node
+  modules, application identity, signing permissions, icons, installers,
+  updater protocols, and incompatible local-data migrations.
+- Independently versioned components: Core DSH, Wework core DSH plugins and UI,
+  bundled personal plugins and Skills, Executor, Codex, and DWS.
+- User-installed marketplace plugins remain independently managed by the
+  plugin system and are not part of desktop component publication.
+
+Independent components must still exactly match the current Electron
+`appVersion` and switch as one atomic component set. A component change that
+requires a new Host capability, native module, or incompatible data format
+automatically becomes a full application release.
+
+The Wework UI, core plugins, bundled personal plugins, and Executor share one
+`wework-<sourceSha12>` runtime version, where `sourceSha12` is the first 12
+hexadecimal characters of the source commit, and switch atomically through the
+same component manifest. They remain separate content-addressed archives only
+as a transport optimization, so clients download the files that actually
+changed; the split does not make Executor an independently released product.
+Codex and DWS retain their own product versions.
+
+The release workflow automatically compares the source commit recorded by the
+previous component manifest. If only managed components changed, the Electron
+application version stays unchanged and installed clients receive only new
+component manifests. Changes to the Electron main process, preload, packaged
+resources, or release boundary advance the application version and the full
+Electron update manifests. Wework changes that cannot be classified safely
+default to a full update.
+
+Every publication creates an immutable Release containing complete installers
+with the newest components. Full updates use a `wework-v<appVersion>` tag;
+component updates use `wework-v<appVersion>-runtime.<sourceSha12>`, where
+`sourceSha12` is the first 12 hexadecimal characters of the source commit,
+without advancing the Electron `appVersion`. The newest stable publication is
+marked as the GitHub `latest` Release. New users download a complete installer
+from that Release, while every historical Release also remains independently
+installable.
+
+Repository-built Wework core plugin/UI, bundled plugin, and Executor archives
+are uploaded to their corresponding version Release. External Core DSH, Codex,
+DWS, and other non-repository binary dependencies use content-addressed
+archives stored centrally in `wework-updater` for reuse across versions.
+Rolling component manifests are also published there, but it is no longer the
+first-time installer download entry point. Existing users therefore download
+only components that actually changed and do not redownload Electron and
+Chromium for a component-only change.
+
+The client accepts only a component manifest that exactly matches the running
+Electron application version, channel, platform, and architecture. It verifies
+the archive size and SHA-256 before extraction, then verifies the extracted
+component content SHA-256. Downloads enter a content-addressed store under the
+user data directory as `pending` and the complete component set switches
+through one atomic state file on the next startup. Wework confirms the new set
+only after the workbench and Core DSH start successfully. A failed startup, or
+a process exit before confirmation, rolls back to the previous set on the next
+launch. Packaged resources remain the final fallback.
+
+Wework no longer packages or downloads a second Node runtime. At startup it
+creates a lightweight `node` entry under the user data directory, prepends it
+to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
+Electron, and sets `ELECTRON_RUN_AS_NODE=1`. Core DSH and Codex skills therefore
+use Electron's version-bound Node for both explicit `node script.ts` commands
+and `#!/usr/bin/env node` entry points.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:
@@ -104,13 +200,45 @@ locks.
 `.github/workflows/wework-app.yml` supports stable and beta channels, an
 optional version override, parallel builds for three platforms, Actions
 artifacts, formal GitHub Releases, and rolling manifests for both Electron and
-legacy Tauri clients. Stable releases advance both stable and beta channels;
-beta releases advance only beta. The workflow installs the dependencies owned
-by `wework/electron`, prepares bundled sidecars, and calls the unified Electron
-build command. Desktop resource changes belong in `wework/resources/` or the
-Electron packaging scripts, not in a duplicated workflow resource list.
+legacy Tauri clients. The workflow automatically selects a component or full
+publication from the source changes since the last published state; there is
+no manual release-kind input. Stable releases advance both stable and beta
+channels; beta releases advance only beta. The workflow installs the
+dependencies owned by `wework/electron`, prepares bundled sidecars, and calls
+the unified Electron build command. Desktop resource changes belong in
+`wework/resources/` or the Electron packaging scripts, not in a duplicated
+workflow resource list.
 
 A rolling channel may skip an equal-version upload only when both Electron YAML
-manifests and all three legacy Tauri JSON manifests exist. The workflow repairs
-an incomplete equal version and fails for an incomplete newer version instead
-of overwriting it with an older release.
+manifests, all three legacy Tauri JSON manifests, and component manifests for
+all four build targets exist. The workflow repairs an incomplete equal version
+and fails for an incomplete newer version instead of overwriting it with an
+older release. Component archives are never overwritten and are uploaded only
+when their content-addressed asset name is absent.
+
+## Internal MinIO releases
+
+Internal macOS releases use the same Electron build and component manifests:
+
+```bash
+bash wework/scripts/build-minio-mac-release.sh \
+  --version <version> \
+  --macos-build-target aarch64-apple-darwin \
+  --brand-config wework/branding/weibo.json \
+  --beta \
+  --upload
+```
+
+`wework/branding/weibo.json` fixes the internal product name, bundle ID,
+user-data namespace, and default Backend and Socket URLs. The package must use
+this identity to overwrite the installed internal application and continue
+using its existing conversations and Executor data. Explicit runtime
+environment variables may still override the URL defaults.
+
+The script publishes versioned DMG/ZIP files, four immutable component
+archives, Electron YAML, the legacy Tauri migration JSON, and the rolling
+component manifest, then verifies every public download. An equal but
+incomplete version is repaired; an incomplete newer remote version fails. A
+roughly 350 MB compressed DMG expanding to an application directory near
+700 MB is expected for the same complete offline runtime and does not indicate
+duplicate packaging.

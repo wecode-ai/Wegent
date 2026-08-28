@@ -1,10 +1,16 @@
 import path from 'path'
 import fs from 'fs'
+import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { createLogger, defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { configDefaults } from 'vitest/config'
+
+const require = createRequire(import.meta.url)
+const { resolveReleaseVersion } = require('./electron/scripts/release-version.cjs') as {
+  resolveReleaseVersion: (defaultVersion?: string, environment?: NodeJS.ProcessEnv) => string
+}
 
 function normalizeBackendUrl(value: string): string {
   const url = new URL(value)
@@ -28,6 +34,7 @@ const packageJson = JSON.parse(
 ) as {
   version?: string
 }
+const releaseVersion = resolveReleaseVersion(packageJson.version)
 const internalExtensionsDir = path.resolve(__dirname, './wecode/extensions')
 const extensionsDir = fs.existsSync(internalExtensionsDir)
   ? internalExtensionsDir
@@ -53,6 +60,43 @@ const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
 
+function preserveDshUiEntryExports() {
+  return {
+    name: 'wework-preserve-dsh-ui-entry-exports',
+    options(options: {
+      preserveEntrySignatures?: false | 'strict' | 'allow-extension' | 'exports-only'
+    }) {
+      return {
+        ...options,
+        preserveEntrySignatures: 'strict' as const,
+      }
+    },
+    generateBundle(
+      _options: unknown,
+      bundle: Record<
+        string,
+        {
+          exports?: string[]
+          isEntry?: boolean
+          name?: string
+          type: 'asset' | 'chunk'
+        }
+      >
+    ) {
+      for (const output of Object.values(bundle)) {
+        if (
+          output.type === 'chunk' &&
+          output.isEntry &&
+          output.name?.startsWith('wework-ui-') &&
+          !output.exports?.includes('default')
+        ) {
+          throw new Error(`DSH UI entry "${output.name}" must preserve its default export`)
+        }
+      }
+    },
+  }
+}
+
 logger.warn = (message, options) => {
   const isKnownBrowserExternal =
     message.includes('has been externalized for browser compatibility') &&
@@ -65,6 +109,7 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    preserveDshUiEntryExports(),
     fileViewerRenderers({
       preset: 'auto',
       autoPresets: ['office', 'lite', 'engineering'],
@@ -74,7 +119,7 @@ export default defineConfig({
     ...internalVitePlugins,
   ],
   define: {
-    __WEWORK_APP_VERSION__: JSON.stringify(packageJson.version ?? '0.0.0'),
+    __WEWORK_APP_VERSION__: JSON.stringify(releaseVersion),
   },
   optimizeDeps: {
     // Test artifacts may contain standalone plugin apps with dependencies that
@@ -88,6 +133,39 @@ export default defineConfig({
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,
+    rolldownOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        'wework-ui-applications': path.resolve(__dirname, 'dsh/ui-applications/src/route.tsx'),
+        'wework-ui-automations': path.resolve(__dirname, 'dsh/ui-automations/src/route.tsx'),
+        'wework-ui-cloud-work': path.resolve(__dirname, 'dsh/ui-cloud-work/src/route.tsx'),
+        'wework-ui-cloud-work-sidebar': path.resolve(
+          __dirname,
+          'dsh/ui-cloud-work/src/sidebar-navigation.tsx'
+        ),
+        'wework-ui-core-settings': path.resolve(
+          __dirname,
+          'dsh/ui-core-settings/src/settings-page.tsx'
+        ),
+        'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
+        'wework-ui-plugin-center-catalog': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/catalog-route.tsx'
+        ),
+        'wework-ui-plugin-center-create': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/create-route.tsx'
+        ),
+        'wework-ui-plugin-center-management': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/management-route.tsx'
+        ),
+      },
+      output: {
+        entryFileNames: chunk =>
+          chunk.name.startsWith('wework-ui-') ? 'plugins/[name].js' : 'assets/[name]-[hash].js',
+      },
+    },
   },
   server: {
     host: '0.0.0.0',

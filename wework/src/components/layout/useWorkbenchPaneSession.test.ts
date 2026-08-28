@@ -4,7 +4,44 @@ import {
   clearRuntimeConversationCacheForTests,
   getRuntimeConversationMessages,
 } from '@/features/workbench/runtimeConversationCache'
-import { rollbackRejectedRuntimeConversationTurn } from './useWorkbenchPaneSession'
+import {
+  resolveRuntimeTranscriptPageSize,
+  rollbackRejectedRuntimeConversationTurn,
+  runtimeTranscriptHasMoreBefore,
+} from './useWorkbenchPaneSession'
+
+describe('resolveRuntimeTranscriptPageSize', () => {
+  afterEach(() => {
+    delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
+  })
+
+  test('reads an Electron override injected after the module was loaded', () => {
+    window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = { transcriptPageSize: 20 }
+
+    expect(resolveRuntimeTranscriptPageSize()).toBe(20)
+  })
+
+  test.each([0, -1, Number.NaN, 10.5])(
+    'falls back to the production page size for invalid value %s',
+    configuredPageSize => {
+      expect(resolveRuntimeTranscriptPageSize(configuredPageSize)).toBe(50)
+    }
+  )
+})
+
+describe('runtimeTranscriptHasMoreBefore', () => {
+  test('keeps older pagination available when the server returns a before cursor', () => {
+    expect(
+      runtimeTranscriptHasMoreBefore({
+        taskId: 'task-1',
+        messages: [],
+        turns: [],
+        beforeCursor: 'opaque-older-page',
+        hasMoreBefore: false,
+      })
+    ).toBe(true)
+  })
+})
 
 describe('rollbackRejectedRuntimeConversationTurn', () => {
   afterEach(clearRuntimeConversationCacheForTests)

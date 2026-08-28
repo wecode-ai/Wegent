@@ -26,6 +26,14 @@ const mocks = vi.hoisted(() => ({
   resetAttachments: vi.fn(),
   sendRuntimePaneMessage: vi.fn(async () => true),
   createTask: vi.fn(),
+  loadRuntimeTranscriptForPane: vi.fn(),
+  syncTranscript: vi.fn(),
+  lifecycleSnapshot: null as {
+    derived: {
+      isRunning: boolean
+      isTurnActive: boolean
+    }
+  } | null,
   activeModelSelection: null as ModelSelectionConfig | null,
 }))
 
@@ -97,7 +105,7 @@ vi.mock('@/features/workbench/useWorkbench', () => ({
     sendRuntimePaneGuidance: vi.fn(),
     cancelRuntimePaneTask: vi.fn(),
     subscribeRuntimeTaskStream: () => () => undefined,
-    loadRuntimeTranscriptForPane: vi.fn(),
+    loadRuntimeTranscriptForPane: mocks.loadRuntimeTranscriptForPane,
   }),
 }))
 
@@ -146,10 +154,10 @@ vi.mock('@/features/workbench/temporaryChatModelContext', () => ({
 }))
 
 vi.mock('@/features/workbench/runtimeTaskLifecycle', () => ({
-  useRuntimeTaskLifecycle: () => null,
+  useRuntimeTaskLifecycle: () => mocks.lifecycleSnapshot,
   useRuntimeTaskLifecycleStore: () => ({
-    getTask: () => null,
-    syncTranscript: vi.fn(),
+    getTask: () => mocks.lifecycleSnapshot,
+    syncTranscript: mocks.syncTranscript,
   }),
 }))
 
@@ -158,7 +166,50 @@ describe('TemporaryChatPanel', () => {
     mocks.resetAttachments.mockReset()
     mocks.sendRuntimePaneMessage.mockClear()
     mocks.createTask.mockReset()
+    mocks.loadRuntimeTranscriptForPane.mockReset()
+    mocks.loadRuntimeTranscriptForPane.mockResolvedValue({
+      running: false,
+      messages: [],
+      turns: [],
+      contextUsage: null,
+      turnNavigation: [],
+      fullContent: false,
+      rangeStart: null,
+      rangeEnd: null,
+      hasMoreBefore: false,
+      beforeCursor: null,
+      hasMoreAfter: false,
+      afterCursor: null,
+    })
+    mocks.syncTranscript.mockReset()
+    mocks.lifecycleSnapshot = null
     mocks.activeModelSelection = null
+  })
+
+  it('lets an idle transcript settle a stale running execution without an active turn', async () => {
+    mocks.lifecycleSnapshot = {
+      derived: {
+        isRunning: true,
+        isTurnActive: false,
+      },
+    }
+
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="settled-task"
+        initialAddress={address}
+        sendEphemeral={false}
+      />
+    )
+
+    await waitFor(() => expect(mocks.syncTranscript).toHaveBeenCalledTimes(1))
+    expect(mocks.syncTranscript).toHaveBeenCalledWith(
+      address,
+      expect.objectContaining({ running: false }),
+      { preserveActiveTurn: false }
+    )
   })
 
   it('keeps sent attachments on the user message after clearing the composer', async () => {

@@ -66,8 +66,6 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
-  RuntimeTaskStatusReplayRequest,
-  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -521,6 +519,7 @@ interface RuntimeWorkIpcOptions {
   normalizeDeviceRecord?: <T extends Record<string, unknown>>(data: T, deviceId: string) => T
   adaptListResponse?: (response: unknown, deviceId: string) => RuntimeWorkListResponse
   cloudModelGateway?: CloudModelGateway
+  getRuntimeProxyUrl?: () => string
   user?: User
   transportLabel?: 'Local' | 'Cloud'
   syncConfiguredModelCatalog?: boolean
@@ -1195,8 +1194,11 @@ function harnessProxyUpstream(
   }
 }
 
-function applyLocalProxyConfig(modelConfig: Record<string, unknown>): Record<string, unknown> {
-  const proxyUrl = getLocalProxyUrl().trim()
+function applyRuntimeProxyConfig(
+  modelConfig: Record<string, unknown>,
+  runtimeProxyUrl?: string
+): Record<string, unknown> {
+  const proxyUrl = runtimeProxyUrl?.trim()
   if (!proxyUrl) return modelConfig
 
   const runtimeConfig = {
@@ -1222,9 +1224,10 @@ function applyLocalProxyConfig(modelConfig: Record<string, unknown>): Record<str
 
 function applyRuntimeModelOptions(
   modelConfig: Record<string, unknown>,
-  modelOptions?: Record<string, string>
+  modelOptions?: Record<string, string>,
+  runtimeProxyUrl?: string
 ): Record<string, unknown> {
-  modelConfig = applyLocalProxyConfig(modelConfig)
+  modelConfig = applyRuntimeProxyConfig(modelConfig, runtimeProxyUrl)
   const reasoning = runtimeReasoning(modelOptions)
   if (reasoning) modelConfig.reasoning = reasoning
   const serviceTier = runtimeServiceTier(modelOptions)
@@ -1336,6 +1339,7 @@ interface BuildLocalRuntimeExecutionRequestInput {
   modelOptions?: RuntimeTaskCreateRequest['modelOptions']
   modelConfig?: Record<string, unknown>
   cloudModelGateway?: CloudModelGateway
+  runtimeProxyUrl?: string
   additionalSkills?: RuntimeTaskCreateRequest['additionalSkills']
   additionalContext?: RuntimeTaskCreateRequest['additionalContext']
   attachments?: RuntimeTaskCreateRequest['attachments']
@@ -1414,7 +1418,11 @@ function buildLocalRuntimeExecutionRequest(
           input.modelOptions,
           input.cloudModelGateway
         ))
-  const modelConfig = applyRuntimeModelOptions({ ...baseModelConfig }, input.modelOptions)
+  const modelConfig = applyRuntimeModelOptions(
+    { ...baseModelConfig },
+    input.modelOptions,
+    input.runtimeProxyUrl
+  )
   const reasoning = runtimeReasoning(input.modelOptions)
   const collaborationMode = runtimeCollaborationMode(input.modelOptions)
   const skillNames = (input.additionalSkills ?? []).map(skillName).filter(isNonEmptyString)
@@ -1698,6 +1706,7 @@ async function createLocalRuntimeTaskPayload(
   localDeviceId: string,
   requestWithLocalDevice: RequestWithLocalDevice,
   cloudModelGateway: CloudModelGateway | undefined,
+  runtimeProxyUrl: string | undefined,
   user: User,
   requireLocalCodexCatalog: boolean
 ): Promise<Record<string, unknown>> {
@@ -1726,7 +1735,8 @@ async function createLocalRuntimeTaskPayload(
           initialSupervisor.modelSelection.options,
           cloudModelGateway
         ),
-        initialSupervisor.modelSelection.options
+        initialSupervisor.modelSelection.options,
+        runtimeProxyUrl
       ),
     }
   }
@@ -1746,6 +1756,7 @@ async function createLocalRuntimeTaskPayload(
         modelType: normalizedData.friendlyTitle.modelType,
         modelOptions: normalizedData.friendlyTitle.modelOptions,
         cloudModelGateway,
+        runtimeProxyUrl,
         localDeviceId,
         workspacePath: runtimeWorkspace?.workspacePath,
         standaloneChatWorkspace: normalizedData.standaloneChatWorkspace,
@@ -1777,6 +1788,7 @@ async function createLocalRuntimeTaskPayload(
       modelOptions: normalizedData.modelOptions,
       modelConfig: normalizedData.modelConfig,
       cloudModelGateway,
+      runtimeProxyUrl,
       additionalSkills: normalizedData.additionalSkills,
       additionalContext: normalizedData.additionalContext,
       attachments: normalizedData.attachments,
@@ -1805,6 +1817,7 @@ function createLocalRuntimeSendPayload(
   data: RuntimeSendRequest,
   localDeviceId: string,
   cloudModelGateway: CloudModelGateway | undefined,
+  runtimeProxyUrl: string | undefined,
   user: User,
   requireLocalCodexCatalog: boolean
 ): Record<string, unknown> {
@@ -1855,6 +1868,7 @@ function createLocalRuntimeSendPayload(
         modelType: normalizedData.modelType,
         modelOptions: normalizedData.modelOptions,
         cloudModelGateway,
+        runtimeProxyUrl,
         attachments: normalizedData.attachments,
         additionalContext: normalizedData.additionalContext,
         cloudProjectId: normalizedData.cloudProjectId,
@@ -1898,6 +1912,7 @@ function createLocalRuntimeSendPayload(
       modelType: normalizedData.modelType,
       modelOptions: normalizedData.modelOptions,
       cloudModelGateway,
+      runtimeProxyUrl,
       attachments: normalizedData.attachments,
       additionalContext: normalizedData.additionalContext,
       cloudProjectId: normalizedData.cloudProjectId,
@@ -2122,6 +2137,7 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
     const projectSource =
       stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectSidebarOrder = workspace.projectSidebarOrder ?? workspace.project_sidebar_order
     const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
     const rawDefaultProjectSpace = recordValue(
       workspace.defaultProjectSpace ?? workspace.default_project_space
@@ -2200,6 +2216,10 @@ function adaptRuntimeWorkListResponse(
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
           .map(path => ({ kind: 'local', path })),
+        sidebarOrder:
+          typeof projectSidebarOrder === 'number' && Number.isInteger(projectSidebarOrder)
+            ? projectSidebarOrder
+            : null,
         pinned: workspace.projectPinned === true || workspace.project_pinned === true,
         pinnedOrder:
           typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
@@ -2467,11 +2487,6 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
-    replayRuntimeTaskStatuses(
-      data: RuntimeTaskStatusReplayRequest
-    ): Promise<RuntimeTaskStatusReplayResponse> {
-      return requestWithLocalDevice('runtime.tasks.status.replay', data)
-    },
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -2578,6 +2593,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
+        options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog
       )
@@ -2606,6 +2622,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
+        options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog
       )
@@ -2668,6 +2685,7 @@ export function createRuntimeWorkApiFromIpc(
         data,
         localDeviceId,
         options.cloudModelGateway,
+        options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog
       )
@@ -2723,7 +2741,8 @@ export function createRuntimeWorkApiFromIpc(
           selection.options,
           options.cloudModelGateway
         ),
-        selection.options
+        selection.options,
+        options.getRuntimeProxyUrl?.()
       )
       const normalizedAddress = normalizeLocalDeviceRecord({ address: data.address }, localDeviceId)
         .address as RuntimeTaskAddress
@@ -2951,6 +2970,7 @@ export function createRuntimeWorkApiFromIpc(
         localDeviceId,
         requestWithLocalDevice,
         options.cloudModelGateway,
+        options.getRuntimeProxyUrl?.(),
         user,
         requireLocalCodexCatalog
       )
@@ -3165,6 +3185,7 @@ export function createAutomationApiFromIpc(
       localDeviceId,
       requestWithLocalDevice,
       options.cloudModelGateway,
+      options.getRuntimeProxyUrl?.(),
       user,
       requireLocalCodexCatalog
     )
@@ -3173,6 +3194,7 @@ export function createAutomationApiFromIpc(
           continuationRequest,
           localDeviceId,
           options.cloudModelGateway,
+          options.getRuntimeProxyUrl?.(),
           user,
           requireLocalCodexCatalog
         )
@@ -3467,6 +3489,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     getLocalDeviceId,
     {
       cloudModelGateway: deps.cloudModelGateway,
+      getRuntimeProxyUrl: getLocalProxyUrl,
       user: deps.user,
     }
   ) as unknown as NonNullable<WorkbenchServices['runtimeWorkApi']>
@@ -3475,6 +3498,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     (method, params) => request(method, params as Record<string, unknown>),
     {
       cloudModelGateway: deps.cloudModelGateway,
+      getRuntimeProxyUrl: getLocalProxyUrl,
       user: deps.user,
       prepareRuntimeModel: data => runtimeWorkApi.prepareRuntimeModel(data),
     }
@@ -3550,6 +3574,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
         modelType: data.modelType,
         modelOptions: data.modelOptions,
         cloudModelGateway: deps.cloudModelGateway,
+        runtimeProxyUrl: getLocalProxyUrl(),
         localDeviceId: deviceId,
         workspaceSource: 'local_path',
         newSession: true,

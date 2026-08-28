@@ -727,6 +727,99 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   }
 }
 
+async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
+    text: '进行中',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-open-board-menu"]')
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  const activeBoardTabPrefix = 'workspace-tab-select-board-'
+  assert.ok(
+    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
+    'The running work-item board tab identity was unavailable'
+  )
+  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
+  const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('waitFor', runningColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', reviewColumnSelector),
+    /WEWORK_DESKTOP_E2E_TASK/,
+    'The running task was also rendered in the review column'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-02-running-task-synchronized.png',
+    activeBoardContentSelector
+  )
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="pause-response-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+}
+
+async function verifyTrackedTaskSettledStatus(control) {
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-status"]', {
+    text: '等待确认',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-open-board-menu"]')
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  const activeBoardTabPrefix = 'workspace-tab-select-board-'
+  assert.ok(
+    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
+    'The settled work-item board tab identity was unavailable'
+  )
+  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
+  const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('waitFor', reviewColumnSelector, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.doesNotMatch(
+    await control.command('getText', runningColumnSelector),
+    /WEWORK_DESKTOP_E2E_TASK/,
+    'The settled task remained in the running column'
+  )
+  await captureVerificationScreenshot(
+    control,
+    'workspace-03-settled-task-synchronized.png',
+    activeBoardContentSelector
+  )
+}
+
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
@@ -1376,6 +1469,8 @@ export {
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,
   verifyDefaultTaskBoardAssociation,
+  verifyTrackedTaskRunningStatus,
+  verifyTrackedTaskSettledStatus,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,
   allWorkspaceTabIds,

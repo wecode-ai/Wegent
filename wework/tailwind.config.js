@@ -4,6 +4,7 @@ export default {
   content: [
     './index.html',
     './src/**/*.{ts,tsx}',
+    './dsh/*/src/**/*.{ts,tsx}',
     './wecode/**/*.{ts,tsx}',
     './node_modules/streamdown/dist/*.js',
   ],

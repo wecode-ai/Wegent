@@ -17,7 +17,7 @@ import type {
   RuntimeWorkSearchRequest,
   User,
 } from '@/types/api'
-import { projectTaskTrackingApi } from './projectTaskTracking'
+import { reconcileProjectTaskTrackingStatus } from './projectTaskTracking'
 import type {
   RuntimePaneTranscript,
   RuntimePaneTranscriptLoadOptions,
@@ -181,7 +181,10 @@ export function useWorkbenchRuntimeTasks({
   )
 
   const openRuntimeTask = useCallback(
-    async (address: RuntimeTaskAddress) => {
+    async (
+      address: RuntimeTaskAddress,
+      options?: { fallbackProject?: ProjectWithTasks | null }
+    ) => {
       const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
         item.deviceWorkspaces.some(
           workspace =>
@@ -193,7 +196,7 @@ export function useWorkbenchRuntimeTasks({
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
           ) ?? runtimeProjectToProject(runtimeProjectWork))
-        : null
+        : (options?.fallbackProject ?? null)
 
       writeLastProjectId(user.id, project?.id ?? null)
       openRuntimeTaskView(address, project, {
@@ -256,10 +259,8 @@ export function useWorkbenchRuntimeTasks({
     async (addresses: RuntimeTaskAddress[]) => {
       await Promise.all(
         addresses.map(async address => {
-          const trackingApi = projectTaskTrackingApi(services, address)
-          if (!trackingApi) return
           try {
-            await trackingApi.updateTaskTrackingStatus(address, 'archived')
+            await reconcileProjectTaskTrackingStatus(services, address, 'archived')
           } catch (error) {
             console.warn('[Wework] Failed to complete archived task on project board', {
               address: runtimeAddressDebug(address),
@@ -473,8 +474,10 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
+        await openRuntimeTask(response.target, {
+          fallbackProject: state.currentProject,
+        })
         await refreshWorkLists()
-        await openRuntimeTask(response.target)
       } catch (error) {
         dispatch({
           type: 'error_set',
@@ -482,7 +485,14 @@ export function useWorkbenchRuntimeTasks({
         })
       }
     },
-    [dispatch, executorClient, openRuntimeTask, refreshWorkLists, state.currentRuntimeTask]
+    [
+      dispatch,
+      executorClient,
+      openRuntimeTask,
+      refreshWorkLists,
+      state.currentProject,
+      state.currentRuntimeTask,
+    ]
   )
 
   const getRuntimeGoal = useCallback(

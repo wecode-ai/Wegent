@@ -15,7 +15,6 @@ const scripts = [
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
-  'scripts/prepare-execution-runtime.mjs',
   'scripts/prepare-harness-runtime.mjs',
 ]
 
@@ -23,6 +22,7 @@ describe('desktop resource migration', () => {
   test('desktop entrypoints install the isolated Electron workspace', async () => {
     const packageJson = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
     const devMacScript = await readFile(join(weworkRoot, 'scripts/dev-mac-app.sh'), 'utf8')
+    const devWindowsScript = await readFile(join(weworkRoot, 'scripts/dev-windows-app.ps1'), 'utf8')
     const devAppWatcher = await readFile(
       join(weworkRoot, 'scripts/dev-wework-app-watch.mjs'),
       'utf8'
@@ -30,7 +30,7 @@ describe('desktop resource migration', () => {
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe(
-      'pnpm --dir electron install --frozen-lockfile'
+      'pnpm --dir electron install --frozen-lockfile && node electron/node_modules/electron/install.js'
     )
     expect(packageJson.scripts['dev:desktop']).toContain('pnpm run prepare:electron')
     expect(packageJson.scripts['dev:mac']).toBe('bash scripts/dev-mac-app.sh')
@@ -49,6 +49,8 @@ describe('desktop resource migration', () => {
     expect(devAppWatcher).toContain('emptyOutDir: true')
     expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
+    expect(devMacScript).not.toContain('node electron/node_modules/electron/install.js')
+    expect(devWindowsScript).not.toContain('node electron/node_modules/electron/install.js')
   })
 
   test.each(scripts)('%s depends only on neutral desktop resources', async relativePath => {
@@ -81,21 +83,36 @@ describe('desktop resource migration', () => {
     expect(source).toContain('const [executorPath] = await Promise.all([')
     expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(source).toContain("run(pnpmCommand, ['prepare:harness-runtime', '--materialize']")
-    expect(source).toContain("run(pnpmCommand, ['prepare:execution-runtime', '--materialize']")
+    expect(source).toContain("path: 'bundled-plugins'")
+    expect(source).toContain('const weworkRuntimeVersion = `wework-${sourceSha.slice(0, 12)}`')
+    expect(source).toContain('version: weworkRuntimeVersion')
+    expect(source).toContain('sourceSha,')
+    expect(source).toContain('path: `bin/${dwsName}`')
+    expect(source).toContain("version: weworkPackage.devDependencies['dingtalk-workspace-cli']")
+    expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
   })
 
-  test('launches the release builder through the Windows command interpreter', async () => {
+  test('does not include a separate Node runtime in desktop packages', async () => {
+    const [packageApp, builderConfig] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+    ])
+
+    expect(packageApp).not.toContain("resources', 'node-runtime")
+    expect(builderConfig).not.toContain('resources/node-runtime')
+  })
+
+  test('launches the package-owned electron-builder CLI directly', async () => {
     const source = await readFile(join(weworkRoot, 'electron/scripts/build-release.mjs'), 'utf8')
 
-    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
-    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
-  })
-
-  test('signs the packaged Node runtime with the configured macOS keychain', async () => {
-    const source = await readFile(join(weworkRoot, 'scripts/prepare-execution-runtime.mjs'), 'utf8')
-
-    expect(source).toContain("identity === '-' ? undefined : process.env.MACOS_KEYCHAIN_PATH")
+    expect(source).toContain("'node_modules/electron-builder/cli.js'")
+    expect(source).toContain('resolveNodeRuntime()')
+    expect(source).toContain('WEWORK_RELEASE_DIR_ONLY')
+    expect(source).toContain("...(directoryOnly ? ['--dir'] : [])")
+    expect(source).not.toContain("'pnpm'")
+    expect(source).not.toContain('wrapWindowsScriptCommand')
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {
@@ -108,6 +125,21 @@ describe('desktop resource migration', () => {
       "const installerArchitecture = platform === 'linux' && arch === 'x64' ? 'x86_64' : arch"
     )
     expect(source).toContain('linux_${installerArchitecture}\\\\.AppImage')
+  })
+
+  test('creates macOS component archives from the requested packaged application', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("arch === 'arm64' ? 'mac-arm64' : 'mac'")
+    expect(source).toContain(
+      "packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')"
+    )
+    expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
+    expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
+    expect(source).not.toContain('async function findDirectory')
   })
 
   test('signs legacy updater assets through the Windows command interpreter', async () => {
@@ -126,8 +158,12 @@ describe('desktop resource migration', () => {
       'utf8'
     )
 
-    expect(source).toContain('const packagedResources = join(')
-    expect(source).toContain("['resources', 'harness-runtime']")
+    expect(source).toContain('const packagedResourcesRoot = join(')
+    expect(source).toContain(
+      "const packagedResources = join(packagedResourcesRoot, 'harness-runtime')"
+    )
+    expect(source).toContain("corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins')")
+    expect(source).toContain('harnessRuntimeRoot: runtimeRoot')
     expect(source).not.toContain("['prepare:harness-runtime', '--materialize']")
   })
 
@@ -138,12 +174,14 @@ describe('desktop resource migration', () => {
     )
 
     expect(source).not.toContain('prepare:execution-runtime')
+    expect(source).not.toContain('electronInstallScript')
+    expect(source).toContain("['--dir', 'electron', 'run', 'prepare:package']")
+    expect(source).toContain('WEWORK_EXECUTOR_PATH: executorPath')
   })
 
   test.each([
     'resources/icons/icon.icns',
     'resources/icons/icon.ico',
-    'resources/bundled-execution-runtimes/node.json',
     'resources/bundled-harness-runtime/.resource-placeholder',
     'resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json',
     'resources/bundled-plugins/wework-plugin-example/.codex-plugin/plugin.json',

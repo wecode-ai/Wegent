@@ -284,7 +284,7 @@ function mcpElicitationConfigToml(evidencePath) {
     '[mcp_servers.wegent_sites_interactions]',
     `command = ${command}`,
     `args = [${server}, ${evidence}]`,
-    'default_tools_approval_mode = "approve"',
+    'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
 }
@@ -374,12 +374,11 @@ function codexCacheRoot() {
 }
 
 async function prepareHarnessRuntimeRoots(appBinary) {
-  const packagedResources = join(
+  const packagedResourcesRoot = join(
     dirname(appBinary),
-    ...(process.platform === 'darwin'
-      ? ['..', 'Resources', 'harness-runtime']
-      : ['resources', 'harness-runtime'])
+    ...(process.platform === 'darwin' ? ['..', 'Resources'] : ['resources'])
   )
+  const packagedResources = join(packagedResourcesRoot, 'harness-runtime')
   const catalogPath = join(packagedResources, 'runtimes.json')
   const catalog = JSON.parse(await readFile(catalogPath, 'utf8'))
   const runtimeRoot = join(resultDir, 'harness-runtime')
@@ -394,18 +393,10 @@ async function prepareHarnessRuntimeRoots(appBinary) {
     await readFile(dshEntry)
   }
 
-  const nodeRuntimeRoot = join(resultDir, 'node-runtime')
-  const node = join(nodeRuntimeRoot, 'bin', process.platform === 'win32' ? 'node.exe' : 'node')
-  await rm(nodeRuntimeRoot, { recursive: true, force: true })
-  await mkdir(dirname(node), { recursive: true })
-  await copyFile(process.execPath, node)
-  await chmod(node, 0o755)
-  assert.equal(
-    await isExecutable(node),
-    true,
-    `The desktop E2E Node runtime was not executable at ${node}`
-  )
-  return { harnessRuntimeRoot: runtimeRoot, nodeRuntimeRoot }
+  return {
+    corePluginsRoot: join(packagedResourcesRoot, 'wework-core-plugins'),
+    harnessRuntimeRoot: runtimeRoot,
+  }
 }
 
 async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
@@ -419,11 +410,14 @@ async function cloneMacElectronApp(binaryPath, appIdentifier, codexBinary) {
   assert.ok(binaryName, `Unable to determine the Electron executable name from ${binaryPath}`)
   await rm(appBundlePath, { recursive: true, force: true })
   await runChecked('/bin/cp', ['-cR', sourceBundlePath, appBundlePath])
-  await runChecked('/usr/libexec/PlistBuddy', [
-    '-c',
-    `Set :CFBundleIdentifier ${appIdentifier}`,
-    join(appBundlePath, 'Contents', 'Info.plist'),
-  ])
+  if (process.env.WEWORK_E2E_REQUIRE_RELEASE_PACKAGE !== '1') {
+    await runChecked('/usr/libexec/PlistBuddy', [
+      '-c',
+      `Set :CFBundleIdentifier ${appIdentifier}`,
+      join(appBundlePath, 'Contents', 'Info.plist'),
+    ])
+    await runChecked('codesign', ['--force', '--deep', '--sign', '-', appBundlePath])
+  }
   commandOutput(MACOS_LAUNCH_SERVICES_REGISTER, ['-f', appBundlePath])
   return {
     binaryPath: join(appBundlePath, 'Contents', 'MacOS', binaryName),

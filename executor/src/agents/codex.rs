@@ -55,10 +55,6 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_SOURCE_DIR",
     "WEWORK_EXECUTOR_SIDECAR",
 ];
-const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV: &str = "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN";
-const DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR: &str = "127.0.0.1:9231";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
@@ -396,6 +392,27 @@ impl CodexAppServerClient {
             if pending_request_count > 0 {
                 return Err(pending_request_count);
             }
+            state.process.take()
+        };
+        if let Some(process) = process {
+            drop(process);
+        }
+        Ok(())
+    }
+
+    async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
+        let process = {
+            let mut state = self.state.lock().await;
+            let active_turn_count = state.active_threads.values().sum::<usize>();
+            let Some(process) = state.process.as_ref() else {
+                state.thread_generations.clear();
+                return Ok(());
+            };
+            let pending_request_count = process.pending.lock().await.len();
+            if active_turn_count > 0 || pending_request_count > 0 {
+                return Err((active_turn_count, pending_request_count));
+            }
+            state.thread_generations.clear();
             state.process.take()
         };
         if let Some(process) = process {
@@ -1435,12 +1452,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                 thread_fields.push(("operation", operation.to_owned()));
                 thread_fields.extend(mcp_thread_config_fields(&params));
                 log_executor_event("codex shared thread request started", &thread_fields);
-                let response = client.request(operation, params).await?;
-                let thread_id = thread_id_from_response(
+                let thread_id = request_shared_thread_id_with_provider_recovery(
+                    client,
                     operation,
-                    &response,
-                    launch_config.model_provider.as_deref(),
-                )?;
+                    params,
+                    &launch_config,
+                    &request.task_id,
+                    &request.subtask_id,
+                )
+                .await?;
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -2037,12 +2057,8 @@ async fn read_shared_turn_notifications(
         {
             waiting_for_initial_progress = false;
         }
-        let auto_approve_mcp_tool_call = options.auto_approve_mcp_tool_calls
-            && message
-                .get("method")
-                .and_then(Value::as_str)
-                .is_some_and(|method| method == "mcpServer/elicitation/request")
-            && is_mcp_tool_call_approval(message_params(&message));
+        let auto_approve_mcp_tool_call =
+            options.auto_approve_mcp_tool_calls && is_mcp_tool_call_approval_request(&message);
         if !auto_approve_mcp_tool_call {
             if let Some(sender) = &options.notifications {
                 let _ = sender.send(message.clone());
@@ -2059,6 +2075,7 @@ async fn read_shared_turn_notifications(
                 &message,
                 request_user_input_answers.clone(),
                 response_error_tx.clone(),
+                options.auto_approve_mcp_tool_calls,
             )?;
             continue;
         }
@@ -2247,9 +2264,21 @@ fn spawn_shared_request_user_input_response(
     message: &Value,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
+    auto_approve_mcp_tool_calls: bool,
 ) -> Result<(), String> {
     let request_id = json_rpc_request_id(message)
         .ok_or_else(|| "request_user_input message is missing JSON-RPC id".to_owned())?;
+    if auto_approve_mcp_tool_calls {
+        if let Some(response) = mcp_tool_call_request_user_input_response(message_params(message)) {
+            let client = client.clone();
+            tokio::spawn(async move {
+                if let Err(error) = client.send_response(request_id, response).await {
+                    let _ = response_error_tx.send(error);
+                }
+            });
+            return Ok(());
+        }
+    }
     let Some(receiver) = request_user_input_answers else {
         return Err("request_user_input requires a runtime response channel".to_owned());
     };
@@ -2972,7 +3001,7 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .extend(global_mcp_config_overrides());
     launch_config
         .config_overrides
-        .extend(cdp_browser_mcp_config_overrides(request));
+        .extend(cdp_browser_mcp_config_overrides(request)?);
     launch_config
         .config_overrides
         .extend(project_space_mcp_config_overrides(request)?);
@@ -3739,14 +3768,9 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
-fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    let command =
-        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let bridge_addr = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR.to_owned());
-    let bridge_url = format!("http://{bridge_addr}");
+fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+    let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3763,83 +3787,40 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
+    ];
+    if !crate::browser_mcp::bridge_is_available() {
+        return Ok(overrides);
+    }
+    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
+        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    overrides.extend([
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
-            toml_value(&command.display().to_string())
+            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization"]),
+            toml_value(&format!("Bearer {}", endpoint.token))
         ),
+        format!("{key}.tool_timeout_sec=60"),
         format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["browser-mcp-server"]))
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "startup_timeout_sec"
-            ]),
-            15
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "tool_timeout_sec"
-            ]),
-            60
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "default_tools_approval_mode"
-            ]),
+            "{key}.default_tools_approval_mode={}",
             toml_value("approve")
         ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"
-            ]),
-            toml_value(&bridge_url)
-        ),
-    ];
+    ]);
 
     if let Some(label) = embedded_browser_label(request) {
         overrides.push(format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_EMBEDDED_BROWSER_LABEL"
+                server_name,
+                "http_headers",
+                "X-Wework-Browser-Label"
             ]),
             toml_value(&label)
         ));
     }
-    if let Ok(token) = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV) {
-        if !token.trim().is_empty() {
-            overrides.push(format!(
-                "{}={}",
-                toml_key_path(&[
-                    "mcp_servers",
-                    WEWORK_BROWSER_MCP_SERVER_NAME,
-                    "env",
-                    "WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"
-                ]),
-                toml_value(token.trim())
-            ));
-        }
-    }
-
-    overrides
+    Ok(overrides)
 }
 
 fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
@@ -4011,9 +3992,17 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
 
 async fn prepare_codex_execution_request(
     request: ExecutionRequest,
-    cancellation: Option<&mut oneshot::Receiver<()>>,
+    mut cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if let Some(cancellation) = cancellation.as_deref_mut() {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            result = ensure_codex_mcp_endpoints() => result?,
+        }
+    } else {
+        ensure_codex_mcp_endpoints().await?;
+    }
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
@@ -4127,6 +4116,14 @@ async fn prepare_codex_execution_request(
         request,
         generated_files,
     })
+}
+
+async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
+    if crate::browser_mcp::bridge_is_available() {
+        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    Ok(())
 }
 
 fn ensure_codex_turn_not_cancelled(
@@ -4659,6 +4656,71 @@ fn validate_codex_model_provider(
         // Codex builds return it, so reject an explicit mismatch without breaking those clients.
         None => Ok(()),
     }
+}
+
+async fn request_shared_thread_id_with_provider_recovery(
+    client: &CodexAppServerClient,
+    operation: &'static str,
+    params: Value,
+    launch_config: &CodexLaunchConfig,
+    task_id: &str,
+    subtask_id: &str,
+) -> Result<String, String> {
+    let response = client.request(operation, params.clone()).await?;
+    let provider_error = match thread_id_from_response(
+        operation,
+        &response,
+        launch_config.model_provider.as_deref(),
+    ) {
+        Ok(thread_id) => return Ok(thread_id),
+        Err(error) => error,
+    };
+    if operation != "thread/resume"
+        || validate_codex_model_provider(
+            operation,
+            &response,
+            launch_config.model_provider.as_deref(),
+        )
+        .is_ok()
+    {
+        return Err(provider_error);
+    }
+
+    let mut fields = task_fields(task_id, subtask_id);
+    fields.push(("operation", operation.to_owned()));
+    fields.push(("error", provider_error.clone()));
+    match client.restart_if_idle().await {
+        Ok(()) => {
+            log_executor_event(
+                "codex shared stale thread provider recovery restarting",
+                &fields,
+            );
+        }
+        Err((active_turn_count, pending_request_count)) => {
+            fields.push(("active_turn_count", active_turn_count.to_string()));
+            fields.push(("pending_request_count", pending_request_count.to_string()));
+            log_executor_event(
+                "codex shared stale thread provider recovery unavailable",
+                &fields,
+            );
+            return Err(provider_error);
+        }
+    }
+
+    client
+        .ensure_process_for_launch_config(launch_config)
+        .await?;
+    let response = client.request(operation, params).await?;
+    let thread_id = thread_id_from_response(
+        operation,
+        &response,
+        launch_config.model_provider.as_deref(),
+    )?;
+    log_executor_event(
+        "codex shared stale thread provider recovery completed",
+        &fields,
+    );
+    Ok(thread_id)
 }
 
 fn thread_start_params(request: &ExecutionRequest, launch_config: &CodexLaunchConfig) -> Value {
@@ -5202,6 +5264,36 @@ const MCP_ELICITATION_ALLOW: &str = "Allow";
 const MCP_ELICITATION_ALLOW_SESSION: &str = "Allow for this session";
 const MCP_ELICITATION_ALLOW_ALWAYS: &str = "Allow and don't ask me again";
 const MCP_ELICITATION_DECLINE: &str = "Decline";
+const MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX: &str = "mcp_tool_call_approval_";
+
+fn is_mcp_tool_call_approval_request(message: &Value) -> bool {
+    match message.get("method").and_then(Value::as_str) {
+        Some("item/tool/requestUserInput") => {
+            mcp_tool_call_request_user_input_response(message_params(message)).is_some()
+        }
+        Some("mcpServer/elicitation/request") => is_mcp_tool_call_approval(message_params(message)),
+        _ => false,
+    }
+}
+
+fn mcp_tool_call_request_user_input_response(params: &Value) -> Option<Value> {
+    let questions = params.get("questions")?.as_array()?;
+    let [question] = questions.as_slice() else {
+        return None;
+    };
+    let question_id = question.get("id")?.as_str()?;
+    let call_id = question_id.strip_prefix(MCP_TOOL_CALL_APPROVAL_QUESTION_ID_PREFIX)?;
+    if call_id.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "answers": {
+            question_id: {
+                "answers": [MCP_ELICITATION_ALLOW]
+            }
+        }
+    }))
+}
 
 async fn receive_mcp_server_elicitation_response(
     message: &Value,

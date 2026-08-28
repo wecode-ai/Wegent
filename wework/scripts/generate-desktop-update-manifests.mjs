@@ -3,11 +3,19 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-const [assetsDirectory, outputDirectory, version, channel, repository, releaseTag, notesPath] =
-  process.argv.slice(2)
+const [
+  assetsDirectory,
+  outputDirectory,
+  version,
+  channel,
+  repository,
+  releaseTag,
+  notesPath,
+  sourceSha,
+] = process.argv.slice(2)
 
 if (
   !assetsDirectory ||
@@ -16,14 +24,18 @@ if (
   !channel ||
   !repository ||
   !releaseTag ||
-  !notesPath
+  !notesPath ||
+  !sourceSha
 ) {
   throw new Error(
-    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file>'
+    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file> <source-sha>'
   )
 }
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
+}
+if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
 }
 
 const assets = resolve(assetsDirectory)
@@ -34,6 +46,11 @@ const releaseBaseUrl = (
   process.env.WEWORK_RELEASE_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/${releaseTag}`
 ).replace(/\/+$/, '')
+const sharedComponentBaseUrl = (
+  process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
+  `https://github.com/${repository}/releases/download/wework-updater`
+).replace(/\/+$/, '')
+const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -117,13 +134,84 @@ for (const targetChannel of tauriChannels) {
   }
 }
 
+const componentTargets = [
+  ...(requestedTargets.has('macos-arm64') ? [['macos', 'arm64']] : []),
+  ...(requestedTargets.has('macos-x64') ? [['macos', 'x64']] : []),
+  ...(requestedTargets.has('windows-x64') ? [['windows', 'x64']] : []),
+  ['linux', 'x64'],
+]
+const hasComponentRelease = await Promise.all(
+  componentTargets.map(([platform, architecture]) =>
+    stat(resolve(assets, `components-${platform}-${architecture}.json`))
+      .then(file => file.isFile())
+      .catch(() => false)
+  )
+).then(results => results.some(Boolean))
+
+for (const [platform, architecture] of hasComponentRelease ? componentTargets : []) {
+  const sourcePath = resolve(assets, `components-${platform}-${architecture}.json`)
+  let source
+  try {
+    source = JSON.parse(await readFile(sourcePath, 'utf8'))
+  } catch {
+    if (platform === 'linux') continue
+    throw new Error(`Component release descriptor is missing: ${sourcePath}`)
+  }
+  const components = {}
+  for (const [id, component] of Object.entries(source.components ?? {})) {
+    const archivePath = resolve(assets, component.assetName)
+    const archive = await localAsset(component.assetName)
+    const archiveSha256 = await sha256(archivePath)
+    if (archiveSha256 !== component.archiveSha256) {
+      throw new Error(
+        `Component archive checksum mismatch for ${id}: expected ${component.archiveSha256}, received ${archiveSha256}`
+      )
+    }
+    components[id] = {
+      version: component.version,
+      contentSha256: component.contentSha256,
+      archiveSha256,
+      archiveBytes: archive.size,
+      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      entryPath: component.entryPath,
+    }
+  }
+  for (const targetChannel of tauriChannels) {
+    await writeFile(
+      resolve(output, `components-${targetChannel}-${platform}-${architecture}.json`),
+      `${JSON.stringify(
+        {
+          schemaVersion: 1,
+          appVersion: version,
+          sourceSha,
+          channel: targetChannel,
+          platform,
+          arch: architecture,
+          releaseDate,
+          components,
+        },
+        null,
+        2
+      )}\n`,
+      'utf8'
+    )
+  }
+}
+
 async function asset(name) {
+  const local = await localAsset(name)
+  return {
+    ...local,
+    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
+  }
+}
+
+async function localAsset(name) {
   const path = resolve(assets, name)
   const file = await stat(path)
   if (!file.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
   return {
     name,
-    url: `${releaseBaseUrl}/${encodeURIComponent(name)}`,
     size: file.size,
     sha512: await sha512(path),
   }
@@ -165,4 +253,10 @@ async function sha512(path) {
   const hash = createHash('sha512')
   await pipeline(createReadStream(path), hash)
   return hash.digest('base64')
+}
+
+async function sha256(path) {
+  const hash = createHash('sha256')
+  await pipeline(createReadStream(path), hash)
+  return hash.digest('hex')
 }

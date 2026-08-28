@@ -22,6 +22,8 @@ A task UI identity combines the state-owning device with the task ID. Live-list 
 
 New project tasks that have not entered the manual order appear before existing manually ordered tasks; multiple unordered tasks are sorted by their latest activity. Tasks with a manual order continue to follow `sidebarOrder`. This keeps an optimistic task without `sidebarOrder` at the top immediately, then preserves its position after Executor returns the persisted order instead of dropping it to the bottom.
 
+The project list must not depend on the array order of any individual local, cloud, or cached response. Executor derives `projectSidebarOrder` from `project-order`; Wework preserves it in project summaries and the offline cache, then reapplies it after merging runtime work sources. Projects without persisted order keep their relative merge order, while ordered projects do not move because of task activity, request completion timing, or device reconnection.
+
 ## Project model
 
 Executor merges three Codex project representations:

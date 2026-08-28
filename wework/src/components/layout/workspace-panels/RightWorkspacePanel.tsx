@@ -49,15 +49,14 @@ import { TemporaryChatPanel } from './TemporaryChatPanel'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import {
   resolveRightWorkspaceExtensionDescriptor,
-  rightWorkspaceBetterSidebar,
+  rightWorkspaceDshSidebar,
   isRightWorkspaceExtensionTab,
-  isWeworkWorkspaceSidebarTabAvailable,
   titleOfWeworkWorkspaceSidebarTab,
   type WeworkWorkspaceScope,
   type WeworkWorkspaceSidebarTabDescriptor,
   type RightWorkspaceExtensionTab,
   type RightWorkspaceExtensionTabState,
-} from './rightWorkspaceSidebarRegistry'
+} from './rightWorkspaceDshSidebar'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
   if (platform === 'win') {
@@ -404,9 +403,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 }: RightWorkspacePanelProps) {
   const { t } = useTranslation('common')
   const registeredExtensionTabs = useSyncExternalStore(
-    rightWorkspaceBetterSidebar.subscribe,
-    rightWorkspaceBetterSidebar.getTabs,
-    rightWorkspaceBetterSidebar.getTabs
+    rightWorkspaceDshSidebar.subscribe,
+    rightWorkspaceDshSidebar.getTabs,
+    rightWorkspaceDshSidebar.getTabs
   )
   const [pluginDialog, setPluginDialog] = useState<{
     tab: RightWorkspaceBrowserTab
@@ -480,8 +479,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
 
   const getNewTabOptions = (): WorkspaceAddMenuItem[] => [
     ...workspaceActions,
-    ...registeredExtensionTabs
-      .filter(descriptor => !descriptor.hidden)
+    ...[...registeredExtensionTabs]
       .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
       .map(
         (descriptor): WorkspaceAddMenuItem => ({
@@ -489,16 +487,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
           testId: `right-workspace-extension-option-${descriptor.id}`,
           icon: PanelRight,
           label: titleOfWeworkWorkspaceSidebarTab(descriptor),
-          disabled: !isWeworkWorkspaceSidebarTabAvailable(
-            descriptor,
-            extensionScope,
-            rightWorkspaceBetterSidebar.getSnapshot().state ?? {
-              panelOpen: visible,
-              tabs: [],
-              activeTabId: null,
-            }
-          ),
-          onSelect: () => rightWorkspaceBetterSidebar.openTab({ type: descriptor.id }),
+          onSelect: () => rightWorkspaceDshSidebar.openTab({ type: descriptor.id }),
         })
       ),
     {
@@ -650,7 +639,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             allowTemporaryChat={allowTemporaryChat}
             workspaceActions={workspaceActions}
             extensionTabs={registeredExtensionTabs}
-            extensionScope={extensionScope}
             onSelectReview={onSelectReview}
             onSelectTerminal={onSelectTerminal}
             onSelectBrowser={onSelectBrowser}
@@ -1026,16 +1014,7 @@ function RightWorkspaceTabIcon({
   }
 
   const descriptor = resolveRightWorkspaceExtensionDescriptor(extensionState)
-  if (descriptor?.icon) {
-    return (
-      <span
-        data-testid={`${testId}-icon`}
-        className="flex h-4 w-4 shrink-0 items-center justify-center text-text-secondary"
-      >
-        {typeof descriptor.icon === 'function' ? descriptor.icon(14) : descriptor.icon}
-      </span>
-    )
-  }
+  if (descriptor) return <PanelRight data-testid={`${testId}-icon`} className="h-4 w-4 shrink-0" />
 
   if (iconSrc && !imageFailed) {
     return (
@@ -1081,7 +1060,6 @@ function RightWorkspaceLauncher({
   allowTemporaryChat,
   workspaceActions,
   extensionTabs,
-  extensionScope,
   onSelectReview,
   onSelectTerminal,
   onSelectBrowser,
@@ -1093,7 +1071,6 @@ function RightWorkspaceLauncher({
   allowTemporaryChat: boolean
   workspaceActions: WorkspaceAddMenuItem[]
   extensionTabs: readonly WeworkWorkspaceSidebarTabDescriptor[]
-  extensionScope: WeworkWorkspaceScope
   onSelectReview: () => void
   onSelectTerminal: () => void
   onSelectBrowser: () => void
@@ -1109,8 +1086,7 @@ function RightWorkspaceLauncher({
       className="flex min-h-0 flex-1 items-center justify-center px-8"
     >
       <div className="flex w-full max-w-xl flex-col gap-1.5">
-        {extensionTabs
-          .filter(descriptor => !descriptor.hidden)
+        {[...extensionTabs]
           .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
           .map(descriptor => (
             <RightWorkspaceLauncherItem
@@ -1118,18 +1094,7 @@ function RightWorkspaceLauncher({
               data-testid={`right-workspace-extension-option-${descriptor.id}`}
               icon={PanelRight}
               label={titleOfWeworkWorkspaceSidebarTab(descriptor)}
-              onClick={() => rightWorkspaceBetterSidebar.openTab({ type: descriptor.id })}
-              disabled={
-                !isWeworkWorkspaceSidebarTabAvailable(
-                  descriptor,
-                  extensionScope,
-                  rightWorkspaceBetterSidebar.getSnapshot().state ?? {
-                    panelOpen: true,
-                    tabs: [],
-                    activeTabId: null,
-                  }
-                )
-              }
+              onClick={() => rightWorkspaceDshSidebar.openTab({ type: descriptor.id })}
             />
           ))}
         {workspaceActions.map(action => (

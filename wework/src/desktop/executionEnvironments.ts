@@ -16,18 +16,35 @@ export interface ExecutionEnvironmentStatus {
   installedBytes: number
   path: string | null
   error: string | null
+  source?: 'electron' | 'configured' | 'system'
+  configuredPath?: string | null
+  restartRequired?: boolean
 }
 
 export function listExecutionEnvironments() {
-  return Promise.resolve<ExecutionEnvironmentStatus[]>([])
+  return window.weworkElectronExecutionEnvironments?.list() ?? Promise.resolve([])
 }
 
-export function installExecutionEnvironment(id: ExecutionEnvironmentStatus['id']) {
-  return Promise.reject<ExecutionEnvironmentStatus>(
-    new Error(`Managed ${id} installation is unavailable in Electron`)
+export function chooseNodeExecutable() {
+  return (
+    window.weworkElectronExecutionEnvironments?.chooseNodeExecutable() ??
+    Promise.reject(new Error('Node.js selection is unavailable outside Electron'))
   )
 }
 
-export function removeExecutionEnvironment(id: ExecutionEnvironmentStatus['id']) {
-  return Promise.reject<void>(new Error(`Managed ${id} removal is unavailable in Electron`))
+export function useBuiltinNode() {
+  return (
+    window.weworkElectronExecutionEnvironments?.useBuiltinNode() ??
+    Promise.reject(new Error('Node.js configuration is unavailable outside Electron'))
+  )
+}
+
+declare global {
+  interface Window {
+    weworkElectronExecutionEnvironments?: {
+      list(): Promise<ExecutionEnvironmentStatus[]>
+      chooseNodeExecutable(): Promise<{ path: string; version: string } | null>
+      useBuiltinNode(): Promise<void>
+    }
+  }
 }

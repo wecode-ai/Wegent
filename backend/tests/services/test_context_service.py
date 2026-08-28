@@ -377,6 +377,9 @@ class TestContextServiceAttachmentCopy:
         )
         from app.services.context import context_service
 
+        context_service_module = importlib.import_module(
+            "app.services.context.context_service"
+        )
         source = SubtaskContext(
             subtask_id=0,
             user_id=1,
@@ -413,6 +416,11 @@ class TestContextServiceAttachmentCopy:
             "get_attachment_binary_data",
             lambda _db, _context: pytest.fail("video copy must not read binary data"),
         )
+        monkeypatch.setattr(
+            context_service_module,
+            "find_external_attachment_storage_adapter",
+            lambda _mime_type, _purpose: None,
+        )
 
         copied = context_service.copy_attachment_for_user(
             db=db,
@@ -440,6 +448,123 @@ class TestContextServiceAttachmentCopy:
         assert copied.type_data["quick_launch_function_id"] == "create_video"
         assert copied.type_data["quick_launch_preset_id"] == "demo"
         assert copied.binary_data == b""
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(copied)
+
+    def test_copy_attachment_for_user_promotes_legacy_video_reference(
+        self, monkeypatch
+    ) -> None:
+        from app.models.subtask_context import (
+            ContextStatus,
+            ContextType,
+            SubtaskContext,
+        )
+        from app.services.attachment.external_storage import (
+            ExternalAttachmentPlayback,
+            ExternalAttachmentReference,
+            ExternalAttachmentStorageResult,
+        )
+        from app.services.context import context_service
+
+        context_service_module = importlib.import_module(
+            "app.services.context.context_service"
+        )
+        source = SubtaskContext(
+            subtask_id=0,
+            user_id=1,
+            context_type=ContextType.ATTACHMENT.value,
+            name="demo.mp4",
+            status=ContextStatus.READY.value,
+            extracted_text="",
+            text_length=0,
+            image_base64="",
+            type_data={
+                "original_filename": "demo.mp4",
+                "file_extension": ".mp4",
+                "file_size": 4096,
+                "mime_type": "video/mp4",
+                "storage_backend": "weibo",
+                "fid": 987654,
+            },
+        )
+        source.id = 60
+        added_contexts = []
+        stored_inputs = []
+        db = Mock()
+
+        def add_context(context):
+            added_contexts.append(context)
+
+        def flush_context():
+            if added_contexts and added_contexts[-1].id is None:
+                added_contexts[-1].id = 601
+
+        class _MediaStorage:
+            backend_type = "weibo_video_hosting"
+
+            def store(self, **kwargs):
+                stored_inputs.append(kwargs)
+                return ExternalAttachmentStorageResult(
+                    backend_type=self.backend_type,
+                    type_data={
+                        "weibo_video_upload": {
+                            "media_id": "media-123",
+                            "upload_id": "upload-123",
+                        }
+                    },
+                )
+
+        def resolve_reference(*, type_data):
+            upload = type_data.get("weibo_video_upload") or {}
+            if upload.get("media_id"):
+                return ExternalAttachmentReference(
+                    name="media_id",
+                    value=upload["media_id"],
+                )
+            return ExternalAttachmentReference(name="fid", value=type_data["fid"])
+
+        db.add.side_effect = add_context
+        db.flush.side_effect = flush_context
+        monkeypatch.setattr(
+            context_service_module,
+            "find_external_attachment_storage_adapter",
+            lambda _mime_type, _purpose: _MediaStorage(),
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_reference",
+            resolve_reference,
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "resolve_external_attachment_playback",
+            lambda **_kwargs: ExternalAttachmentPlayback(
+                url="https://example.com/demo.mp4",
+                media_type="video/mp4",
+            ),
+        )
+        monkeypatch.setattr(
+            context_service_module,
+            "_download_external_media",
+            lambda _url: b"video-bytes",
+        )
+
+        copied = context_service.copy_attachment_for_user(
+            db=db,
+            source_context=source,
+            target_user_id=7,
+            source_metadata={"source": "quick_launch_preset"},
+        )
+
+        assert stored_inputs[0]["data"] == b"video-bytes"
+        assert stored_inputs[0]["filename"] == "demo.mp4"
+        assert source.type_data["fid"] == 987654
+        assert source.type_data["weibo_video_upload"]["media_id"] == "media-123"
+        assert copied.type_data["fid"] == 987654
+        assert copied.type_data["weibo_video_upload"]["media_id"] == "media-123"
+        assert copied.type_data["storage_backend"] == "weibo_video_hosting"
+        context_service._promote_legacy_video_reference(db, source)
+        assert len(stored_inputs) == 1
         db.commit.assert_called_once()
         db.refresh.assert_called_once_with(copied)
 

@@ -41,6 +41,8 @@ else
 fi
 if [ -n "$EXPLICIT_VITE_WEGENT_SOCKET_URL" ]; then
   export VITE_WEGENT_SOCKET_URL="$EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE"
+else
+  export VITE_WEGENT_SOCKET_URL="${VITE_WEGENT_SOCKET_URL:-wss://wss-wegent.intra.weibo.com}"
 fi
 if [ -n "$EXPLICIT_VITE_WEWORK_FEEDBACK_URL" ]; then
   export VITE_WEWORK_FEEDBACK_URL="$EXPLICIT_VITE_WEWORK_FEEDBACK_URL_VALUE"
@@ -50,27 +52,30 @@ fi
 
 VERSION=""
 CHANNEL="stable"
+RELEASE_KIND="${WEWORK_RELEASE_KIND:-full}"
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_WINDOWS_RELEASE_S3_PREFIX:-wework/windows}"
+COMPONENT_S3_PREFIX="${WEWORK_COMPONENT_S3_PREFIX:-wework/components}"
 OUTPUT_DIR="${WEWORK_WINDOWS_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
-VERSION_BACKUP_DIR=""
 
 usage() {
   cat <<'EOF'
 Usage: bash wework/scripts/build-minio-windows-release.sh --version <version> [options]
 
-Build the same signed Electron Windows release used by GitHub CI, generate both
-Electron updater YAML and a Tauri-signed migration bridge, and optionally
-publish them to MinIO. Run this script on a native Windows host.
+Build the same signed Electron Windows release used by GitHub CI and optionally
+publish either the full app update or only its independently updatable
+components to MinIO. Run this script on a native Windows host.
 
 Options:
   --version <version>       Release version. Required.
   --channel <stable|beta>   Update channel. Default: stable.
+  --release-kind <kind>     full or component. Default: full.
   --beta                    Shorthand for --channel beta.
   --notes <text>            Release notes.
   --endpoint <url>          S3 API endpoint.
@@ -79,6 +84,8 @@ Options:
   --output-dir <path>       Local artifact directory.
   --windows-build-target <target>
                             Only x86_64-pc-windows-msvc is supported.
+  --brand-config <path>     Brand identity and internal runtime defaults.
+                            Default: wework/branding/weibo.json.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
@@ -112,22 +119,17 @@ normalize_prefix() {
   printf '%s\n' "$value"
 }
 
-restore_version_files() {
-  if [ -n "$VERSION_BACKUP_DIR" ]; then
-    cp -f "$VERSION_BACKUP_DIR/wework-package.json" "$WEWORK_DIR/package.json"
-    cp -f "$VERSION_BACKUP_DIR/electron-package.json" "$WEWORK_DIR/electron/package.json"
-    rm -rf "$VERSION_BACKUP_DIR"
-  fi
-}
-
 upload_artifacts() {
   require_env ATTACHMENT_S3_ACCESS_KEY
   require_env ATTACHMENT_S3_SECRET_KEY
   ATTACHMENT_S3_ENDPOINT="$S3_ENDPOINT" \
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
+  WEWORK_COMPONENT_S3_PREFIX="$COMPONENT_S3_PREFIX" \
   RELEASE_VERSION="$VERSION" \
+  RELEASE_SOURCE_SHA="$SOURCE_SHA" \
   RELEASE_CHANNEL="$CHANNEL" \
+  RELEASE_KIND="$RELEASE_KIND" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
     uv run --project "$PROJECT_DIR/backend" \
       python "$SCRIPT_DIR/upload-windows-release-to-s3.py"
@@ -135,6 +137,16 @@ upload_artifacts() {
 
 verify_uploaded_artifacts() {
   local electron_channel="$CHANNEL"
+  local component_manifest="components-$CHANNEL-windows-x64.json"
+  if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$component_manifest"; then
+    echo "Published component manifest is not publicly readable: $UPDATE_BASE_URL/$component_manifest" >&2
+    exit 1
+  fi
+  node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
+    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" windows x64
+  if [ "$RELEASE_KIND" = "component" ]; then
+    return
+  fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   for url in \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_windows_x64-setup.exe" \
@@ -151,6 +163,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
+    --release-kind) RELEASE_KIND="$2"; shift 2 ;;
     beta|--beta) CHANNEL="beta"; shift ;;
     stable|--stable) CHANNEL="stable"; shift ;;
     --notes) RELEASE_NOTES="$(wework_decode_release_notes "$2")"; shift 2 ;;
@@ -159,6 +172,7 @@ while [ "$#" -gt 0 ]; do
     --prefix) S3_PREFIX="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --windows-build-target) WINDOWS_BUILD_TARGET="$2"; shift 2 ;;
+    --brand-config) BRAND_CONFIG="$2"; shift 2 ;;
     --upload) UPLOAD="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -181,6 +195,10 @@ if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
   echo "--channel must be stable or beta." >&2
   exit 1
 fi
+if [ "$RELEASE_KIND" != "full" ] && [ "$RELEASE_KIND" != "component" ]; then
+  echo "--release-kind must be full or component." >&2
+  exit 1
+fi
 if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
   echo "A beta version must be published to the beta channel." >&2
   exit 1
@@ -191,6 +209,10 @@ if [ "$WINDOWS_BUILD_TARGET" != "x86_64-pc-windows-msvc" ]; then
 fi
 if [ "$(node -p process.platform 2>/dev/null || true)" != "win32" ]; then
   echo "Windows Electron releases must be built on a native Windows host." >&2
+  exit 1
+fi
+if [ ! -f "$BRAND_CONFIG" ]; then
+  echo "Brand config not found: $BRAND_CONFIG" >&2
   exit 1
 fi
 if [ -z "$S3_ENDPOINT" ] || [ -z "$S3_BUCKET" ]; then
@@ -210,7 +232,14 @@ fi
 
 S3_ENDPOINT="${S3_ENDPOINT%/}"
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
+COMPONENT_S3_PREFIX="$(normalize_prefix "$COMPONENT_S3_PREFIX")"
+BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
+SOURCE_SHA="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+export WEWORK_BRAND_CONFIG="$BRAND_CONFIG"
+export WEWORK_RELEASE_VERSION="$VERSION"
+export WEWORK_SOURCE_SHA="$SOURCE_SHA"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
+COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
 if [ -z "$RELEASE_NOTES" ]; then
   RELEASE_NOTES="$(
     cd "$PROJECT_DIR"
@@ -225,12 +254,6 @@ require_command uv
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 require_env WIN_CSC_LINK
 
-VERSION_BACKUP_DIR="$(mktemp -d)"
-trap restore_version_files EXIT
-cp "$WEWORK_DIR/package.json" "$VERSION_BACKUP_DIR/wework-package.json"
-cp "$WEWORK_DIR/electron/package.json" "$VERSION_BACKUP_DIR/electron-package.json"
-node "$SCRIPT_DIR/sync-desktop-release-version.mjs" "$VERSION"
-
 echo "Building Wework Electron Windows x64 release $VERSION ($CHANNEL)"
 CARGO_BUILD_TARGET="$WINDOWS_BUILD_TARGET" \
 WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET" \
@@ -238,6 +261,7 @@ WEWORK_CODEX_TARGET="$WINDOWS_BUILD_TARGET" \
 WEWORK_DWS_TARGET="$WINDOWS_BUILD_TARGET" \
 WEWORK_RELEASE_PLATFORM=windows \
 WEWORK_RELEASE_ARCH=x64 \
+WEWORK_SOURCE_SHA="$SOURCE_SHA" \
 WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
 VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
 VITE_WEWORK_RUNTIME_MODE=local-first \
@@ -248,15 +272,16 @@ node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
 notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows_x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
+WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
 WEWORK_RELEASE_TARGETS=windows-x64 \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \
-    internal/minio "minio-$VERSION" "$notes_path"
+    internal/minio "minio-$VERSION" "$notes_path" "$SOURCE_SHA"
 
 if [ "$UPLOAD" = "true" ]; then
   upload_artifacts
   verify_uploaded_artifacts
-  echo "Published MinIO Electron and legacy Tauri update channels."
+  echo "Published MinIO $RELEASE_KIND release assets and component update channels."
 else
   echo "Release artifacts are ready in: $OUTPUT_DIR"
 fi

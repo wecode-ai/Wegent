@@ -54,7 +54,11 @@ import {
   writeCodexConfig,
 } from './desktop-build-flows.mjs'
 
+import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs'
+
 import { DesktopE2EServer } from './desktop-server.mjs'
+
+import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
 
 import {
   verifyActiveGoalIdleUnreadLifecycle,
@@ -268,6 +272,8 @@ import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
+  verifyTrackedTaskRunningStatus,
+  verifyTrackedTaskSettledStatus,
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,
   verifyWorkspaceDocumentTabs,
@@ -950,6 +956,7 @@ async function main() {
       captureScreenshot: (control, name, selector) =>
         captureVerificationScreenshot(control, name, selector),
       executorHome,
+      electronUserDataDirectory,
       homePath,
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
@@ -1073,11 +1080,20 @@ async function main() {
       )
     }
 
-    const harnessRuntimes =
-      SELECTED_DESKTOP_SEGMENT === 'harness-apps'
-        ? await prepareHarnessRuntimeRoots(appBinary)
-        : null
-    const electronCoreRuntimeRoot = process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || null
+    const needsPackagedHarnessRuntime =
+      SELECTED_DESKTOP_SEGMENT === 'harness-apps' ||
+      (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition'))
+    const usesReleasePackageRuntimeAssets =
+      desktopScenario?.usesReleasePackageRuntimeAssets === true
+    const harnessRuntimes = needsPackagedHarnessRuntime
+      ? await prepareHarnessRuntimeRoots(appBinary)
+      : null
+    const configuredElectronCoreRuntimeRoot =
+      process.env.WEWORK_E2E_HARNESS_RUNTIME_ROOT?.trim() || null
+    const electronCoreRuntimeRoot =
+      harnessRuntimes?.harnessRuntimeRoot ||
+      (usesReleasePackageRuntimeAssets ? null : configuredElectronCoreRuntimeRoot)
+    const electronCorePluginsRoot = harnessRuntimes?.corePluginsRoot || null
     if (electronCoreRuntimeRoot) {
       assert.equal(
         await pathExists(electronCoreRuntimeRoot),
@@ -1100,7 +1116,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
-      WEWORK_E2E_BACKGROUND_WINDOW: '1',
+      WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -1126,12 +1142,8 @@ async function main() {
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_EXECUTOR_PATH: executorBinary,
       WEWORK_USER_DATA_DIR: electronUserDataDirectory,
-      ...(electronCoreRuntimeRoot ? { WEWORK_HARNESS_RUNTIME_ROOT: electronCoreRuntimeRoot } : {}),
-      ...(harnessRuntimes
-        ? {
-            WEWORK_HARNESS_RUNTIME_ROOT: harnessRuntimes.harnessRuntimeRoot,
-            WEWORK_NODE_RUNTIME_ROOT: harnessRuntimes.nodeRuntimeRoot,
-          }
+      ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
+        ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
         : {}),
       ...(RUNS_PLUGIN_E2E
         ? {
@@ -1142,18 +1154,34 @@ async function main() {
           }
         : {}),
     }
-    delete appEnvironment.WEGENT_APP_IPC_DEVICE_ID
-    const electronLaunchArguments =
-      process.platform === 'linux' && typeof process.getuid === 'function' && process.getuid() === 0
-        ? (() => {
-            assert.equal(
-              process.env.WEWORK_E2E_ISOLATED_XVFB,
-              'true',
-              'Root Electron E2E may disable the Chromium sandbox only inside isolated Xvfb'
-            )
-            return ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
-          })()
-        : []
+    for (const key of [
+      'ELECTRON_RUN_AS_NODE',
+      'WEGENT_APP_IPC_DEVICE_ID',
+      'WEGENT_APP_IPC_ENDPOINT',
+      'WEGENT_APP_IPC_OWNER_TOKEN',
+      'WEGENT_APP_IPC_TOKEN',
+      'WEGENT_APP_LIFECYCLE_FD',
+      'WEGENT_EXECUTOR_BINARY',
+      'WEGENT_RUNTIME_AUTH_TOKEN',
+      'WEGENT_TASK_ID',
+      'WEGENT_TASK_WORKSPACE',
+      'WEWORK_CORE_DSH_COMMAND',
+      'WEWORK_CORE_DSH_URL',
+      'WEWORK_CORE_PLUGIN_ROOT',
+      'WEWORK_CORE_PLUGINS_SHA256',
+      'WEWORK_HARNESS_RESOURCE_ROOT',
+      'WEWORK_HARNESS_RUNTIME_ROOT',
+      'WEWORK_NODE_BIN',
+      'WEWORK_NODE_PATH',
+      'WEWORK_NODE_RUNTIME_ROOT',
+    ]) {
+      delete appEnvironment[key]
+    }
+    if (electronCoreRuntimeRoot) {
+      appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
+    }
+    Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
         cwd: weworkDir,
@@ -1218,12 +1246,30 @@ async function main() {
     } else {
       await declineInitialTelemetryConsent(control)
     }
-    if (RUNS_PLUGIN_E2E) {
+    if (RUNS_PLUGIN_E2E && !shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
       phase = 'blank-codex-home-initialization'
       await initializeBlankCodexHome({
         codexHome,
         control,
       })
+    }
+    if (RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')) {
+      phase = 'core-dsh-ui-plugin-composition'
+      await verifyCoreDshUiPluginComposition({
+        control,
+        initialRendererLocation: ready.location,
+        pluginsRoot: electronCorePluginsRoot,
+        restartDesktopApp,
+        runtimeRoot: electronCoreRuntimeRoot,
+      })
+      if (DESKTOP_SEGMENT === 'core-dsh-ui-plugin-composition') {
+        console.log(
+          `Wework desktop plugin E2E segment ${DESKTOP_SEGMENT} passed. Evidence: ${resultDir}`
+        )
+        return
+      }
+    }
+    if (RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
         control.url,
@@ -2206,7 +2252,10 @@ last_updated = "2026-07-30T00:00:00Z"`
     })
 
     let associatedTaskTabTestId = null
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
     }
@@ -2274,7 +2323,10 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     let taskRowTestId
     let taskRowCompletionText = COMPLETION_TEXT
-    if (shouldRunDesktopCheckpoint('core-task-flow')) {
+    if (
+      shouldRunDesktopCheckpoint('core-task-flow') ||
+      shouldRunDesktopCheckpoint('task-status-sync')
+    ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       await control.command('waitFor', activeModelSelector, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -2307,6 +2359,26 @@ last_updated = "2026-07-30T00:00:00Z"`
           testId.startsWith('runtime-local-task-row-') && !taskRowsBeforeInitialTask.has(testId)
       )
       assert.ok(taskRowTestId, 'The initial task row identity was not found')
+      if (associatedTaskTabTestId) {
+        phase = 'project-space-running-task-synchronized'
+        await verifyTrackedTaskRunningStatus(control, associatedTaskTabTestId)
+      }
+      if (shouldRunDesktopCheckpoint('task-status-sync')) {
+        phase = 'project-space-settled-task-synchronized'
+        control.releaseInitialToolExecution()
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await verifyTrackedTaskSettledStatus(control)
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
       await verifyUserMessageNavigation({
         control,
         projectRowSelector,
@@ -3842,6 +3914,7 @@ last_updated = "2026-07-30T00:00:00Z"`
     await blockingNetworkProxy?.stop()
     await stopDesktopAppProcess(app)
     await control.close()
+    await desktopScenario?.cleanup?.()
     await rm(codexSqliteHome, { recursive: true, force: true })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])

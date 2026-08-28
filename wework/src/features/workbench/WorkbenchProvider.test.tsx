@@ -881,6 +881,44 @@ function RuntimeTaskPinProbe() {
   )
 }
 
+function RuntimeTaskForkProbe() {
+  const workbench = useWorkbench()
+
+  return (
+    <div>
+      <span data-testid="fork-current-runtime-task">
+        {workbench.state.currentRuntimeTask?.taskId ?? 'none'}
+      </span>
+      <span data-testid="fork-current-project">{workbench.state.currentProject?.id ?? 'none'}</span>
+      <button
+        type="button"
+        data-testid="open-fork-source"
+        onClick={() =>
+          void workbench.openRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+            taskId: 'runtime-a',
+          })
+        }
+      >
+        open fork source
+      </button>
+      <button
+        type="button"
+        data-testid="fork-current-runtime-task-action"
+        onClick={() =>
+          void workbench.forkCurrentRuntimeTask({
+            deviceId: 'device-1',
+            workspacePath: '/workspace/project-alpha',
+          })
+        }
+      >
+        fork current runtime task
+      </button>
+    </div>
+  )
+}
+
 function RuntimeTaskPinDuringRefreshProbe() {
   const workbench = useWorkbench()
   const pinRequestedRef = useRef(false)
@@ -2418,6 +2456,76 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-total')).toHaveTextContent('0')
     expect(localExecutorMocks.ensureLocalExecutorStarted).toHaveBeenCalled()
     expect(localExecutorMocks.requestLocalExecutor).toHaveBeenCalledWith('runtime.tasks.list', {})
+  })
+
+  test('opens a forked task before refreshing the runtime task list', async () => {
+    const refreshRequest = deferred<RuntimeWorkListResponse>()
+    const runtimeWorkApi = createRuntimeWorkApiMock({
+      listRuntimeWork: vi
+        .fn()
+        .mockResolvedValueOnce(createRuntimeWork())
+        .mockReturnValueOnce(refreshRequest.promise),
+      forkRuntimeTask: vi.fn().mockResolvedValue({
+        accepted: true,
+        target: {
+          deviceId: 'device-1',
+          workspacePath: '/workspace/project-alpha',
+          taskId: 'runtime-fork',
+        },
+      }),
+    })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimeTaskForkProbe />, services)
+
+    await userEvent.click(await screen.findByTestId('open-fork-source'))
+    await waitFor(() =>
+      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-a')
+    )
+    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+
+    await userEvent.click(screen.getByTestId('fork-current-runtime-task-action'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('fork-current-runtime-task')).toHaveTextContent('runtime-fork')
+    )
+    expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7')
+    expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(2)
+
+    refreshRequest.resolve(
+      createRuntimeWork({
+        projects: [
+          {
+            project: { id: 7, name: 'Wegent' },
+            deviceWorkspaces: [
+              {
+                id: 22,
+                projectId: 7,
+                deviceId: 'device-1',
+                deviceName: 'Project Device',
+                deviceStatus: 'online',
+                workspacePath: '/workspace/project-alpha',
+                mapped: true,
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-fork',
+                    workspacePath: '/workspace/project-alpha',
+                    title: 'Runtime fork',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+            totalTasks: 1,
+          },
+        ],
+        totalTasks: 1,
+      })
+    )
+    await waitFor(() => expect(screen.getByTestId('fork-current-project')).toHaveTextContent('7'))
   })
 
   test('keeps a project task globally pinned while executor refresh is stale', async () => {
@@ -13302,6 +13410,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'succeeded'
+      )
+    )
 
     act(() => {
       streamHandlers.onChatStart?.({
@@ -13311,12 +13425,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'running'
-      )
-    )
 
     act(() => {
       streamHandlers.onRuntimeTaskTitleUpdated?.({
@@ -13355,7 +13463,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-a-task-status')).toHaveTextContent('done')
   })
 
-  test('does not synchronize restored task history during workbench load', async () => {
+  test('reconciles restored runtime state without creating board items', async () => {
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -13402,7 +13510,12 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
+        'running'
+      )
+    )
   })
 
   test('routes task status to the project store recorded in the runtime handle', async () => {
@@ -13578,10 +13691,15 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
     expect(trackProjectTask).not.toHaveBeenCalled()
-    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-bound' }),
+        'queued'
+      )
+    )
   })
 
-  test('does not regress board completion when a stale running snapshot arrives', async () => {
+  test('waits for canonical executor settlement before projecting completion', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onChatStart) streamHandlers = handlers
@@ -13667,12 +13785,6 @@ describe('WorkbenchProvider runtime tasks', () => {
       })
     })
 
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'succeeded'
-      )
-    )
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     await act(async () => {
       staleRunningUpdate.reject(new Error('stale running update failed'))
@@ -13683,7 +13795,11 @@ describe('WorkbenchProvider runtime tasks', () => {
       await staleRuntimeWorkRefresh.promise
     })
     expect(updateTaskTrackingStatus).toHaveBeenCalledTimes(2)
-    expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('succeeded')
+    expect(updateTaskTrackingStatus.mock.calls.map(([, status]) => status)).toEqual([
+      'running',
+      'running',
+    ])
+    expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('running')
   })
 
   test('polls the cloud executor until idle when the cached snapshot predates the active turn', async () => {

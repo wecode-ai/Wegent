@@ -12,7 +12,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Laptop,
   Loader2,
   MessageCircle,
@@ -20,7 +19,6 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
-  Plug,
   Plus,
   RotateCw,
   Search,
@@ -55,7 +53,10 @@ import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDialog'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
-import { SHOW_PLUGINS_NAVIGATION } from '@/features/plugins/visibility'
+import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
 import { getRuntimeTaskThreadId } from '@/features/workbench/workbenchRuntimeHelpers'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
@@ -79,9 +80,9 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import { CloudConnectionSidebarButton } from '@/features/cloud-connection/CloudConnectionSidebarButton'
-import { isCloudConnectionUiAvailable } from '@/features/cloud-connection/cloudConnectionAvailability'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
+import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
 import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
 import {
   StandaloneFolderProjectDialog,
@@ -100,7 +101,7 @@ import {
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalWorkspace } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
-import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { getPlatform } from '@/lib/platform'
 import {
   isEditableShortcutTarget,
@@ -261,10 +262,6 @@ interface DesktopSidebarProps {
   ) => Promise<void> | void
   onToggleGlobalImNotification?: () => Promise<void> | void
   onOpenGlobalImNotificationSettings?: () => Promise<void> | void
-  onOpenPlugins: () => void
-  onOpenCloudWork?: () => void
-  onOpenSites?: () => void
-  onOpenAutomation?: () => void
   onRefreshDevices?: () => Promise<void>
   onOpenStandaloneFolderProject?: (
     mode: StandaloneWorkspaceDialogMode,
@@ -3032,10 +3029,6 @@ export function DesktopSidebar({
   onToggleRuntimeTaskNotification,
   onToggleGlobalImNotification,
   onOpenGlobalImNotificationSettings,
-  onOpenPlugins,
-  onOpenCloudWork,
-  onOpenSites,
-  onOpenAutomation,
   onRefreshDevices,
   onOpenStandaloneFolderProject,
   onOpenStandaloneWorkspace,
@@ -3086,13 +3079,22 @@ export function DesktopSidebar({
   const sidebarWidth = sidebarWidthProp ?? internalResizable.sidebarWidth
   const resizing = resizingProp ?? internalResizable.resizing
   const handleResizeStart = onResizeStartProp ?? internalResizable.handleResizeStart
-  const showCloudConnectionEntry = isCloudConnectionUiAvailable()
   const platform = getPlatform()
   const usesOverlayTitlebar = false
   const isWindowsDesktop = isElectronRuntime() && platform === 'win'
   const appUpdate = useOptionalAppUpdate()
   const installedReleaseNotes = appUpdate?.installedReleaseNotes ?? null
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
+  const registeredSidebarNavigation = useDshSlotEntries<WeworkDshSidebarNavigationItem>(
+    WEWORK_DSH_SLOTS.sidebarNavigation
+  )
+  const sidebarNavigation = useMemo(
+    () =>
+      [...registeredSidebarNavigation]
+        .filter(item => !item.experimental || experimentalFeaturesEnabled)
+        .sort((left, right) => (left.order ?? 100) - (right.order ?? 100)),
+    [experimentalFeaturesEnabled, registeredSidebarNavigation]
+  )
 
   const storageScope = getDesktopSidebarStorageScope(user)
   const projectsExpandedStorageKey = getDesktopSidebarStorageKey(storageScope, 'projectsExpanded')
@@ -4020,53 +4022,54 @@ export function DesktopSidebar({
             )}
           >
             <nav className="mb-4 space-y-0.5">
-              <DesktopSidebarNavItem
-                icon={AlarmClock}
-                label={t('workbench.automation', '已安排')}
-                testId="automation-button"
-                selected={activeItem === 'automation'}
-                onClick={onOpenAutomation ?? (() => navigateTo('/automations'))}
-              />
-              {SHOW_PLUGINS_NAVIGATION && (
-                <DesktopSidebarNavItem
-                  icon={Plug}
-                  label={t('workbench.plugins', '插件')}
-                  testId="plugins-button"
-                  selected={activeItem === 'plugins'}
-                  onClick={onOpenPlugins}
-                  onPointerEnter={() => {
-                    if (!isDesktopRuntime()) return
-                    void import('@/components/plugins/workspace/prefetchPluginsWorkspace').then(
-                      module => module.prefetchPluginsWorkspace()
-                    )
-                  }}
-                />
-              )}
-              <DesktopSidebarNavItem
-                icon={Grid3X3}
-                label={t('workbench.sites', '工作台/站点/小程序')}
-                testId="sites-button"
-                selected={activeItem === 'sites'}
-                onClick={onOpenSites ?? (() => navigateTo('/sites'))}
-              />
-              {showCloudConnectionEntry && (
-                <CloudConnectionSidebarButton
-                  devices={devices}
-                  cloudWorkStatus={cloudWorkStatus}
-                  selected={activeItem === 'cloud-work'}
-                  onOpenCloudWork={onOpenCloudWork ?? (() => navigateTo('/cloud-work'))}
-                  onOpenSettings={() => onOpenSettings({ settingsPage: 'connections' })}
-                  onSelectCloudDevice={deviceId => onSelectStandaloneDevice?.(deviceId)}
-                  onAddDevice={() => {
-                    if (onOpenStandaloneFolderProject) {
-                      onOpenStandaloneFolderProject('remote', 'add-device')
-                    } else {
-                      setStandaloneRemoteDialogIntent('add-device')
-                      setStandaloneWorkspaceDialogMode('remote')
+              {sidebarNavigation.map(item => {
+                if (item.surface === 'module') {
+                  return (
+                    <DshSidebarNavigationSurface
+                      key={item.id}
+                      item={item}
+                      devices={devices}
+                      cloudWorkStatus={cloudWorkStatus}
+                      selected={activeItem === (item.activeItem ?? item.id)}
+                      onNavigate={navigateTo}
+                      onOpenSettings={settingsPage =>
+                        onOpenSettings({
+                          settingsPage: settingsPage as OpenSettingsOptions['settingsPage'],
+                        })
+                      }
+                      onSelectStandaloneDevice={onSelectStandaloneDevice}
+                      onAddRemoteDevice={() => {
+                        if (onOpenStandaloneFolderProject) {
+                          onOpenStandaloneFolderProject('remote', 'add-device')
+                        } else {
+                          setStandaloneRemoteDialogIntent('add-device')
+                          setStandaloneWorkspaceDialogMode('remote')
+                        }
+                      }}
+                    />
+                  )
+                }
+
+                return (
+                  <DesktopSidebarNavItem
+                    key={item.id}
+                    iconElement={
+                      <DshIcon
+                        name={item.icon}
+                        aria-hidden="true"
+                        className="h-4 w-4 text-current"
+                      />
                     }
-                  }}
-                />
-              )}
+                    label={t(item.labelKey ?? item.id, item.label)}
+                    testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
+                    selected={activeItem === (item.activeItem ?? item.id)}
+                    onClick={() => navigateTo(item.path)}
+                    onPointerEnter={
+                      item.prefetch ? () => prefetchDshSidebarNavigation(item) : undefined
+                    }
+                  />
+                )
+              })}
             </nav>
             {priorityFilterActive ? (
               <DesktopSidebarPrioritySection

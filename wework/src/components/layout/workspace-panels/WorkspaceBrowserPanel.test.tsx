@@ -1953,6 +1953,7 @@ describe('WorkspaceBrowserPanel', () => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
     })
     const webviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+    expect(webviewHost.querySelector('webview')).toHaveAttribute('allowpopups', 'true')
     expect(webviewHost).toHaveStyle({ pointerEvents: 'auto', visibility: 'visible' })
     expect(webviewHost.parentElement).toHaveStyle({ zIndex: '10' })
 

@@ -4,12 +4,19 @@ import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import identityModule from './build-identity.cjs'
+import releaseVersionModule from './release-version.cjs'
+
+const { resolveBuildIdentity } = identityModule
+const { resolveReleaseVersion } = releaseVersionModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+const releaseVersion = resolveReleaseVersion(sourcePackage.version)
+const identity = resolveBuildIdentity()
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -45,11 +52,17 @@ await writeFile(
   `${JSON.stringify(
     {
       name: sourcePackage.name,
-      productName: 'WeWork',
-      version: sourcePackage.version,
+      productName: identity.productName,
+      version: releaseVersion,
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
+      weworkAppId: identity.identifier,
+      ...(identity.executorNamespace
+        ? { weworkExecutorNamespace: identity.executorNamespace }
+        : {}),
+      ...(identity.backendUrl ? { weworkBackendUrl: identity.backendUrl } : {}),
+      ...(identity.socketUrl ? { weworkSocketUrl: identity.socketUrl } : {}),
     },
     null,
     2
@@ -57,13 +70,13 @@ await writeFile(
 )
 const applications = await packager({
   dir: staging,
-  name: 'WeWork',
+  name: identity.productName,
   electronVersion: '43.4.1',
   electronZipDir,
-  appBundleId: 'io.wecode.wework',
-  appVersion: sourcePackage.version,
-  buildVersion: sourcePackage.version,
-  executableName: 'WeWork',
+  appBundleId: identity.identifier,
+  appVersion: releaseVersion,
+  buildVersion: releaseVersion,
+  executableName: identity.executableName,
   out: output,
   overwrite: true,
   asar: {
@@ -71,8 +84,10 @@ const applications = await packager({
   },
   extraResource: [
     join(electronRoot, 'resources', 'harness-runtime'),
-    join(electronRoot, 'resources', 'node-runtime'),
     join(electronRoot, 'resources', 'bin'),
+    join(electronRoot, 'resources', 'codex'),
+    join(electronRoot, 'resources', 'wework-core-plugins'),
+    join(electronRoot, 'resources', 'components.json'),
     join(electronRoot, 'resources', 'bundled-plugins'),
     join(electronRoot, 'resources', 'bundled-hooks'),
     join(sharedResourcesRoot, 'icons'),
@@ -86,7 +101,7 @@ if (process.platform === 'darwin') {
   for (const application of applications) {
     await run(
       'codesign',
-      ['--force', '--deep', '--sign', '-', join(application, 'WeWork.app')],
+      ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
       electronRoot
     )
   }
