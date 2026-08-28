@@ -142,6 +142,64 @@ describe('SystemDragBridge', () => {
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel'))
   })
 
+  test('handles rejected panel dismissal after a drag ends', async () => {
+    const error = new Error('dismiss failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.invoke.mockImplementation(command => {
+      if (command === 'systemDrag.takePending') return Promise.resolve(mocks.pending.splice(0))
+      if (command === 'systemDrag.dismissPanel') return Promise.reject(error)
+      return Promise.resolve(undefined)
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const event = new Event('dragstart', { bubbles: true }) as DragEvent
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? 'selected text' : 'true'),
+      },
+    })
+
+    act(() => {
+      document.body.dispatchEvent(event)
+      document.body.dispatchEvent(new Event('dragend', { bubbles: true }))
+    })
+
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Wework] Failed to dismiss system drag panel:',
+        error
+      )
+    )
+  })
+
+  test('handles rejected panel dismissal when system drag is disabled', async () => {
+    const error = new Error('dismiss failed')
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mocks.invoke.mockImplementation(command => {
+      if (command === 'systemDrag.takePending') return Promise.resolve(mocks.pending.splice(0))
+      if (command === 'systemDrag.dismissPanel') return Promise.reject(error)
+      return Promise.resolve(undefined)
+    })
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('wework:app-preferences-changed', {
+          detail: { systemDragEnabled: false, quickPhrases: [] },
+        })
+      )
+    })
+
+    await waitFor(() =>
+      expect(consoleError).toHaveBeenCalledWith(
+        '[Wework] Failed to dismiss system drag panel:',
+        error
+      )
+    )
+  })
+
   test('does not open the system drag panel until a selected-text drag starts', async () => {
     render(<SystemDragBridge />)
     await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())

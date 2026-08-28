@@ -73,6 +73,14 @@ function selectionInsideWorkspace(selection: Selection): boolean {
   )
 }
 
+async function dismissSystemDragPanel(): Promise<void> {
+  try {
+    await invokeDesktopHost('systemDrag.dismissPanel')
+  } catch (error) {
+    console.error('[Wework] Failed to dismiss system drag panel:', error)
+  }
+}
+
 export function SystemDragBridge() {
   const workbench = useWorkbench()
   const latest = useRef(workbench)
@@ -107,7 +115,7 @@ export function SystemDragBridge() {
       systemDragEnabled.current = (event as CustomEvent<AppPreferences>).detail.systemDragEnabled
       if (!systemDragEnabled.current) {
         activePanelRequest.current = null
-        void invokeDesktopHost('systemDrag.dismissPanel')
+        void dismissSystemDragPanel()
       }
     }
     window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
@@ -165,7 +173,9 @@ export function SystemDragBridge() {
       activePanelRequest.current = request
     }
     const dismissPanelAfter = (request: Promise<unknown>) => {
-      void request.finally(() => invokeDesktopHost('systemDrag.dismissPanel'))
+      void request.finally(dismissSystemDragPanel).catch(error => {
+        console.error('[Wework] Failed to finish system drag panel request:', error)
+      })
     }
     const handleSelectedTextChanged = (event: Event) => {
       const { source, text, rect } = (event as CustomEvent<SelectedTextChangedDetail>).detail
@@ -194,7 +204,7 @@ export function SystemDragBridge() {
     const handleDragEnd = () => {
       const request = activePanelRequest.current
       if (!request) {
-        void invokeDesktopHost('systemDrag.dismissPanel')
+        void dismissSystemDragPanel()
         return
       }
       activePanelRequest.current = null
