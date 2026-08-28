@@ -72,7 +72,9 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
     for (const viewport of viewports) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await knowledge.openPicker()
-      await expect(page.getByTestId(viewport.container)).toBeVisible()
+      const container = page.getByTestId(viewport.container)
+      await expect(container).toBeVisible()
+      await expect(container).toHaveAttribute('data-state', 'open')
 
       await page.getByTestId('knowledge-picker-dingtalk-parent').click()
       const compactDingTalkOption = page.getByTestId(
