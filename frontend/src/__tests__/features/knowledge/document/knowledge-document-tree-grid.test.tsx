@@ -96,8 +96,15 @@ describe('KnowledgeDocumentTreeGrid', () => {
     expect(screen.queryByTestId('download-document-13')).not.toBeInTheDocument()
   })
 
-  it('identifies imported documents as external rather than just their file extension', () => {
-    const documents = [createDocument({ source_type: 'external', file_extension: '.PDF' })]
+  it('shows the imported file format alongside its external origin without renaming it', () => {
+    const documents = [
+      createDocument({
+        source_type: 'external',
+        file_extension: '.PDF',
+        attachment_id: 42,
+        name: 'Imported report',
+      }),
+    ]
     const { nodes, index } = buildKnowledgeResourceTree([], documents)
     render(
       <KnowledgeDocumentTreeGrid
@@ -113,8 +120,10 @@ describe('KnowledgeDocumentTreeGrid', () => {
       />
     )
     expect(screen.getByText('document.document.type.external')).toBeInTheDocument()
+    expect(screen.getByText('PDF')).toBeInTheDocument()
     expect(screen.queryByText('.PDF')).not.toBeInTheDocument()
-    expect(screen.getByText('doc.txt').parentElement?.querySelector('svg')).toHaveClass(
+    expect(screen.queryByText('Imported report.pdf')).not.toBeInTheDocument()
+    expect(screen.getByText('Imported report').parentElement?.querySelector('svg')).toHaveClass(
       'lucide-file-text',
       'text-error'
     )
