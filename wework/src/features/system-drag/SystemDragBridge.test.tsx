@@ -108,6 +108,40 @@ describe('SystemDragBridge', () => {
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel'))
   })
 
+  test('dismisses the system panel after an in-flight show completes during cleanup', async () => {
+    let resolveShow: (() => void) | undefined
+    mocks.invoke.mockImplementation(command => {
+      if (command === 'systemDrag.takePending') return Promise.resolve(mocks.pending.splice(0))
+      if (command === 'systemDrag.showPanel') {
+        return new Promise<void>(resolve => {
+          resolveShow = resolve
+        })
+      }
+      return Promise.resolve(undefined)
+    })
+    const view = render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const event = new Event('dragstart', { bubbles: true }) as DragEvent
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? 'selected text' : 'true'),
+      },
+    })
+
+    act(() => {
+      document.body.dispatchEvent(event)
+    })
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.showPanel'))
+    view.unmount()
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.dismissPanel')
+
+    await act(async () => {
+      resolveShow?.()
+    })
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.dismissPanel'))
+  })
+
   test('does not open the system drag panel until a selected-text drag starts', async () => {
     render(<SystemDragBridge />)
     await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())

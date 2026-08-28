@@ -164,6 +164,9 @@ export function SystemDragBridge() {
       })
       activePanelRequest.current = request
     }
+    const dismissPanelAfter = (request: Promise<unknown>) => {
+      void request.finally(() => invokeDesktopHost('systemDrag.dismissPanel'))
+    }
     const handleSelectedTextChanged = (event: Event) => {
       const { source, text, rect } = (event as CustomEvent<SelectedTextChangedDetail>).detail
       setManagedSelection(current => {
@@ -195,7 +198,7 @@ export function SystemDragBridge() {
         return
       }
       activePanelRequest.current = null
-      void request.finally(() => invokeDesktopHost('systemDrag.dismissPanel'))
+      dismissPanelAfter(request)
     }
     window.addEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelectedTextChanged)
     document.addEventListener('dragstart', handleDragStart)
@@ -204,6 +207,11 @@ export function SystemDragBridge() {
       window.removeEventListener(SELECTED_TEXT_CHANGED_EVENT, handleSelectedTextChanged)
       document.removeEventListener('dragstart', handleDragStart)
       document.removeEventListener('dragend', handleDragEnd)
+      const request = activePanelRequest.current
+      if (request) {
+        activePanelRequest.current = null
+        dismissPanelAfter(request)
+      }
     }
   }, [])
 
