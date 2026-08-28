@@ -969,7 +969,8 @@ if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"uses: ./.github/actions/setup-python-uv-cache"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'python-version: "3.12"'* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"shell: pwsh"* ]] ||
-  [[ "$wework_windows_desktop_core_job" != *"\$redisRoot | Out-File -FilePath \$env:GITHUB_PATH"* ]]; then
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_REDIS_SERVER_BIN=\$redisServerPath"* ]] ||
+  [[ "$wework_windows_desktop_core_job" == *"\$redisRoot | Out-File -FilePath \$env:GITHUB_PATH"* ]]; then
   printf 'Windows Wework Core desktop E2E must use all selected Core shards\n' >&2
   exit 1
 fi
