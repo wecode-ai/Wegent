@@ -471,6 +471,36 @@ jobs:
           test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
 
+      - name: Prepare Windows Redis E2E tools
+        shell: pwsh
+        env:
+          REDIS_WINDOWS_VERSION: 8.10.1
+          REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a
+        run: |
+          $archiveName = "Redis-$env:REDIS_WINDOWS_VERSION-Windows-x64-msys2.zip"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archiveName
+          $downloadUrl = "https://github.com/redis-windows/redis-windows/releases/download/$env:REDIS_WINDOWS_VERSION/$archiveName"
+          curl.exe --fail --location --retry 3 --output $archivePath $downloadUrl
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download Windows Redis E2E tools"
+          }
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:REDIS_WINDOWS_SHA256) {
+            throw "Unexpected Windows Redis archive SHA256: $actualSha256"
+          }
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP "redis-windows"
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot
+          $sourceRoot = Join-Path $extractRoot "Redis-$env:REDIS_WINDOWS_VERSION-Windows-x64-msys2"
+          $toolsRoot = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/redis"
+          New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+          Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $toolsRoot -Recurse -Force
+          foreach ($binary in @("redis-server.exe", "redis-cli.exe")) {
+            if (-not (Test-Path (Join-Path $toolsRoot $binary) -PathType Leaf)) {
+              throw "Missing Windows Redis E2E binary: $binary"
+            }
+          }
+
       - name: Save Windows Wework Electron E2E build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-windows-desktop-cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -494,6 +524,15 @@ jobs:
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload Windows Redis E2E tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-redis-e2e-tools
+          path: wework/test-results/windows-e2e-tools/redis/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
@@ -552,6 +591,28 @@ jobs:
         with:
           name: wework-desktop-windows-core-e2e-build
           path: wework/electron/release/WeWork-win32-x64
+
+      - name: Download Windows Redis E2E tools
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-windows-redis-e2e-tools
+          path: wework/test-results/windows-e2e-tools/redis
+
+      - name: Configure Windows Redis E2E tools
+        shell: pwsh
+        run: |
+          $redisRoot = (Resolve-Path "wework/test-results/windows-e2e-tools/redis").Path
+          foreach ($binary in @("redis-server.exe", "redis-cli.exe")) {
+            $binaryPath = Join-Path $redisRoot $binary
+            if (-not (Test-Path $binaryPath -PathType Leaf)) {
+              throw "Missing Windows Redis E2E binary: $binary"
+            }
+            & $binaryPath --version
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to run Windows Redis E2E binary: $binary"
+            }
+          }
+          $redisRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Run Windows Wework desktop Core shard E2E
         env:
