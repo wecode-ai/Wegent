@@ -15,6 +15,7 @@ from minio_release_assets import (
     load_component_assets,
     publish_component_assets,
     publish_component_manifest,
+    publish_immutable_file,
 )
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$")
@@ -216,6 +217,7 @@ def publish_channel(
     prefix: str,
     output_dir: Path,
     channel: str,
+    publish_components,
 ) -> bool:
     channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
     component_manifest = output_dir / f"components-{channel}-windows-x64.json"
@@ -229,6 +231,7 @@ def publish_channel(
         ((prefix, electron_manifest.name), (prefix, component_manifest.name)),
     ):
         return False
+    publish_components()
     upload_electron_manifest(client, bucket, prefix, electron_manifest)
     upload_channel_manifest(client, bucket, prefix, channel_manifest)
     return True
@@ -320,23 +323,39 @@ def main() -> None:
     if not artifacts:
         raise SystemExit(f"No Windows release artifacts found for version {version}")
     for artifact in artifacts:
-        upload_file(
+        publish_immutable_file(
             client,
             bucket,
             prefix,
             artifact,
-            "public, max-age=31536000, immutable",
+            lambda path: upload_file(
+                client,
+                bucket,
+                prefix,
+                path,
+                "public, max-age=31536000, immutable",
+            ),
         )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
-    advanced = publish_channel(client, bucket, prefix, output_dir, channel)
-    if advanced:
-        upload_component_channel(channel, False, False)
+    advanced = publish_channel(
+        client,
+        bucket,
+        prefix,
+        output_dir,
+        channel,
+        lambda: upload_component_channel(channel, False, False),
+    )
     if channel == "stable":
-        beta_advanced = publish_channel(client, bucket, prefix, output_dir, "beta")
-        if beta_advanced:
-            upload_component_channel("beta", False, False)
+        publish_channel(
+            client,
+            bucket,
+            prefix,
+            output_dir,
+            "beta",
+            lambda: upload_component_channel("beta", False, False),
+        )
     if channel != "stable" or not advanced:
         return
     publish_latest_installer(client, bucket, prefix, version, artifacts)

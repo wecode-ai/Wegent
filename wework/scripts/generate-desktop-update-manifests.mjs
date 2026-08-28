@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { basename, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
 const [

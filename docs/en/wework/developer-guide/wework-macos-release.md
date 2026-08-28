@@ -215,3 +215,30 @@ all four build targets exist. The workflow repairs an incomplete equal version
 and fails for an incomplete newer version instead of overwriting it with an
 older release. Component archives are never overwritten and are uploaded only
 when their content-addressed asset name is absent.
+
+## Internal MinIO releases
+
+Internal macOS releases use the same Electron build and component manifests:
+
+```bash
+bash wework/scripts/build-minio-mac-release.sh \
+  --version <version> \
+  --macos-build-target aarch64-apple-darwin \
+  --brand-config wework/branding/weibo.json \
+  --beta \
+  --upload
+```
+
+`wework/branding/weibo.json` fixes the internal product name, bundle ID,
+user-data namespace, and default Backend and Socket URLs. The package must use
+this identity to overwrite the installed internal application and continue
+using its existing conversations and Executor data. Explicit runtime
+environment variables may still override the URL defaults.
+
+The script publishes versioned DMG/ZIP files, four immutable component
+archives, Electron YAML, the legacy Tauri migration JSON, and the rolling
+component manifest, then verifies every public download. An equal but
+incomplete version is repaired; an incomplete newer remote version fails. A
+roughly 350 MB compressed DMG expanding to an application directory near
+700 MB is expected for the same complete offline runtime and does not indicate
+duplicate packaging.

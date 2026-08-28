@@ -178,3 +178,25 @@ workflow 中复制另一份资源列表。
 存在时，才可因版本未变而跳过上传。相同版本但资产不完整时必须补齐；如果远端是
 不完整的更高版本，工作流必须失败，避免用旧版本覆盖。组件压缩包不可覆盖，只能在
 对应内容哈希尚不存在时上传。
+
+## 内网 MinIO 发布
+
+内网 macOS 发布使用同一套 Electron 构建与组件清单：
+
+```bash
+bash wework/scripts/build-minio-mac-release.sh \
+  --version <version> \
+  --macos-build-target aarch64-apple-darwin \
+  --brand-config wework/branding/weibo.json \
+  --beta \
+  --upload
+```
+
+`wework/branding/weibo.json` 固定内网产品名、Bundle ID、用户数据命名空间、Backend
+和 Socket 默认地址。安装包必须使用该配置构建，才能覆盖安装现有内网客户端并继续
+读取原聊天与 Executor 数据。命令行显式传入的运行时环境变量仍可覆盖地址默认值。
+
+发布脚本依次上传版本化 DMG/ZIP、四类不可变组件包、Electron YAML、旧 Tauri
+迁移 JSON 和组件滚动清单，最后从公开下载地址逐项验证。相同版本但清单不完整时会
+补齐；远端存在不完整的更高版本时直接失败。DMG 是压缩产物，约 350 MB 的 DMG
+解包后应用目录约 700 MB 属于同一套完整离线运行环境，不代表重复打包。

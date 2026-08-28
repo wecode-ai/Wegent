@@ -10,6 +10,8 @@ PROJECT_DIR="$(cd "$WEWORK_DIR/.." && pwd)"
 source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 # shellcheck source=lib/wework-release-notes.sh
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
+# shellcheck source=lib/wework-macos-signing.sh
+source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -41,6 +43,8 @@ else
 fi
 if [ -n "$EXPLICIT_VITE_WEGENT_SOCKET_URL" ]; then
   export VITE_WEGENT_SOCKET_URL="$EXPLICIT_VITE_WEGENT_SOCKET_URL_VALUE"
+else
+  export VITE_WEGENT_SOCKET_URL="${VITE_WEGENT_SOCKET_URL:-wss://wss-wegent.intra.weibo.com}"
 fi
 if [ -n "$EXPLICIT_VITE_WEWORK_FEEDBACK_URL" ]; then
   export VITE_WEWORK_FEEDBACK_URL="$EXPLICIT_VITE_WEWORK_FEEDBACK_URL_VALUE"
@@ -60,8 +64,9 @@ UPDATE_MANIFEST_S3_PREFIX="${WEWORK_UPDATE_MANIFEST_S3_PREFIX:-${WEWORK_LEGACY_M
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
 MACOS_BUILD_TARGET="${MACOS_BUILD_TARGET:-aarch64-apple-darwin}"
+BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
-VERSION_BACKUP_DIR=""
+RESUME_SIGNED_APP=""
 
 usage() {
   cat <<'EOF'
@@ -83,6 +88,11 @@ Options:
   --output-dir <path>       Local artifact directory.
   --macos-build-target <target>
                             aarch64-apple-darwin or x86_64-apple-darwin.
+  --brand-config <path>     Brand identity and internal runtime defaults.
+                            Default: wework/branding/weibo.json.
+  --resume-signed-app <path>
+                            Resume from an existing signed .app after a
+                            notarization upload failure.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
@@ -147,14 +157,6 @@ default_s3_prefix() {
   esac
 }
 
-restore_version_files() {
-  if [ -n "$VERSION_BACKUP_DIR" ]; then
-    cp -f "$VERSION_BACKUP_DIR/wework-package.json" "$WEWORK_DIR/package.json"
-    cp -f "$VERSION_BACKUP_DIR/electron-package.json" "$WEWORK_DIR/electron/package.json"
-    rm -rf "$VERSION_BACKUP_DIR"
-  fi
-}
-
 upload_artifacts() {
   local arm64_prefix="${WEWORK_MAC_ARM64_RELEASE_S3_PREFIX:-wework/macos}"
   local x64_prefix="${WEWORK_MAC_X64_RELEASE_S3_PREFIX:-wework/mac-x64}"
@@ -196,6 +198,8 @@ verify_uploaded_artifacts() {
     echo "Published component manifest is not publicly readable: $UPDATE_BASE_URL/$component_manifest" >&2
     exit 1
   fi
+  node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
+    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" macos "$arch"
   if [ "$RELEASE_KIND" = "component" ]; then
     return
   fi
@@ -226,6 +230,8 @@ while [ "$#" -gt 0 ]; do
     --prefix) S3_PREFIX="$2"; shift 2 ;;
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --macos-build-target) MACOS_BUILD_TARGET="$2"; shift 2 ;;
+    --brand-config) BRAND_CONFIG="$2"; shift 2 ;;
+    --resume-signed-app) RESUME_SIGNED_APP="$2"; shift 2 ;;
     --upload) UPLOAD="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -260,8 +266,17 @@ if [ "$(uname -s)" != "Darwin" ]; then
   echo "macOS Electron releases must be built on a macOS host." >&2
   exit 1
 fi
+if [ ! -f "$BRAND_CONFIG" ]; then
+  echo "Brand config not found: $BRAND_CONFIG" >&2
+  exit 1
+fi
 
 arch="$(release_arch)"
+BRAND_CONFIG="$(cd "$(dirname "$BRAND_CONFIG")" && pwd)/$(basename "$BRAND_CONFIG")"
+SOURCE_SHA="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
+export WEWORK_BRAND_CONFIG="$BRAND_CONFIG"
+export WEWORK_RELEASE_VERSION="$VERSION"
+export WEWORK_SOURCE_SHA="$SOURCE_SHA"
 if [ -z "$S3_PREFIX" ]; then
   S3_PREFIX="$(default_s3_prefix)"
 fi
@@ -287,7 +302,6 @@ UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
 COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
 UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$UPDATE_MANIFEST_S3_PREFIX"
-SOURCE_SHA="$(cd "$PROJECT_DIR" && git rev-parse HEAD)"
 if [ -z "$RELEASE_NOTES" ]; then
   RELEASE_NOTES="$(
     cd "$PROJECT_DIR"
@@ -302,30 +316,43 @@ require_command uv
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 
 export APPLE_APP_SPECIFIC_PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_PASSWORD:-}}"
-export CSC_NAME="${CSC_NAME:-${APPLE_SIGNING_IDENTITY:-}}"
+export WEWORK_CUSTOM_MACOS_NOTARIZATION=true
+export WEWORK_NOTARYTOOL_S3_ACCELERATION="${WEWORK_NOTARYTOOL_S3_ACCELERATION:-true}"
+CSC_NAME="$(
+  wework_normalize_macos_signing_identity \
+    "${CSC_NAME:-${APPLE_SIGNING_IDENTITY:-}}"
+)"
+export CSC_NAME
 if [ -z "${CSC_LINK:-}" ] && [ -z "$CSC_NAME" ]; then
   echo "CSC_LINK or APPLE_SIGNING_IDENTITY is required for a signed macOS release." >&2
   exit 1
 fi
 
-VERSION_BACKUP_DIR="$(mktemp -d)"
-trap restore_version_files EXIT
-cp "$WEWORK_DIR/package.json" "$VERSION_BACKUP_DIR/wework-package.json"
-cp "$WEWORK_DIR/electron/package.json" "$VERSION_BACKUP_DIR/electron-package.json"
-node "$SCRIPT_DIR/sync-desktop-release-version.mjs" "$VERSION"
-
-echo "Building Wework Electron macOS $arch release $VERSION ($CHANNEL)"
-CARGO_BUILD_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_CODEX_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" \
-WEWORK_RELEASE_PLATFORM=macos \
-WEWORK_RELEASE_ARCH="$arch" \
-WEWORK_SOURCE_SHA="$SOURCE_SHA" \
-WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
-VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
-VITE_WEWORK_RUNTIME_MODE=local-first \
-  pnpm --filter wework build:release
+if [ -n "$RESUME_SIGNED_APP" ]; then
+  if [ ! -d "$RESUME_SIGNED_APP" ] || [[ "$RESUME_SIGNED_APP" != *.app ]]; then
+    echo "Signed macOS application not found: $RESUME_SIGNED_APP" >&2
+    exit 1
+  fi
+  RESUME_SIGNED_APP="$(cd "$(dirname "$RESUME_SIGNED_APP")" && pwd)/$(basename "$RESUME_SIGNED_APP")"
+  echo "Resuming Wework Electron macOS $arch release $VERSION from signed app"
+  node "$WEWORK_DIR/electron/scripts/notarize-macos.cjs" "$RESUME_SIGNED_APP"
+  WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
+    node "$WEWORK_DIR/electron/scripts/package-prebuilt-macos-release.mjs" \
+      "$RESUME_SIGNED_APP" "$arch"
+else
+  echo "Building Wework Electron macOS $arch release $VERSION ($CHANNEL)"
+  CARGO_BUILD_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_CODEX_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" \
+  WEWORK_RELEASE_PLATFORM=macos \
+  WEWORK_RELEASE_ARCH="$arch" \
+  WEWORK_SOURCE_SHA="$SOURCE_SHA" \
+  WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
+  VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
+  VITE_WEWORK_RUNTIME_MODE=local-first \
+    pnpm --filter wework build:release
+fi
 
 node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
   macos "$arch" "$VERSION" "$OUTPUT_DIR"

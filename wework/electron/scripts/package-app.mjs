@@ -5,14 +5,17 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import identityModule from './build-identity.cjs'
+import releaseVersionModule from './release-version.cjs'
 
 const { resolveBuildIdentity } = identityModule
+const { resolveReleaseVersion } = releaseVersionModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
+const releaseVersion = resolveReleaseVersion(sourcePackage.version)
 const identity = resolveBuildIdentity()
 const icon =
   process.platform === 'darwin'
@@ -50,7 +53,7 @@ await writeFile(
     {
       name: sourcePackage.name,
       productName: identity.productName,
-      version: sourcePackage.version,
+      version: releaseVersion,
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
@@ -71,8 +74,8 @@ const applications = await packager({
   electronVersion: '43.4.1',
   electronZipDir,
   appBundleId: identity.identifier,
-  appVersion: sourcePackage.version,
-  buildVersion: sourcePackage.version,
+  appVersion: releaseVersion,
+  buildVersion: releaseVersion,
   executableName: identity.executableName,
   out: output,
   overwrite: true,

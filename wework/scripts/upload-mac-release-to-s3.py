@@ -15,6 +15,7 @@ from minio_release_assets import (
     load_component_assets,
     publish_component_assets,
     publish_component_manifest,
+    publish_immutable_file,
 )
 
 MACOS_PLATFORM_PREFIXES = {
@@ -246,6 +247,7 @@ def publish_channel(
     output_dir: Path,
     channel: str,
     platform: str,
+    publish_components,
 ) -> bool:
     operating_system, architecture = platform.split("-", 1)
     channel_manifest = output_dir / f"{channel}-{operating_system}-{architecture}.json"
@@ -266,6 +268,7 @@ def publish_channel(
         ),
     ):
         return False
+    publish_components()
     upload_electron_manifest(client, bucket, release_prefix, electron_manifest)
     upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
     return True
@@ -423,12 +426,18 @@ def main() -> None:
     if not artifacts:
         raise SystemExit(f"No release artifacts found for version {version}")
     for artifact in artifacts:
-        upload_file(
+        publish_immutable_file(
             client,
             bucket,
             prefix,
             artifact,
-            "public, max-age=31536000, immutable",
+            lambda path: upload_file(
+                client,
+                bucket,
+                prefix,
+                path,
+                "public, max-age=31536000, immutable",
+            ),
         )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
@@ -437,6 +446,7 @@ def main() -> None:
 
     stable_advanced = False
     for platform in expected_platforms:
+        component_platform, component_arch = platform_details[platform]
         advanced = publish_channel(
             client,
             bucket,
@@ -445,16 +455,14 @@ def main() -> None:
             output_dir,
             channel,
             platform,
-        )
-        component_platform, component_arch = platform_details[platform]
-        if advanced:
-            upload_component_channel(
+            lambda: upload_component_channel(
                 channel,
                 component_platform,
                 component_arch,
                 False,
                 False,
-            )
+            ),
+        )
         if channel == "stable":
             stable_advanced = stable_advanced or advanced
             beta_advanced = publish_channel(
@@ -465,15 +473,14 @@ def main() -> None:
                 output_dir,
                 "beta",
                 platform,
-            )
-            if beta_advanced:
-                upload_component_channel(
+                lambda: upload_component_channel(
                     "beta",
                     component_platform,
                     component_arch,
                     False,
                     False,
-                )
+                ),
+            )
 
     if channel != "stable" or not stable_advanced:
         return

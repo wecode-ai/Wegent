@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -10,6 +11,9 @@ import {
   waitForEndpointAuthentication,
 } from './managed-executor-runtime.js'
 import { temporaryDirectory } from './test-helpers.js'
+
+const require = createRequire(import.meta.url)
+const { resolveNodeRuntime } = require('../../scripts/node-runtime.cjs')
 
 describe('managed executor runtime', () => {
   test('reuses the Tauri executor home by default', () => {
@@ -118,7 +122,7 @@ describe('managed executor runtime', () => {
     const ownerConnectionsPath = join(directory.path, 'owner-connections')
     const identityPath = join(directory.path, 'executor-identity.json')
     const runtime = new ManagedExecutorRuntime({
-      command: process.execPath,
+      command: resolveNodeRuntime(),
       args: [
         '-e',
         `

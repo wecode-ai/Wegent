@@ -73,6 +73,20 @@ pnpm --dir wework/electron build:release
 `.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
 update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.
 
+Run an internal Windows release on a native Windows host:
+
+```powershell
+bash wework/scripts/build-minio-windows-release.sh `
+  --version <version> `
+  --brand-config wework/branding/weibo.json `
+  --beta `
+  --upload
+```
+
+This script shares the internal brand identity, complete offline package,
+content-addressed component assets, and MinIO rolling-manifest rules with the
+macOS release. It no longer publishes legacy Node or Harness runtime sidecars.
+
 ## Troubleshooting
 
 - **Electron cannot find the Executor**: make sure sidecar preparation
