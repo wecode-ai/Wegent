@@ -3771,8 +3771,6 @@ fn global_mcp_config_overrides() -> Vec<String> {
 fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
     let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
     let key = toml_key_path(&["mcp_servers", server_name]);
-    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
-        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3789,6 +3787,13 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
             .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
+    ];
+    if !crate::browser_mcp::bridge_is_available() {
+        return Ok(overrides);
+    }
+    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
+        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    overrides.extend([
         format!("{key}.enabled=true"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
@@ -3801,7 +3806,7 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<St
             "{key}.default_tools_approval_mode={}",
             toml_value("approve")
         ),
-    ];
+    ]);
 
     if let Some(label) = embedded_browser_label(request) {
         overrides.push(format!(
@@ -3993,15 +3998,10 @@ async fn prepare_codex_execution_request(
         tokio::select! {
             biased;
             _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
-            result = async {
-                crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
-                crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
-                Ok::<(), String>(())
-            } => result?,
+            result = ensure_codex_mcp_endpoints() => result?,
         }
     } else {
-        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
-        crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+        ensure_codex_mcp_endpoints().await?;
     }
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
@@ -4116,6 +4116,14 @@ async fn prepare_codex_execution_request(
         request,
         generated_files,
     })
+}
+
+async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
+    if crate::browser_mcp::bridge_is_available() {
+        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    Ok(())
 }
 
 fn ensure_codex_turn_not_cancelled(

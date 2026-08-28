@@ -3224,6 +3224,14 @@ fn turn_input_converts_composer_file_references_to_plain_paths() {
 
 #[test]
 fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
+    let _lock = crate::test_env::lock();
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    env::set_var(
+        "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL",
+        "http://127.0.0.1:43127",
+    );
+    env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", "bridge-token");
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
@@ -3272,6 +3280,62 @@ fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
         config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
         "workspace-browser-task-123"
     );
+
+    if let Some(value) = old_url {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    }
+    if let Some(value) = old_token {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    }
+}
+
+#[test]
+fn codex_launch_config_omits_browser_mcp_without_local_bridge() {
+    let _lock = crate::test_env::lock();
+    let home = env::temp_dir().join(format!("codex-no-browser-bridge-{}", std::process::id()));
+    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+
+    let request = ExecutionRequest {
+        task_id: "task:remote".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert!(!config.contains_key("mcp_servers.wework_browser.url"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
+
+    for (name, value) in [
+        ("WEGENT_EXECUTOR_HOME", old_home),
+        (
+            "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE",
+            old_runtime_file,
+        ),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", old_url),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", old_token),
+    ] {
+        if let Some(value) = value {
+            env::set_var(name, value);
+        } else {
+            env::remove_var(name);
+        }
+    }
 }
 
 #[test]

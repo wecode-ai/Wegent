@@ -268,6 +268,31 @@ function findNestedString(value, predicate) {
   return null
 }
 
+function toolOutputText(request, callId) {
+  const findOutput = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const output = findOutput(item)
+        if (output != null) return output
+      }
+      return null
+    }
+    if (!value || typeof value !== 'object') return null
+    if (
+      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
+      value.call_id === callId
+    ) {
+      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
+    }
+    for (const item of Object.values(value)) {
+      const output = findOutput(item)
+      if (output != null) return output
+    }
+    return null
+  }
+  return findOutput(request.input ?? [])
+}
+
 function pluginWorkspacePublishCommand(body) {
   const context = findNestedString(body, value =>
     value.includes(PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX)
@@ -2158,6 +2183,27 @@ class DesktopE2EServer {
           requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_SEARCH_ID),
           true,
           'The embedded-browser tool search output did not return to the model'
+        )
+        const searchOutput = toolOutputText(body, EMBEDDED_BROWSER_SETUP_SEARCH_ID)
+        assert.ok(searchOutput, 'The embedded-browser tool search output was empty')
+        const browserToolAvailable = searchOutput.includes('"name":"wework_browser"')
+        if (this.cloudModelsAvailable) {
+          assert.equal(
+            browserToolAvailable,
+            false,
+            'A remote cloud executor exposed the local-only Wework browser tool'
+          )
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        assert.equal(
+          browserToolAvailable,
+          true,
+          'The local Wework executor did not expose its browser tool'
         )
         const browserTool = selectMcpTool(body, 'wework_browser', 'browser_open', {
           url: new URL('/embedded-browser-agent-fixture', this.url).href,

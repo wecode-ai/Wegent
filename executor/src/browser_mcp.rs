@@ -65,6 +65,10 @@ pub fn is_browser_mcp_command() -> bool {
     env::args().nth(1).as_deref() == Some("browser-mcp-server")
 }
 
+pub(crate) fn bridge_is_available() -> bool {
+    bridge_identity::bridge_is_available()
+}
+
 pub async fn run() -> Result<(), String> {
     let result = run_inner().await;
     if let Err(error) = &result {
