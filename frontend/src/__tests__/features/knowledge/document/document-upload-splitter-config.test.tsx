@@ -273,6 +273,25 @@ describe('DocumentUpload source interactions', () => {
     await waitFor(() => expect(screen.getByTestId('document-upload-submit')).toBeEnabled())
   }
 
+  it('keeps file validation errors before the scrollable upload contents', async () => {
+    mount()
+    fireEvent.change(screen.getByTestId('document-upload-file-input'), {
+      target: { files: [new File(['image'], 'unsupported.jpg', { type: 'image/jpeg' })] },
+    })
+
+    const error = await screen.findByRole('alert')
+    const dropzone = screen.getByTestId('document-upload-dropzone')
+    expect(error).toHaveTextContent('document.upload.unsupportedFileType')
+    expect(dropzone.parentElement).not.toContainElement(error)
+    expect(error.compareDocumentPosition(dropzone) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByTestId('document-upload-cancel')).toBeEnabled()
+
+    selectSource('text')
+    expect(error).not.toBeVisible()
+    selectSource('file')
+    expect(error).toBeVisible()
+  })
+
   it('adds text in one submission without submitting or clearing local file drafts', async () => {
     mount()
     await addLocalFile()
