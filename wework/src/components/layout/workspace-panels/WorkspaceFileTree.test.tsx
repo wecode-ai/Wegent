@@ -123,6 +123,30 @@ describe('WorkspaceFileTree', () => {
     expect(getEntryByTreePath(model.entryByTreePath, 'SRC/index.ts', true)).toBe(sourceFile)
   })
 
+  test('renders files relative to a Windows drive root', () => {
+    const model = createWorkspaceTreeModel({
+      rootPath: 'C:\\',
+      activeDirectoryPath: 'C:\\',
+      entriesByPath: {
+        'C:\\': [
+          {
+            name: 'README.md',
+            path: String.raw`c:\README.md`,
+            isDirectory: false,
+            size: 12,
+            modifiedAt: null,
+          },
+        ],
+      },
+      expandedPaths: new Set(),
+      selectedPath: String.raw`C:\README.md`,
+    })
+
+    expect(model.paths).toEqual(['README.md'])
+    expect(model.selectedTreePath).toBe('README.md')
+    expect(model.caseInsensitivePaths).toBe(true)
+  })
+
   test('keeps POSIX tree keys case-sensitive', () => {
     const lowerCaseFile: WorkspaceFileEntry = {
       name: 'index.ts',

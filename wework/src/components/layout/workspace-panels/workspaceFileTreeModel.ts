@@ -14,7 +14,7 @@ function normalizeWorkspacePath(path: string) {
 
 function isWindowsWorkspacePath(path: string) {
   const normalizedPath = normalizeWorkspacePath(path)
-  return /^[a-z]:\//i.test(normalizedPath) || normalizedPath.startsWith('//')
+  return /^[a-z]:(?:\/|$)/i.test(normalizedPath) || normalizedPath.startsWith('//')
 }
 
 function relativeWorkspacePath(rootPath: string, path: string) {
