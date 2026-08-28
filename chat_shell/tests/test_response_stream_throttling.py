@@ -4,13 +4,17 @@
 
 """Tests for Chat Shell Responses API stream compaction."""
 
+import asyncio
+
 import pytest
 
 from chat_shell.api.v1.response import (
     SSETransport,
+    _cancel_chat_task,
     _create_sse_emitter,
     _drain_sse_transport,
 )
+from chat_shell.tools.events import create_tool_event_handler
 
 
 @pytest.mark.asyncio
@@ -121,3 +125,50 @@ async def test_cancelled_stream_drains_buffered_arguments_before_incomplete() ->
         "response.incomplete",
     ]
     assert events[0][1]["delta"] == "buffered-before-cancel"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stream_waits_for_late_tool_event_tasks() -> None:
+    """Cancellation waits for detached tool events before closing the stream."""
+    transport = SSETransport()
+    emitter = _create_sse_emitter(
+        task_id=1,
+        subtask_id=2,
+        model="test-model",
+        transport=transport,
+    )
+    original_delta = emitter.tool_argument_delta
+
+    async def delayed_delta(**kwargs):
+        await asyncio.sleep(0.2)
+        return await original_delta(**kwargs)
+
+    emitter.tool_argument_delta = delayed_delta
+    handler = create_tool_event_handler(object(), emitter, object())
+    producer_started = asyncio.Event()
+
+    async def produce_tool_event() -> None:
+        try:
+            handler(
+                "tool_argument_delta",
+                {
+                    "call_id": "call-1",
+                    "arguments_delta": "late-before-cancel",
+                },
+            )
+            producer_started.set()
+            await asyncio.Event().wait()
+        finally:
+            await handler.wait_pending()
+
+    chat_task = asyncio.create_task(produce_tool_event())
+    await producer_started.wait()
+    await _cancel_chat_task(chat_task)
+    await emitter.incomplete("cancelled")
+    events = [event async for event in _drain_sse_transport(transport)]
+
+    assert [event_type for event_type, _ in events] == [
+        "response.function_call_arguments.delta",
+        "response.incomplete",
+    ]
+    assert events[0][1]["delta"] == "late-before-cancel"

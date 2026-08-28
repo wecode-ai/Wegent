@@ -204,6 +204,12 @@ async def _drain_sse_transport(
         yield event
 
 
+async def _cancel_chat_task(chat_task: asyncio.Task[None]) -> None:
+    """Cancel chat processing and wait for its cleanup to finish."""
+    chat_task.cancel()
+    await asyncio.gather(chat_task, return_exceptions=True)
+
+
 def _extract_stream_attributes(
     request: OpenAIResponsesRequest,
     request_id: str,
@@ -488,7 +494,7 @@ async def _stream_response(
                 session_manager.is_cancelled(subtask_id)
                 or request_cancel_event.is_set()
             ):
-                chat_task.cancel()
+                await _cancel_chat_task(chat_task)
                 await emitter.incomplete("cancelled")
                 async for event_type, data in _drain_sse_transport(transport):
                     yield _create_sse_event(event_type, data)
@@ -545,7 +551,7 @@ async def _stream_response(
             await chat_task
 
     except asyncio.CancelledError:
-        chat_task.cancel()
+        await _cancel_chat_task(chat_task)
         await emitter.incomplete("cancelled")
         async for event_type, data in _drain_sse_transport(transport):
             yield _create_sse_event(event_type, data)
