@@ -50,7 +50,12 @@ async function submitArchive(archivePath, environment) {
   ]
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return JSON.parse(await run('xcrun', args))
+      console.log(`Apple notarization upload attempt ${attempt}/${attempts}`)
+      const result = JSON.parse(await run('xcrun', args))
+      console.log(
+        `Apple notarization attempt ${attempt}/${attempts} completed: ${result.status || 'unknown'}`
+      )
+      return result
     } catch (error) {
       if (!isTransientNotaryFailure(error) || attempt === attempts) throw error
       const delayMs = attempt * 5000

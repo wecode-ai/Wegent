@@ -43,6 +43,36 @@ process.stdout.write(JSON.stringify({
   expect(config.notarize).toBe(false)
 })
 
+test('builds a signed macOS application without starting notarization', () => {
+  const config = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const config = require(process.argv[1])
+process.stdout.write(JSON.stringify({
+  afterSign: config.afterSign,
+  notarize: config.mac.notarize,
+}))
+`,
+        resolve(electronRoot, 'electron-builder.config.cjs'),
+      ],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          WEWORK_CUSTOM_MACOS_NOTARIZATION: 'true',
+          WEWORK_SKIP_MACOS_NOTARIZATION: 'true',
+        },
+      }
+    )
+  )
+
+  expect(config.afterSign).toBeUndefined()
+  expect(config.notarize).toBe(false)
+})
+
 test('builds notarytool API key authorization for CI', () => {
   expect(
     authorizationArgs({
@@ -71,6 +101,7 @@ test('builds notarytool password authorization without changing credentials', ()
 })
 
 test('retries only transient notarization transport failures', () => {
+  expect(isTransientNotaryFailure(new Error('HTTPClientError.connectTimeout'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('HTTPClientError.deadlineExceeded'))).toBe(true)
   expect(isTransientNotaryFailure(new Error('abortedUpload after connection reset'))).toBe(true)
   expect(

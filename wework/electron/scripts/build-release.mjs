@@ -10,6 +10,7 @@ const electronBuilderCli = resolve(electronRoot, 'node_modules/electron-builder/
 const nodeRuntime = resolveNodeRuntime()
 const requestedPlatform = process.env.WEWORK_RELEASE_PLATFORM?.trim()
 const requestedArch = process.env.WEWORK_RELEASE_ARCH?.trim()
+const directoryOnly = process.env.WEWORK_RELEASE_DIR_ONLY?.trim().toLowerCase() === 'true'
 const platform = requestedPlatform || process.platform
 const arch = requestedArch || process.arch
 const platformFlag = {
@@ -35,6 +36,7 @@ await run(
     'electron-builder.config.cjs',
     platformFlag,
     `--${arch}`,
+    ...(directoryOnly ? ['--dir'] : []),
     '--publish',
     'never',
   ],
