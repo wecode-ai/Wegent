@@ -123,6 +123,7 @@ import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dsh
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -667,6 +668,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <DshSlotSurface
         className="pointer-events-none fixed inset-0 z-system-popover"

@@ -23,6 +23,7 @@ import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
+import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
@@ -125,6 +126,7 @@ export function createElectronCapabilityRouter(
   preferences: PreferencesStore,
   rendererStorage: RendererStorageStore,
   browser: EmbeddedBrowserManager,
+  computerUse: ComputerUseService,
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
@@ -303,6 +305,17 @@ export function createElectronCapabilityRouter(
     ])
   })
   router.register('clipboard.writeText', params => clipboard.writeText(stringParam(params, 'text')))
+  router.register('computerUse.status', () => computerUse.status())
+  router.register('computerUse.setEnabled', async params => {
+    const enabled = booleanParam(params, 'enabled') ?? false
+    await preferences.update({ computerUseEnabled: enabled })
+    return computerUse.setEnabled(enabled)
+  })
+  router.register('computerUse.requestPermissions', () => computerUse.requestPermissions())
+  router.register('computerUse.openScreenRecordingSettings', () =>
+    computerUse.openScreenRecordingSettings()
+  )
+  router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
       const logDirectory = app.getPath('logs')

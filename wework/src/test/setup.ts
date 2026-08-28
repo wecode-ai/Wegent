@@ -180,6 +180,14 @@ const testSettings = [
     'integrations',
   ],
   ['plugins', '/settings/plugins', 'package', 'settings_nav_plugins', '插件', 'integrations'],
+  [
+    'computer-use',
+    '/settings/computer-use',
+    'monitor-cog',
+    'settings_nav_computer_use',
+    '电脑操控',
+    'integrations',
+  ],
   ['browser', '/settings/browser', 'app-window', 'settings_nav_browser', '浏览器', 'integrations'],
   [
     'git-hosting',

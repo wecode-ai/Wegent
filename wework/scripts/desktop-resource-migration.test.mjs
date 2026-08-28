@@ -71,6 +71,24 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("'install', '--omit=dev'")
   })
 
+  test('packages CUA native libraries and license outside ASAR', async () => {
+    const [packageApp, builderConfig, electronWorkspace, asarPatch, license] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/pnpm-workspace.yaml'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/patches/@trycua__cua-driver@0.22.1.patch'), 'utf8'),
+      readFile(join(weworkRoot, 'resources/licenses/cua-driver-LICENSE.md'), 'utf8'),
+    ])
+
+    expect(packageApp).toContain("unpack: '**/*.{node,dylib,so,dll}'")
+    expect(packageApp).toContain("join(sharedResourcesRoot, 'licenses')")
+    expect(builderConfig).toContain("asarUnpack: ['**/*.{node,dylib,so,dll}']")
+    expect(builderConfig).toContain("{ from: '../resources/licenses', to: 'licenses' }")
+    expect(electronWorkspace).toContain("'@trycua/cua-driver@0.22.1':")
+    expect(asarPatch).toContain('app.asar.unpacked')
+    expect(license).toContain('Copyright (c) 2025 Cua AI, Inc.')
+  })
+
   test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
     const source = await readFile(
       join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'),
