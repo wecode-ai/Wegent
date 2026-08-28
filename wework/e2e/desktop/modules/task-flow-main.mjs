@@ -895,9 +895,7 @@ async function main() {
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
   ])
-  if (DROPPED_WORKSPACE_PATHS_ONLY) {
-    await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
-  }
+  await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
     writeFile(

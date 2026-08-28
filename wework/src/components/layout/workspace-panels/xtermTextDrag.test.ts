@@ -97,6 +97,8 @@ describe('xterm text drag', () => {
         dataTransfer.types.push(type)
       },
     } as unknown as DataTransfer
+    fireEvent.mouseDown(region as HTMLElement, { button: 0 })
+    expect(container).toContainElement(region)
     fireEvent.dragStart(region as HTMLElement, { dataTransfer })
 
     expect(dataTransfer.getData('text/plain')).toBe('terminal output')

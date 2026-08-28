@@ -28,15 +28,35 @@ export function installCodeViewTextDrag(
   text: string,
   onSelectionRectChange?: (rect: SelectedTextRect | null) => void
 ): () => void {
-  const listeners = new Map<HTMLElement, (event: DragEvent) => void>()
+  const listeners = new Map<
+    HTMLElement,
+    {
+      handleDragStart: (event: DragEvent) => void
+      previousDraggable: string | null
+      previousTestId: string | null
+    }
+  >()
+
+  const restoreLine = (
+    line: HTMLElement,
+    state: {
+      handleDragStart: (event: DragEvent) => void
+      previousDraggable: string | null
+      previousTestId: string | null
+    }
+  ) => {
+    line.removeEventListener('dragstart', state.handleDragStart)
+    if (state.previousDraggable === null) line.removeAttribute('draggable')
+    else line.setAttribute('draggable', state.previousDraggable)
+    if (state.previousTestId === null) line.removeAttribute('data-testid')
+    else line.setAttribute('data-testid', state.previousTestId)
+  }
 
   const sync = () => {
     const selectedLines = new Set(findSelectedLines(host))
-    listeners.forEach((listener, line) => {
+    listeners.forEach((state, line) => {
       if (selectedLines.has(line)) return
-      line.removeEventListener('dragstart', listener)
-      line.removeAttribute('draggable')
-      delete line.dataset.testid
+      restoreLine(line, state)
       listeners.delete(line)
     })
     selectedLines.forEach(line => {
@@ -44,10 +64,16 @@ export function installCodeViewTextDrag(
       const handleDragStart = (event: DragEvent) => {
         if (event.dataTransfer) writeSelectedTextDragData(event.dataTransfer, text)
       }
+      const previousDraggable = line.getAttribute('draggable')
+      const previousTestId = line.getAttribute('data-testid')
       line.draggable = true
       line.dataset.testid = 'workspace-preview-selection-drag-region'
       line.addEventListener('dragstart', handleDragStart)
-      listeners.set(line, handleDragStart)
+      listeners.set(line, {
+        handleDragStart,
+        previousDraggable,
+        previousTestId,
+      })
     })
     onSelectionRectChange?.(selectedLinesRect([...selectedLines]))
   }
@@ -59,11 +85,7 @@ export function installCodeViewTextDrag(
   return () => {
     window.cancelAnimationFrame(frame)
     observer.disconnect()
-    listeners.forEach((listener, line) => {
-      line.removeEventListener('dragstart', listener)
-      line.removeAttribute('draggable')
-      delete line.dataset.testid
-    })
+    listeners.forEach((state, line) => restoreLine(line, state))
     onSelectionRectChange?.(null)
   }
 }

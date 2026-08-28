@@ -165,6 +165,11 @@ export function installXtermTextDrag({
 
   const handleMouseDown = (event: MouseEvent) => {
     if (event.button !== 0) return
+    if (
+      event.target instanceof Element &&
+      event.target.closest('[data-testid="xterm-selection-drag-region"]')
+    )
+      return
     selectingWithMouse = true
     overlay.replaceChildren()
   }

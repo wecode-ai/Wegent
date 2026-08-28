@@ -129,6 +129,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
+let pendingSystemDragWindow: BrowserWindow | null = null
 let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
@@ -480,13 +481,20 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   }
 })
 
+function disposeSystemDragWindow(): void {
+  systemDragWindow?.destroy()
+  pendingSystemDragWindow?.destroy()
+  systemDragWindow = null
+  pendingSystemDragWindow = null
+  systemDragWindowCreationPromise = null
+}
+
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -638,6 +646,7 @@ async function createAuxiliaryWindow(
       sandbox: true,
     },
   })
+  if (isSystemDrag) pendingSystemDragWindow = auxiliaryWindow
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
   auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
@@ -652,8 +661,10 @@ async function createAuxiliaryWindow(
     console.error('[auxiliary-window] renderer process exited', { kind, ...details })
   })
   auxiliaryWindow.on('closed', () => {
-    if (kind === 'system-drag-panel') systemDragWindow = null
-    else {
+    if (kind === 'system-drag-panel') {
+      if (systemDragWindow === auxiliaryWindow) systemDragWindow = null
+      if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
+    } else {
       if (popoutWindow === auxiliaryWindow) popoutWindow = null
       if (popoutWindowReadyPromise === readinessPromise) {
         popoutWindowReadyPromise = null
@@ -671,6 +682,10 @@ async function createAuxiliaryWindow(
         '[data-testid="system-drag-panel"]'
       )
       await readinessPromise
+      if (pendingSystemDragWindow !== auxiliaryWindow || auxiliaryWindow.isDestroyed()) {
+        throw new Error('System drag panel creation was disposed')
+      }
+      pendingSystemDragWindow = null
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
@@ -685,6 +700,7 @@ async function createAuxiliaryWindow(
     }
     return auxiliaryWindow
   } catch (error) {
+    if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
@@ -1015,8 +1031,7 @@ async function shutdown(): Promise<void> {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -1206,11 +1221,10 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel: () => {
-            void showSystemDragPanel().catch(error => {
+          showSystemDragPanel: () =>
+            showSystemDragPanel().catch(error => {
               console.error('Failed to show system drag panel:', error)
-            })
-          },
+            }),
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()

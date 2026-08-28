@@ -11,6 +11,8 @@ describe('CodeView text drag', () => {
     const selectedLine = document.createElement('div')
     selectedLine.dataset.line = '2'
     selectedLine.dataset.selectedLine = ''
+    selectedLine.dataset.testid = 'existing-line'
+    selectedLine.setAttribute('draggable', 'false')
     vi.spyOn(selectedLine, 'getBoundingClientRect').mockReturnValue({
       bottom: 80,
       height: 20,
@@ -53,6 +55,7 @@ describe('CodeView text drag', () => {
     expect(dataTransfer.getData('text/plain')).toBe('const selected = true')
     expect(dataTransfer.getData(SELECTED_TEXT_DRAG_TYPE)).toBe('true')
     dispose()
-    expect(selectedLine).not.toHaveAttribute('draggable')
+    expect(selectedLine).toHaveAttribute('draggable', 'false')
+    expect(selectedLine).toHaveAttribute('data-testid', 'existing-line')
   })
 })

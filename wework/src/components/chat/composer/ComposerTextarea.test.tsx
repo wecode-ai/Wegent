@@ -1256,6 +1256,44 @@ describe('ComposerTextarea', () => {
     expect(dropEvent.defaultPrevented).toBe(true)
   })
 
+  test('does not process selected text drops while disabled', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="keep this draft"
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        canSend={false}
+        disabled
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input')
+    const dropEvent = new Event('drop', {
+      bubbles: true,
+      cancelable: true,
+    }) as DragEvent
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        files: [],
+        items: [],
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? 'ignored text' : 'true'),
+      },
+    })
+
+    fireEvent(editor, dropEvent)
+
+    expect(dropEvent.defaultPrevented).toBe(true)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(editor).toHaveTextContent('keep this draft')
+  })
+
   test('shows the cloud space entries in the @ menu when cloud is enabled', async () => {
     const textareaRef = createRef<HTMLElement>()
 

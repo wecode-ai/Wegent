@@ -1433,6 +1433,11 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       (event: DragEvent) => {
         const dataTransfer = event.dataTransfer
         if (!dataTransfer) return false
+        if (disabled) {
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
         if (Array.from(dataTransfer.types).includes(SELECTED_TEXT_DRAG_TYPE)) {
           const text = dataTransfer.getData('text/plain')
           if (!text) return false
@@ -1465,7 +1470,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         )
         return true
       },
-      [commitEditorValue, insertPathReferences, onPasteFiles]
+      [commitEditorValue, disabled, insertPathReferences, onPasteFiles]
     )
 
     return (

@@ -927,17 +927,17 @@ function startDesktopControlDataTransfer(command: DesktopControlCommand): string
 function endDesktopControlDataTransfer(command: DesktopControlCommand): string {
   const activeDrag = activeDesktopControlDataTransfer
   if (!activeDrag) throw new Error('No data-transfer drag is active')
-  if (!command.target) throw new Error('Data-transfer drag requires a target selector')
-  const target = findDesktopControlElements(command.target)[0]
-  if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
 
   try {
+    if (!command.target) throw new Error('Data-transfer drag requires a target selector')
+    const target = findDesktopControlElements(command.target)[0]
+    if (!target) throw new Error(`Unable to find target selector "${command.target}"`)
     dispatchDesktopControlDragEvent(target, 'dragenter', activeDrag.transfer)
     dispatchDesktopControlDragEvent(target, 'dragover', activeDrag.transfer)
     dispatchDesktopControlDragEvent(target, 'drop', activeDrag.transfer)
-    dispatchDesktopControlDragEvent(activeDrag.source, 'dragend', activeDrag.transfer)
     return activeDrag.source.textContent?.trim() ?? ''
   } finally {
+    dispatchDesktopControlDragEvent(activeDrag.source, 'dragend', activeDrag.transfer)
     activeDesktopControlDataTransfer = null
   }
 }
@@ -1067,7 +1067,9 @@ function fillDesktopControlElement(element: HTMLElement, value: string) {
 
 function selectDesktopControlText(selector: string, value: string): string {
   const elements = findDesktopControlElements(selector)
-  const wholeElement = elements.find(element => element.textContent?.trim() === value)
+  const wholeElement = value
+    ? elements.find(element => element.textContent?.trim() === value)
+    : undefined
   if (wholeElement) {
     const range = document.createRange()
     range.selectNodeContents(wholeElement)

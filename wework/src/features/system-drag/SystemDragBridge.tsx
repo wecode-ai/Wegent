@@ -76,7 +76,7 @@ function selectionInsideWorkspace(selection: Selection): boolean {
 export function SystemDragBridge() {
   const workbench = useWorkbench()
   const latest = useRef(workbench)
-  const systemDragEnabled = useRef(true)
+  const systemDragEnabled = useRef(false)
   const activePanelRequest = useRef<Promise<unknown> | null>(null)
   const [managedSelection, setManagedSelection] = useState<ManagedTextSelection | null>(null)
   const managedSelectionRef = useRef(managedSelection)
@@ -131,7 +131,10 @@ export function SystemDragBridge() {
       }
       const text = selection.toString().trim()
       const rect = selection.getRangeAt(0).getBoundingClientRect()
-      if (!text || rect.width <= 0 || rect.height <= 0) return
+      if (!text || rect.width <= 0 || rect.height <= 0) {
+        setManagedSelection(current => (current?.source === 'workspace-document' ? null : current))
+        return
+      }
       setManagedSelection({
         source: 'workspace-document',
         text,

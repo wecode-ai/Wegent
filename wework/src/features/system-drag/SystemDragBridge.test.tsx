@@ -202,6 +202,45 @@ describe('SystemDragBridge', () => {
     expect(screen.queryByTestId('workspace-selection-actions')).not.toBeInTheDocument()
   })
 
+  test('dismisses stale workspace document actions when the selection becomes empty', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const root = document.createElement('div')
+    root.dataset.testid = 'workspace-file-preview'
+    const textNode = document.createTextNode('selected text')
+    root.append(textNode)
+    document.body.append(root)
+    let selectedText = 'selected text'
+    vi.spyOn(document, 'getSelection').mockReturnValue({
+      anchorNode: textNode,
+      focusNode: textNode,
+      getRangeAt: () => ({
+        getBoundingClientRect: () => ({
+          left: 100,
+          top: 200,
+          width: 80,
+          height: 20,
+        }),
+      }),
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => selectedText,
+    } as unknown as Selection)
+
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+
+    selectedText = '   '
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    await waitFor(() =>
+      expect(screen.queryByTestId('workspace-selection-actions')).not.toBeInTheDocument()
+    )
+  })
+
   test('does not show the system panel when selected text drag is disabled', async () => {
     mocks.getAppPreferences.mockResolvedValue({
       systemDragEnabled: false,
@@ -222,6 +261,38 @@ describe('SystemDragBridge', () => {
     })
 
     expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.showPanel')
+  })
+
+  test('does not show the system panel before drag preferences load', async () => {
+    let resolvePreferences:
+      | ((preferences: { systemDragEnabled: boolean; quickPhrases: never[] }) => void)
+      | undefined
+    mocks.getAppPreferences.mockReturnValue(
+      new Promise(resolve => {
+        resolvePreferences = resolve
+      })
+    )
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    const dispatchSelectedTextDrag = () => {
+      const event = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(event, 'dataTransfer', {
+        value: {
+          types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+          getData: (type: string) => (type === 'text/plain' ? 'selected text' : 'true'),
+        },
+      })
+      document.body.dispatchEvent(event)
+    }
+    act(dispatchSelectedTextDrag)
+    expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.showPanel')
+
+    await act(async () => {
+      resolvePreferences?.({ systemDragEnabled: true, quickPhrases: [] })
+    })
+    act(dispatchSelectedTextDrag)
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.showPanel'))
   })
 
   test('shows the system panel for workspace file drags', async () => {
