@@ -617,9 +617,17 @@ async function verifyFailedCloudConnectionCanDisconnect(control) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await control.command('click', '[data-testid="settings-cloud-disconnect-button"]')
-  await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  try {
+    await control.command('waitFor', '[data-testid="settings-cloud-connect-button"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  } catch (error) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}; post-disconnect path=${snapshot.pathname ?? 'unknown'}; testIds=${JSON.stringify(snapshot.testIds ?? [])}; text=${JSON.stringify(snapshot.text ?? '')}`,
+      { cause: error }
+    )
+  }
 
   await control.command('click', '[data-testid="settings-cloud-connect-button"]')
   await control.command('fill', '[data-testid="cloud-backend-url-input"]', {
