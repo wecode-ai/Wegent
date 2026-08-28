@@ -13,10 +13,10 @@ import {
   findFirstLocalNeedingLogin,
   findLocalConnectorsForMessage,
   installedPluginMatchesName,
+  latestConnectorAuthMessage,
   listMentionedPluginReferences,
   listMentionedPluginNames,
   messageNeedsConnectorPreflight,
-  messageRequiresConnectorAuth,
   resolveLocalConnectorAuthHint,
   toLocalConnectorAuthTarget,
   type LocalConnectorRequirement,
@@ -69,32 +69,6 @@ async function loadInstalledPlugins(options?: {
           : () => false,
     }
   )
-}
-
-function messageText(message: WorkbenchMessage): string {
-  const parts: string[] = [message.content, message.error ?? '']
-  for (const block of message.blocks ?? []) {
-    const maybeContent = Reflect.get(block, 'content')
-    if (typeof maybeContent === 'string') parts.push(maybeContent)
-    const maybeToolOutput = Reflect.get(block, 'toolOutput') ?? Reflect.get(block, 'tool_output')
-    if (typeof maybeToolOutput === 'string') parts.push(maybeToolOutput)
-    else if (maybeToolOutput != null) {
-      try {
-        parts.push(JSON.stringify(maybeToolOutput))
-      } catch {
-        // ignore
-      }
-    }
-    const renderPayload = Reflect.get(block, 'renderPayload')
-    if (renderPayload && typeof renderPayload === 'object') {
-      try {
-        parts.push(JSON.stringify(renderPayload))
-      } catch {
-        // ignore
-      }
-    }
-  }
-  return parts.filter(Boolean).join('\n')
 }
 
 async function targetNeedsLogin(target: LocalConnectorAuthTarget): Promise<boolean> {
@@ -235,17 +209,14 @@ export function useLocalConnectorAuthGate(options: {
 
   useEffect(() => {
     if (pending) return
-    const latest = [...options.messages].reverse().find(message => {
-      if (message.role !== 'assistant' && message.role !== 'system') return false
-      return messageRequiresConnectorAuth(messageText(message))
-    })
-    if (!latest) return
-    const key = latest.id
+    const candidate = latestConnectorAuthMessage(options.messages)
+    if (!candidate) return
+    const key = candidate.message.id
     if (handledResumeKeysRef.current.has(key)) return
 
     void (async () => {
       try {
-        const text = messageText(latest)
+        const { message: latest, text } = candidate
         const pluginKey = extractConnectorAuthPluginKey(text)
         const connectorSlug = extractConnectorAuthConnectorSlug(text)
         const hint = resolveLocalConnectorAuthHint(text)

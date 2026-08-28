@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
 
 const { resolveBuildIdentity } = identityModule
@@ -77,7 +78,7 @@ async function prepareComponentAssets() {
     await readFile(join(packagedComponentResourcesRoot, 'components.json'), 'utf8')
   )
   const componentAssets = {}
-  for (const id of ['coreDsh', 'weworkCorePlugins', 'bundledPlugins', 'executor', 'codex', 'dws']) {
+  for (const id of desktopComponentIds) {
     const component = packaged.components[id]
     if (!component?.path || !component?.sha256 || !component?.version) {
       throw new Error(`Packaged component metadata is incomplete: ${id}`)

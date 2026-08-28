@@ -38,6 +38,7 @@ const mergedDefaultPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,

@@ -30,6 +30,11 @@ const appPath = resolve(requestedAppPath)
 if (!(await stat(appPath).catch(() => null))?.isDirectory() || !appPath.endsWith('.app')) {
   throw new Error(`Prebuilt macOS application is missing: ${appPath}`)
 }
+if (!(await stat(electronBuilderCli).catch(() => null))?.isFile()) {
+  throw new Error(
+    `Missing electron-builder CLI at ${electronBuilderCli}; install the locked Electron workspace first: pnpm --dir ${electronRoot} install --frozen-lockfile`
+  )
+}
 
 await verifyApplicationIdentity(appPath)
 await run('xcrun', ['stapler', 'validate', appPath], electronRoot)

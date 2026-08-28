@@ -6,6 +6,7 @@ const { resolveReleaseVersion } = require('./scripts/release-version.cjs')
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
+const electronMirror = process.env.WEWORK_ELECTRON_MIRROR?.trim()
 const identity = resolveBuildIdentity()
 const releaseVersion = resolveReleaseVersion(require('./package.json').version)
 const packagePrebuiltMacosRelease =
@@ -35,9 +36,16 @@ module.exports = {
     buildResources: 'build',
     output: 'release-installer',
   },
+  ...(electronMirror
+    ? {
+        electronDownload: {
+          mirror: electronMirror.endsWith('/') ? electronMirror : `${electronMirror}/`,
+        },
+      }
+    : {}),
   files: ['dist/**/*', 'package.json'],
   asar: true,
-  asarUnpack: ['**/*.node'],
+  asarUnpack: ['**/*.{node,dylib,so,dll}'],
   extraResources: [
     { from: 'resources/harness-runtime', to: 'harness-runtime' },
     { from: 'resources/bin', to: 'bin' },
@@ -46,6 +54,7 @@ module.exports = {
     { from: 'resources/components.json', to: 'components.json' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: 'resources/bundled-hooks', to: 'bundled-hooks' },
+    { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
     { from: 'resources/vnc', to: 'vnc' },
   ],

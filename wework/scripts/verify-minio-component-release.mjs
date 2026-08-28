@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
+import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
+
 const [baseUrlInput, version, channel, platform, arch] = process.argv.slice(2)
-const componentIds = ['coreDsh', 'weworkCorePlugins', 'executor', 'codex']
 
 if (!baseUrlInput || !version || !channel || !platform || !arch) {
   throw new Error(
@@ -26,12 +27,12 @@ if (
   manifest?.platform !== platform ||
   manifest?.arch !== arch ||
   !manifest?.components ||
-  Object.keys(manifest.components).sort().join(',') !== componentIds.slice().sort().join(',')
+  Object.keys(manifest.components).sort().join(',') !== desktopComponentIds.slice().sort().join(',')
 ) {
   throw new Error(`Published component manifest is incompatible: ${manifestUrl}`)
 }
 
-for (const id of componentIds) {
+for (const id of desktopComponentIds) {
   const component = manifest.components[id]
   if (
     typeof component?.downloadUrl !== 'string' ||

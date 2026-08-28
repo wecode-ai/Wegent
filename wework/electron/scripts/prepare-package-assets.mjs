@@ -7,6 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 import releaseVersionModule from './release-version.cjs'
 
@@ -17,6 +18,7 @@ const repositoryRoot = resolve(weworkRoot, '..')
 const executorRoot = join(repositoryRoot, 'executor')
 const resourcesRoot = join(electronRoot, 'resources')
 const sharedResourcesRoot = join(weworkRoot, 'resources')
+const { assetDirectory: harnessRuntimeAssetDirectory } = resolveHarnessRuntimeCachePaths(weworkRoot)
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const rustTarget = process.env.CARGO_BUILD_TARGET?.trim() || (await hostRustTarget())
@@ -55,7 +57,7 @@ const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
 for (const runtime of packagedRuntimes) {
   await cp(
-    join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets', runtime.assetName),
+    join(harnessRuntimeAssetDirectory, runtime.assetName),
     join(harnessResources, runtime.assetName)
   )
 }

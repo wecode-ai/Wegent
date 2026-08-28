@@ -71,6 +71,24 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain("'install', '--omit=dev'")
   })
 
+  test('packages CUA native libraries and license outside ASAR', async () => {
+    const [packageApp, builderConfig, electronWorkspace, asarPatch, license] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/pnpm-workspace.yaml'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/patches/@trycua__cua-driver@0.22.1.patch'), 'utf8'),
+      readFile(join(weworkRoot, 'resources/licenses/cua-driver-LICENSE.md'), 'utf8'),
+    ])
+
+    expect(packageApp).toContain("unpack: '**/*.{node,dylib,so,dll}'")
+    expect(packageApp).toContain("join(sharedResourcesRoot, 'licenses')")
+    expect(builderConfig).toContain("asarUnpack: ['**/*.{node,dylib,so,dll}']")
+    expect(builderConfig).toContain("{ from: '../resources/licenses', to: 'licenses' }")
+    expect(electronWorkspace).toContain("'@trycua/cua-driver@0.22.1':")
+    expect(asarPatch).toContain('app.asar.unpacked')
+    expect(license).toContain('Copyright (c) 2025 Cua AI, Inc.')
+  })
+
   test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
     const source = await readFile(
       join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'),
@@ -113,6 +131,35 @@ describe('desktop resource migration', () => {
     expect(source).toContain("...(directoryOnly ? ['--dir'] : [])")
     expect(source).not.toContain("'pnpm'")
     expect(source).not.toContain('wrapWindowsScriptCommand')
+  })
+
+  test('prebuilt macOS packaging requires the installed Electron workspace toolchain', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'electron/scripts/package-prebuilt-macos-release.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("'node_modules/electron-builder/cli.js'")
+    expect(source).toContain('resolveNodeRuntime()')
+    expect(source).toContain('install --frozen-lockfile')
+    expect(source).toContain("'--prepackaged'")
+  })
+
+  test('keeps macOS release build caches outside the disposable workspace', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/build-minio-mac-release.sh'), 'utf8')
+
+    expect(source).toContain('$HOME/Library/Caches/wegent/release-build')
+    expect(source).toContain('ELECTRON_CACHE=')
+    expect(source).toContain('ELECTRON_BUILDER_CACHE=')
+    expect(source).toContain('ELECTRON_DOWNLOAD_CACHE_MODE=')
+    expect(source).toContain('WEGENT_CODEX_CACHE_DIR=')
+    expect(source).toContain('WEWORK_HARNESS_RUNTIME_CACHE_ROOT=')
+    expect(source).toContain('WEGENT_CARGO_TARGET_ROOT=')
+    expect(source).toContain('pnpm_config_store_dir=')
+    expect(source).toContain('configure_wegent_sccache_s3')
+    expect(source).toContain('SCCACHE_SERVER_PORT=')
+    expect(source).toContain('sccache --stop-server')
+    expect(source).toContain('wework-release-executor-$MACOS_BUILD_TARGET')
   })
 
   test('collects the electron-builder Linux x64 artifact name', async () => {

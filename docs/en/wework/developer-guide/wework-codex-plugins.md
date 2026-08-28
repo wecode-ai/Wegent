@@ -41,6 +41,8 @@ Plugins can declare device-side authorization under `connectors[].localAuth`. `l
 
 The connector authorization preflight before sending a message runs synchronously only for messages that explicitly reference a `plugin://` URI or contain a connector authentication hint; ordinary messages are sent immediately without reading the installed plugin list, so sending is never blocked by local plugin enumeration. When a plugin reference is present, preflight only enriches the mentioned plugins with `plugin/read` and must not call full `plugin/list` / `readState` on the send path, which can stall conversation open by ~10 seconds.
 
+Mid-run authorization recovery checks only the latest assistant or system message in the current conversation; task switching must not rescan the complete transcript. Detection text must have a fixed size bound and may include only message errors, message content, and textual or known structured error fields from tool blocks. It must not serialize `renderPayload` or other unbounded presentation data. This prevents paginated history caches or a single large tool result from blocking the renderer main thread, and prevents stale authorization errors from reopening after later successful replies.
+
 Browser OAuth runs as an asynchronous authorization session with `preparing`, `waiting_browser`, `verifying`, and `ok/error` states. Closing the UI calls the Executor `cancel` RPC and terminates the login process. CLI bridges must emit one status JSON object and must never include tokens, cookies, or other credentials.
 
 Local authorization tools have two sources:

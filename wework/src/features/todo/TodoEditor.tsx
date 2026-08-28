@@ -749,6 +749,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [descriptionOverflowing, setDescriptionOverflowing] = useState(false)
   const [expandedRailSections, setExpandedRailSections] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -758,6 +759,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [statusHistoryOpen, setStatusHistoryOpen] = useState(false)
   const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null)
   const detailScrollRef = useRef<HTMLDivElement>(null)
+  const descriptionCollapseRef = useRef<HTMLDivElement>(null)
 
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
@@ -786,6 +788,43 @@ export function TodoEditor(props: TodoEditorProps) {
     if (!node) return
     node.scrollTop = 0
   }, [editItemId, isCreate])
+
+  useEffect(() => {
+    if (!workspacePanel || descriptionExpanded) return
+    const container = descriptionCollapseRef.current
+    if (!container) return
+
+    let frameId: number | null = null
+    const updateOverflow = () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null
+        const editor = container.querySelector<HTMLElement>('.bn-editor')
+        const editorBottom = editor?.getBoundingClientRect().bottom ?? 0
+        const overflowing = Array.from(
+          editor?.querySelectorAll<HTMLElement>('.bn-block-outer') ?? []
+        ).some(block => block.getBoundingClientRect().bottom > editorBottom + 1)
+        setDescriptionOverflowing(current => (current === overflowing ? current : overflowing))
+      })
+    }
+
+    updateOverflow()
+    const mutationObserver = new MutationObserver(updateOverflow)
+    mutationObserver.observe(container, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    })
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateOverflow)
+    resizeObserver?.observe(container)
+
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+      mutationObserver.disconnect()
+      resizeObserver?.disconnect()
+    }
+  }, [descriptionExpanded, editItemId, workspacePanel])
 
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current === editItemId) return
@@ -2009,6 +2048,8 @@ export function TodoEditor(props: TodoEditorProps) {
                   )}
                 >
                   <div
+                    ref={workspacePanel ? descriptionCollapseRef : undefined}
+                    data-overflowing={descriptionOverflowing ? 'true' : 'false'}
                     className={cn(
                       twoColumn && 'task-detail-desc',
                       twoColumn && !descriptionExpanded && 'is-collapsed'

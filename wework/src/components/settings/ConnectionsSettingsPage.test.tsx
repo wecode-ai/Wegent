@@ -182,6 +182,10 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   })
 }
 
+// Compile the injected DSH modules outside the per-test hook timeout. The setup hook
+// still clears and restores the module cache before every test to preserve isolation.
+await preloadDefaultDshUiTestModules()
+
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),

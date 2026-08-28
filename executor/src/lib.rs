@@ -9,6 +9,7 @@ pub mod browser_mcp;
 pub mod callback;
 mod claude_session;
 mod codex_phase;
+pub mod computer_use_mcp;
 pub mod config;
 mod connector_gateway;
 pub mod connector_mcp;

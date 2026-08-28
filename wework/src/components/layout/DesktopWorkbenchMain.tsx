@@ -1123,7 +1123,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = await prepareSubmission(description)
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
@@ -2848,7 +2848,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ) : currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
       <WorkItemComposerGuide
         integrated
-        bindingPending
         project={currentWorkItemGuideProject}
         projects={availableWorkItemProjects}
         onSelectProject={handleSelectCloudProject}

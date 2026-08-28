@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core.config import settings
 from app.core.jwt_compat import decode_jose_jwt
+from app.core.session_token import is_user_session_payload
 from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
@@ -282,6 +283,8 @@ def verify_token(token: str) -> Dict[str, Any]:
 
     try:
         payload = decode_jose_jwt(token, algorithms=[settings.ALGORITHM])
+        if not is_user_session_payload(payload):
+            raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
@@ -381,6 +384,8 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
 
         try:
             payload = decode_jose_jwt(token, algorithms=[settings.ALGORITHM])
+            if not is_user_session_payload(payload):
+                return None
             username: str = payload.get("sub")
             if username is None:
                 if is_telemetry_enabled():

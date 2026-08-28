@@ -337,6 +337,35 @@ async def test_runtime_rpc_service_losslessly_downgrades_plain_v2(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_rpc_service_preserves_v1_device_project_binding(monkeypatch):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "schemaVersion": 2,
+            "runtime": "codex",
+            "message": "Implement",
+            "runtimeProjectKey": "local:wegent",
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    assert "schemaVersion" not in emitted
+    assert emitted["runtimeProjectKey"] == "local:wegent"
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_rejects_lossy_v2_downgrade(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 

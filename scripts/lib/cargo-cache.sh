@@ -42,6 +42,37 @@ configure_wegent_sccache() {
   fi
 }
 
+configure_wegent_sccache_s3() {
+  local endpoint="${1%/}"
+  local bucket="$2"
+  local access_key="$3"
+  local secret_key="$4"
+  local region="${5:-us-east-1}"
+  local key_prefix="${6:-wegent/sccache}"
+  local use_ssl=""
+
+  case "$endpoint" in
+    https://*) use_ssl=true ;;
+    http://*) use_ssl=false ;;
+    *)
+      echo "Error: sccache S3 endpoint must use http:// or https://." >&2
+      return 1
+      ;;
+  esac
+  if [ -z "$bucket" ] || [ -z "$access_key" ] || [ -z "$secret_key" ]; then
+    echo "Error: sccache S3 bucket and credentials are required." >&2
+    return 1
+  fi
+
+  export SCCACHE_BUCKET="$bucket"
+  export SCCACHE_ENDPOINT="$endpoint"
+  export SCCACHE_REGION="$region"
+  export SCCACHE_S3_KEY_PREFIX="${key_prefix#/}"
+  export SCCACHE_S3_USE_SSL="$use_ssl"
+  export AWS_ACCESS_KEY_ID="$access_key"
+  export AWS_SECRET_ACCESS_KEY="$secret_key"
+}
+
 install_wegent_sccache_with_homebrew() {
   if [ "${WEGENT_DISABLE_SCCACHE:-0}" = "1" ] || command -v sccache >/dev/null 2>&1; then
     return 0
