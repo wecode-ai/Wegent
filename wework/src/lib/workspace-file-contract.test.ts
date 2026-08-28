@@ -60,6 +60,49 @@ describe('workspace file contract', () => {
     })
   })
 
+  test('matches Windows workspace directory names case-insensitively', () => {
+    expect(
+      normalizeWorkspaceTree(
+        {
+          path: String.raw`\\?\C:\WORK\WEGENT`,
+          entries: [
+            {
+              name: 'src',
+              path: String.raw`\\?\C:\WORK\WEGENT\src`,
+              is_directory: true,
+              size: 0,
+              modified_at: null,
+            },
+          ],
+        },
+        String.raw`c:\work\Wegent`
+      )
+    ).toEqual({
+      path: String.raw`C:\work\Wegent`,
+      entries: [
+        {
+          name: 'src',
+          path: String.raw`C:\work\Wegent\src`,
+          isDirectory: true,
+          size: 0,
+          modifiedAt: null,
+        },
+      ],
+    })
+  })
+
+  test('matches POSIX workspace directory names case-sensitively', () => {
+    expect(() =>
+      normalizeWorkspaceTree(
+        {
+          path: '/work/wegent',
+          entries: [],
+        },
+        '/work/Wegent'
+      )
+    ).toThrow('Invalid workspace tree response')
+  })
+
   test('normalizes Windows text and binary file responses', () => {
     const requestedPath = String.raw`C:\work\Wegent\README.md`
 

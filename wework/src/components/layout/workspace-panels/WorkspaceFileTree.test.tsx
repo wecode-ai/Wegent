@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
-import { createWorkspaceTreeModel } from './workspaceFileTreeModel'
+import { createWorkspaceTreeModel, getEntryByTreePath } from './workspaceFileTreeModel'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
 function createFileEntry(index: number): WorkspaceFileEntry {
@@ -89,5 +89,64 @@ describe('WorkspaceFileTree', () => {
     })
 
     expect(model.paths).toEqual(['src/'])
+  })
+
+  test('uses case-insensitive Windows tree keys while preserving display casing', () => {
+    const sourceDirectory: WorkspaceFileEntry = {
+      name: 'Src',
+      path: String.raw`C:\Work\Wegent\Src`,
+      isDirectory: true,
+      size: 0,
+      modifiedAt: null,
+    }
+    const sourceFile: WorkspaceFileEntry = {
+      name: 'Index.ts',
+      path: String.raw`c:\work\wegent\src\Index.ts`,
+      isDirectory: false,
+      size: 12,
+      modifiedAt: null,
+    }
+    const model = createWorkspaceTreeModel({
+      rootPath: String.raw`C:\Work\Wegent`,
+      activeDirectoryPath: String.raw`c:\work\wegent\src`,
+      entriesByPath: {
+        [String.raw`C:\Work\Wegent`]: [sourceDirectory],
+        [String.raw`c:\work\wegent\src`]: [sourceFile],
+      },
+      expandedPaths: new Set([String.raw`c:\work\wegent\SRC`]),
+      selectedPath: String.raw`C:\WORK\WEGENT\SRC\INDEX.TS`,
+    })
+
+    expect(model.paths).toEqual(['Src/', 'Src/Index.ts'])
+    expect(model.expandedTreePaths).toEqual(['Src/'])
+    expect(model.selectedTreePath).toBe('Src/Index.ts')
+    expect(getEntryByTreePath(model.entryByTreePath, 'SRC/index.ts', true)).toBe(sourceFile)
+  })
+
+  test('keeps POSIX tree keys case-sensitive', () => {
+    const lowerCaseFile: WorkspaceFileEntry = {
+      name: 'index.ts',
+      path: '/workspace/project/src/index.ts',
+      isDirectory: false,
+      size: 12,
+      modifiedAt: null,
+    }
+    const upperCaseFile: WorkspaceFileEntry = {
+      ...lowerCaseFile,
+      name: 'Index.ts',
+      path: '/workspace/project/Src/Index.ts',
+    }
+    const model = createWorkspaceTreeModel({
+      rootPath: '/workspace/project',
+      activeDirectoryPath: '/workspace/project',
+      entriesByPath: {
+        '/workspace/project': [lowerCaseFile, upperCaseFile],
+      },
+      expandedPaths: new Set(),
+      selectedPath: null,
+    })
+
+    expect(model.paths).toEqual(['src/index.ts', 'Src/Index.ts'])
+    expect(getEntryByTreePath(model.entryByTreePath, 'SRC/INDEX.TS')).toBeNull()
   })
 })

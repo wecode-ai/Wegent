@@ -136,7 +136,11 @@ function WorkspacePierreFileTree({
       const nextPath = selectedPaths[0]
       if (!nextPath) return
 
-      const entry = getEntryByTreePath(treeModel.entryByTreePath, nextPath)
+      const entry = getEntryByTreePath(
+        treeModel.entryByTreePath,
+        nextPath,
+        treeModel.caseInsensitivePaths
+      )
       if (!entry) return
 
       if (entry.isDirectory) {

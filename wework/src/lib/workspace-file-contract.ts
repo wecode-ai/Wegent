@@ -70,6 +70,13 @@ function comparableWorkspacePath(path: string): string {
   return isWindowsWorkspacePath(path) ? path.toLowerCase() : path
 }
 
+function workspacePathLeafMatches(leftPath: string, rightPath: string): boolean {
+  const leftLeaf = leftPath.split('/').pop() ?? ''
+  const rightLeaf = rightPath.split('/').pop() ?? ''
+  const windowsPaths = isWindowsWorkspacePath(leftPath) && isWindowsWorkspacePath(rightPath)
+  return windowsPaths ? leftLeaf.toLowerCase() === rightLeaf.toLowerCase() : leftLeaf === rightLeaf
+}
+
 function formatRequestedWorkspacePath(normalizedPath: string, requestedPath: string): string {
   return requestedPath.trim().includes('\\') ? normalizedPath.replace(/\//g, '\\') : normalizedPath
 }
@@ -163,10 +170,7 @@ export function normalizeWorkspaceTree(
     throw new Error('Invalid workspace tree response')
   }
   const path = normalizeAbsoluteWorkspacePath(record.path, 'Invalid workspace tree response')
-  if (
-    comparableWorkspacePath(path.split('/').pop() ?? '') !==
-    comparableWorkspacePath(normalizedRequestedPath.split('/').pop() ?? '')
-  ) {
+  if (!workspacePathLeafMatches(path, normalizedRequestedPath)) {
     throw new Error('Invalid workspace tree response')
   }
   const formattedRequestedPath = formatRequestedWorkspacePath(
