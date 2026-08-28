@@ -199,7 +199,7 @@ class SqlAlchemySubtaskStore:
         return ExecutorReference(
             namespace=executor_namespace,
             name=executor_name,
-            deleted_at=executor_deleted_at is True or executor_deleted_at == "true",
+            deleted_at=executor_deleted_at == "true",
         )
 
     def get_latest_assistant_executor_from(
