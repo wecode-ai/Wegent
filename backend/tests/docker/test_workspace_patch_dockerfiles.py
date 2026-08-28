@@ -30,3 +30,19 @@ def test_pnpm_install_stages_copy_workspace_patches(dockerfile: Path):
         copy_index = stage.find("COPY patches ./patches")
         install_index = stage.find("pnpm install --frozen-lockfile")
         assert 0 <= copy_index < install_index
+
+
+def test_frontend_build_stage_copies_workspace_patches() -> None:
+    content = (ROOT / "docker" / "frontend" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    build_stage = next(
+        stage
+        for stage in re.split(r"(?m)^FROM ", content)[1:]
+        if "AS builder" in stage
+    )
+
+    copy_index = build_stage.find("COPY --from=deps /app/patches ./patches")
+    build_index = build_stage.find("pnpm run build")
+
+    assert 0 <= copy_index < build_index

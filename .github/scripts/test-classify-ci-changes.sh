@@ -289,6 +289,9 @@ assert_case "cache policy changes validate all modules" "$all_true" \
 assert_case "release workflow changes validate all modules" "$all_true" \
   ".github/workflows/publish-image.yml"
 
+assert_case "base image workflow changes validate all modules" "$all_true" \
+  ".github/workflows/publish-base-image.yml"
+
 assert_case "cache warmup changes validate all modules" "$all_true" \
   ".github/workflows/ci-cache-warmup.yml"
 

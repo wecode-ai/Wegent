@@ -41,6 +41,7 @@ ENV NEXT_PUBLIC_APP_VERSION=${APP_VERSION}
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/frontend/node_modules ./frontend/node_modules
 COPY --from=deps /app/packages/chat-core/node_modules ./packages/chat-core/node_modules
+COPY --from=deps /app/patches ./patches
 
 # Copy source code
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
