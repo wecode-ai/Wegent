@@ -1,0 +1,310 @@
+pipeline {
+  agent {
+    label 'windows'
+  }
+
+  parameters {
+    string(
+      name: 'VERSION',
+      defaultValue: '',
+      description: 'Release version, for example 1.2.3 or 1.2.4-beta.1'
+    )
+    string(
+      name: 'BRANCH',
+      defaultValue: 'develop',
+      description: 'Git branch, tag, or commit to build'
+    )
+    booleanParam(
+      name: 'BETA',
+      defaultValue: false,
+      description: 'Publish to the beta update channel'
+    )
+    booleanParam(
+      name: 'UPLOAD',
+      defaultValue: false,
+      description: 'Upload the verified release assets to MinIO'
+    )
+    text(
+      name: 'CHANGE_LOG',
+      defaultValue: '',
+      description: 'Optional release notes'
+    )
+  }
+
+  environment {
+    ComSpec = 'C:\\Windows\\System32\\cmd.exe'
+    PATH = 'C:\\Windows\\System32;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;C:\\Program Files\\Git\\cmd;C:\\Program Files\\Git\\bin;C:\\Program Files\\nodejs'
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    timeout(time: 2, unit: 'HOURS')
+  }
+
+  stages {
+    stage('Prepare Windows environment') {
+      steps {
+        script {
+          env.PATH = [
+            'C:\\Windows\\System32',
+            'C:\\Windows\\System32\\WindowsPowerShell\\v1.0',
+            'C:\\Program Files\\Git\\cmd',
+            'C:\\Program Files\\Git\\bin',
+            'C:\\Program Files\\nodejs',
+            "${env.USERPROFILE}\\.cargo\\bin",
+            "${env.USERPROFILE}\\.local\\bin",
+            "${env.APPDATA}\\npm"
+          ].findAll { it?.trim() }.unique().join(';')
+        }
+
+        bat '''
+@echo off
+setlocal
+
+node -e "const major=Number(process.versions.node.split('.')[0]); if(process.platform!=='win32'||process.arch!=='x64'||major!==24){console.error('Expected Windows x64 Node.js 24, received', process.platform, process.arch, process.version); process.exit(1)}"
+if errorlevel 1 exit /b %errorlevel%
+
+for /f "delims=" %%V in ('pnpm --version') do set "PNPM_VERSION=%%V"
+if not "%PNPM_VERSION%"=="11.7.0" (
+  echo Expected pnpm 11.7.0, received %PNPM_VERSION%
+  exit /b 1
+)
+
+where uv >nul 2>&1
+if errorlevel 1 (
+  echo uv was not found on PATH
+  exit /b 1
+)
+
+where rustup >nul 2>&1
+if errorlevel 1 (
+  echo rustup was not found on PATH
+  exit /b 1
+)
+
+rustup target list --installed | findstr /x "x86_64-pc-windows-msvc" >nul
+if errorlevel 1 (
+  echo Rust target x86_64-pc-windows-msvc is not installed
+  exit /b 1
+)
+
+if not exist "C:\\Program Files\\Git\\bin\\bash.exe" (
+  echo Git Bash was not found at C:\\Program Files\\Git\\bin\\bash.exe
+  exit /b 1
+)
+
+if not exist "%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe" (
+  echo Visual Studio Installer vswhere.exe was not found
+  exit /b 1
+)
+'''
+      }
+    }
+
+    stage('Checkout') {
+      steps {
+        deleteDir()
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: params.BRANCH.trim()]],
+          userRemoteConfigs: [[
+            credentialsId: 'wegent-git-credentials',
+            url: 'https://git.intra.weibo.com/weibo_rd/common/wecode/wegent.git'
+          ]]
+        ])
+      }
+    }
+
+    stage('Resolve release') {
+      steps {
+        script {
+          def releaseVersion = params.VERSION.trim()
+          def stableVersion = ~/^[0-9]+\.[0-9]+\.[0-9]+$/
+          def betaVersion = ~/^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$/
+
+          if (params.BETA && !(releaseVersion ==~ betaVersion)) {
+            error("Beta releases require x.y.z-beta.N, received: ${releaseVersion}")
+          }
+          if (!params.BETA && !(releaseVersion ==~ stableVersion)) {
+            error("Stable releases require x.y.z, received: ${releaseVersion}")
+          }
+
+          env.RELEASE_VERSION = releaseVersion
+          env.RELEASE_CHANNEL = params.BETA ? 'beta' : 'stable'
+          env.SOURCE_SHA = bat(
+            returnStdout: true,
+            script: '@git rev-parse HEAD'
+          ).trim()
+          currentBuild.displayName = "#${env.BUILD_NUMBER} ${releaseVersion} windows-x64"
+          currentBuild.description =
+            "${env.RELEASE_CHANNEL} ${env.SOURCE_SHA.take(12)} upload=${params.UPLOAD}"
+        }
+
+        bat '''
+@echo off
+if not exist .jenkins-release mkdir .jenkins-release
+'''
+        writeFile(
+          file: '.jenkins-release/notes.txt',
+          text: params.CHANGE_LOG ?: ''
+        )
+      }
+    }
+
+    stage('Install dependencies') {
+      steps {
+        bat '''
+@echo off
+call pnpm install --frozen-lockfile
+exit /b %errorlevel%
+'''
+      }
+    }
+
+    stage('Build unsigned Windows release') {
+      steps {
+        withCredentials([
+          string(
+            credentialsId: 'wegent-s3-endpoint',
+            variable: 'ATTACHMENT_S3_ENDPOINT'
+          ),
+          string(
+            credentialsId: 'wegent-s3-bucket',
+            variable: 'ATTACHMENT_S3_BUCKET'
+          ),
+          string(
+            credentialsId: 'wegent-s3-access-key',
+            variable: 'ATTACHMENT_S3_ACCESS_KEY'
+          ),
+          string(
+            credentialsId: 'wegent-s3-secret-key',
+            variable: 'ATTACHMENT_S3_SECRET_KEY'
+          ),
+          string(
+            credentialsId: 'wegent-s3-region',
+            variable: 'ATTACHMENT_S3_REGION'
+          ),
+          string(
+            credentialsId: 'wegent-s3-use-ssl',
+            variable: 'ATTACHMENT_S3_USE_SSL'
+          )
+        ]) {
+          writeFile(
+            file: '.jenkins-release/build.sh',
+            text: '''#!/usr/bin/env bash
+set -euo pipefail
+
+export WEWORK_UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
+
+for key_file in "$WEWORK_UPDATER_KEY_PATH" "$WEWORK_UPDATER_KEY_PATH.pub"; do
+  if [ ! -s "$key_file" ]; then
+    echo "Required legacy updater key file is missing or empty: $key_file" >&2
+    exit 1
+  fi
+done
+
+args=(
+  --version "$RELEASE_VERSION"
+  --channel "$RELEASE_CHANNEL"
+  --unsigned
+)
+
+if [ -s .jenkins-release/notes.txt ]; then
+  args+=(--notes "$(cat .jenkins-release/notes.txt)")
+fi
+
+if [ "${UPLOAD:-false}" = "true" ]; then
+  args+=(--upload)
+fi
+
+bash wework/scripts/build-minio-windows-release.sh "${args[@]}"
+'''
+          )
+          writeFile(
+            file: '.jenkins-release/run-build.cmd',
+            text: '''@echo off
+setlocal
+
+set "VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe"
+for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VS_INSTALL=%%I"
+
+if not defined VS_INSTALL (
+  echo Visual Studio C++ Build Tools were not found
+  exit /b 1
+)
+
+call "%VS_INSTALL%\\Common7\\Tools\\VsDevCmd.bat" -arch=x64 -host_arch=x64
+if errorlevel 1 exit /b %errorlevel%
+
+"C:\\Program Files\\Git\\bin\\bash.exe" .jenkins-release/build.sh
+exit /b %errorlevel%
+'''
+          )
+
+          bat 'call .jenkins-release\\run-build.cmd'
+        }
+      }
+    }
+
+    stage('Verify updater bridge') {
+      steps {
+        writeFile(
+          file: '.jenkins-release/verify-release.mjs',
+          text: '''import { readFile, stat } from 'node:fs/promises'
+import { resolve } from 'node:path'
+
+const version = process.env.RELEASE_VERSION
+const channel = process.env.RELEASE_CHANNEL
+const output = resolve('wework/electron/release-minio')
+const installerName = `WeWork_${version}_windows_x64-setup.exe`
+const installer = resolve(output, installerName)
+const signaturePath = `${installer}.sig`
+const channelManifest = resolve(output, `${channel}-windows-x86_64.json`)
+const electronManifest = resolve(output, `${channel === 'stable' ? 'latest' : 'beta'}.yml`)
+
+for (const path of [installer, signaturePath, channelManifest, electronManifest]) {
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile() || file.size === 0) {
+    throw new Error(`Required Windows release artifact is missing or empty: ${path}`)
+  }
+}
+
+const signature = (await readFile(signaturePath, 'utf8')).trim()
+const legacy = JSON.parse(
+  await readFile(resolve(output, 'latest.json'), 'utf8')
+)
+const bridge = legacy.platforms?.['windows-x86_64']
+if (!bridge || bridge.signature !== signature || !bridge.url.endsWith(installerName)) {
+  throw new Error('The legacy Tauri Windows updater bridge is incomplete.')
+}
+
+const electron = await readFile(electronManifest, 'utf8')
+if (!electron.includes(installerName)) {
+  throw new Error('The Electron Windows updater manifest does not reference the installer.')
+}
+
+console.log(`Verified Windows Tauri-to-Electron bridge for ${version} (${channel}).`)
+'''
+        )
+
+        bat 'node .jenkins-release\\verify-release.mjs'
+      }
+    }
+
+    stage('Archive') {
+      steps {
+        archiveArtifacts(
+          artifacts: 'wework/electron/release-minio/**',
+          fingerprint: true
+        )
+      }
+    }
+  }
+
+  post {
+    always {
+      deleteDir()
+    }
+  }
+}
