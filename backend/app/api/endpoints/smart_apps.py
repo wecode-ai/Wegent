@@ -5,8 +5,10 @@
 """Authenticated Smart app marketplace and restricted publication API."""
 
 from typing import NoReturn
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -24,7 +26,14 @@ from app.schemas.smart_app import (
     SmartAppSubmissionInitResponse,
     SmartAppSubmissionItem,
 )
-from app.services.marketplace_artifact_storage import MarketplaceArtifactStorageError
+from app.services.marketplace_artifact_storage import (
+    MarketplaceArtifactStorageError,
+    marketplace_artifact_storage,
+)
+from app.services.smart_app_download_link import (
+    InvalidSmartAppDownloadToken,
+    verify_smart_app_download_token,
+)
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
 
 router = APIRouter(tags=["smart-apps"])
@@ -96,6 +105,48 @@ def download_marketplace_item(
         )
     except MarketplaceArtifactStorageError as exc:
         _raise_storage_unavailable(exc)
+
+
+@router.get("/marketplace/{smart_app_id}/artifact")
+def download_marketplace_artifact(
+    smart_app_id: int,
+    token: str = Query(..., description="Short-lived Smart app download token"),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Stream a ticketed Smart app package through the Backend HTTPS origin."""
+    try:
+        claims = verify_smart_app_download_token(token)
+    except InvalidSmartAppDownloadToken as exc:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired Smart app download link"
+        ) from exc
+    if claims.smart_app_id != smart_app_id:
+        raise HTTPException(
+            status_code=403, detail="Invalid or expired Smart app download link"
+        )
+
+    try:
+        artifact = smart_app_marketplace_service.download_artifact(
+            db,
+            smart_app_id=smart_app_id,
+            release_id=claims.release_id,
+            user_id=claims.user_id,
+        )
+        chunks = marketplace_artifact_storage.open_download(artifact.storage_key)
+    except MarketplaceArtifactStorageError as exc:
+        _raise_storage_unavailable(exc)
+
+    encoded_filename = quote(artifact.filename, safe="")
+    return StreamingResponse(
+        chunks,
+        media_type="application/zip",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+            "Content-Length": str(artifact.size_bytes),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.post("/submissions/init", response_model=SmartAppSubmissionInitResponse)

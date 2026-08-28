@@ -18,6 +18,8 @@ When Executor launches Codex, it injects the browser MCP server configuration. B
 
 Each Wework process binds an independent random local bridge port and atomically writes the bridge identity to `runtime/embedded-browser-bridge.json` under the active Executor home. The identity contains a schema version, process PID, loopback address, authentication token, and start time. Directory and file permissions should be restricted to the current user, and the token must not be logged. The MCP server reads the latest identity before each request and accepts only loopback addresses, so multiple Wework instances do not route browser requests to the wrong window.
 
+After starting the bridge, Electron must pass the runtime file path to the managed Executor. When the Executor builds the Codex browser MCP configuration, it must pass only that file path and must not pin the current bridge URL or token in the configuration. Otherwise, a random Electron port or a restarted bridge leaves the MCP server connected to stale coordinates and bypasses runtime identity refresh.
+
 Bridge requests must include the authentication token. `open` and `navigate` allow only safe web schemes; do not allow `file:`, `javascript:`, or other URLs that could read local files or execute arbitrary script through the Agent navigation path.
 
 The bridge supports limited concurrency. A long `waitFor` request must not block independent `click`, `fill`, or `inspect` requests; when the concurrency limit is reached, return an explicit busy error instead of waiting forever.
