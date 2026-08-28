@@ -119,10 +119,6 @@ export class TerminalRuntime {
     const rows = terminalDimension(params.rows, DEFAULT_ROWS, 'rows')
     const environment = terminalEnvironment(this.#environment, params.env)
     const command = terminalCommand(params, this.#platform, environment)
-    const initialInput = terminalInitialInput(params.initial_input)
-    const initialInputReadinessMarker = terminalInitialInputReadinessMarker(
-      params.initial_input_readiness_marker
-    )
     let pty
     try {
       pty = this.#spawn(command.executable, command.args, {
@@ -143,9 +139,6 @@ export class TerminalRuntime {
       pty,
       sequence: 0,
       snapshot: '',
-      initialInput,
-      initialInputReadinessMarker,
-      initialInputWriteScheduled: false,
       dataSubscription: null,
       exitSubscription: null,
     }
@@ -224,30 +217,6 @@ export class TerminalRuntime {
       session_id: session.id,
       sequence: session.sequence,
       data,
-    })
-    this.#writePendingInitialInput(session)
-  }
-
-  #writePendingInitialInput(session) {
-    if (!session.pty || !session.initialInput || session.initialInputWriteScheduled) return
-    if (
-      session.initialInputReadinessMarker &&
-      !session.snapshot.includes(session.initialInputReadinessMarker)
-    ) {
-      return
-    }
-    session.initialInputWriteScheduled = true
-    setImmediate(() => {
-      session.initialInputWriteScheduled = false
-      if (this.#sessions.get(session.id) !== session || !session.pty || !session.initialInput) {
-        return
-      }
-      try {
-        session.pty.write(session.initialInput)
-        session.initialInput = null
-      } catch {
-        // Keep the input pending so a later output can trigger another attempt.
-      }
     })
   }
 
@@ -413,40 +382,6 @@ function terminalCommand(params, platform, environment) {
     return value
   })
   return { executable, args }
-}
-
-function terminalInitialInput(value) {
-  if (value == null || value === '') return null
-  if (typeof value !== 'string') {
-    throw new TerminalRuntimeError('invalid_params', 'Terminal initial input must be a string', 400)
-  }
-  if (Buffer.byteLength(value) > MAX_INPUT_BYTES) {
-    throw new TerminalRuntimeError(
-      'input_too_large',
-      'Terminal initial input exceeds size limit',
-      413
-    )
-  }
-  return value
-}
-
-function terminalInitialInputReadinessMarker(value) {
-  if (value == null || value === '') return null
-  if (typeof value !== 'string' || value.includes('\0')) {
-    throw new TerminalRuntimeError(
-      'invalid_params',
-      'Terminal initial input readiness marker must be a valid string',
-      400
-    )
-  }
-  if (Buffer.byteLength(value) > MAX_INPUT_BYTES) {
-    throw new TerminalRuntimeError(
-      'input_too_large',
-      'Terminal initial input readiness marker exceeds size limit',
-      413
-    )
-  }
-  return value
 }
 
 function trimUtf8Tail(value, maxBytes) {

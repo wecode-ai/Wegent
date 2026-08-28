@@ -561,16 +561,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await captureScreenshot(control, '02-split-drag-targets.png', 'body')
 
-      const splitStartedAt = Date.now()
-      await control.command('dragEnd', 'body', {
-        target: rightTarget,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[role="separator"][data-separator]', {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      const splitDurationMs = Date.now() - splitStartedAt
+      const splitResult = JSON.parse(
+        await control.command('dragEnd', 'body', {
+          target: rightTarget,
+          waitForSelector: '[role="separator"][data-separator]',
+          timeoutMs: uiTimeoutMs,
+        })
+      )
+      const splitDurationMs = splitResult.durationMs
+      assert.equal(
+        typeof splitDurationMs,
+        'number',
+        `Sidebar drag did not report its renderer duration: ${JSON.stringify(splitResult)}`
+      )
       assert.ok(
         splitDurationMs < 3_000,
         `Sidebar drag took too long to create a split: ${splitDurationMs}ms`

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   inspectNativeWorkspacePaths,
+  fileUrlToPath,
   readClipboardFileUriPaths,
   readNativeClipboardWorkspacePaths,
   readNativeDroppedWorkspacePaths,
@@ -54,6 +55,12 @@ describe('workspace path transfer', () => {
       '/Users/alice/project/frontend',
       '/Users/alice/project/large file.bin',
     ])
+  })
+
+  test('converts Windows file URIs to drive paths without a leading slash', () => {
+    expect(fileUrlToPath('file:///D:/a/Wegent/dsh-e2e-smoke.zip')).toBe(
+      'D:/a/Wegent/dsh-e2e-smoke.zip'
+    )
   })
 
   test('asks Electron to inspect native clipboard paths with URI fallbacks', async () => {

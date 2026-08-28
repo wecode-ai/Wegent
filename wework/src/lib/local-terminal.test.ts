@@ -12,6 +12,7 @@ import {
   openLocalWorkspace,
   pickLocalWorkspaceOpenerExe,
   resizeLocalTerminal,
+  startLocalHarness,
   startLocalTerminal,
   writeLocalTerminal,
 } from './local-terminal'
@@ -130,6 +131,46 @@ describe('Electron local terminal', () => {
       ['terminal.resize', { session_id: 'terminal-1', rows: 40, cols: 120 }],
       ['terminal.close', { session_id: 'terminal-1' }],
     ])
+  })
+
+  test('passes a new Kimi prompt as a launch argument without PTY input injection', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000002')
+    mocks.localExecutor.mockResolvedValue({
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
+      env: { KIMI_CONFIG_DIR: '/tmp/kimi' },
+    })
+    mocks.terminalRequest.mockResolvedValue(undefined)
+
+    await startLocalHarness({
+      harnessId: 'kimi_code',
+      prompt: 'Inspect the project with Kimi',
+      isPrimary: false,
+      projectId: 7,
+      executablePath: '/usr/local/bin/kimi',
+      args: ['--model', '__kimi_env_model__'],
+      pluginRoots: [],
+      cwd: '/Users/me/project',
+      modelKey: 'wework:model',
+      resumeSessionId: null,
+    })
+
+    expect(mocks.localExecutor).toHaveBeenCalledWith('executor.harnesses.prepare_launch', {
+      harness_id: 'kimi_code',
+      session_id: expect.stringContaining('local-harness-'),
+      cwd: '/Users/me/project',
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
+      uses_wework_model: false,
+      accept_bypass_permissions: false,
+    })
+    expect(mocks.terminalRequest).toHaveBeenCalledWith('terminal.start', {
+      session_id: expect.stringContaining('local-harness-'),
+      executable: '/usr/local/bin/kimi',
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
+      cwd: '/Users/me/project',
+      rows: undefined,
+      cols: undefined,
+      env: { KIMI_CONFIG_DIR: '/tmp/kimi' },
+    })
   })
 
   test('opens local paths through Electron host capabilities', async () => {

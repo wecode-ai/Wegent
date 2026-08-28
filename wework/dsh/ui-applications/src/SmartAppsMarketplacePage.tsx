@@ -63,6 +63,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
+import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 
 interface SmartAppsMarketplacePageProps {
@@ -660,7 +661,8 @@ export function SmartAppsMarketplacePage({
     event.preventDefault()
     const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/)[0]?.trim()
     if (!uri) return
-    await importCreatedPackage(decodeURIComponent(new URL(uri).pathname))
+    const path = fileUrlToPath(uri)
+    if (path) await importCreatedPackage(path)
   }
 
   function availableUpdate(installation: HarnessAppInstallation) {

@@ -272,6 +272,8 @@ class RealCloudEnvironment {
       PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
+      INIT_DATA_DIR: join(backendDirectory, 'init_data'),
+      BUILTIN_PLUGINS_DIR: join(backendDirectory, 'init_data', 'plugins'),
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
@@ -477,7 +479,7 @@ class RealCloudEnvironment {
     logFile,
     authToken = this.authToken,
   }) {
-    return {
+    const environment = {
       ...process.env,
       ...(this.claudeBinary ? { CLAUDE_BINARY_PATH: this.claudeBinary } : {}),
       CODEX_BIN: this.codexBinary,
@@ -502,6 +504,16 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
+    for (const key of [
+      'WEGENT_APP_IPC_DEVICE_ID',
+      'WEGENT_APP_IPC_ENDPOINT',
+      'WEGENT_APP_IPC_OWNER_TOKEN',
+      'WEGENT_APP_IPC_TOKEN',
+      'WEGENT_APP_LIFECYCLE_FD',
+    ]) {
+      delete environment[key]
+    }
+    return environment
   }
 
   async startRemoteExecutor(executorBinary) {
@@ -528,8 +540,6 @@ class RealCloudEnvironment {
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
     })
-    delete this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
-    delete this.remoteDockerExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath

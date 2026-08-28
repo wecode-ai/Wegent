@@ -862,6 +862,7 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
+  const startedAt = performance.now()
   const targetSelector = command.target ?? activeDrag.targetSelector
   const target = findDesktopControlElements(targetSelector)[0]
   if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
@@ -879,6 +880,17 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       ...endOptions,
       buttons: 0,
     })
+    if (command.waitForSelector) {
+      await waitForDesktopControlElement({
+        ...command,
+        selector: command.waitForSelector,
+        visible: true,
+      })
+      return JSON.stringify({
+        durationMs: Math.round(performance.now() - startedAt),
+        sourceText: activeDrag.sourceText,
+      })
+    }
     return activeDrag.sourceText
   } finally {
     activeDesktopControlDrag = null
