@@ -1160,10 +1160,11 @@ function LocalModelSettingsSection({
     setTestResult(null)
     setTestingModelKey(targetKey)
     try {
+      const connectionTest = findLocalModelProviderProfile(form.providerProfileId).connectionTest
       await testLocalModelConnection({
-        baseUrl: form.baseUrl,
-        apiFormat: form.apiFormat,
-        requestPath: form.requestPath,
+        baseUrl: connectionTest?.baseUrl ?? form.baseUrl,
+        apiFormat: connectionTest?.apiFormat ?? form.apiFormat,
+        requestPath: connectionTest?.requestPath ?? form.requestPath,
         modelId,
         toolProfile: form.toolProfile,
         apiKey: form.apiKey.trim() ? form.apiKey : editingModel?.apiKey,
