@@ -5,6 +5,7 @@
 """Regression tests for the knowledge document external identity migration."""
 
 import importlib.util
+import io
 from pathlib import Path
 from types import ModuleType
 
@@ -12,9 +13,11 @@ import pytest
 import sqlalchemy as sa
 from pytest import MonkeyPatch
 from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.dialects import mysql
 
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
+from app.models.knowledge import KnowledgeDocumentExternalSource
 
 
 def _load_migration() -> ModuleType:
@@ -36,6 +39,35 @@ def test_revision_extends_main_head() -> None:
 
     assert migration.revision == "c5d6e7f8a9b0"
     assert migration.down_revision == "7a4c2e9f1b30"
+
+
+@pytest.mark.parametrize("source", ["model", "migration"])
+def test_mysql_ddl_obeys_review_rules(source: str) -> None:
+    output = io.StringIO()
+    if source == "model":
+        output.write(
+            str(
+                sa.schema.CreateTable(
+                    KnowledgeDocumentExternalSource.__table__
+                ).compile(dialect=mysql.dialect())
+            )
+        )
+    else:
+        migration = _load_migration()
+        migration.op = Operations(
+            MigrationContext.configure(
+                dialect_name="mysql",
+                opts={"as_sql": True, "output_buffer": output},
+            )
+        )
+        migration.upgrade()
+
+    ddl = output.getvalue()
+    assert (
+        "CONSTRAINT uniq_knowledge_documents_external UNIQUE "
+        "(kind_id, external_provider, external_resource_id)" in ddl
+    )
+    assert "COLLATE" not in ddl.upper()
 
 
 def _legacy_engine() -> sa.engine.Engine:
@@ -108,7 +140,7 @@ def test_upgrade_downgrade_cycle_runs_against_real_engine(
         )
         assert "external_provider" not in _columns(connection)
         assert "external_resource_id" not in _columns(connection)
-        assert "uq_knowledge_documents_external" not in _index_names(connection)
+        assert "uniq_knowledge_documents_external" not in _index_names(connection)
 
 
 def test_unique_index_rejects_duplicate_external_identity(

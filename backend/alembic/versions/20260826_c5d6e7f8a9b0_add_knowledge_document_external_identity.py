@@ -60,11 +60,10 @@ def upgrade() -> None:
             "kind_id",
             "external_provider",
             "external_resource_id",
-            name="uq_knowledge_documents_external",
+            name="uniq_knowledge_documents_external",
         ),
         mysql_engine="InnoDB",
         mysql_charset="utf8mb4",
-        mysql_collate="utf8mb4_unicode_ci",
         comment="知识文档外部身份表，仅外部导入文档有记录",
     )
 
