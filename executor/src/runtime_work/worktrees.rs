@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::config::device::worktree_persistent_storage_verified;
+use crate::{
+    config::device::worktree_persistent_storage_verified,
+    path_compat::strip_windows_verbatim_prefix,
+};
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
@@ -1869,7 +1872,9 @@ fn git_common_dir(worktree_path: &Path) -> Result<PathBuf, String> {
     } else {
         worktree_path.join(common_dir)
     };
-    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
+    Ok(strip_windows_verbatim_prefix(
+        &fs::canonicalize(&absolute).unwrap_or(absolute),
+    ))
 }
 
 fn normalize_configured_root(value: &str) -> Result<String, String> {

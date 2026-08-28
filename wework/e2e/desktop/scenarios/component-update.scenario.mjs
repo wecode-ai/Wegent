@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { join, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
-import { promisify } from 'node:util'
+import { create } from 'tar'
 
 const MARKER_NAME = 'e2e-component-update.marker'
-const execFileAsync = promisify(execFile)
 
 export async function createDesktopScenario({ electronUserDataDirectory, resultDir, uiTimeoutMs }) {
   const appBinary = resolve(process.env.WEWORK_E2E_APP_BIN ?? '')
@@ -216,24 +214,13 @@ function sha256(bytes) {
 }
 
 async function createTarArchive(source, archive) {
-  await execFileAsync('git', ['init'], { cwd: source })
-  await execFileAsync('git', ['config', 'core.autocrlf', 'false'], { cwd: source })
-  await execFileAsync('git', ['add', '--all'], { cwd: source })
-  await execFileAsync(
-    'git',
-    [
-      '-c',
-      'user.name=Wework Desktop E2E',
-      '-c',
-      'user.email=desktop-e2e@wework.local',
-      'commit',
-      '-m',
-      'test: create component update archive',
-    ],
-    { cwd: source }
+  await create(
+    {
+      cwd: source,
+      file: archive,
+      gzip: true,
+      portable: true,
+    },
+    ['.']
   )
-  await execFileAsync('git', ['archive', '--format=tar.gz', '--output', archive, 'HEAD'], {
-    cwd: source,
-  })
-  await rm(join(source, '.git'), { recursive: true, force: true })
 }

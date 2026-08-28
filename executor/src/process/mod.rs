@@ -954,13 +954,17 @@ fn command_from_spec(spec: &CommandSpec) -> Command {
 pub fn spawn_program_parts(program: &str) -> (PathBuf, Vec<String>) {
     #[cfg(windows)]
     {
-        let program_path = Path::new(program);
-        if windows_batch::is_batch_file(program_path) {
-            if let Some(target) = windows_batch::resolve_batch_target(program_path) {
+        let search_path = env::var_os("PATH");
+        let program_path =
+            windows_batch::resolve_program_path(Path::new(program), search_path.as_deref());
+        if windows_batch::is_batch_file(&program_path) {
+            if let Some(target) = windows_batch::resolve_batch_target(&program_path) {
                 return (target.program, target.prefix_args);
             }
         }
+        return (program_path, Vec::new());
     }
+    #[cfg(not(windows))]
     (PathBuf::from(program), Vec::new())
 }
 

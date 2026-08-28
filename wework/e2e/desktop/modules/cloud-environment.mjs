@@ -267,6 +267,8 @@ class RealCloudEnvironment {
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       ...remoteDeviceE2EExtension.backendEnv,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
@@ -280,18 +282,11 @@ class RealCloudEnvironment {
       cwd: backendDirectory,
       env: backendEnv,
     })
-    const backendPython =
-      process.platform === 'win32'
-        ? join(backendDirectory, '.venv', 'Scripts', 'python.exe')
-        : join(backendDirectory, '.venv', 'bin', 'python')
-    assert.equal(
-      await pathExists(backendPython),
-      true,
-      `Real cloud backend Python is missing after migration: ${backendPython}`
-    )
     this.backend = spawn(
-      backendPython,
+      'uv',
       [
+        'run',
+        'python',
         '-u',
         '-m',
         'uvicorn',

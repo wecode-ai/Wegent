@@ -3184,7 +3184,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The encoded Markdown file link did not resolve to the workspace file path'
       )
       await control.command('finishAnimations', 'body')

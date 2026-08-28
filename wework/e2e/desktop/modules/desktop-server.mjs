@@ -3472,9 +3472,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'dropped_workspace_paths') {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'

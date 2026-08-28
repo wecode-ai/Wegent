@@ -655,7 +655,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
       )
       await verifyHarnessWorkbenchChrome({
         control,
-        title: 'OC | Local harness CLI reply',
+        title: 'Inspect the current project',
         timeoutMs: uiTimeoutMs,
         captureWorkbench: capturePage,
         screenshot: 'local-harness-08-opencode-workbench-panels.png',

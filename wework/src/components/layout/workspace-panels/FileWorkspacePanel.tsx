@@ -48,7 +48,8 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
 
-const ELECTRON_E2E_FILE_TRANSITION_MS = 300
+// Keep the retained preview observable across slower Windows IPC control round trips.
+const ELECTRON_E2E_FILE_TRANSITION_MS = 1_000
 
 async function preserveElectronE2EFileTransition(): Promise<void> {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
