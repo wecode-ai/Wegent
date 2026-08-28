@@ -37,6 +37,7 @@ from app.core import security
 from app.core.config import settings
 from app.core.exceptions import CustomHTTPException
 from app.db.session import SessionLocal
+from app.models.knowledge import DocumentIndexStatus, KnowledgeDocument
 from app.models.user import User
 from app.schemas.knowledge import (
     AccessibleKnowledgeResponse,
@@ -47,6 +48,10 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    ExternalDocumentBatchImportRequest,
+    ExternalDocumentBatchImportResponse,
+    ExternalDocumentImportRequest,
+    ExternalDocumentStatusRequest,
     InitialMemberCreate,
     KnowledgeBaseCreate,
     KnowledgeBaseListResponse,
@@ -73,6 +78,10 @@ from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.external_document_import import (
+    ExternalDocumentImportError,
+    external_document_import_service,
 )
 from app.services.knowledge.orchestrator import (
     DEFAULT_KNOWLEDGE_LIST_LIMIT,
@@ -775,6 +784,152 @@ async def create_document(
         )
 
 
+@router.post(
+    "/{knowledge_base_id}/documents/external-import",
+    response_model=KnowledgeDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_async("import_external_document", "knowledge.api")
+async def import_external_document(
+    knowledge_base_id: int,
+    data: ExternalDocumentImportRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocument:
+    """
+    Import one external provider document into this knowledge base.
+
+    A new resource creates a placeholder immediately. An existing settled copy
+    refreshes in place while preserving its Wegent name and folder; an active
+    copy is returned without dispatching duplicate work. Background tasks reuse
+    the regular conversion and indexing pipeline.
+    """
+    try:
+        result = external_document_import_service.import_document(
+            db=db,
+            user=current_user,
+            knowledge_base_id=knowledge_base_id,
+            provider_id=data.provider,
+            external_resource_id=data.external_resource_id,
+            folder_id=data.folder_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    add_span_event(
+        "knowledge.document.external_imported",
+        {
+            "document_id": str(result.id),
+            "knowledge_base_id": str(knowledge_base_id),
+            "provider": data.provider,
+            "user_id": str(current_user.id),
+        },
+    )
+
+    return result
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/external-import-batch",
+    response_model=ExternalDocumentBatchImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@trace_async("import_external_document_batch", "knowledge.api")
+async def import_external_document_batch(
+    knowledge_base_id: int,
+    data: ExternalDocumentBatchImportRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> ExternalDocumentBatchImportResponse:
+    """
+    Import several external provider documents into this knowledge base.
+
+    Creates one placeholder document per distinct external resource; background
+    tasks then fetch each body and reuse the regular conversion and indexing
+    pipeline. Existing settled documents refresh in place; active attempts are
+    reused without dispatching duplicate work.
+    """
+    try:
+        result = external_document_import_service.import_documents(
+            db=db,
+            user=current_user,
+            knowledge_base_id=knowledge_base_id,
+            provider_id=data.provider,
+            external_resource_ids=data.external_resource_ids,
+            folder_id=data.folder_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    add_span_event(
+        "knowledge.document.external_import_batched",
+        {
+            "knowledge_base_id": str(knowledge_base_id),
+            "provider": data.provider,
+            "created_count": str(len(result.created)),
+            "updated_count": str(len(result.updated)),
+            "processing_count": str(len(result.processing)),
+            "user_id": str(current_user.id),
+        },
+    )
+
+    return ExternalDocumentBatchImportResponse(
+        created=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.created
+        ],
+        updated=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.updated
+        ],
+        processing=[
+            KnowledgeDocumentResponse.model_validate(document)
+            for document in result.processing
+        ],
+        requested_count=result.requested_count,
+    )
+
+
+@router.post(
+    "/{knowledge_base_id}/documents/external-import-status",
+    response_model=dict[str, DocumentIndexStatus],
+)
+@trace_sync("get_external_document_import_statuses", "knowledge.api")
+def get_external_document_import_statuses(
+    knowledge_base_id: int,
+    data: ExternalDocumentStatusRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, DocumentIndexStatus]:
+    """Check candidate identities across the entire current knowledge base."""
+    try:
+        return external_document_import_service.get_import_statuses(
+            db,
+            current_user,
+            knowledge_base_id,
+            data.provider,
+            data.external_resource_ids,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
 # Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
 
@@ -894,6 +1049,46 @@ async def reindex_document(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=error_msg,
             )
+
+
+@document_router.post(
+    "/{document_id}/external-import/retry",
+    response_model=KnowledgeDocumentResponse,
+)
+@trace_sync("retry_external_document_import", "knowledge.api")
+def retry_external_document_import(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> KnowledgeDocumentResponse:
+    """
+    Retry the background import of one external document record.
+
+    Reuses the same document row: the retry claim advances its index
+    generation, clears the recorded failure, and re-dispatches the import
+    task. This is the dedicated entry for external imports — a failed import
+    has no valid attachment, so the ordinary reindex flow does not apply.
+    """
+    try:
+        result = external_document_import_service.retry_document_import(
+            db=db,
+            user=current_user,
+            document_id=document_id,
+        )
+    except ExternalDocumentImportError as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=str(exc),
+        ) from exc
+
+    add_span_event(
+        "knowledge.document.external_import_retried",
+        {
+            "document_id": str(document_id),
+            "user_id": str(current_user.id),
+        },
+    )
+    return KnowledgeDocumentResponse.model_validate(result)
 
 
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)

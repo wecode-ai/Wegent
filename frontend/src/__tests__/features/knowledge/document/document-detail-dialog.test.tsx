@@ -31,7 +31,9 @@ jest.mock('next/navigation', () => ({
 }))
 
 jest.mock('next/dynamic', () => () => {
-  const MockDynamicComponent = () => <div data-testid="dynamic-component" />
+  const MockDynamicComponent = ({ source }: { source?: string }) => (
+    <div data-testid="dynamic-component">{source}</div>
+  )
   MockDynamicComponent.displayName = 'MockDynamicComponent'
   return MockDynamicComponent
 })
@@ -99,15 +101,18 @@ jest.mock('@/features/knowledge/document/components/KnowledgeSourcePreview', () 
     active,
     allowDownload,
     className,
+    protectedKnowledgeBaseId,
   }: {
     active: boolean
     allowDownload?: boolean
     className?: string
+    protectedKnowledgeBaseId?: number
   }) => (
     <div
       className={className}
       data-active={String(active)}
       data-allow-download={String(allowDownload)}
+      data-protected-knowledge-base-id={protectedKnowledgeBaseId}
       data-testid="mock-knowledge-source-preview"
     />
   ),
@@ -210,7 +215,135 @@ describe('DocumentDetailDialog permissions', () => {
   })
 })
 
+describe('DocumentDetailDialog external source info', () => {
+  const externalMeta = {
+    provider: 'dingtalk',
+    resource_id: 'node-1',
+    title: 'Spec Doc',
+    url: 'https://alidocs.dingtalk.com/i/nodes/node-1',
+    status: 'accessible',
+    last_success_at: '2026-08-26T10:00:00Z',
+  }
+  const externalDocument: KnowledgeDocument = {
+    ...baseDocument,
+    source_type: 'external',
+    external_provider: 'dingtalk',
+    source_config: { external: externalMeta },
+  }
+
+  it('shows provider, source link, last import time and accessibility', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={externalDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    const info = screen.getByTestId('external-source-info')
+    expect(info).toHaveTextContent('dingtalk')
+    expect(info).toHaveTextContent('Spec Doc')
+    expect(info).toHaveTextContent('document.document.externalSource.lastImportedAt')
+    const link = screen.getByTestId('external-source-link')
+    expect(link).toHaveAttribute('href', 'https://alidocs.dingtalk.com/i/nodes/node-1')
+    expect(link).toHaveClass('min-h-[44px]', 'min-w-[44px]', 'md:min-h-0', 'md:min-w-0')
+    // An accessible source never renders the inaccessible badge.
+    expect(screen.queryByTestId('external-source-inaccessible')).not.toBeInTheDocument()
+  })
+
+  it('marks an inaccessible source while keeping the snapshot metadata', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: {
+            external: {
+              ...externalMeta,
+              status: 'inaccessible',
+              last_error: 'node not found',
+            },
+          },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.getByTestId('external-source-inaccessible')).toBeInTheDocument()
+  })
+
+  it('hides the source info for regular documents', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={baseDocument}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    { ...externalMeta, provider: 123 },
+    { ...externalMeta, title: null },
+    { ...externalMeta, url: { unsafe: true } },
+  ])('hides invalid external source metadata', invalidExternalMeta => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...externalDocument,
+          source_config: { external: invalidExternalMeta },
+        }}
+        knowledgeBaseId={21}
+        kbType="notebook"
+      />
+    )
+
+    expect(screen.queryByTestId('external-source-info')).not.toBeInTheDocument()
+  })
+})
+
 describe('DocumentDetailDialog processing errors', () => {
+  it('shows stored external content alongside an indexing failure', () => {
+    render(
+      <DocumentDetailDialog
+        open={true}
+        onOpenChange={jest.fn()}
+        document={{
+          ...baseDocument,
+          attachment_id: 641,
+          source_type: 'external',
+          is_active: false,
+          index_status: 'failed',
+          processing_error: {
+            stage: 'indexing',
+            code: 'indexing_failed',
+            message: 'Indexing failed.',
+            retryable: true,
+            generation: 2,
+            occurred_at: '2026-08-27T04:00:47Z',
+          },
+        }}
+        knowledgeBaseId={21}
+      />
+    )
+
+    expect(screen.getByText('plain text content')).toBeInTheDocument()
+    expect(screen.getByTestId('document-processing-error-detail-11')).toBeInTheDocument()
+    expect(
+      screen.getByText('knowledge:document.document.processingError.codes.indexingFailed')
+    ).toBeInTheDocument()
+  })
+
   it('renders the localized message for a known public error code', () => {
     const failedDocument: KnowledgeDocument = {
       ...baseDocument,
@@ -303,24 +436,66 @@ describe('DocumentDetailDialog original file preview', () => {
     expect(sourceActions).not.toHaveClass('invisible')
   })
 
-  it('hides original-file download actions for organization knowledge bases', () => {
-    render(
-      <DocumentDetailDialog
-        open={true}
-        onOpenChange={jest.fn()}
-        document={officeDocument}
-        knowledgeBaseId={21}
-        isOrganization={true}
-      />
-    )
+  it.each(['file', 'external'] as const)(
+    'hides original-file download actions for organization %s documents',
+    sourceType => {
+      render(
+        <DocumentDetailDialog
+          open={true}
+          onOpenChange={jest.fn()}
+          document={{ ...officeDocument, source_type: sourceType }}
+          knowledgeBaseId={21}
+          isOrganization={true}
+        />
+      )
 
-    expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
-    expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
-    expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
-      'data-allow-download',
-      'false'
-    )
-  })
+      expect(screen.queryByTestId('knowledge-source-preview-download')).not.toBeInTheDocument()
+      expect(screen.getByTestId('knowledge-source-preview-fullscreen')).toBeInTheDocument()
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-allow-download',
+        'false'
+      )
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-protected-knowledge-base-id',
+        '21'
+      )
+    }
+  )
+
+  it.each(['pptx', 'xlsx'])(
+    'previews and downloads an imported %s without replacing its filename',
+    async extension => {
+      const user = userEvent.setup()
+      render(
+        <DocumentDetailDialog
+          open
+          onOpenChange={jest.fn()}
+          document={{
+            ...officeDocument,
+            source_type: 'external',
+            name: '导入资料',
+            file_extension: extension,
+          }}
+          knowledgeBaseId={21}
+        />
+      )
+
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-active',
+        'true'
+      )
+      await user.click(screen.getByTestId('knowledge-source-preview-download'))
+      expect(mockDownloadAttachment).toHaveBeenCalledWith(32)
+      await user.click(screen.getByTestId('knowledge-document-parsed-tab'))
+      expect(screen.getByTestId('mock-knowledge-source-preview')).toHaveAttribute(
+        'data-active',
+        'false'
+      )
+      expect(
+        screen.queryByRole('button', { name: 'document.document.detail.edit' })
+      ).not.toBeInTheDocument()
+    }
+  )
 
   it('shows derived summaries while protecting organization document content', async () => {
     const user = userEvent.setup()

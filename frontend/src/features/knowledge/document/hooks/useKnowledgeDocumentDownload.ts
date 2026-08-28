@@ -26,7 +26,12 @@ export function useKnowledgeDocumentDownload() {
       name: string
       source_type: string
     }): Promise<void> => {
-      if (document.source_type !== 'file' || !document.attachment_id) return
+      if (!document.attachment_id) return
+      if (document.source_type === 'external') {
+        await downloadAttachment(document.attachment_id)
+        return
+      }
+      if (document.source_type !== 'file') return
 
       if (isVideoFileName(document.name)) {
         let downloader = getKnowledgeVideoDownloader()

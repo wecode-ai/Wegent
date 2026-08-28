@@ -4,7 +4,8 @@
 
 'use client'
 
-import { BookOpen, FileText, Info, AlertTriangle, RefreshCw, Pencil } from 'lucide-react'
+import { FileText, Info, AlertTriangle, RefreshCw, Pencil } from 'lucide-react'
+import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 import type { KnowledgeBase } from '@/types/knowledge'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
@@ -66,7 +67,7 @@ export function KnowledgeBaseSummaryCard({
           {/* Header with icon and name */}
           <div className="flex items-start gap-3">
             <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <BookOpen className="w-5 h-5 text-primary" />
+              <KnowledgeBaseIcon kbType={knowledgeBase.kb_type} className="w-5 h-5" />
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="text-base font-semibold text-text-primary truncate">

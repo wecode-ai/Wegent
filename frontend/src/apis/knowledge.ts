@@ -154,6 +154,56 @@ export async function createDocument(
   return apiClient.post<KnowledgeDocument>(`/knowledge-bases/${knowledgeBaseId}/documents`, data)
 }
 
+export interface ExternalDocumentBatchImportRequest {
+  provider: string
+  external_resource_ids: string[]
+  folder_id?: number
+}
+
+export type ExternalDocumentImportStatuses = Record<string, KnowledgeDocument['index_status']>
+
+/** Check candidates across the entire KB, without a folder or listing-page filter. */
+export async function getExternalDocumentImportStatuses(
+  knowledgeBaseId: number,
+  provider: string,
+  resourceIds: string[]
+): Promise<ExternalDocumentImportStatuses> {
+  const ids = [...new Set(resourceIds)]
+  const statuses: ExternalDocumentImportStatuses = {}
+  // Bound requests to the server's lookup limit, not the 50-document import limit.
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const batch = await apiClient.post<ExternalDocumentImportStatuses>(
+      `/knowledge-bases/${knowledgeBaseId}/documents/external-import-status`,
+      { provider, external_resource_ids: ids.slice(offset, offset + 500) }
+    )
+    Object.assign(statuses, batch)
+  }
+  return statuses
+}
+
+export interface ExternalDocumentBatchImportResult {
+  created: KnowledgeDocument[]
+  updated: KnowledgeDocument[]
+  processing: KnowledgeDocument[]
+  requested_count: number
+}
+
+/**
+ * Import several external provider documents into a knowledge base.
+ *
+ * Creates one placeholder per new external resource, refreshes settled copies
+ * in place, and reports copies whose existing attempt is still processing.
+ */
+export async function importExternalDocumentBatch(
+  knowledgeBaseId: number,
+  data: ExternalDocumentBatchImportRequest
+): Promise<ExternalDocumentBatchImportResult> {
+  return apiClient.post<ExternalDocumentBatchImportResult>(
+    `/knowledge-bases/${knowledgeBaseId}/documents/external-import-batch`,
+    data
+  )
+}
+
 /** Get the latest metadata and processing state for one document. */
 export async function getDocument(
   documentId: number,
@@ -280,6 +330,19 @@ export async function reindexDocument(
   return apiClient.post<DocumentReindexResponse>(
     `/knowledge-documents/${documentId}/reindex`,
     body ?? {}
+  )
+}
+
+/**
+ * Retry the background import of one external document record.
+ *
+ * Dedicated entry for external imports: a failed import has no valid
+ * attachment, so the ordinary reindex flow does not apply. The backend
+ * reuses the same document row and re-dispatches the import task.
+ */
+export async function retryExternalDocumentImport(documentId: number): Promise<KnowledgeDocument> {
+  return apiClient.post<KnowledgeDocument>(
+    `/knowledge-documents/${documentId}/external-import/retry`
   )
 }
 
