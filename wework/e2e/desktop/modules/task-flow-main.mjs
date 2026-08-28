@@ -1107,6 +1107,7 @@ async function main() {
       CODEX_BIN: resolvedAppCodexBinary,
       CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
+      WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',

@@ -39,6 +39,8 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
+const PRIORITY_FILTER_SHORTCUT = process.platform === 'darwin' ? 'Meta+Alt+U' : 'Control+Alt+U'
+
 async function verifyPriorityFilter({ composerSelector, control }) {
   let requestInputResponseReleased = false
   control.setScenario('request_user_input')
@@ -149,11 +151,11 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await captureVerificationScreenshot(control, 'priority-filter-03-handled-task-settled.png')
 
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('press', 'body', { key: PRIORITY_FILTER_SHORTCUT })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('press', 'body', { key: PRIORITY_FILTER_SHORTCUT })
     await control.command('waitFor', '[data-testid="runtime-priority-empty"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
@@ -167,7 +169,7 @@ async function verifyPriorityFilter({ composerSelector, control }) {
     )
     await captureVerificationScreenshot(control, 'priority-filter-04-reopened-task-in-recent.png')
 
-    await control.command('press', 'body', { key: 'Meta+Alt+U' })
+    await control.command('press', 'body', { key: PRIORITY_FILTER_SHORTCUT })
     await control.command('waitFor', '[data-testid="projects-section-toggle"]', {
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })

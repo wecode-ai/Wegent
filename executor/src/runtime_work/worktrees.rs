@@ -1140,7 +1140,16 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
     let value = path.to_str().ok_or("Invalid worktree path")?;
-    git_output(path, &["worktree", "remove", "--force", value], None).map(|_| ())
+    let common_dir = git_common_dir(path)?;
+    let mut command = Command::new("git");
+    command
+        .arg("--git-dir")
+        .arg(common_dir)
+        .args(["worktree", "remove", "--force", value]);
+    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
+    command_result(output).map(|_| ())
 }
 
 fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {

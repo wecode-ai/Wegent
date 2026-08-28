@@ -285,6 +285,13 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+      if (
+        Number(
+          await control.command('getElementCount', '[data-testid="environment-info-popover"]')
+        ) === 0
+      ) {
+        await control.command('click', ENVIRONMENT_BUTTON)
+      }
       await control.command('waitFor', '[data-testid="environment-info-popover"]')
       await capture(control, 'change-request-status-01-task-created.png')
 

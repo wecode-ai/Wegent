@@ -622,6 +622,7 @@ jobs:
           $redisRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Run Windows Wework desktop Core shard E2E
+        shell: pwsh
         env:
           CI: true
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
@@ -632,12 +633,17 @@ jobs:
           WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
-          test -f "$WEWORK_E2E_APP_BIN"
-          test -f "$WEWORK_E2E_EXECUTOR_BIN"
-          test -f "$WEWORK_E2E_CODEX_BIN"
-          test -f "$(dirname "$WEWORK_E2E_APP_BIN")/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"
-          node wework/e2e/desktop/run-checkpoints.mjs \
-            --parallel-segments "$WEWORK_E2E_SEGMENTS"
+          foreach ($path in @(
+            $env:WEWORK_E2E_APP_BIN,
+            $env:WEWORK_E2E_EXECUTOR_BIN,
+            $env:WEWORK_E2E_CODEX_BIN,
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
+          )) {
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Missing Windows Wework desktop E2E resource: $path"
+            }
+          }
+          node wework/e2e/desktop/run-checkpoints.mjs --parallel-segments $env:WEWORK_E2E_SEGMENTS
 
       - name: Prune transient Wework desktop E2E caches
         if: always()

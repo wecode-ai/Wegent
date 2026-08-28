@@ -3251,7 +3251,7 @@ class DesktopE2EServer {
         assistantMessage(
           FILE_PANEL_ANCHOR_RESPONSE.replace(
             `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
-            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+            `${encodeURI(`${this.workspacePath.replaceAll('\\', '/')}/${FILE_PANEL_LINK_NAME}`)}:1`
           )
         ),
         responseCompleted(responseId),
@@ -3444,9 +3444,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'pasted_workspace_paths') {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'

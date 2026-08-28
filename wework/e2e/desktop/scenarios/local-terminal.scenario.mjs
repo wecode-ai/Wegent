@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 
+import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -15,7 +14,6 @@ import {
 const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const CENTRAL_HARNESS_SELECTOR = '[data-testid="central-harness-terminal"]'
-const execFileAsync = promisify(execFile)
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 const HARNESS_BIN_DIR = join(REPOSITORY_ROOT, '.github', 'claude-code-cli', 'node_modules', '.bin')
 const CLAUDE_PARALLEL_TOOL_PROMPT = 'Run the parallel Claude tool regression'
@@ -50,17 +48,16 @@ const HARNESS_PROMPT_MATCHERS = [
 
 async function resolveHarnessExecutables() {
   const executables = {
-    openCodeExecutable: join(HARNESS_BIN_DIR, 'opencode'),
-    claudeCodeExecutable: join(HARNESS_BIN_DIR, 'claude'),
-    kimiCodeExecutable: join(HARNESS_BIN_DIR, 'kimi'),
+    openCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'opencode'),
+    claudeCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'claude'),
+    kimiCodeExecutable: localHarnessCliPath(HARNESS_BIN_DIR, 'kimi'),
   }
   await Promise.all(
     Object.values(executables).map(executablePath => access(executablePath, constants.X_OK))
   )
   const versions = await Promise.all(
     Object.values(executables).map(async executablePath => {
-      const { stdout } = await execFileAsync(executablePath, ['--version'])
-      const firstLine = stdout.trim().split('\n')[0] ?? ''
+      const firstLine = await localHarnessCliVersion(executablePath)
       const match = firstLine.match(/\d+\.\d+\.\d+/)
       return match ? match[0] : firstLine
     })

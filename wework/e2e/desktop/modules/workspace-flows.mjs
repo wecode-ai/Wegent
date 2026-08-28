@@ -960,6 +960,7 @@ async function verifyTrackedTaskSettledStatus(control) {
   const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('scrollIntoView', reviewColumnSelector)
   await control.command('waitFor', reviewColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,

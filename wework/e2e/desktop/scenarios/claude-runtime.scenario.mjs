@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 
+import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -19,12 +18,8 @@ const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR = `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${
 const COMPOSER_SELECTOR = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_PROJECT_WORK_BUTTON = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-const CLAUDE_BINARY = join(
-  REPOSITORY_ROOT,
-  '.github',
-  'claude-code-cli',
-  'node_modules',
-  '.bin',
+const CLAUDE_BINARY = localHarnessCliPath(
+  join(REPOSITORY_ROOT, '.github', 'claude-code-cli', 'node_modules', '.bin'),
   'claude'
 )
 const MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
@@ -48,8 +43,6 @@ const LOCAL_ARTIFACT = 'claude-local-e2e.txt'
 const LOCAL_ARTIFACT_CONTENT = 'WEWORK_CLAUDE_LOCAL_ARTIFACT'
 const REMOTE_ARTIFACT = 'claude-remote-e2e.txt'
 const REMOTE_ARTIFACT_CONTENT = 'WEWORK_CLAUDE_REMOTE_ARTIFACT'
-const execFileAsync = promisify(execFile)
-
 function sse(response, events) {
   response.writeHead(200, {
     'cache-control': 'no-cache',
@@ -339,12 +332,18 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   await access(CLAUDE_BINARY, constants.X_OK)
-  const { stdout } = await execFileAsync(CLAUDE_BINARY, ['--version'])
-  const claudeVersion = stdout.trim().split('\n')[0]
-  const localClaudeAlias = join(resultDir, 'local-claude')
+  const claudeVersion = await localHarnessCliVersion(CLAUDE_BINARY)
+  const localClaudeAlias = join(
+    resultDir,
+    process.platform === 'win32' ? 'local-claude.cmd' : 'local-claude'
+  )
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
   await rm(localClaudeAlias, { force: true })
-  await symlink(CLAUDE_BINARY, localClaudeAlias)
+  if (process.platform === 'win32') {
+    await writeFile(localClaudeAlias, `@echo off\r\ncall "${CLAUDE_BINARY}" %*\r\n`, 'utf8')
+  } else {
+    await symlink(CLAUDE_BINARY, localClaudeAlias)
+  }
   await mkdir(remoteWorkspacePath, { recursive: true })
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
