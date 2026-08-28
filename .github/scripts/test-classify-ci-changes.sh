@@ -935,6 +935,8 @@ wework_windows_desktop_core_build_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"github.event_name != 'merge_group'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"github.event.action == 'labeled'"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
   [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
@@ -951,6 +953,8 @@ wework_windows_desktop_core_job="$(
     "$wework_workflow"
 )"
 if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"github.event_name != 'merge_group'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"github.event.action == 'labeled'"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
   [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
@@ -974,6 +978,16 @@ if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name !=
   [[ "$wework_summary_job" == *"RUN_DESKTOP_CLOUD_E2E: \${{ github.event_name != 'pull_request' ||"* ]] ||
   [[ "$wework_summary_job" == *"RUN_DESKTOP_OTHER_E2E: \${{ github.event_name != 'pull_request' ||"* ]]; then
   printf 'Wework E2E summary must honor merge-group change classification\n' >&2
+  exit 1
+fi
+if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  printf 'Wework E2E summary must check Windows Core only when explicitly scheduled\n' >&2
+  exit 1
+fi
+
+if grep -q '^  push:' "$wework_workflow"; then
+  printf 'Wework E2E must not run the full suite after every main push\n' >&2
   exit 1
 fi
 

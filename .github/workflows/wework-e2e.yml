@@ -62,7 +62,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
-          FORCE_ALL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
@@ -416,7 +416,7 @@ jobs:
     name: Build Windows Wework Desktop Core E2E Artifact
     needs:
       - changes
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -552,7 +552,7 @@ jobs:
     needs:
       - changes
       - build-wework-desktop-windows-core-e2e
-    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
     runs-on: windows-latest
     timeout-minutes: 60
     strategy:
@@ -878,6 +878,7 @@ jobs:
         env:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
@@ -898,6 +899,7 @@ jobs:
 
           if [[ "$RUN_E2E" != "true" && \
             "$RUN_DESKTOP_CORE_E2E" != "true" && \
+            "$RUN_WINDOWS_DESKTOP_CORE_E2E" != "true" && \
             "$RUN_DESKTOP_CLOUD_E2E" != "true" && \
             "$RUN_DESKTOP_OTHER_E2E" != "true" && \
             "$RUN_MACOS_INSPECTOR_E2E" != "true" ]]; then
@@ -930,13 +932,13 @@ jobs:
             exit 1
           fi
 
-          if [[ "$RUN_DESKTOP_CORE_E2E" == "true" && \
+          if [[ "$RUN_WINDOWS_DESKTOP_CORE_E2E" == "true" && \
             "$WINDOWS_DESKTOP_CORE_BUILD_RESULT" != "success" ]]; then
             echo "Windows Wework desktop Core E2E build completed with: $WINDOWS_DESKTOP_CORE_BUILD_RESULT"
             exit 1
           fi
 
-          if [[ "$RUN_DESKTOP_CORE_E2E" == "true" && \
+          if [[ "$RUN_WINDOWS_DESKTOP_CORE_E2E" == "true" && \
             "$WINDOWS_DESKTOP_CORE_E2E_RESULT" != "success" ]]; then
             echo "Windows Wework desktop Core E2E completed with: $WINDOWS_DESKTOP_CORE_E2E_RESULT"
             exit 1
