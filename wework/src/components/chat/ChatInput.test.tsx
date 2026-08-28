@@ -1908,7 +1908,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-menu-speed')).not.toHaveTextContent('⚡')
   })
 
-  test('shows an empty state when no desktop models are available', async () => {
+  test('offers model setup actions when no desktop models are available', async () => {
     render(
       <ChatInput
         value=""
@@ -1923,10 +1923,12 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
-
-    expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
+    expect(screen.getByTestId('model-selector-empty-state')).toHaveTextContent(
+      'Add a custom model, or sign in to Wegent to sync cloud models.'
+    )
+    expect(screen.getByTestId('model-selector-add-custom-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-login-cloud')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-model')).not.toBeInTheDocument()
   })
 
   test('closes the desktop model menu only from its trigger, outside click, or Escape', async () => {
