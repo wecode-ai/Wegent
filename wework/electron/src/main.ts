@@ -44,6 +44,7 @@ import {
   EmbeddedBrowserManager,
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
+import { ComputerUseService } from './host/computer-use-service.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import {
   WorkbenchTabController,
@@ -117,6 +118,7 @@ let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let popoutWindow: BrowserWindow | null = null
@@ -901,8 +903,11 @@ async function shutdown(): Promise<void> {
   workbenchPlugins = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
+  const computerUseService = computerUse
+  computerUse = null
   await Promise.allSettled([
     browserBridge?.stop(),
+    computerUseService?.stop(),
     plugins?.shutdown(),
     workbenchTabs?.stop(),
     desktopRuntime?.stop(),
@@ -950,6 +955,11 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   await embeddedBrowserBridge.start()
+  computerUse = new ComputerUseService(
+    environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+  )
+  const savedPreferences = await preferences.read()
+  await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -986,6 +996,7 @@ async function configureDesktopRuntime(): Promise<void> {
         preferences,
         rendererStorage,
         embeddedBrowser,
+        computerUse,
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,

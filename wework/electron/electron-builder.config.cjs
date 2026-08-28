@@ -26,7 +26,7 @@ module.exports = {
   },
   files: ['dist/**/*', 'package.json'],
   asar: true,
-  asarUnpack: ['**/*.node'],
+  asarUnpack: ['**/*.{node,dylib,so,dll}'],
   extraResources: [
     { from: 'resources/harness-runtime', to: 'harness-runtime' },
     { from: 'resources/bin', to: 'bin' },
@@ -34,6 +34,7 @@ module.exports = {
     { from: 'resources/wework-core-plugins', to: 'wework-core-plugins' },
     { from: 'resources/components.json', to: 'components.json' },
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
+    { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
   ],
   publish: {

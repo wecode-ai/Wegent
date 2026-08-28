@@ -3308,6 +3308,55 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
 }
 
 #[test]
+fn codex_launch_config_includes_computer_use_mcp_server() {
+    let _lock = crate::test_env::lock();
+    let home = unique_test_path("codex-computer-use-mcp");
+    let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    let _bridge_addr = EnvRestore::capture(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    let _bridge_token = EnvRestore::capture(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
+    env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
+    fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
+        .expect("runtime directory should be created");
+    fs::write(
+        &runtime_path,
+        br#"{"address":"127.0.0.1:43128","token":"computer-use-test-token"}"#,
+    )
+    .expect("computer use runtime record should be written");
+
+    let request = ExecutionRequest::default();
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
+    assert_eq!(
+        config["mcp_servers.wework_computer.command"],
+        env::current_exe().unwrap().display().to_string()
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.args"],
+        json!(["computer-use-mcp-server"])
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.default_tools_approval_mode"],
+        "writes"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_URL"],
+        "http://127.0.0.1:43128"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
+        "computer-use-test-token"
+    );
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
 fn codex_thread_binds_project_space_through_context_grant() {
     let mut request = ExecutionRequest {
         task_id: "runtime-task-1".to_owned(),

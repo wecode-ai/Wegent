@@ -15,6 +15,7 @@ core_segments=(
   project-ai-settings
   model-routing
   permission-modes
+  computer-use
   core-task-flow
   task-attachments
   window-lifecycle
@@ -124,7 +125,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
-  model-routing
+  model-routing,computer-use
 )
 
 validate_core_shards() {
@@ -496,6 +497,17 @@ classify_wework_path() {
       select_target "core:embedded-browser"
       select_target "core:browser-toolbar-actions"
       macos_inspector_e2e=true
+      return
+      ;;
+
+    # Computer use spans the settings UI, Electron-native CUA bridge, and Codex MCP routing.
+    wework/electron/src/host/computer-use-service* | \
+      wework/src/components/settings/ComputerUseSettingsPage* | \
+      wework/src/desktop/computerUse* | \
+      wework/src/features/computer-use/* | \
+      wework/e2e/desktop/scenarios/computer-use.scenario.mjs | \
+      executor/src/computer_use_mcp.rs)
+      select_target "core:computer-use"
       return
       ;;
 
