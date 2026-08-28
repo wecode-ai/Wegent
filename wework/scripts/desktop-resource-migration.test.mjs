@@ -79,6 +79,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain("'--config.node-linker=hoisted'")
     expect(source).toContain("'deploy',")
     expect(source).toContain("'--prod',")
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
     expect(source).not.toContain("'--legacy'")
     expect(source).not.toContain("'npm',")
     expect(source).not.toContain("'install', '--omit=dev'")

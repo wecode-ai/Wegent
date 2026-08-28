@@ -15,6 +15,7 @@ const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const identity = resolveBuildIdentity()
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -27,7 +28,7 @@ await Promise.all([
   rm(staging, { recursive: true, force: true }),
 ])
 await run(
-  'pnpm',
+  pnpmCommand,
   [
     '--config.inject-workspace-packages=true',
     '--config.node-linker=hoisted',
