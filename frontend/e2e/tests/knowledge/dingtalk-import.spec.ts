@@ -92,12 +92,8 @@ test.describe('External DingTalk document import', () => {
         .getByTestId(`dingtalk-folder-navigate-${EXTERNAL_IMPORT_NODES.formatsRoot}`)
         .click()
 
-      await expect(
-        page.getByTestId(`dingtalk-node-unsupported-${EXTERNAL_IMPORT_NODES.sheet}`)
-      ).toBeVisible()
-      await expect(
-        page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.sheet}`)
-      ).toHaveCount(0)
+      const sheet = page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.sheet}`)
+      await expect(sheet).toBeEnabled()
       await expect(
         page.getByTestId(`dingtalk-node-configure-${EXTERNAL_IMPORT_NODES.table}`)
       ).toBeVisible()
@@ -110,6 +106,12 @@ test.describe('External DingTalk document import', () => {
       await expect(pdf).toHaveAttribute('aria-checked', 'true')
       await pdf.click()
       await expect(pdf).toHaveAttribute('aria-checked', 'false')
+      await sheet.click()
+      await page.getByTestId('dingtalk-import-submit').click()
+      await expect(page.getByTestId('dingtalk-import-error')).toContainText(
+        /钉钉表格 MCP|DingTalk Table MCP/
+      )
+      await expect(page.getByTestId('dingtalk-import-result')).toHaveCount(0)
       await page.getByTestId('dingtalk-import-cancel').click()
       expect(await listDocuments(request, context.token, context.knowledgeBaseId)).toEqual([])
     })

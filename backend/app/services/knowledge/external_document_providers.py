@@ -35,6 +35,10 @@ from shared.telemetry.decorators import trace_async
 logger = logging.getLogger(__name__)
 
 EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS = 180
+_SPREADSHEET_MCP_SERVICES = {
+    "able": ("ai_table", "AI Table"),
+    "axls": ("table", "Table"),
+}
 
 
 class ExternalDocumentImportError(Exception):
@@ -223,12 +227,13 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
             )
         if (
             node.content_type.strip().upper() == "ALIDOC"
-            and node.extension == "able"
-            and not DingTalkDocService.get_user_dingtalk_mcp_url(user, "ai_table")
+            and node.extension in _SPREADSHEET_MCP_SERVICES
         ):
-            raise ExternalDocumentImportError(
-                "DingTalk AI Table MCP is not configured or not enabled. Configure it in Settings > Integrations."
-            )
+            service, label = _SPREADSHEET_MCP_SERVICES[node.extension]
+            if not DingTalkDocService.get_user_dingtalk_mcp_url(user, service):
+                raise ExternalDocumentImportError(
+                    f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."
+                )
         return {
             "provider": self.provider_id,
             "resource_id": node.dingtalk_node_id,
@@ -307,14 +312,19 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
                     )
                 return "md", markdown.encode("utf-8")
             if str(info.get("contentType")).strip().upper() == "ALIDOC":
-                ai_table_url = DingTalkDocService.get_user_dingtalk_mcp_url(
-                    user, "ai_table"
-                )
-                if not ai_table_url:
+                source_extension = str(info.get("extension")).strip().lower()
+                service, label = _SPREADSHEET_MCP_SERVICES[source_extension]
+                export_url = DingTalkDocService.get_user_dingtalk_mcp_url(user, service)
+                if not export_url:
                     raise ExternalDocumentFetchError(
-                        "DingTalk AI Table MCP is not configured or not enabled. Configure it in Settings > Integrations."
+                        f"DingTalk {label} MCP is not configured or not enabled. Configure it in Settings > Integrations."
                     )
-                return "xlsx", await self._export_ai_table(ai_table_url, node_id)
+                export = (
+                    self._export_sheet
+                    if source_extension == "axls"
+                    else self._export_ai_table
+                )
+                return "xlsx", await export(export_url, node_id)
             payload = self._parse_mcp_response(
                 await session.call_tool("download_file", {"nodeId": node_id}),
                 "download_file",
@@ -322,6 +332,35 @@ class DingTalkExternalDocumentProvider(ExternalDocumentProvider):
         urls = payload.get("resourceUrl")
         url = urls[0] if isinstance(urls, list) and urls else urls
         return extension, await download_content(url, payload.get("headers"))
+
+    async def _export_sheet(self, url: str, node_id: str) -> bytes:
+        """Export one workbook within fetch_content's existing timeout budget."""
+        async with open_dingtalk_session(url) as session:
+            submitted = self._parse_mcp_response(
+                await session.call_tool(
+                    "submit_export_job", {"nodeId": node_id, "exportFormat": "xlsx"}
+                ),
+                "submit_export_job",
+            )
+            job_id = submitted.get("jobId")
+            if not isinstance(job_id, str) or not job_id.strip():
+                raise ExternalDocumentFetchError(
+                    "DingTalk sheet export returned no job ID"
+                )
+            while True:
+                result = self._parse_mcp_response(
+                    await session.call_tool("query_export_job", {"jobId": job_id}),
+                    "query_export_job",
+                )
+                if result.get("jobId") != job_id:
+                    raise ExternalDocumentFetchError(
+                        "DingTalk sheet export job identity changed"
+                    )
+                if result.get("status") in {"failed", "error"}:
+                    raise ExternalDocumentFetchError("DingTalk sheet export failed")
+                if result.get("status") == "success" and result.get("downloadUrl"):
+                    return await download_content(result["downloadUrl"])
+                await asyncio.sleep(2)
 
     async def _export_ai_table(self, url: str, node_id: str) -> bytes:
         """Export one Base snapshot, resuming the same job within a bounded budget."""

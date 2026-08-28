@@ -17,7 +17,7 @@ def get_import_extension(node: dict[str, Any]) -> str | None:
     if kind == "folder":
         return None
     if content_type == "ALIDOC":
-        return {"adoc": "md", "able": "xlsx"}.get(extension)
+        return {"adoc": "md", "able": "xlsx", "axls": "xlsx"}.get(extension)
     if kind == "file" and content_type and extension in DOWNLOAD_EXTENSIONS:
         return extension
     return None

@@ -79,6 +79,7 @@ jest.mock('@/hooks/useTranslation', () => ({
         'document.upload.dingtalk.resultSeparator': ', ',
         'document.upload.dingtalk.done': 'Done',
         'document.upload.dingtalk.addFailed': 'Failed to import',
+        'document.upload.dingtalk.tableNotConfigured': dingtalk.tableNotConfigured,
         'document.upload.dingtalk.submitButton': 'Import',
         'document.upload.dingtalk.selectAll': 'Select all',
         'document.upload.dingtalk.clearSelection': 'Clear selection',
@@ -276,7 +277,7 @@ describe('DocumentUpload dingtalk source', () => {
         screen.getByTestId(`dingtalk-node-name-${extension}`).querySelector('svg')
       ).toHaveClass(...iconClasses)
     }
-    expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
+    expect(screen.getByTestId('dingtalk-node-select-axls')).toBeEnabled()
     expect(screen.queryByTestId('dingtalk-node-select-mp3')).not.toBeInTheDocument()
   })
 
@@ -321,7 +322,7 @@ describe('DocumentUpload dingtalk source', () => {
       const syncNodes = source === 'docs' ? mockSyncDocs : mockSyncWikispaceNodes
       const staleNodes = [
         docNode('legacy', 'Legacy Doc', { source, extension: '' }),
-        docNode('unsupported', 'Unsupported Doc', { source, extension: 'axls' }),
+        docNode('unsupported', 'Unsupported Doc', { source, extension: 'appt' }),
         docNode('missing-type', 'Missing Type', { source, content_type: '' }),
       ]
       getNodes.mockResolvedValueOnce({ nodes: staleNodes, total_count: 3 }).mockResolvedValue({
@@ -394,7 +395,7 @@ describe('DocumentUpload dingtalk source', () => {
       fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
       await waitFor(() => expect(onImport).toHaveBeenCalled())
       expect(onImport.mock.calls[0][0]).toEqual(
-        aiConfigured ? ['doc', 'pdf', 'base'] : ['doc', 'pdf']
+        aiConfigured ? ['doc', 'pdf', 'base', 'sheet'] : ['doc', 'pdf', 'sheet']
       )
     }
   )
@@ -1171,27 +1172,40 @@ describe('DocumentUpload dingtalk source', () => {
     }
   })
 
-  it('keeps the dialog open and shows the error when the import fails', async () => {
-    mockGetDocs.mockResolvedValue({ nodes: [docNode('doc-9', 'Failing Doc')], total_count: 1 })
-    const onDingtalkImport = jest.fn().mockRejectedValue('conflict')
+  it.each([
+    ['conflict', 'Failed to import'],
+    [
+      new Error(
+        'DingTalk Table MCP is not configured or not enabled. Configure it in Settings > Integrations.'
+      ),
+      'Configure and enable DingTalk Table MCP in Settings > Integrations first.',
+    ],
+  ])(
+    'keeps the dialog open and shows the error when the import fails (%s)',
+    async (error, message) => {
+      mockGetDocs.mockResolvedValue({ nodes: [docNode('doc-9', 'Failing Doc')], total_count: 1 })
+      const onDingtalkImport = jest.fn().mockRejectedValue(error)
 
-    render(
-      <DocumentUpload
-        knowledgeBaseId={42}
-        open={true}
-        onOpenChange={jest.fn()}
-        onUploadComplete={jest.fn()}
-        onDingtalkImport={onDingtalkImport}
-      />
-    )
-    fireEvent.click(screen.getByTestId('dingtalk-source-button'))
-    fireEvent.click(await screen.findByTestId('dingtalk-node-select-doc-9'))
-    fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+      render(
+        <DocumentUpload
+          knowledgeBaseId={42}
+          open={true}
+          onOpenChange={jest.fn()}
+          onUploadComplete={jest.fn()}
+          onDingtalkImport={onDingtalkImport}
+        />
+      )
+      fireEvent.click(screen.getByTestId('dingtalk-source-button'))
+      fireEvent.click(await screen.findByTestId('dingtalk-node-select-doc-9'))
+      fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
 
-    await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent('Failed to import')
-    expect(screen.queryByTestId('dingtalk-import-result')).not.toBeInTheDocument()
-  })
+      await waitFor(() => expect(onDingtalkImport).toHaveBeenCalledTimes(1))
+      expect(await screen.findByTestId('dingtalk-import-error')).toHaveTextContent(
+        message as string
+      )
+      expect(screen.queryByTestId('dingtalk-import-result')).not.toBeInTheDocument()
+    }
+  )
 
   it.each(['docs', 'wikispace'])('offers configuration for unavailable %s', async source => {
     mockGetSyncStatus.mockResolvedValue({ is_configured: false, total_nodes: 0 })

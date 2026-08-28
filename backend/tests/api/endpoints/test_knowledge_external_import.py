@@ -616,13 +616,15 @@ class TestImportExternalDocumentBatch:
 
         assert response.status_code == 403
 
-    def test_rejects_non_document_node_without_partial_import(
+    @pytest.mark.parametrize("unconfigured_sheet", [False, True])
+    def test_rejects_invalid_or_unconfigured_node_without_partial_import(
         self,
         import_client: TestClient,
         test_db: Session,
         test_user: User,
         configured_dingtalk: None,
         dispatched: list[int],
+        unconfigured_sheet: bool,
     ) -> None:
         kb_id = _create_kb(test_db, test_user.id)
         doc_node = _create_synced_node(
@@ -631,6 +633,10 @@ class TestImportExternalDocumentBatch:
         file_node = _create_synced_node(
             test_db, test_user.id, "jj" * 16, name="Bin File", node_type="file"
         )
+        if unconfigured_sheet:
+            file_node.content_type = "ALIDOC"
+            file_node.raw_metadata = {"extension": "axls"}
+            test_db.commit()
 
         response = import_client.post(
             f"/knowledge-bases/{kb_id}/documents/external-import-batch",
@@ -640,6 +646,8 @@ class TestImportExternalDocumentBatch:
         )
 
         assert response.status_code == 400
+        if unconfigured_sheet:
+            assert "DingTalk Table MCP is not configured" in response.json()["detail"]
         assert dispatched == []
         documents = test_db.query(KnowledgeDocument).count()
         assert documents == 0

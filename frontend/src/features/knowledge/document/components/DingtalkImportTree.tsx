@@ -35,7 +35,11 @@ function isAiTable(node: DingtalkDocNode): boolean {
 
 function isImportable(node: DingtalkDocNode, aiTableConfigured: boolean): boolean {
   if (node.node_type === 'folder') return false
-  if (node.content_type.toUpperCase() === 'ALIDOC' && node.extension === 'adoc') return true
+  if (
+    node.content_type.toUpperCase() === 'ALIDOC' &&
+    ['adoc', 'axls'].includes(node.extension ?? '')
+  )
+    return true
   if (isAiTable(node)) return aiTableConfigured
   return (
     node.node_type === 'file' &&

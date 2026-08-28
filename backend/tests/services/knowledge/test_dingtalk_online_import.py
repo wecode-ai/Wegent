@@ -47,7 +47,7 @@ async def test_signed_download_does_not_log_credentials(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -77,14 +77,19 @@ async def test_signed_download_does_not_log_credentials(
     }
     async with server:
         with caplog.at_level(logging.INFO):
-            content = await ai_source.fetch_content(test_db, test_user, "base-1")
+            content = await spreadsheet_source.fetch_content(
+                test_db, test_user, "base-1"
+            )
     assert content.content == b"data"
     assert "private-download-token" not in caplog.text
 
 
 @pytest.fixture
-async def ai_source(
-    test_db: Session, test_user: User, docs_mcp: McpFixture
+async def spreadsheet_source(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    request: pytest.FixtureRequest,
 ) -> DingTalkExternalDocumentProvider:
     responses, _ = docs_mcp
     info = {
@@ -93,7 +98,7 @@ async def ai_source(
         "name": "Base",
         "nodeType": "file",
         "contentType": "ALIDOC",
-        "extension": "able",
+        "extension": getattr(request, "param", "able"),
     }
     responses["list_nodes"] = {"success": True, "nodes": [info]}
     responses["get_document_info"] = info
@@ -103,30 +108,37 @@ async def ai_source(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "spreadsheet_source,service_id,label",
+    [("able", "ai_table", "AI Table"), ("axls", "table", "Table")],
+    indirect=["spreadsheet_source"],
+)
+@pytest.mark.parametrize(
     "config", [{}, {"enabled": False, "url": "https://mcp.example.test/ai"}]
 )
-async def test_missing_ai_configuration_does_not_block_text_import(
+async def test_missing_export_configuration_does_not_block_text_import(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
     online_source: DingTalkExternalDocumentProvider,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     monkeypatch: pytest.MonkeyPatch,
     config: dict,
+    service_id: str,
+    label: str,
 ) -> None:
     responses, _ = docs_mcp
     monkeypatch.setattr(
         "app.services.user_mcp_service.UserMCPService.get_provider_service_config",
         lambda *args, **kwargs: (
             config
-            if kwargs["service_id"] == "ai_table"
+            if kwargs["service_id"] == service_id
             else {"enabled": True, "url": "https://mcp.example.test/docs"}
         ),
     )
     with pytest.raises(
-        ExternalDocumentImportError, match="AI Table MCP is not configured"
+        ExternalDocumentImportError, match=f"{label} MCP is not configured"
     ):
-        ai_source.resolve_importable(test_db, test_user, "base-1")
+        spreadsheet_source.resolve_importable(test_db, test_user, "base-1")
     # The directory fixture above refreshes the cache; restore a text node through sync.
     info = {
         "success": True,
@@ -163,14 +175,14 @@ async def test_invalid_export_results_are_not_downloaded(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     signed_download: list,
     data: dict,
 ) -> None:
     responses, session = docs_mcp
     responses["export_data"] = {"status": "success", "data": data}
     with pytest.raises(ExternalDocumentFetchError):
-        await ai_source.fetch_content(test_db, test_user, "base-1")
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
     assert signed_download == []
     assert (
         sum(c.args[0] == "export_data" for c in session.call_tool.await_args_list) == 1
@@ -183,7 +195,7 @@ async def test_export_polling_is_bounded_without_restarting_job(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     monkeypatch: pytest.MonkeyPatch,
     status: str,
 ) -> None:
@@ -196,7 +208,7 @@ async def test_export_polling_is_bounded_without_restarting_job(
         "app.services.knowledge.external_document_providers.asyncio.sleep", AsyncMock()
     )
     with pytest.raises(ExternalDocumentFetchError, match="timed out"):
-        await ai_source.fetch_content(test_db, test_user, "base-1")
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
     calls = [
         c.args[1]
         for c in session.call_tool.await_args_list
@@ -212,7 +224,7 @@ async def test_export_rejects_changed_or_missing_task_identity(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     signed_download: list,
     response_id: str | None,
 ) -> None:
@@ -232,7 +244,7 @@ async def test_export_rejects_changed_or_missing_task_identity(
     }
 
     with pytest.raises(ExternalDocumentFetchError, match="task identity changed"):
-        await ai_source.fetch_content(test_db, test_user, "base-1")
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
     assert signed_download == []
 
 
@@ -242,7 +254,7 @@ async def test_ai_export_requires_its_own_success_envelope(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     signed_download: list,
     envelope: dict,
 ) -> None:
@@ -256,7 +268,7 @@ async def test_ai_export_requires_its_own_success_envelope(
         },
     }
     with pytest.raises(ExternalDocumentFetchError, match="unsuccessful response"):
-        await ai_source.fetch_content(test_db, test_user, "base-1")
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
     assert signed_download == []
 
 
@@ -275,7 +287,7 @@ async def test_unsafe_or_failed_download_never_returns_content_or_leaks_url(
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     monkeypatch: pytest.MonkeyPatch,
     url: str,
     status_code: int,
@@ -301,7 +313,7 @@ async def test_unsafe_or_failed_download_never_returns_content_or_leaks_url(
     )
     monkeypatch.setattr("app.core.config.settings.MAX_UPLOAD_FILE_SIZE_MB", limit)
     with pytest.raises(ExternalDocumentFetchError) as error:
-        await ai_source.fetch_content(test_db, test_user, "base-1")
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
     assert "signature" not in str(error.value)
     assert "secret" not in str(error.value)
 
@@ -400,13 +412,14 @@ async def test_ai_table_exports_whole_base_and_polls_same_task(
     ]
 
 
+@pytest.mark.parametrize("spreadsheet_source", ["able", "axls"], indirect=True)
 def test_exported_workbook_is_saved_and_previewable_before_index_success(
     test_client: TestClient,
     test_token: str,
     test_db: Session,
     test_user: User,
     docs_mcp: McpFixture,
-    ai_source: DingTalkExternalDocumentProvider,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
     signed_download: list,
     dispatched: list[int],
     monkeypatch: pytest.MonkeyPatch,
@@ -414,12 +427,20 @@ def test_exported_workbook_is_saved_and_previewable_before_index_success(
     workbook = Workbook()
     workbook.active.append(["Project", "Status"])
     workbook.active.append(["AI export preview", "Ready"])
+    workbook.create_sheet("Second sheet").append(["Other sheet content"])
     buffer = BytesIO()
     workbook.save(buffer)
     workbook.close()
     body = buffer.getvalue()
     mock_download(monkeypatch, body=body)
     responses, _ = docs_mcp
+    responses["submit_export_job"] = {"success": True, "jobId": "job-1"}
+    responses["query_export_job"] = {
+        "success": True,
+        "status": "success",
+        "jobId": "job-1",
+        "downloadUrl": "https://files.example.test/base",
+    }
     responses["export_data"] = lambda args: {
         "status": "success",
         "error": {},
@@ -462,10 +483,110 @@ def test_exported_workbook_is_saved_and_previewable_before_index_success(
     )
     assert response.status_code == 200, response.text
     assert "AI export preview" in response.json()["content"]
+    assert "Other sheet content" in response.json()["content"]
     repeated = external_document_import_service.import_document(
         test_db, test_user, kb_id, "dingtalk", "base-1"
     )
     assert repeated.id == document_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spreadsheet_source", ["axls"], indirect=True)
+async def test_sheet_exports_once_and_queries_the_same_job(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+) -> None:
+    responses, session = docs_mcp
+    responses["submit_export_job"] = {"success": True, "jobId": "job-1"}
+    replies = iter(
+        [
+            {"success": True, "status": "pending", "jobId": "job-1"},
+            {
+                "success": True,
+                "status": "success",
+                "jobId": "job-1",
+                "downloadUrl": "https://files.example.test/sheet",
+            },
+        ]
+    )
+    responses["query_export_job"] = lambda args: next(replies)
+    session.call_tool.reset_mock()
+
+    content = await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+
+    assert content.file_extension == "xlsx"
+    assert content.content == b"exported-workbook"
+    assert [call.args for call in session.call_tool.await_args_list] == [
+        ("get_document_info", {"nodeId": "base-1"}),
+        ("submit_export_job", {"nodeId": "base-1", "exportFormat": "xlsx"}),
+        ("query_export_job", {"jobId": "job-1"}),
+        ("query_export_job", {"jobId": "job-1"}),
+    ]
+    assert session.urls[-1] == "https://mcp.example.test/table"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spreadsheet_source", ["axls"], indirect=True)
+@pytest.mark.parametrize(
+    "tool,response",
+    [
+        ("submit_export_job", {"success": True, "jobId": " "}),
+        ("query_export_job", {"success": False, "status": "success", "jobId": "job-1"}),
+        ("query_export_job", {"success": True, "status": "failed", "jobId": "job-1"}),
+        (
+            "query_export_job",
+            {"success": True, "status": "success", "jobId": "other-job"},
+        ),
+    ],
+)
+async def test_sheet_rejects_invalid_export_without_downloading(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
+    signed_download: list,
+    tool: str,
+    response: dict,
+) -> None:
+    responses, _ = docs_mcp
+    responses["submit_export_job"] = {"success": True, "jobId": "job-1"}
+    responses[tool] = {**response, "downloadUrl": "https://files.example.test/sheet"}
+    with pytest.raises(ExternalDocumentFetchError):
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+    assert signed_download == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spreadsheet_source", ["axls"], indirect=True)
+@pytest.mark.parametrize("status", ["pending", "success"])
+async def test_sheet_waiting_for_download_respects_import_timeout(
+    test_db: Session,
+    test_user: User,
+    docs_mcp: McpFixture,
+    spreadsheet_source: DingTalkExternalDocumentProvider,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    responses, session = docs_mcp
+    responses["submit_export_job"] = {"success": True, "jobId": "job-1"}
+    responses["query_export_job"] = {
+        "success": True,
+        "status": status,
+        "jobId": "job-1",
+    }
+    monkeypatch.setattr(
+        "app.services.knowledge.external_document_providers.EXTERNAL_DOCUMENT_MCP_READ_TIMEOUT_SECONDS",
+        0.01,
+    )
+    with pytest.raises(ExternalDocumentFetchError, match="timed out"):
+        await spreadsheet_source.fetch_content(test_db, test_user, "base-1")
+    assert (
+        sum(c.args[0] == "submit_export_job" for c in session.call_tool.await_args_list)
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -564,7 +685,7 @@ def docs_mcp(monkeypatch: pytest.MonkeyPatch) -> McpFixture:
         ("doc", "ALIDOC", None),
         ("doc", "ALIDOC", ""),
         ("file", "ALIDOC", ""),
-        ("doc", "ALIDOC", "axls"),
+        ("doc", "ALIDOC", "appt"),
         ("doc", "", "adoc"),
     ],
 )
@@ -712,7 +833,7 @@ async def test_both_sources_offer_supported_document_formats(
     actual = {node.dingtalk_node_id: node.node_type for node in synced}
     for name, _, _, _, expected in cases:
         assert actual[name] == expected
-        if name in {"text", "lowercase", "table", "pdf", "word"}:
+        if name in {"text", "lowercase", "sheet", "table", "pdf", "word"}:
             assert (
                 DingTalkExternalDocumentProvider().resolve_importable(
                     test_db, test_user, name
@@ -727,7 +848,7 @@ async def test_both_sources_offer_supported_document_formats(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("extension", ["axls", "appt", "pdf", None])
+@pytest.mark.parametrize("extension", ["appt", "pdf", None])
 async def test_live_metadata_blocks_unsupported_content_even_with_stale_cache(
     test_db: Session,
     test_user: User,
