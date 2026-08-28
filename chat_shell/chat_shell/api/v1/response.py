@@ -193,6 +193,17 @@ def _create_sse_event(event_type: str, data: dict) -> ServerSentEvent:
     )
 
 
+async def _drain_sse_transport(
+    transport: SSETransport,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Yield all events currently queued by the SSE transport."""
+    while True:
+        event = await transport.get_event()
+        if event is None:
+            break
+        yield event
+
+
 def _extract_stream_attributes(
     request: OpenAIResponsesRequest,
     request_id: str,
@@ -478,8 +489,9 @@ async def _stream_response(
                 or request_cancel_event.is_set()
             ):
                 chat_task.cancel()
-                event_type, data = await emitter.incomplete("cancelled")
-                yield _create_sse_event(event_type, data)
+                await emitter.incomplete("cancelled")
+                async for event_type, data in _drain_sse_transport(transport):
+                    yield _create_sse_event(event_type, data)
                 return
 
             # Get next event from queue
@@ -525,11 +537,7 @@ async def _stream_response(
                 transport.mark_done()
 
         # Drain remaining events after loop exits
-        while True:
-            event = await transport.get_event()
-            if event is None:
-                break
-            event_type, data = event
+        async for event_type, data in _drain_sse_transport(transport):
             yield _create_sse_event(event_type, data)
 
         # Wait for chat task to complete if not already done
@@ -538,8 +546,9 @@ async def _stream_response(
 
     except asyncio.CancelledError:
         chat_task.cancel()
-        event_type, data = await emitter.incomplete("cancelled")
-        yield _create_sse_event(event_type, data)
+        await emitter.incomplete("cancelled")
+        async for event_type, data in _drain_sse_transport(transport):
+            yield _create_sse_event(event_type, data)
 
     except Exception as e:
         import traceback

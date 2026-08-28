@@ -6,7 +6,11 @@
 
 import pytest
 
-from chat_shell.api.v1.response import SSETransport, _create_sse_emitter
+from chat_shell.api.v1.response import (
+    SSETransport,
+    _create_sse_emitter,
+    _drain_sse_transport,
+)
 
 
 @pytest.mark.asyncio
@@ -80,3 +84,40 @@ async def test_tool_argument_deltas_flush_before_full_completion() -> None:
         "response.function_call_arguments.done"
     ) < event_types.index("response.completed")
     assert event_types[-1] == "response.completed"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stream_drains_buffered_arguments_before_incomplete() -> None:
+    """Cancellation emits pending tool arguments before the terminal event."""
+    transport = SSETransport()
+    emitter = _create_sse_emitter(
+        task_id=1,
+        subtask_id=2,
+        model="test-model",
+        transport=transport,
+    )
+
+    await emitter.tool_argument_start(
+        call_id="call_write",
+        name="write_file",
+        arguments_summary={"file_path": "/tmp/report.md"},
+    )
+    await emitter.tool_argument_delta(
+        call_id="call_write",
+        arguments_delta="already-sent",
+    )
+    async for _ in _drain_sse_transport(transport):
+        pass
+
+    await emitter.tool_argument_delta(
+        call_id="call_write",
+        arguments_delta="buffered-before-cancel",
+    )
+    await emitter.incomplete("cancelled")
+    events = [event async for event in _drain_sse_transport(transport)]
+
+    assert [event_type for event_type, _ in events] == [
+        "response.function_call_arguments.delta",
+        "response.incomplete",
+    ]
+    assert events[0][1]["delta"] == "buffered-before-cancel"
