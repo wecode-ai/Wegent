@@ -104,6 +104,46 @@ test_automatic_sccache_paths_follow_target_changes() {
   [[ "$actual" == *":$root/second" ]] || fail "automatic sccache paths were stale: $actual"
 }
 
+test_sccache_s3_configuration() {
+  local actual
+  actual="$(bash -c '
+    set -euo pipefail
+    source "$1"
+    configure_wegent_sccache_s3 \
+      "https://minio.example.com/" \
+      "build-cache" \
+      "access-key" \
+      "secret-key" \
+      "cn-north-1" \
+      "/wework/sccache"
+    printf "%s|%s|%s|%s|%s|%s|%s" \
+      "$SCCACHE_BUCKET" \
+      "$SCCACHE_ENDPOINT" \
+      "$SCCACHE_REGION" \
+      "$SCCACHE_S3_KEY_PREFIX" \
+      "$SCCACHE_S3_USE_SSL" \
+      "$AWS_ACCESS_KEY_ID" \
+      "$AWS_SECRET_ACCESS_KEY"
+  ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh")"
+
+  [ "$actual" = \
+    "build-cache|https://minio.example.com|cn-north-1|wework/sccache|true|access-key|secret-key" ] \
+    || fail "unexpected sccache S3 configuration: $actual"
+}
+
+test_sccache_s3_rejects_endpoint_without_scheme() {
+  if bash -c '
+    source "$1"
+    configure_wegent_sccache_s3 \
+      "minio.example.com" \
+      "build-cache" \
+      "access-key" \
+      "secret-key"
+  ' _ "$PROJECT_DIR/scripts/lib/cargo-cache.sh" >/dev/null 2>&1; then
+    fail "sccache S3 configuration accepted an endpoint without a scheme"
+  fi
+}
+
 cleanup() {
   rm -rf "$TEST_ROOT"
 }
@@ -116,6 +156,8 @@ main() {
   test_sccache_is_configured_when_available "$TEST_ROOT"
   test_sccache_is_installed_with_homebrew "$TEST_ROOT"
   test_automatic_sccache_paths_follow_target_changes "$TEST_ROOT"
+  test_sccache_s3_configuration
+  test_sccache_s3_rejects_endpoint_without_scheme
   echo "cargo-cache tests passed"
 }
 

@@ -12,6 +12,8 @@ source "$SCRIPT_DIR/lib/wework-updater-signing.sh"
 source "$SCRIPT_DIR/lib/wework-release-notes.sh"
 # shellcheck source=lib/wework-macos-signing.sh
 source "$SCRIPT_DIR/lib/wework-macos-signing.sh"
+# shellcheck source=../../scripts/lib/cargo-cache.sh
+source "$PROJECT_DIR/scripts/lib/cargo-cache.sh"
 
 EXPLICIT_VITE_API_BASE_URL="${VITE_API_BASE_URL+x}"
 EXPLICIT_VITE_API_BASE_URL_VALUE="${VITE_API_BASE_URL:-}"
@@ -69,6 +71,58 @@ UPLOAD="false"
 RESUME_SIGNED_APP=""
 SIGNED_APP_ONLY="false"
 UPLOAD_EXISTING="false"
+
+configure_release_sccache() {
+  local sccache_port=""
+  local sccache_prefix="${WEWORK_RELEASE_SCCACHE_PREFIX:-wework/build-cache/sccache/$MACOS_BUILD_TARGET}"
+
+  [ "${WEWORK_RELEASE_SCCACHE_S3:-false}" = "true" ] || return 0
+  case "$MACOS_BUILD_TARGET" in
+    aarch64-apple-darwin) sccache_port=42261 ;;
+    x86_64-apple-darwin) sccache_port=42262 ;;
+  esac
+
+  require_command sccache
+  require_env ATTACHMENT_S3_ACCESS_KEY
+  require_env ATTACHMENT_S3_SECRET_KEY
+  export SCCACHE_SERVER_PORT="${SCCACHE_SERVER_PORT:-$sccache_port}"
+  configure_wegent_sccache_s3 \
+    "$S3_ENDPOINT" \
+    "$S3_BUCKET" \
+    "$ATTACHMENT_S3_ACCESS_KEY" \
+    "$ATTACHMENT_S3_SECRET_KEY" \
+    "${ATTACHMENT_S3_REGION:-us-east-1}" \
+    "$sccache_prefix"
+  sccache --stop-server >/dev/null 2>&1 || true
+}
+
+configure_release_build_cache() {
+  local cache_root="${WEWORK_RELEASE_CACHE_ROOT:-$HOME/Library/Caches/wegent/release-build}"
+
+  export WEWORK_RELEASE_CACHE_ROOT="$cache_root"
+  export ELECTRON_CACHE="${ELECTRON_CACHE:-$cache_root/electron}"
+  export ELECTRON_BUILDER_CACHE="${ELECTRON_BUILDER_CACHE:-$cache_root/electron-builder}"
+  export ELECTRON_DOWNLOAD_CACHE_MODE="${ELECTRON_DOWNLOAD_CACHE_MODE:-0}"
+  export WEGENT_CODEX_CACHE_DIR="${WEGENT_CODEX_CACHE_DIR:-$cache_root/codex}"
+  export WEWORK_HARNESS_RUNTIME_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_CACHE_ROOT:-$cache_root/harness-runtime}"
+  export WEGENT_CARGO_TARGET_ROOT="${WEGENT_CARGO_TARGET_ROOT:-$cache_root/cargo-target}"
+  export SCCACHE_DIR="${SCCACHE_DIR:-$cache_root/sccache}"
+  export pnpm_config_store_dir="${pnpm_config_store_dir:-$cache_root/pnpm-store}"
+
+  mkdir -p \
+    "$ELECTRON_CACHE" \
+    "$ELECTRON_BUILDER_CACHE" \
+    "$WEGENT_CODEX_CACHE_DIR" \
+    "$WEWORK_HARNESS_RUNTIME_CACHE_ROOT" \
+    "$WEGENT_CARGO_TARGET_ROOT" \
+    "$SCCACHE_DIR" \
+    "$pnpm_config_store_dir"
+
+  configure_release_sccache
+  configure_wegent_cargo_target_dir \
+    "$PROJECT_DIR" \
+    "wework-release-executor-$MACOS_BUILD_TARGET"
+}
 
 usage() {
   cat <<'EOF'
@@ -366,6 +420,7 @@ if [ "$UPLOAD_EXISTING" = "true" ]; then
 fi
 
 require_command pnpm
+configure_release_build_cache
 if [ "$SIGNED_APP_ONLY" != "true" ]; then
   wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
 fi
@@ -395,6 +450,8 @@ if [ -n "$RESUME_SIGNED_APP" ]; then
   fi
   RESUME_SIGNED_APP="$(cd "$(dirname "$RESUME_SIGNED_APP")" && pwd)/$(basename "$RESUME_SIGNED_APP")"
   echo "Resuming Wework Electron macOS $arch release $VERSION from signed app"
+  echo "Installing the locked Wework Electron workspace toolchain"
+  pnpm --dir "$WEWORK_DIR/electron" install --frozen-lockfile
   node "$WEWORK_DIR/electron/scripts/notarize-macos.cjs" "$RESUME_SIGNED_APP"
   WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
     node "$WEWORK_DIR/electron/scripts/package-prebuilt-macos-release.mjs" \
