@@ -37,8 +37,11 @@ wegent-runtime:
     DOCKERFILE_PATH: wecode/docker/base
   script:
     - build_image
-  when: manual
   rules:
+    - if: '$CI_COMMIT_REF_NAME == "main" && $CI_PIPELINE_SOURCE == "push"'
+      variables:
+        ALIAS_IMAGE: pushregistry.api.weibo.com/ci/wegent-runtime:latest
+      when: on_success
     - when: manual
 
 wgent-shell:
