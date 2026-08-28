@@ -11,11 +11,10 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
-from minio_component_assets import (
-    ComponentRelease,
-    component_channel_is_complete,
-    load_component_release,
-    publish_component_archives,
+from minio_release_assets import (
+    load_component_assets,
+    publish_component_assets,
+    publish_component_manifest,
     publish_immutable_file,
 )
 
@@ -145,23 +144,6 @@ def read_manifest(
             response.release_conn()
 
 
-def read_text_object(
-    client: Minio, bucket: str, prefix: str, filename: str
-) -> str | None:
-    response = None
-    try:
-        response = client.get_object(bucket, storage_key(prefix, filename))
-        return response.read().decode("utf-8")
-    except S3Error as error:
-        if error.code in {"NoSuchKey", "NoSuchObject"}:
-            return None
-        raise
-    finally:
-        if response is not None:
-            response.close()
-            response.release_conn()
-
-
 def version_parts(version: str) -> tuple[int, int, int, int, int]:
     match = VERSION_PATTERN.fullmatch(version)
     if match is None:
@@ -192,7 +174,7 @@ def release_advances_channel(
     bucket: str,
     prefix: str,
     path: Path,
-    complete: bool = True,
+    required_objects: tuple[tuple[str, str], ...] = (),
 ) -> bool:
     if not path.is_file():
         raise SystemExit(f"Updater channel manifest not found: {path}")
@@ -200,19 +182,30 @@ def release_advances_channel(
     current = read_manifest(client, bucket, prefix, path.name)
     if current is None:
         return True
-    candidate_parts = version_parts(candidate["version"])
-    current_parts = version_parts(current["version"])
-    comparison = (candidate_parts > current_parts) - (candidate_parts < current_parts)
-    if comparison > 0:
+    candidate_version = candidate["version"]
+    current_version = current["version"]
+    if version_parts(candidate_version) > version_parts(current_version):
         return True
-    if comparison == 0 and not complete:
-        print(f"Repairing incomplete release channel: {candidate['version']}")
-        return True
-    if comparison < 0 and not complete:
-        raise SystemExit(
-            f"Newer release channel {current['version']} is incomplete; "
-            f"refusing to replace it with {candidate['version']}"
+
+    complete = all(
+        object_exists(client, bucket, object_prefix, filename)
+        for object_prefix, filename in required_objects
+    )
+    if candidate_version == current_version and not complete:
+        print(
+            f"Repairing incomplete release channel at {candidate_version}: "
+            f"s3://{bucket}/{storage_key(prefix, path.name)}"
         )
+        return True
+    if (
+        version_parts(current_version) > version_parts(candidate_version)
+        and not complete
+    ):
+        raise SystemExit(
+            f"Newer release channel {current_version} is incomplete; "
+            f"refusing to replace it with {candidate_version}"
+        )
+
     print(
         f"Keeping newer or equal release channel: "
         f"s3://{bucket}/{storage_key(prefix, path.name)}"
@@ -220,12 +213,19 @@ def release_advances_channel(
     return False
 
 
-def electron_manifest_version(content: str, path: Path | None = None) -> str:
-    match = re.search(r"(?m)^version:\s*['\"]?([^'\"\s]+)", content)
-    if match is None:
-        location = f" {path}" if path is not None else ""
-        raise SystemExit(f"Electron updater manifest{location} has no version")
-    return match.group(1)
+def object_exists(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    filename: str,
+) -> bool:
+    try:
+        client.stat_object(bucket, storage_key(prefix, filename))
+        return True
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return False
+        raise
 
 
 def upload_electron_manifest(
@@ -239,77 +239,36 @@ def upload_electron_manifest(
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
 
 
-def release_channel_is_complete(
+def publish_channel(
     client: Minio,
     bucket: str,
     release_prefix: str,
     manifest_prefix: str,
-    version: str,
-    channel_manifest: Path,
-    electron_manifest: Path,
-    component_release: ComponentRelease,
-) -> bool:
-    legacy = read_manifest(client, bucket, manifest_prefix, channel_manifest.name)
-    electron = read_text_object(client, bucket, release_prefix, electron_manifest.name)
-    try:
-        electron_matches = (
-            electron is not None and electron_manifest_version(electron) == version
-        )
-    except SystemExit:
-        electron_matches = False
-    return (
-        legacy is not None
-        and legacy.get("version") == version
-        and electron_matches
-        and component_channel_is_complete(
-            client,
-            bucket,
-            release_prefix,
-            component_release,
-        )
-    )
-
-
-def publish_release_channel(
-    client: Minio,
-    bucket: str,
-    release_prefix: str,
-    manifest_prefix: str,
-    version: str,
+    output_dir: Path,
     channel: str,
     platform: str,
-    output_dir: Path,
-    component_release: ComponentRelease,
+    publish_components,
 ) -> bool:
     operating_system, architecture = platform.split("-", 1)
     channel_manifest = output_dir / f"{channel}-{operating_system}-{architecture}.json"
+    component_arch = "arm64" if architecture == "aarch64" else "x64"
+    component_manifest = (
+        output_dir / f"components-{channel}-macos-{component_arch}.json"
+    )
     electron_channel = "latest" if channel == "stable" else "beta"
     electron_manifest = output_dir / f"{electron_channel}-mac.yml"
-    complete = release_channel_is_complete(
-        client,
-        bucket,
-        release_prefix,
-        manifest_prefix,
-        version,
-        channel_manifest,
-        electron_manifest,
-        component_release,
-    )
     if not release_advances_channel(
         client,
         bucket,
         manifest_prefix,
         channel_manifest,
-        complete,
+        (
+            (release_prefix, electron_manifest.name),
+            (release_prefix, component_manifest.name),
+        ),
     ):
         return False
-    upload_file(
-        client,
-        bucket,
-        release_prefix,
-        component_release.channel_manifest,
-        "no-cache, no-store",
-    )
+    publish_components()
     upload_electron_manifest(client, bucket, release_prefix, electron_manifest)
     upload_channel_manifest(client, bucket, manifest_prefix, channel_manifest)
     return True
@@ -393,14 +352,75 @@ def main() -> None:
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/macos")
     manifest_prefix = os.environ.get("WEWORK_UPDATE_MANIFEST_S3_PREFIX", prefix)
     version = require_env("RELEASE_VERSION")
+    source_sha = require_env("RELEASE_SOURCE_SHA")
+    release_kind = os.environ.get("RELEASE_KIND", "full")
+    if release_kind not in {"full", "component"}:
+        raise SystemExit(f"Unsupported Wework release kind: {release_kind}")
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
         raise SystemExit(f"Unsupported Wework update channel: {channel}")
     expected_platforms = set(require_env("UPDATER_PLATFORMS").split(","))
     output_dir = Path(require_env("RELEASE_OUTPUT_DIR"))
+    component_prefix = os.environ.get("WEWORK_COMPONENT_S3_PREFIX", "wework/components")
 
     if not client.bucket_exists(bucket):
         raise SystemExit(f"S3 bucket does not exist: {bucket}")
+
+    platform_details = {
+        "darwin-aarch64": ("macos", "arm64"),
+        "darwin-x86_64": ("macos", "x64"),
+    }
+    component_targets = [platform_details[platform] for platform in expected_platforms]
+    component_assets = []
+    for platform, arch in component_targets:
+        component_assets.extend(
+            load_component_assets(output_dir, platform, arch, version)
+        )
+    publish_component_assets(
+        client,
+        bucket,
+        prefix,
+        component_prefix,
+        component_assets,
+        lambda path, target_prefix: upload_file(
+            client,
+            bucket,
+            target_prefix,
+            path,
+            "public, max-age=31536000, immutable",
+        ),
+    )
+
+    def upload_component_channel(
+        target_channel: str,
+        platform: str,
+        arch: str,
+        component_only: bool,
+        allow_different_app_version: bool,
+    ) -> bool:
+        return publish_component_manifest(
+            client,
+            bucket,
+            prefix,
+            output_dir,
+            target_channel,
+            platform,
+            arch,
+            version,
+            source_sha,
+            component_only,
+            allow_different_app_version,
+            lambda path, target_prefix: upload_file(
+                client, bucket, target_prefix, path, "no-cache, no-store"
+            ),
+        )
+
+    if release_kind == "component":
+        for platform, arch in component_targets:
+            upload_component_channel(channel, platform, arch, True, False)
+            if channel == "stable":
+                upload_component_channel("beta", platform, arch, True, True)
+        return
 
     artifacts = sorted(output_dir.glob(f"WeWork_{version}_*"))
     if not artifacts:
@@ -424,74 +444,53 @@ def main() -> None:
         raise SystemExit(f"Updater manifest not found: {manifest}")
     validate_manifest(manifest, version, expected_platforms)
 
-    if len(expected_platforms) != 1:
-        raise SystemExit("Each macOS MinIO build must publish exactly one architecture")
-    platform = next(iter(expected_platforms))
-    _, architecture = platform.split("-", 1)
-    release_arch = "arm64" if architecture == "aarch64" else "x64"
-    component_release = load_component_release(
-        output_dir,
-        version,
-        channel,
-        "macos",
-        release_arch,
-    )
-    publish_component_archives(
-        client,
-        bucket,
-        prefix,
-        component_release,
-        lambda path: upload_file(
+    stable_advanced = False
+    for platform in expected_platforms:
+        component_platform, component_arch = platform_details[platform]
+        advanced = publish_channel(
             client,
             bucket,
             prefix,
-            path,
-            "public, max-age=31536000, immutable",
-        ),
-    )
-    advanced_channel = publish_release_channel(
-        client,
-        bucket,
-        prefix,
-        manifest_prefix,
-        version,
-        channel,
-        platform,
-        output_dir,
-        component_release,
-    )
-    if channel == "stable":
-        beta_components = load_component_release(
+            manifest_prefix,
             output_dir,
-            version,
-            "beta",
-            "macos",
-            release_arch,
+            channel,
+            platform,
+            lambda: upload_component_channel(
+                channel,
+                component_platform,
+                component_arch,
+                False,
+                False,
+            ),
         )
-        advanced_channel = (
-            publish_release_channel(
+        if channel == "stable":
+            stable_advanced = stable_advanced or advanced
+            beta_advanced = publish_channel(
                 client,
                 bucket,
                 prefix,
                 manifest_prefix,
-                version,
+                output_dir,
                 "beta",
                 platform,
-                output_dir,
-                beta_components,
+                lambda: upload_component_channel(
+                    "beta",
+                    component_platform,
+                    component_arch,
+                    False,
+                    False,
+                ),
             )
-            or advanced_channel
-        )
-    if not advanced_channel:
+
+    if channel != "stable" or not stable_advanced:
         return
-    if channel == "stable":
-        publish_latest_dmg(client, bucket, prefix, version, artifacts)
-        upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
-        print(
-            "Published the per-architecture legacy manifest after its release assets."
-        )
-        if expected_platforms.issubset(MACOS_PLATFORM_PREFIXES):
-            publish_legacy_manifest(client, bucket, version, manifest_prefix)
+    publish_latest_dmg(client, bucket, prefix, version, artifacts)
+    upload_file(client, bucket, prefix, manifest, "no-cache, no-store")
+    print("Published the per-architecture legacy manifest after its release assets.")
+    if len(expected_platforms) == 1 and expected_platforms.issubset(
+        MACOS_PLATFORM_PREFIXES
+    ):
+        publish_legacy_manifest(client, bucket, version, manifest_prefix)
 
 
 if __name__ == "__main__":

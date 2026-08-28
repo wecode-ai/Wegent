@@ -1249,6 +1249,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,
       WEWORK_HARNESS_RESOURCE_ROOT: components.coreDsh,
       WEWORK_CORE_PLUGIN_ROOT: components.weworkCorePlugins,
+      WEWORK_CORE_PLUGINS_SHA256: components.contentSha256.weworkCorePlugins,
       WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR: join(components.bundledPlugins, 'wework-personal'),
       WEGENT_BUNDLED_HOOKS_DIR: join(componentResourcesRoot, 'bundled-hooks'),
       ...(process.env.WEWORK_EXECUTOR_PATH?.trim()

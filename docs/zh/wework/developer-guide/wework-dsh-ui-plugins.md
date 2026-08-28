@@ -99,6 +99,28 @@ Wework 当前随 Core DSH 打包以下 UI 插件：
 Auth、Cloud、Workbench 等宿主 Context。第三方插件不应使用该字段，应把自己的
 React 组件传给 `ctx.wework.ui.register` 的第四个参数。
 
+## 插件同步与指纹重载
+
+Core DSH 的受管插件（`weworkCorePlugins` 组件，包含上节列出的内置插件以及
+`@wegent/dsh-app-wework` 等宿主插件）在 prepare profile 时同步到 profile 的
+`node_modules`。profile 写入 `.wework-runtime.json` stamp，记录 `dshVersion`、
+`sourceFingerprint`（宿主）、`managedUiPlugins` 与 `corePluginsFingerprint`
+（插件内容指纹）。
+
+DSH 进程每次启动都会重新加载插件 JS；stamp 只决定是否需要重刷 profile：
+
+- 宿主指纹（版本或 `sourceFingerprint`）变化 → 完整重刷：重写 `package.json`
+  依赖路径并重新同步受管插件副本。
+- 插件指纹变化 → 删除并重新复制受管插件副本，清理源中已不存在的残留文件。
+- 两者都未变化 → fast path：不动文件，仅修复 node-pty 权限。
+
+插件指纹优先取 `WEWORK_CORE_PLUGINS_SHA256`（来自组件更新激活态的
+`contentSha256`，生产零成本）；未提供时对插件根目录做确定性内容哈希兜底，
+算法与组件内容指纹一致，因此 dev 兜底值与生产环境变量值对同一内容相同。
+旧版 stamp 缺少 `corePluginsFingerprint` 时自动视为不匹配，首次升级重刷一次
+后保持稳定。用户手动安装的插件仍通过 `recoverInstalledDshDependencies`
+保留，不受重刷影响。
+
 ## 打包与验证
 
 新增随 Wework 发布的 DSH 插件时：

@@ -11,11 +11,10 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
-from minio_component_assets import (
-    ComponentRelease,
-    component_channel_is_complete,
-    load_component_release,
-    publish_component_archives,
+from minio_release_assets import (
+    load_component_assets,
+    publish_component_assets,
+    publish_component_manifest,
     publish_immutable_file,
 )
 
@@ -117,23 +116,6 @@ def read_manifest(
             response.release_conn()
 
 
-def read_text_object(
-    client: Minio, bucket: str, prefix: str, filename: str
-) -> str | None:
-    response = None
-    try:
-        response = client.get_object(bucket, storage_key(prefix, filename))
-        return response.read().decode("utf-8")
-    except S3Error as error:
-        if error.code in {"NoSuchKey", "NoSuchObject"}:
-            return None
-        raise
-    finally:
-        if response is not None:
-            response.close()
-            response.release_conn()
-
-
 def version_parts(version: str) -> tuple[int, int, int, int, int]:
     match = VERSION_PATTERN.fullmatch(version)
     if match is None:
@@ -164,7 +146,7 @@ def release_advances_channel(
     bucket: str,
     prefix: str,
     path: Path,
-    complete: bool = True,
+    required_objects: tuple[tuple[str, str], ...] = (),
 ) -> bool:
     if not path.is_file():
         raise SystemExit(f"Updater channel manifest not found: {path}")
@@ -172,19 +154,30 @@ def release_advances_channel(
     current = read_manifest(client, bucket, prefix, path.name)
     if current is None:
         return True
-    candidate_parts = version_parts(candidate["version"])
-    current_parts = version_parts(current["version"])
-    comparison = (candidate_parts > current_parts) - (candidate_parts < current_parts)
-    if comparison > 0:
+    candidate_version = candidate["version"]
+    current_version = current["version"]
+    if version_parts(candidate_version) > version_parts(current_version):
         return True
-    if comparison == 0 and not complete:
-        print(f"Repairing incomplete release channel: {candidate['version']}")
-        return True
-    if comparison < 0 and not complete:
-        raise SystemExit(
-            f"Newer release channel {current['version']} is incomplete; "
-            f"refusing to replace it with {candidate['version']}"
+
+    complete = all(
+        object_exists(client, bucket, object_prefix, filename)
+        for object_prefix, filename in required_objects
+    )
+    if candidate_version == current_version and not complete:
+        print(
+            f"Repairing incomplete release channel at {candidate_version}: "
+            f"s3://{bucket}/{storage_key(prefix, path.name)}"
         )
+        return True
+    if (
+        version_parts(current_version) > version_parts(candidate_version)
+        and not complete
+    ):
+        raise SystemExit(
+            f"Newer release channel {current_version} is incomplete; "
+            f"refusing to replace it with {candidate_version}"
+        )
+
     print(
         f"Keeping newer or equal release channel: "
         f"s3://{bucket}/{storage_key(prefix, path.name)}"
@@ -192,12 +185,19 @@ def release_advances_channel(
     return False
 
 
-def electron_manifest_version(content: str, path: Path | None = None) -> str:
-    match = re.search(r"(?m)^version:\s*['\"]?([^'\"\s]+)", content)
-    if match is None:
-        location = f" {path}" if path is not None else ""
-        raise SystemExit(f"Electron updater manifest{location} has no version")
-    return match.group(1)
+def object_exists(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    filename: str,
+) -> bool:
+    try:
+        client.stat_object(bucket, storage_key(prefix, filename))
+        return True
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return False
+        raise
 
 
 def upload_electron_manifest(
@@ -211,72 +211,27 @@ def upload_electron_manifest(
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
 
 
-def release_channel_is_complete(
+def publish_channel(
     client: Minio,
     bucket: str,
     prefix: str,
-    version: str,
-    channel_manifest: Path,
-    electron_manifest: Path,
-    component_release: ComponentRelease,
-) -> bool:
-    legacy = read_manifest(client, bucket, prefix, channel_manifest.name)
-    electron = read_text_object(client, bucket, prefix, electron_manifest.name)
-    try:
-        electron_matches = (
-            electron is not None and electron_manifest_version(electron) == version
-        )
-    except SystemExit:
-        electron_matches = False
-    return (
-        legacy is not None
-        and legacy.get("version") == version
-        and electron_matches
-        and component_channel_is_complete(
-            client,
-            bucket,
-            prefix,
-            component_release,
-        )
-    )
-
-
-def publish_release_channel(
-    client: Minio,
-    bucket: str,
-    prefix: str,
-    version: str,
-    channel: str,
     output_dir: Path,
-    component_release: ComponentRelease,
+    channel: str,
+    publish_components,
 ) -> bool:
     channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
+    component_manifest = output_dir / f"components-{channel}-windows-x64.json"
     electron_channel = "latest" if channel == "stable" else "beta"
     electron_manifest = output_dir / f"{electron_channel}.yml"
-    complete = release_channel_is_complete(
-        client,
-        bucket,
-        prefix,
-        version,
-        channel_manifest,
-        electron_manifest,
-        component_release,
-    )
     if not release_advances_channel(
         client,
         bucket,
         prefix,
         channel_manifest,
-        complete,
+        ((prefix, electron_manifest.name), (prefix, component_manifest.name)),
     ):
         return False
-    upload_file(
-        client,
-        bucket,
-        prefix,
-        component_release.channel_manifest,
-        "no-cache, no-store",
-    )
+    publish_components()
     upload_electron_manifest(client, bucket, prefix, electron_manifest)
     upload_channel_manifest(client, bucket, prefix, channel_manifest)
     return True
@@ -307,13 +262,62 @@ def main() -> None:
     bucket = require_env("ATTACHMENT_S3_BUCKET")
     prefix = os.environ.get("WEWORK_RELEASE_S3_PREFIX", "wework/windows")
     version = require_env("RELEASE_VERSION")
+    source_sha = require_env("RELEASE_SOURCE_SHA")
+    release_kind = os.environ.get("RELEASE_KIND", "full")
+    if release_kind not in {"full", "component"}:
+        raise SystemExit(f"Unsupported Wework release kind: {release_kind}")
     channel = os.environ.get("RELEASE_CHANNEL", "stable")
     if channel not in {"stable", "beta"}:
         raise SystemExit(f"Unsupported Wework update channel: {channel}")
     output_dir = Path(require_env("RELEASE_OUTPUT_DIR"))
+    component_prefix = os.environ.get("WEWORK_COMPONENT_S3_PREFIX", "wework/components")
 
     if not client.bucket_exists(bucket):
         raise SystemExit(f"S3 bucket does not exist: {bucket}")
+
+    component_assets = load_component_assets(output_dir, "windows", "x64", version)
+    publish_component_assets(
+        client,
+        bucket,
+        prefix,
+        component_prefix,
+        component_assets,
+        lambda path, target_prefix: upload_file(
+            client,
+            bucket,
+            target_prefix,
+            path,
+            "public, max-age=31536000, immutable",
+        ),
+    )
+
+    def upload_component_channel(
+        target_channel: str,
+        component_only: bool,
+        allow_different_app_version: bool,
+    ) -> bool:
+        return publish_component_manifest(
+            client,
+            bucket,
+            prefix,
+            output_dir,
+            target_channel,
+            "windows",
+            "x64",
+            version,
+            source_sha,
+            component_only,
+            allow_different_app_version,
+            lambda path, target_prefix: upload_file(
+                client, bucket, target_prefix, path, "no-cache, no-store"
+            ),
+        )
+
+    if release_kind == "component":
+        upload_component_channel(channel, True, False)
+        if channel == "stable":
+            upload_component_channel("beta", True, True)
+        return
 
     artifacts = sorted(output_dir.glob(f"WeWork_{version}_*"))
     if not artifacts:
@@ -335,61 +339,28 @@ def main() -> None:
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
-    component_release = load_component_release(
-        output_dir,
-        version,
-        channel,
-        "windows",
-        "x64",
-    )
-    publish_component_archives(
+    advanced = publish_channel(
         client,
         bucket,
         prefix,
-        component_release,
-        lambda path: upload_file(
+        output_dir,
+        channel,
+        lambda: upload_component_channel(channel, False, False),
+    )
+    if channel == "stable":
+        publish_channel(
             client,
             bucket,
             prefix,
-            path,
-            "public, max-age=31536000, immutable",
-        ),
-    )
-    advanced_channel = publish_release_channel(
-        client,
-        bucket,
-        prefix,
-        version,
-        channel,
-        output_dir,
-        component_release,
-    )
-    if channel == "stable":
-        beta_components = load_component_release(
             output_dir,
-            version,
             "beta",
-            "windows",
-            "x64",
+            lambda: upload_component_channel("beta", False, False),
         )
-        advanced_channel = (
-            publish_release_channel(
-                client,
-                bucket,
-                prefix,
-                version,
-                "beta",
-                output_dir,
-                beta_components,
-            )
-            or advanced_channel
-        )
-    if not advanced_channel:
+    if channel != "stable" or not advanced:
         return
-    if channel == "stable":
-        publish_latest_installer(client, bucket, prefix, version, artifacts)
-        publish_stable_bootstrap_manifest(client, bucket, prefix, manifest)
-        print("Uploaded latest.json last so legacy clients stay on stable releases.")
+    publish_latest_installer(client, bucket, prefix, version, artifacts)
+    publish_stable_bootstrap_manifest(client, bucket, prefix, manifest)
+    print("Uploaded latest.json last so legacy clients stay on stable releases.")
 
 
 if __name__ == "__main__":

@@ -54,10 +54,12 @@ fi
 
 VERSION=""
 CHANNEL="stable"
+RELEASE_KIND="${WEWORK_RELEASE_KIND:-full}"
 RELEASE_NOTES=""
 S3_ENDPOINT="${ATTACHMENT_S3_ENDPOINT:-}"
 S3_BUCKET="${ATTACHMENT_S3_BUCKET:-}"
 S3_PREFIX="${WEWORK_RELEASE_S3_PREFIX:-}"
+COMPONENT_S3_PREFIX="${WEWORK_COMPONENT_S3_PREFIX:-wework/components}"
 UPDATE_MANIFEST_S3_PREFIX="${WEWORK_UPDATE_MANIFEST_S3_PREFIX:-${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}}"
 OUTPUT_DIR="${WEWORK_RELEASE_OUTPUT_DIR:-$WEWORK_DIR/electron/release-minio}"
 UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-updater.key}"
@@ -70,13 +72,14 @@ usage() {
   cat <<'EOF'
 Usage: bash wework/scripts/build-minio-mac-release.sh --version <version> [options]
 
-Build the same signed Electron macOS release used by GitHub CI, generate both
-Electron updater YAML and a Tauri-signed migration bridge, and optionally
-publish them to MinIO.
+Build the same signed Electron macOS release used by GitHub CI and optionally
+publish either the full app update or only its independently updatable
+components to MinIO.
 
 Options:
   --version <version>       Release version. Required.
   --channel <stable|beta>   Update channel. Default: stable.
+  --release-kind <kind>     full or component. Default: full.
   --beta                    Shorthand for --channel beta.
   --notes <text>            Release notes.
   --endpoint <url>          S3 API endpoint.
@@ -168,13 +171,16 @@ upload_artifacts() {
   ATTACHMENT_S3_ENDPOINT="$S3_ENDPOINT" \
   ATTACHMENT_S3_BUCKET="$S3_BUCKET" \
   WEWORK_RELEASE_S3_PREFIX="$S3_PREFIX" \
+  WEWORK_COMPONENT_S3_PREFIX="$COMPONENT_S3_PREFIX" \
   WEWORK_UPDATE_MANIFEST_S3_PREFIX="$UPDATE_MANIFEST_S3_PREFIX" \
   WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
   WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
   WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
   UPDATER_PLATFORMS="$(legacy_platform)" \
   RELEASE_VERSION="$VERSION" \
+  RELEASE_SOURCE_SHA="$SOURCE_SHA" \
   RELEASE_CHANNEL="$CHANNEL" \
+  RELEASE_KIND="$RELEASE_KIND" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
     uv run --project "$PROJECT_DIR/backend" \
       python "$SCRIPT_DIR/upload-mac-release-to-s3.py"
@@ -182,10 +188,21 @@ upload_artifacts() {
 
 verify_uploaded_artifacts() {
   local arch
+  local component_manifest
   local electron_channel="$CHANNEL"
   local legacy_manifest
 
   arch="$(release_arch)"
+  component_manifest="components-$CHANNEL-macos-$arch.json"
+  if ! curl -fsSI -o /dev/null "$UPDATE_BASE_URL/$component_manifest"; then
+    echo "Published component manifest is not publicly readable: $UPDATE_BASE_URL/$component_manifest" >&2
+    exit 1
+  fi
+  node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
+    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" macos "$arch"
+  if [ "$RELEASE_KIND" = "component" ]; then
+    return
+  fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   legacy_manifest="$CHANNEL-$(legacy_platform).json"
   for url in \
@@ -198,14 +215,13 @@ verify_uploaded_artifacts() {
       exit 1
     fi
   done
-  node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
-    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" macos "$arch"
 }
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift 2 ;;
     --channel) CHANNEL="$2"; shift 2 ;;
+    --release-kind) RELEASE_KIND="$2"; shift 2 ;;
     beta|--beta) CHANNEL="beta"; shift ;;
     stable|--stable) CHANNEL="stable"; shift ;;
     --notes) RELEASE_NOTES="$(wework_decode_release_notes "$2")"; shift 2 ;;
@@ -236,6 +252,10 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
 fi
 if [ "$CHANNEL" != "stable" ] && [ "$CHANNEL" != "beta" ]; then
   echo "--channel must be stable or beta." >&2
+  exit 1
+fi
+if [ "$RELEASE_KIND" != "full" ] && [ "$RELEASE_KIND" != "component" ]; then
+  echo "--release-kind must be full or component." >&2
   exit 1
 fi
 if [ "$CHANNEL" = "stable" ] && [[ "$VERSION" == *-beta.* ]]; then
@@ -277,8 +297,10 @@ fi
 
 S3_ENDPOINT="${S3_ENDPOINT%/}"
 S3_PREFIX="$(normalize_prefix "$S3_PREFIX")"
+COMPONENT_S3_PREFIX="$(normalize_prefix "$COMPONENT_S3_PREFIX")"
 UPDATE_MANIFEST_S3_PREFIX="$(normalize_prefix "$UPDATE_MANIFEST_S3_PREFIX")"
 UPDATE_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX"
+COMPONENT_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$COMPONENT_S3_PREFIX"
 UPDATE_MANIFEST_BASE_URL="$S3_ENDPOINT/$S3_BUCKET/$UPDATE_MANIFEST_S3_PREFIX"
 if [ -z "$RELEASE_NOTES" ]; then
   RELEASE_NOTES="$(
@@ -325,6 +347,7 @@ else
   WEWORK_DWS_TARGET="$MACOS_BUILD_TARGET" \
   WEWORK_RELEASE_PLATFORM=macos \
   WEWORK_RELEASE_ARCH="$arch" \
+  WEWORK_SOURCE_SHA="$SOURCE_SHA" \
   WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL" \
   VITE_WEWORK_RELEASE_CHANNEL="$CHANNEL" \
   VITE_WEWORK_RUNTIME_MODE=local-first \
@@ -336,7 +359,7 @@ node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
 notes_path="$OUTPUT_DIR/WeWork_${VERSION}_macos_${arch}.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
-WEWORK_COMPONENT_BASE_URL="$UPDATE_BASE_URL" \
+WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \
 WEWORK_RELEASE_TARGETS="macos-$arch" \
   node "$SCRIPT_DIR/generate-desktop-update-manifests.mjs" \
     "$OUTPUT_DIR" "$OUTPUT_DIR" "$VERSION" "$CHANNEL" \
@@ -345,7 +368,7 @@ WEWORK_RELEASE_TARGETS="macos-$arch" \
 if [ "$UPLOAD" = "true" ]; then
   upload_artifacts
   verify_uploaded_artifacts
-  echo "Published MinIO Electron, component, and legacy Tauri update channels."
+  echo "Published MinIO $RELEASE_KIND release assets and component update channels."
 else
   echo "Release artifacts are ready in: $OUTPUT_DIR"
 fi

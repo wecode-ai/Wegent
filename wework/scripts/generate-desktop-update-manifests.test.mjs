@@ -151,6 +151,30 @@ test('generates a MinIO macOS architecture release without requiring other targe
     resolve(assets, `WeWork_${version}_macos_arm64.app.tar.gz.sig`),
     'migration-signature'
   )
+  const components = {}
+  for (const id of ['coreDsh', 'executor']) {
+    const content = `minio-${id}`
+    const archiveSha256 = createHash('sha256').update(content).digest('hex')
+    const assetName = `WeworkComponent_${id}_${archiveSha256}_macos_arm64.tar.gz`
+    await writeFile(resolve(assets, assetName), content)
+    components[id] = {
+      version: 'fixture',
+      contentSha256: 'c'.repeat(64),
+      archiveSha256,
+      assetName,
+      entryPath: '.',
+    }
+  }
+  await writeFile(
+    resolve(assets, 'components-macos-arm64.json'),
+    JSON.stringify({
+      schemaVersion: 1,
+      appVersion: version,
+      platform: 'macos',
+      arch: 'arm64',
+      components,
+    })
+  )
   await writeFile(notes, 'MinIO migration')
 
   await run(
@@ -167,7 +191,7 @@ test('generates a MinIO macOS architecture release without requiring other targe
     ],
     {
       WEWORK_RELEASE_BASE_URL: 'https://minio.example/releases/wework/macos',
-      WEWORK_COMPONENT_BASE_URL: 'https://minio.example/releases/wework/macos',
+      WEWORK_COMPONENT_BASE_URL: 'https://minio.example/releases/wework/components',
       WEWORK_RELEASE_TARGETS: 'macos-arm64',
     }
   )
@@ -183,6 +207,16 @@ test('generates a MinIO macOS architecture release without requiring other targe
       url: `https://minio.example/releases/wework/macos/WeWork_${version}_macos_arm64.app.tar.gz`,
     },
   })
+  const componentManifest = JSON.parse(
+    await readFile(resolve(output, 'components-beta-macos-arm64.json'), 'utf8')
+  )
+  expect(componentManifest.sourceSha).toBe('b'.repeat(40))
+  expect(componentManifest.components.coreDsh.downloadUrl).toContain(
+    'https://minio.example/releases/wework/components/'
+  )
+  expect(componentManifest.components.executor.downloadUrl).toContain(
+    'https://minio.example/releases/wework/macos/'
+  )
   await expect(readFile(resolve(output, 'beta.yml'), 'utf8')).rejects.toThrow()
 })
 

@@ -32,6 +32,9 @@ describe('ComponentUpdateManager', () => {
     expect(paths.bundledPlugins).toBe(join(fixture.resources, 'bundled-plugins'))
     expect(paths.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
     expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
+    expect(paths.contentSha256.weworkCorePlugins).toBe(
+      await hashComponentPath(join(fixture.resources, 'wework-core-plugins'))
+    )
   })
 
   test('downloads changed components and atomically activates them on next startup', async () => {
@@ -41,9 +44,10 @@ describe('ComponentUpdateManager', () => {
     const manager = createManager(fixture, fetch)
 
     expect(await manager.stageAvailableUpdate()).toBe(true)
-    const activated = (await manager.prepareStartup()).executor
-    expect(await readFile(activated, 'utf8')).toBe('executor-v2')
-    expect((await stat(activated)).mode & 0o111).not.toBe(0)
+    const activated = await manager.prepareStartup()
+    expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
+    expect(activated.contentSha256.executor).toBe(update.manifest.components.executor.contentSha256)
+    expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
     await manager.confirmStartup()
 
     const restarted = createManager(fixture, fetch)

@@ -105,6 +105,34 @@ inherits Auth, Cloud, and Workbench contexts. Third-party plugins must not use
 this field; they should pass their own React component as the fourth argument
 to `ctx.wework.ui.register`.
 
+## Plugin sync and fingerprint-based reload
+
+The managed Core DSH plugins (the `weworkCorePlugins` component, including the
+first-party plugins listed above and host plugins such as
+`@wegent/dsh-app-wework`) are copied into the profile's `node_modules` on every
+profile prepare. The profile writes a `.wework-runtime.json` stamp recording
+`dshVersion`, `sourceFingerprint` (host), `managedUiPlugins`, and
+`corePluginsFingerprint` (plugin content fingerprint).
+
+The DSH process always reloads plugin JS on startup; the stamp only decides
+whether the profile must be re-prepared:
+
+- Host fingerprint change (version or `sourceFingerprint`) → full re-prepare:
+  rewrite `package.json` dependency paths and re-sync the managed plugin copies.
+- Plugin fingerprint change → delete and re-copy the managed plugin copies,
+  removing residual files that no longer exist in the source.
+- Neither changed → fast path: leave files untouched and only repair node-pty
+  permissions.
+
+The plugin fingerprint comes from `WEWORK_CORE_PLUGINS_SHA256` (the active
+component's `contentSha256`, zero cost in production). When it is not provided,
+the plugin root is hashed deterministically with the same algorithm used for
+component content fingerprints, so the dev fallback and the production
+environment value match for identical content. A legacy stamp without
+`corePluginsFingerprint` is treated as mismatched and refreshed once on the
+first upgrade. Manually installed plugins remain preserved through
+`recoverInstalledDshDependencies` and are not affected by the refresh.
+
 ## Packaging and verification
 
 When adding a DSH plugin shipped with Wework:
