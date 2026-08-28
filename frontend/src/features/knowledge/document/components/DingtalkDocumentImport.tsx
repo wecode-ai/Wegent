@@ -195,9 +195,7 @@ export function DingtalkDocumentImport({
   const availableIds = useMemo(
     () => [
       ...new Set(
-        Object.values(sources).flatMap(item =>
-          collectImportableIds(item.nodes, '', Boolean(item.status?.ai_table_configured))
-        )
+        Object.values(sources).flatMap(item => collectImportableIds(item.nodes, '', item.status))
       ),
     ],
     [sources]
@@ -215,11 +213,7 @@ export function DingtalkDocumentImport({
   const expandedIds = availableIds.filter(id => selectedIds.has(id))
   const overLimit = expandedIds.length > MAX_IMPORT_DOCUMENTS
   // Ancestor documents retained for context are not search matches themselves.
-  const visibleIds = collectImportableIds(
-    visibleNodes,
-    searchQuery,
-    Boolean(source.status?.ai_table_configured)
-  )
+  const visibleIds = collectImportableIds(visibleNodes, searchQuery, source.status)
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id))
 
   const toggleSelect = useCallback((ids: string[]) => {
@@ -344,7 +338,7 @@ export function DingtalkDocumentImport({
                   const count = collectImportableIds(
                     sources[key].nodes,
                     '',
-                    Boolean(sources[key].status?.ai_table_configured)
+                    sources[key].status
                   ).filter(id => selectedIds.has(id)).length
                   return (
                     <button
@@ -499,7 +493,7 @@ export function DingtalkDocumentImport({
                           selectedIds={selectedIds}
                           expandedKeys={expandedKeys}
                           disabled={submitting}
-                          aiTableConfigured={Boolean(source.status?.ai_table_configured)}
+                          configuration={source.status}
                           onToggle={toggleSelect}
                           onExpand={toggleExpanded}
                         />

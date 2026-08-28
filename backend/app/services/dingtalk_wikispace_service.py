@@ -540,4 +540,7 @@ class DingTalkWikiSpaceService:
             "ai_table_configured": bool(
                 DingTalkDocService.get_user_dingtalk_mcp_url(user, "ai_table")
             ),
+            "table_configured": bool(
+                DingTalkDocService.get_user_dingtalk_mcp_url(user, "table")
+            ),
         }

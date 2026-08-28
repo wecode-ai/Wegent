@@ -92,8 +92,12 @@ test.describe('External DingTalk document import', () => {
         .getByTestId(`dingtalk-folder-navigate-${EXTERNAL_IMPORT_NODES.formatsRoot}`)
         .click()
 
-      const sheet = page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.sheet}`)
-      await expect(sheet).toBeEnabled()
+      await expect(
+        page.getByTestId(`dingtalk-node-configure-${EXTERNAL_IMPORT_NODES.sheet}`)
+      ).toBeVisible()
+      await expect(
+        page.getByTestId(`dingtalk-node-select-${EXTERNAL_IMPORT_NODES.sheet}`)
+      ).toHaveCount(0)
       await expect(
         page.getByTestId(`dingtalk-node-configure-${EXTERNAL_IMPORT_NODES.table}`)
       ).toBeVisible()
@@ -106,12 +110,7 @@ test.describe('External DingTalk document import', () => {
       await expect(pdf).toHaveAttribute('aria-checked', 'true')
       await pdf.click()
       await expect(pdf).toHaveAttribute('aria-checked', 'false')
-      await sheet.click()
-      await page.getByTestId('dingtalk-import-submit').click()
-      await expect(page.getByTestId('dingtalk-import-error')).toContainText(
-        /钉钉表格 MCP|DingTalk Table MCP/
-      )
-      await expect(page.getByTestId('dingtalk-import-result')).toHaveCount(0)
+      await expect(page.getByTestId('dingtalk-import-submit')).toBeDisabled()
       await page.getByTestId('dingtalk-import-cancel').click()
       expect(await listDocuments(request, context.token, context.knowledgeBaseId)).toEqual([])
     })
@@ -329,18 +328,28 @@ test.describe('External DingTalk document import', () => {
   }) => {
     test.setTimeout(120_000)
     await runScenario(request, 'delete', async context => {
-      // Slow the provider fetch so the import is still running when deleted.
+      // Hold the body response until deletion, independent of worker scheduling.
       await configureMockImport(request, {
-        responseDelays: { [EXTERNAL_IMPORT_NODES.product]: 5000 },
+        pausedContentNodeIds: [EXTERNAL_IMPORT_NODES.product],
       })
 
-      const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
-        EXTERNAL_IMPORT_NODES.product,
-      ])
-      expect(imported.created).toHaveLength(1)
-      const documentId = imported.created[0].id
-
-      await deleteDocument(request, context.token, documentId)
+      let documentId: number
+      try {
+        const imported = await importViaApi(request, context.token, context.knowledgeBaseId, [
+          EXTERNAL_IMPORT_NODES.product,
+        ])
+        expect(imported.created).toHaveLength(1)
+        documentId = imported.created[0].id
+        await expect
+          .poll(async () => (await configureMockImport(request, {})).waitingContentNodeIds, {
+            timeout: 30_000,
+            message: 'The worker must reach the held body request before deletion',
+          })
+          .toContain(EXTERNAL_IMPORT_NODES.product)
+        await deleteDocument(request, context.token, documentId)
+      } finally {
+        await configureMockImport(request, { pausedContentNodeIds: [] })
+      }
 
       // The late task fetched the content but must not resurrect the document:
       // keep probing the deleted record while the delayed fetch settles.

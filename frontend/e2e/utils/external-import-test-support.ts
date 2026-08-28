@@ -39,7 +39,7 @@ export interface MockImportConfig {
   documentContents?: Record<string, string>
   nodeFailures?: Record<string, string>
   hiddenNodeIds?: string[]
-  responseDelays?: Record<string, number>
+  pausedContentNodeIds?: string[]
 }
 
 function authHeaders(token: string): Record<string, string> {
@@ -160,11 +160,12 @@ export async function syncDingtalkDocs(request: APIRequestContext, token: string
 export async function configureMockImport(
   request: APIRequestContext,
   config: MockImportConfig
-): Promise<void> {
+): Promise<{ waitingContentNodeIds: string[] }> {
   const response = await request.post(`${PROVIDER_NATIVE_MOCK_URL}/mcp-control/config`, {
     data: config,
   })
   await expectOk(response)
+  return response.json()
 }
 
 /** Import external resources through the real batch import API. */

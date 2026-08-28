@@ -61,6 +61,7 @@ class DingtalkSyncStatus(BaseModel):
     total_nodes: int = 0
     is_configured: bool = False  # Whether MCP URL is configured
     ai_table_configured: bool = False
+    table_configured: bool = False
 
 
 class DingtalkSyncResult(BaseModel):

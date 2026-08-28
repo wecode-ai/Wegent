@@ -37,6 +37,7 @@ export interface DingtalkSyncStatus {
   total_nodes: number
   is_configured: boolean
   ai_table_configured?: boolean
+  table_configured?: boolean
 }
 
 export interface DingtalkSyncResult {

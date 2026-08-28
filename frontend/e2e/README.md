@@ -128,7 +128,7 @@ Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AE
 知识库显式绑定检索配置，不依赖管理员预先配置。只模拟钉钉 MCP 和外部 embedding HTTP
 接口；导入任务、remote 索引、Qdrant 存储及分块读取均走真实链路。
 
-格式可选性单独验证：PDF 可选、`axls` 不支持、AI 表格未配置时展示配置入口。
+格式可选性单独验证：PDF 可选，普通表格和 AI 表格缺少各自 MCP 配置时不可选并展示配置入口。
 批量导入目录固定为三篇在线文档；文件下载契约由后端 Provider 测试覆盖，
 本套 E2E 不覆盖 PDF 下载到检索的完整链路。
 

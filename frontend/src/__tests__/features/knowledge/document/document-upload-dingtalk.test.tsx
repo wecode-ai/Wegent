@@ -277,7 +277,8 @@ describe('DocumentUpload dingtalk source', () => {
         screen.getByTestId(`dingtalk-node-name-${extension}`).querySelector('svg')
       ).toHaveClass(...iconClasses)
     }
-    expect(screen.getByTestId('dingtalk-node-select-axls')).toBeEnabled()
+    expect(screen.getByTestId('dingtalk-node-configure-axls')).toBeInTheDocument()
+    expect(screen.queryByTestId('dingtalk-node-select-axls')).not.toBeInTheDocument()
     expect(screen.queryByTestId('dingtalk-node-select-mp3')).not.toBeInTheDocument()
   })
 
@@ -349,12 +350,18 @@ describe('DocumentUpload dingtalk source', () => {
     }
   )
 
-  it.each([true, false])(
-    'selects supported files independently of AI Table configuration (%s)',
-    async aiConfigured => {
+  it.each([
+    [false, false, ['doc', 'pdf']],
+    [true, false, ['doc', 'pdf', 'base']],
+    [false, true, ['doc', 'pdf', 'sheet']],
+    [true, true, ['doc', 'pdf', 'base', 'sheet']],
+  ])(
+    'selects only configured spreadsheet formats (AI: %s, Table: %s)',
+    async (aiConfigured, tableConfigured, expectedIds) => {
       mockGetSyncStatus.mockResolvedValue({
         is_configured: true,
         ai_table_configured: aiConfigured,
+        table_configured: tableConfigured,
       })
       mockGetDocs.mockResolvedValue({
         nodes: [
@@ -391,12 +398,58 @@ describe('DocumentUpload dingtalk source', () => {
           '/settings?tab=integrations'
         )
       }
+      if (!tableConfigured) {
+        expect(screen.getByTestId('dingtalk-node-configure-sheet')).toHaveAttribute(
+          'href',
+          '/settings?tab=integrations'
+        )
+        expect(screen.queryByTestId('dingtalk-node-select-sheet')).not.toBeInTheDocument()
+      }
       fireEvent.click(screen.getByTestId('dingtalk-import-select-all'))
       fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
       await waitFor(() => expect(onImport).toHaveBeenCalled())
-      expect(onImport.mock.calls[0][0]).toEqual(
-        aiConfigured ? ['doc', 'pdf', 'base', 'sheet'] : ['doc', 'pdf', 'sheet']
+      expect(onImport.mock.calls[0][0]).toEqual(expectedIds)
+    }
+  )
+
+  it.each(['docs', 'wikispace'] as const)(
+    'keeps a mixed folder importable and restores its sheet after configuration refresh (%s)',
+    async source => {
+      const getStatus = source === 'docs' ? mockGetSyncStatus : mockGetWikispaceSyncStatus
+      const getNodes = source === 'docs' ? mockGetDocs : mockGetWikispaceNodes
+      getStatus.mockResolvedValue({ is_configured: true, table_configured: false })
+      getNodes.mockResolvedValue({
+        nodes: [
+          folderNode('mixed', 'Mixed', [
+            docNode('text', 'Text', { source }),
+            docNode('sheet', 'Sheet', { source, node_type: 'file', extension: 'axls' }),
+          ]),
+        ],
+        total_count: 3,
+      })
+      const onImport = jest
+        .fn()
+        .mockResolvedValue({ createdCount: 1, updatedCount: 0, processingCount: 0 })
+      await openDingtalkMode({ onDingtalkImport: onImport })
+      if (source === 'wikispace')
+        fireEvent.click(screen.getByTestId('dingtalk-import-tab-wikispace'))
+      fireEvent.click(await screen.findByTestId('dingtalk-folder-navigate-mixed'))
+      fireEvent.click(screen.getByTestId('dingtalk-node-select-mixed'))
+      expect(screen.getByTestId('dingtalk-folder-document-count-mixed')).toHaveTextContent('1')
+      expect(screen.getByTestId('dingtalk-node-select-text')).toHaveAttribute(
+        'aria-checked',
+        'true'
       )
+      expect(screen.queryByTestId('dingtalk-node-select-sheet')).not.toBeInTheDocument()
+
+      getStatus.mockResolvedValue({ is_configured: true, table_configured: true })
+      fireEvent.click(screen.getByTestId('dingtalk-import-refresh'))
+      const sheet = await screen.findByTestId('dingtalk-node-select-sheet')
+      expect(sheet).toBeEnabled()
+      expect(sheet).toHaveAttribute('aria-checked', 'false')
+      expect(screen.getByTestId('dingtalk-folder-document-count-mixed')).toHaveTextContent('2')
+      fireEvent.click(screen.getByTestId('dingtalk-import-submit'))
+      await waitFor(() => expect(onImport).toHaveBeenCalledWith(['text']))
     }
   )
 

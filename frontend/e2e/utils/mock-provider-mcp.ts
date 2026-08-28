@@ -9,15 +9,34 @@ interface McpToolCall {
 }
 
 const toolCalls: McpToolCall[] = []
+const contentGates = new Map<
+  string,
+  { waiting: boolean; promise: Promise<void>; release: () => void }
+>()
+
+function setPausedContentNodes(nodeIds: string[]): void {
+  for (const [nodeId, gate] of contentGates) {
+    if (!nodeIds.includes(nodeId)) {
+      contentGates.delete(nodeId)
+      gate.release()
+    }
+  }
+  for (const nodeId of nodeIds) {
+    if (contentGates.has(nodeId)) continue
+    let release!: () => void
+    const promise = new Promise<void>(resolve => (release = resolve))
+    contentGates.set(nodeId, { waiting: false, promise, release })
+  }
+}
+
 const state = {
   deniedNodeIds: new Set<string>(),
   documentNames: { 'doc-d1': 'Doc-D1_新设计' } as Record<string, string>,
   // Import-scenario controls: content overrides, injected get_document_content
-  // failures, nodes hidden from list_nodes, and per-node response delays.
+  // failures, and nodes hidden from list_nodes.
   documentContents: {} as Record<string, string>,
   nodeFailures: {} as Record<string, string>,
   hiddenNodeIds: new Set<string>(),
-  responseDelays: {} as Record<string, number>,
 }
 
 export const EXTERNAL_IMPORT_NODES = {
@@ -110,13 +129,13 @@ export function handleProviderMcpHttpRequest(
     return true
   }
   if (url.pathname === '/mcp-control/reset' && req.method === 'POST') {
+    setPausedContentNodes([])
     toolCalls.length = 0
     state.deniedNodeIds.clear()
     state.documentNames = { 'doc-d1': 'Doc-D1_新设计' }
     state.documentContents = {}
     state.nodeFailures = {}
     state.hiddenNodeIds.clear()
-    state.responseDelays = {}
     writeJson(res, 200, { status: 'reset' })
     return true
   }
@@ -127,7 +146,7 @@ export function handleProviderMcpHttpRequest(
       documentContents?: Record<string, string>
       nodeFailures?: Record<string, string>
       hiddenNodeIds?: string[]
-      responseDelays?: Record<string, number>
+      pausedContentNodeIds?: string[]
     }>(body)
     // Each field present in the request replaces the whole field, so passing
     // an empty object clears that control. documentNames merges instead: it
@@ -147,8 +166,8 @@ export function handleProviderMcpHttpRequest(
     if (config?.hiddenNodeIds) {
       state.hiddenNodeIds = new Set(config.hiddenNodeIds)
     }
-    if (config?.responseDelays) {
-      state.responseDelays = config.responseDelays
+    if (config?.pausedContentNodeIds) {
+      setPausedContentNodes(config.pausedContentNodeIds)
     }
     writeJson(res, 200, {
       deniedNodeIds: [...state.deniedNodeIds],
@@ -156,7 +175,10 @@ export function handleProviderMcpHttpRequest(
       documentContents: state.documentContents,
       nodeFailures: state.nodeFailures,
       hiddenNodeIds: [...state.hiddenNodeIds],
-      responseDelays: state.responseDelays,
+      pausedContentNodeIds: [...contentGates.keys()],
+      waitingContentNodeIds: [...contentGates]
+        .filter(([, gate]) => gate.waiting)
+        .map(([nodeId]) => nodeId),
     })
     return true
   }
@@ -215,8 +237,11 @@ async function handleMcpRequestAsync(
         ? (params.arguments as Record<string, unknown>)
         : {}
     const nodeId = String(args.nodeId || args.node_id || '')
-    const delayMs = state.responseDelays[nodeId] || 0
-    if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs))
+    const gate = name === 'get_document_content' ? contentGates.get(nodeId) : undefined
+    if (gate) {
+      gate.waiting = true
+      await gate.promise
+    }
     const outcome = await callTool(name, args)
     completedToolCall = {
       timestamp: new Date().toISOString(),

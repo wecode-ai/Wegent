@@ -586,6 +586,37 @@ class TestGetDingtalkDocs:
 class TestGetSyncStatus:
     """Tests for get_sync_status."""
 
+    @pytest.mark.parametrize("source", ["docs", "wikispace"])
+    @pytest.mark.parametrize("table_configured", [False, True])
+    def test_reports_table_configuration_independently(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+        table_configured: bool,
+    ) -> None:
+        from app.schemas.dingtalk_doc import DingtalkSyncStatus
+        from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+
+        monkeypatch.setattr(
+            DingTalkDocService,
+            "get_user_dingtalk_mcp_url",
+            lambda user, service_id="docs": (
+                "https://mcp.example.test"
+                if service_id == "docs" or (service_id == "table" and table_configured)
+                else None
+            ),
+        )
+        service = DingTalkDocService if source == "docs" else DingTalkWikiSpaceService
+
+        result = DingtalkSyncStatus.model_validate(
+            service.get_sync_status(test_user, test_db)
+        ).model_dump()
+
+        assert result["table_configured"] is table_configured
+        assert result["ai_table_configured"] is False
+
     @patch.object(DingTalkDocService, "is_configured", return_value=True)
     def test_returns_status_when_configured(
         self, mock_is_configured: MagicMock, test_db: Session, test_user: User

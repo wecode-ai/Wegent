@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { SelectionIndicator } from '@/components/ui/selection-indicator'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import type { DingtalkDocNode } from '@/types/dingtalk-doc'
+import type { DingtalkDocNode, DingtalkSyncStatus } from '@/types/dingtalk-doc'
 import type { ExternalDocumentImportStatuses } from '@/apis/knowledge'
 import type { DocumentIndexStatus } from '@/types/knowledge'
 
@@ -24,23 +24,23 @@ const IMPORT_STATUS_KEYS: Record<DocumentIndexStatus, string> = {
   not_indexed: 'document.upload.dingtalk.importPending',
 }
 
-/** Import snapshots contain document IDs only; folders are selection shortcuts. */
-function isAiTable(node: DingtalkDocNode): boolean {
-  return (
-    node.node_type !== 'folder' &&
-    node.content_type.toUpperCase() === 'ALIDOC' &&
-    node.extension === 'able'
-  )
+type SpreadsheetConfiguration = Pick<DingtalkSyncStatus, 'ai_table_configured' | 'table_configured'>
+
+function spreadsheetConfigurationKey(node: DingtalkDocNode): keyof SpreadsheetConfiguration | null {
+  if (node.node_type === 'folder' || node.content_type.toUpperCase() !== 'ALIDOC') return null
+  if (node.extension === 'able') return 'ai_table_configured'
+  if (node.extension === 'axls') return 'table_configured'
+  return null
 }
 
-function isImportable(node: DingtalkDocNode, aiTableConfigured: boolean): boolean {
+function isImportable(
+  node: DingtalkDocNode,
+  configuration?: SpreadsheetConfiguration | null
+): boolean {
   if (node.node_type === 'folder') return false
-  if (
-    node.content_type.toUpperCase() === 'ALIDOC' &&
-    ['adoc', 'axls'].includes(node.extension ?? '')
-  )
-    return true
-  if (isAiTable(node)) return aiTableConfigured
+  const configurationKey = spreadsheetConfigurationKey(node)
+  if (configurationKey) return Boolean(configuration?.[configurationKey])
+  if (node.content_type.toUpperCase() === 'ALIDOC' && node.extension === 'adoc') return true
   return (
     node.node_type === 'file' &&
     Boolean(node.content_type) &&
@@ -52,16 +52,16 @@ function isImportable(node: DingtalkDocNode, aiTableConfigured: boolean): boolea
 export function collectImportableIds(
   nodes: DingtalkDocNode[],
   query = '',
-  aiTableConfigured = false
+  configuration?: SpreadsheetConfiguration | null
 ): string[] {
   const normalized = query.trim().toLowerCase()
   return [
     ...new Set(
       nodes.flatMap(node => [
-        ...(isImportable(node, aiTableConfigured) && node.name.toLowerCase().includes(normalized)
+        ...(isImportable(node, configuration) && node.name.toLowerCase().includes(normalized)
           ? [node.dingtalk_node_id]
           : []),
-        ...collectImportableIds(node.children ?? [], normalized, aiTableConfigured),
+        ...collectImportableIds(node.children ?? [], normalized, configuration),
       ])
     ),
   ]
@@ -86,7 +86,7 @@ interface DingtalkImportTreeProps {
   selectedIds: Set<string>
   expandedKeys: Set<string>
   disabled: boolean
-  aiTableConfigured: boolean
+  configuration: SpreadsheetConfiguration | null
   onToggle: (ids: string[]) => void
   onExpand: (key: string) => void
 }
@@ -116,11 +116,11 @@ function ImportTreeNode({
   const searching = Boolean(query.trim())
   const folder = node.node_type === 'folder'
   const hasChildren = Boolean(node.children?.length)
-  const importable = isImportable(node, props.aiTableConfigured)
+  const importable = isImportable(node, props.configuration)
   const importStatus = importable ? props.importStatuses[node.dingtalk_node_id] : undefined
   // A document selects itself; only folders are bulk-selection shortcuts.
   const ids = folder
-    ? collectImportableIds([node], '', props.aiTableConfigured)
+    ? collectImportableIds([node], '', props.configuration)
     : importable
       ? [node.dingtalk_node_id]
       : []
@@ -212,11 +212,15 @@ function ImportTreeNode({
           >
             <SelectionIndicator checked={checked} indeterminate={mixed} mixedIcon="bar" />
           </button>
-        ) : isAiTable(node) && !props.aiTableConfigured ? (
+        ) : spreadsheetConfigurationKey(node) ? (
           <Link
             href="/settings?tab=integrations"
             className="flex min-h-11 shrink-0 items-center px-2 text-xs text-primary"
-            title={t('document.upload.dingtalk.aiTableNotConfigured')}
+            title={t(
+              node.extension === 'able'
+                ? 'document.upload.dingtalk.aiTableNotConfigured'
+                : 'document.upload.dingtalk.tableNotConfigured'
+            )}
             data-testid={`dingtalk-node-configure-${node.dingtalk_node_id}`}
           >
             {t('document.goToSettings')}
