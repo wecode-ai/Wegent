@@ -35,6 +35,23 @@ def test_retry_restores_image_generation_size() -> None:
     assert params.size == "1512x648"
 
 
+def test_retry_restores_workflow_video_model_without_text_model_override() -> None:
+    user_subtask = SimpleNamespace(
+        result={
+            "video_config": {
+                "model": "seedance-2",
+                "model_display_name": "Seedance 2",
+            }
+        }
+    )
+
+    params = chat_namespace._get_retry_generate_params(user_subtask)
+
+    assert params is not None
+    assert params.model == "seedance-2"
+    assert params.model_display_name == "Seedance 2"
+
+
 class _RetryDbMock:
     """Mock DB that records whether the retry session was released."""
 
@@ -211,6 +228,59 @@ async def test_chat_retry_closes_session_before_triggering_sse_dispatch():
 
     assert result == {"success": True}
     mock_trigger.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_retry_persists_failed_state_when_dispatch_raises():
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    db = _RetryDbMock(user=SimpleNamespace(id=1))
+    assistant_subtask = SimpleNamespace(id=42)
+    dispatch_args = {
+        "task": SimpleNamespace(id=100),
+        "assistant_subtask": assistant_subtask,
+    }
+    dispatch_error = RuntimeError("video attachment preprocessing failed")
+
+    with (
+        patch("app.api.ws.chat_namespace.SessionLocal", return_value=db),
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace._prepare_chat_retry_dispatch",
+            return_value=dispatch_args,
+        ),
+        patch(
+            "app.api.ws.chat_namespace.trigger_ai_response_unified",
+            AsyncMock(side_effect=dispatch_error),
+        ),
+        patch(
+            "app.api.ws.chat_namespace._finalize_failed_ai_trigger",
+            AsyncMock(),
+        ) as mock_finalize,
+    ):
+        result = await namespace.on_chat_retry(
+            "sid-123",
+            {
+                "task_id": 100,
+                "subtask_id": 42,
+                "force_override_bot_model": None,
+                "force_override_bot_model_type": None,
+                "use_model_override": False,
+            },
+        )
+
+    assert result == {
+        "error": "Internal server error: video attachment preprocessing failed"
+    }
+    mock_finalize.assert_awaited_once()
+    assert mock_finalize.await_args.kwargs["task_id"] == 100
+    assert mock_finalize.await_args.kwargs["assistant_subtask_id"] == 42
+    assert mock_finalize.await_args.kwargs["error_message"]
+    assert mock_finalize.await_args.kwargs["error_code"]
 
 
 @pytest.mark.asyncio

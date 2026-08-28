@@ -161,24 +161,10 @@ def is_runtime_user_config_enabled(preferences: Any, runtime: str) -> bool:
     return bool(config.get("use_user_config"))
 
 
-def is_runtime_proxy_enabled(preferences: Any, runtime: str) -> bool:
-    """Return whether the user preference enables proxy for a runtime."""
-    normalized_runtime = _normalize_runtime(runtime)
-    parsed = load_runtime_preferences(preferences)
-    runtime_configs = parsed.get(USER_RUNTIME_CONFIG_PREFERENCE_KEY) or {}
-    if not isinstance(runtime_configs, dict):
-        return False
-    config = runtime_configs.get(normalized_runtime) or {}
-    if not isinstance(config, dict):
-        return False
-    return bool(config.get("use_proxy"))
-
-
 def set_runtime_user_config_enabled(
     preferences: Any,
     runtime: str,
     enabled: bool,
-    use_proxy: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Return preferences with the runtime config enablement updated."""
     normalized_runtime = _normalize_runtime(runtime)
@@ -188,30 +174,9 @@ def set_runtime_user_config_enabled(
         runtime_configs = {}
     runtime_config = dict(runtime_configs.get(normalized_runtime) or {})
     runtime_config["use_user_config"] = bool(enabled)
-    if use_proxy is not None:
-        runtime_config["use_proxy"] = bool(use_proxy)
+    runtime_config.pop("use_proxy", None)
     runtime_configs[normalized_runtime] = runtime_config
     parsed[USER_RUNTIME_CONFIG_PREFERENCE_KEY] = runtime_configs
-    return parsed
-
-
-def clear_runtime_proxy_preferences(preferences: Any) -> dict[str, Any]:
-    """Return preferences with all runtime proxy enablement disabled."""
-    parsed = load_runtime_preferences(preferences)
-    runtime_configs = parsed.get(USER_RUNTIME_CONFIG_PREFERENCE_KEY) or {}
-    if not isinstance(runtime_configs, dict):
-        return parsed
-
-    next_runtime_configs = {}
-    for runtime, config in runtime_configs.items():
-        if not isinstance(config, dict):
-            next_runtime_configs[runtime] = config
-            continue
-        next_config = dict(config)
-        next_config["use_proxy"] = False
-        next_runtime_configs[runtime] = next_config
-
-    parsed[USER_RUNTIME_CONFIG_PREFERENCE_KEY] = next_runtime_configs
     return parsed
 
 
@@ -254,7 +219,6 @@ class UserRuntimeConfigService:
         user: User,
         runtime: str,
         use_user_config: bool,
-        use_proxy: Optional[bool] = None,
     ) -> dict[str, Any]:
         """Update whether the runtime should use this user's saved config."""
         normalized_runtime = _normalize_runtime(runtime)
@@ -262,11 +226,7 @@ class UserRuntimeConfigService:
             user.preferences,
             normalized_runtime,
             use_user_config,
-            use_proxy,
         )
-        proxy_kind = self._get_proxy_kind(db, user_id=user.id)
-        if use_proxy is True and not self._get_proxy_url(proxy_kind):
-            raise UserRuntimeConfigError("proxy is not configured")
 
         user.preferences = json.dumps(preferences)
         db.add(user)
@@ -304,10 +264,6 @@ class UserRuntimeConfigService:
             }
         else:
             spec.pop("proxy", None)
-            user.preferences = json.dumps(
-                clear_runtime_proxy_preferences(user.preferences)
-            )
-            db.add(user)
         spec["updatedAt"] = now
         data["spec"] = spec
         kind.json = data
@@ -339,6 +295,15 @@ class UserRuntimeConfigService:
         if response["use_proxy"] and proxy_url:
             response["proxy_url"] = proxy_url
         return response
+
+    def get_proxy_url_for_execution(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+    ) -> str:
+        """Return the decrypted user proxy used by cloud and remote runtimes."""
+        return self._get_proxy_url(self._get_proxy_kind(db, user_id=user_id))
 
     def save_auth_json(
         self,
@@ -654,7 +619,7 @@ class UserRuntimeConfigService:
             "runtime": runtime,
             "display_name": RUNTIME_AUTH_FILES[runtime]["display_name"],
             "use_user_config": is_runtime_user_config_enabled(preferences, runtime),
-            "use_proxy": is_runtime_proxy_enabled(preferences, runtime),
+            "use_proxy": bool(proxy_url),
             "configured": bool(auth.get("encryptedValue")),
             "target_path": auth.get("targetPath")
             or RUNTIME_AUTH_FILES[runtime]["target_path"],

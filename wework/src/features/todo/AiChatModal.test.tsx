@@ -10,6 +10,7 @@ import type {
   ModelOptions,
   ModelType,
   ProjectWithTasks,
+  RuntimeGoalCreateInput,
   RuntimeSendRequest,
   RuntimeTaskAddress,
 } from '@/types/api'
@@ -64,6 +65,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     initialAddress,
     onAddressChange,
     runtimeContext,
+    allowInitialGoal,
     sendEphemeral,
     testId,
   }: {
@@ -74,6 +76,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
       message: string,
       options: {
         attachments: []
+        initialGoal?: RuntimeGoalCreateInput
         executionModel: {
           modelId?: string
           modelType?: ModelType | null
@@ -87,6 +90,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
     initialAddress?: RuntimeTaskAddress | null
     onAddressChange?: (address: RuntimeTaskAddress | null) => void
     runtimeContext?: Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
+    allowInitialGoal?: boolean
     sendEphemeral?: boolean
     testId?: string
   }) => {
@@ -118,6 +122,35 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
         >
           send
         </button>
+        <button
+          type="button"
+          data-testid="mock-chat-goal-send"
+          onClick={() =>
+            void createTask?.('持续完成任务', {
+              attachments: [],
+              initialGoal: {
+                objective: '持续完成任务',
+                status: 'active',
+                tokenBudget: null,
+              },
+              executionModel: {
+                modelId: 'backend-codex',
+                modelType: 'user',
+                modelOptions: { reasoningEffort: 'high' },
+              },
+              optimisticUserMessage: {
+                id: 'queued-side-chat-goal-1',
+                role: 'user',
+                content: '持续完成任务',
+                status: 'done',
+              },
+              onError: vi.fn(),
+              onRuntimeTaskOptimisticOpen: vi.fn(),
+            })
+          }
+        >
+          send goal
+        </button>
         <div
           data-testid="mock-chat-panel"
           data-project-id={currentProject?.id ?? ''}
@@ -129,6 +162,7 @@ vi.mock('@/components/layout/workspace-panels/TemporaryChatPanel', () => ({
           data-cloud-project-id={runtimeContext?.cloudProjectId ?? ''}
           data-loop-item-id={runtimeContext?.origin?.loopItemId ?? ''}
           data-panel-testid={testId}
+          data-allow-initial-goal={allowInitialGoal ? 'yes' : 'no'}
         />
       </>
     )
@@ -209,6 +243,7 @@ describe('AiChatModal', () => {
       'work-item-new-task-chat-panel'
     )
     expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-has-initial-address', 'no')
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-allow-initial-goal', 'yes')
   })
 
   it('keeps the original title as an unsent draft when a work item moves to pending', () => {
@@ -262,12 +297,108 @@ describe('AiChatModal', () => {
           type: 'board_task',
           cloudProjectId: '11',
           loopItemId: 'WEG-1',
+          projectStore: 'backend',
         },
         additionalContext: expect.objectContaining({
           issueEnvironment: expect.objectContaining({
             value: expect.stringContaining('"description":"Use the shared workspace"'),
           }),
         }),
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('forwards Goal mode when creating an Issue task', async () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('mock-chat-goal-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '持续完成任务',
+      expect.objectContaining({
+        initialGoal: {
+          objective: '持续完成任务',
+          status: 'active',
+          tokenBudget: null,
+        },
+      })
+    )
+    mocks.createProjectRuntimeTask.mockClear()
+  })
+
+  it('uses the execution selection captured by the Issue creation page', async () => {
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        initialTaskRequest={{
+          schemaVersion: 2,
+          runtime: 'codex',
+          message: '给出任务列表',
+          projectId: 92,
+          deviceWorkspaceId: 202,
+          execution: {
+            workspace: {
+              source: 'git_worktree',
+              branch: 'feature/issue-selection',
+            },
+          },
+          modelId: 'selected-in-issue-composer',
+          modelType: 'runtime',
+          modelOptions: { reasoning: 'xhigh', collaborationMode: 'default' },
+        }}
+        initialLocalProjectId={92}
+        open
+        onClose={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('mock-chat-panel')).toHaveAttribute('data-project-id', '92')
+    await userEvent.click(screen.getByTestId('mock-chat-send'))
+
+    expect(mocks.createProjectRuntimeTask).toHaveBeenCalledWith(
+      '给出任务列表',
+      expect.objectContaining({
+        project: expect.objectContaining({ id: 92 }),
+        deviceWorkspaceId: 202,
+        executionModel: {
+          modelId: 'backend-codex',
+          modelType: 'user',
+          modelOptions: { reasoningEffort: 'high' },
+        },
+        taskRequest: {
+          schemaVersion: 2,
+          runtime: 'codex',
+          message: '给出任务列表',
+          execution: {
+            workspace: {
+              source: 'git_worktree',
+              branch: 'feature/issue-selection',
+            },
+          },
+          modelId: 'selected-in-issue-composer',
+          modelType: 'runtime',
+          modelOptions: { reasoning: 'xhigh', collaborationMode: 'default' },
+          cloudProjectId: '11',
+          origin: {
+            type: 'board_task',
+            cloudProjectId: '11',
+            loopItemId: 'WEG-1',
+            projectStore: 'backend',
+          },
+          additionalContext: expect.any(Object),
+        },
       })
     )
     mocks.createProjectRuntimeTask.mockClear()
@@ -518,5 +649,36 @@ describe('AiChatModal', () => {
 
     await userEvent.click(screen.getByTestId('ai-chat-modal-close'))
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('notifies the parent only once when a new task address becomes available', () => {
+    const onAddressChange = vi.fn()
+
+    render(
+      <AiChatModal
+        project={project}
+        localProjects={localProjects}
+        task={task}
+        embedded
+        open
+        onClose={vi.fn()}
+        onAddressChange={onAddressChange}
+      />
+    )
+
+    act(() => {
+      mocks.lastOnAddressChange?.({ deviceId: 'cloud-device', taskId: 'runtime-1' })
+      mocks.lastOnAddressChange?.({
+        deviceId: 'cloud-device',
+        taskId: 'runtime-1',
+        threadId: 'thread-1',
+      })
+    })
+
+    expect(onAddressChange).toHaveBeenCalledOnce()
+    expect(onAddressChange).toHaveBeenCalledWith({
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+    })
   })
 })

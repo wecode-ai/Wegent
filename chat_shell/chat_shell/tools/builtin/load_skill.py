@@ -664,6 +664,15 @@ The following skills provide specialized guidance for specific tasks. When your 
 
         if loaded_tools:
             self.register_skill_tools(skill_name, loaded_tools)
+        logger.info(
+            "[LoadSkillTool] Materialized deferred tools for skill '%s': "
+            "loader_count=%d loaded_count=%d tool_names=%s tool_types=%s",
+            skill_name,
+            len(loaders),
+            len(loaded_tools),
+            [getattr(tool, "name", "unknown") for tool in loaded_tools],
+            [type(tool).__name__ for tool in loaded_tools],
+        )
         self._loaded_skill_tool_loaders.add(skill_name)
         return self._skill_tools.get(skill_name, [])
 

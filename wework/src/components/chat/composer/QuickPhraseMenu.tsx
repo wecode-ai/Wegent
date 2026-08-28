@@ -1,15 +1,15 @@
 import { File, FileText, MessageSquareText, Search, Settings, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { convertFileSrc } from '@tauri-apps/api/core'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import { Tooltip } from '@/components/ui/tooltip'
 import { navigateTo } from '@/lib/navigation'
-import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/tauri/appPreferences'
+import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/desktop/appPreferences'
 import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from './useOutsideClick'
+import { desktopFileUrl } from '../assistantMarkdownLinks'
 
 interface QuickPhraseMenuProps {
   disabled?: boolean
@@ -33,7 +33,7 @@ function StashThumbnail({ path }: { path: string }) {
   if (isImagePath(path)) {
     return (
       <img
-        src={convertFileSrc(path)}
+        src={desktopFileUrl(path)}
         alt=""
         className="h-10 w-10 rounded-lg border border-border bg-muted object-cover"
       />
@@ -130,7 +130,7 @@ function StashPreview({ phrase }: { phrase: QuickPhrase }) {
     >
       {imagePath ? (
         <img
-          src={convertFileSrc(imagePath)}
+          src={desktopFileUrl(imagePath)}
           alt={fileName(imagePath)}
           className="max-h-48 w-full rounded-lg bg-muted object-contain"
         />

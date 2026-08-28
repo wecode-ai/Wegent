@@ -42,14 +42,16 @@ locally:
 ```bash
 bash executor/scripts/dev-cloud-device.sh start    # start and keep online (idempotent)
 bash executor/scripts/dev-cloud-device.sh status   # show running/online state
-bash executor/scripts/dev-cloud-device.sh restart  # restart with the latest source
+bash executor/scripts/dev-cloud-device.sh restart  # restart manually
 bash executor/scripts/dev-cloud-device.sh stop     # stop
 ```
 
 - The default device id is `cloud-device-dev` (override with `DEVICE_ID`); it
   appears under "cloud devices" in the device list after registration.
-- The script builds the latest executor, mints a 30-day token from the
-  `backend/.env` secret, and uses an isolated executor home and Codex home (it
+- The script builds the latest executor and watches `executor/src`,
+  `Cargo.toml`, and `Cargo.lock`; source changes trigger an incremental build
+  and dynamic executor restart. It also mints a 30-day token from the
+  `backend/.env` secret and uses an isolated executor home and Codex home (it
   never reads personal Codex credentials).
 - When creating a robot, choose the "cloud" execution environment and
   `cloud-device-dev` as the device; assigned tasks then execute locally through

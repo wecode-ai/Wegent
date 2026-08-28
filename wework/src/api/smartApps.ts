@@ -1,7 +1,6 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
 import type { HttpClient } from './http'
-import { shouldUseTauriFetch } from './http'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from './plugins'
+import { sha256Hex } from './fileHash'
 
 export interface SmartAppMarketplaceTag {
   id: string
@@ -101,7 +100,13 @@ export interface SmartAppSubmissionCompleteResponse {
   item: SmartAppMarketplaceItem | null
 }
 
-export function createSmartAppsApi(client: HttpClient) {
+function resolveSmartAppDownloadUrl(downloadUrl: string, apiBaseUrl: string): string {
+  if (!apiBaseUrl.trim()) return downloadUrl
+  const baseUrl = new URL(apiBaseUrl, window.location.origin)
+  return new URL(downloadUrl, baseUrl).toString()
+}
+
+export function createSmartAppsApi(client: HttpClient, apiBaseUrl = '') {
   const initSubmission = (
     packageInfo: SmartAppPreparedPackage,
     metadata: SmartAppSubmissionMetadata
@@ -147,8 +152,14 @@ export function createSmartAppsApi(client: HttpClient) {
     getItem(id: number) {
       return client.get<SmartAppMarketplaceItem>(`/smart-apps/marketplace/${id}`)
     },
-    getDownload(id: number) {
-      return client.post<SmartAppDownloadDescriptor>(`/smart-apps/marketplace/${id}/download`)
+    async getDownload(id: number) {
+      const descriptor = await client.post<SmartAppDownloadDescriptor>(
+        `/smart-apps/marketplace/${id}/download`
+      )
+      return {
+        ...descriptor,
+        downloadUrl: resolveSmartAppDownloadUrl(descriptor.downloadUrl, apiBaseUrl),
+      }
     },
     getAccess(id: number) {
       return client.get<SmartAppAccess>(`/smart-apps/${id}/access`)
@@ -160,16 +171,13 @@ export function createSmartAppsApi(client: HttpClient) {
     completeSubmission,
     cancelSubmission,
     async publish(file: File, metadata: SmartAppSubmissionMetadata) {
-      const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-      const sha256 = Array.from(new Uint8Array(digest), byte =>
-        byte.toString(16).padStart(2, '0')
-      ).join('')
+      const sha256 = await sha256Hex(file)
       const initialized = await initSubmission(
         { filename: file.name, sha256, sizeBytes: file.size },
         metadata
       )
       try {
-        const transport = shouldUseTauriFetch() ? tauriFetch : globalThis.fetch.bind(globalThis)
+        const transport = globalThis.fetch.bind(globalThis)
         const upload = await transport(initialized.uploadUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/zip' },

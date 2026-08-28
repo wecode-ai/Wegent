@@ -234,7 +234,7 @@ export function RepoListView({
             )}
           >
             <FolderX className="w-4 h-4" />
-            <span>{t('common:repos.no_workspace_short', '不使用代码仓库')}</span>
+            <span>{t('common:repos.no_workspace_needed')}</span>
           </button>
         )}
         <RepositorySelectorFooter

@@ -12,6 +12,44 @@ import {
 import type { Team } from '@/types/api'
 
 const routerPush = jest.fn()
+const mockModelSelector = jest.fn(
+  ({
+    modelCategoryType = 'llm',
+    compact,
+    triggerVariant,
+    selectedTeam: modelTeam,
+  }: {
+    modelCategoryType?: string
+    compact?: boolean
+    triggerVariant?: string
+    selectedTeam?: Team | null
+  }) => (
+    <div
+      data-testid="model-selector"
+      data-model-category={modelCategoryType}
+      data-compact={compact ? 'true' : 'false'}
+      data-trigger-variant={triggerVariant ?? 'default'}
+      data-team-id={modelTeam?.id}
+    />
+  )
+)
+const mockVideoGenerationModeSelector = jest.fn(
+  ({ triggerVariant }: { triggerVariant?: string }) => (
+    <div
+      data-testid="video-generation-mode-selector"
+      data-trigger-variant={triggerVariant ?? 'default'}
+    />
+  )
+)
+const mockVideoSettingsPopover = jest.fn(
+  ({ showDuration, iconOnly }: { showDuration?: boolean; iconOnly?: boolean }) => (
+    <div
+      data-testid="video-settings-popover"
+      data-show-duration={showDuration === false ? 'false' : 'true'}
+      data-icon-only={iconOnly ? 'true' : 'false'}
+    />
+  )
+)
 const mockTeamSelectorButton = jest.fn(
   ({ iconOnly, triggerTestId }: { iconOnly?: boolean; triggerTestId?: string }) => (
     <button
@@ -58,7 +96,12 @@ jest.mock('@/components/ui/tooltip', () => ({
 
 jest.mock('@/features/tasks/components/selector/ModelSelector', () => ({
   __esModule: true,
-  default: () => <div data-testid="model-selector" />,
+  default: (props: {
+    modelCategoryType?: string
+    compact?: boolean
+    triggerVariant?: string
+    selectedTeam?: Team | null
+  }) => mockModelSelector(props),
 }))
 
 jest.mock('@/features/tasks/components/selector/UnifiedRepositorySelector', () => ({
@@ -123,7 +166,10 @@ jest.mock('@/features/tasks/components/selector', () => ({
   __esModule: true,
   ImageSizeSelector: () => <div data-testid="image-size-selector" />,
   GenerateModeSelector: () => <div data-testid="generate-mode-selector" />,
-  VideoSettingsPopover: () => <div data-testid="video-settings-popover" />,
+  VideoGenerationModeSelector: (props: { triggerVariant?: string }) =>
+    mockVideoGenerationModeSelector(props),
+  VideoSettingsPopover: (props: { showDuration?: boolean; iconOnly?: boolean }) =>
+    mockVideoSettingsPopover(props),
   isGenerateMode: () => false,
 }))
 
@@ -207,6 +253,9 @@ function createProps(): ChatInputControlsProps {
 describe('ChatInputControls toolbar actions', () => {
   beforeEach(() => {
     routerPush.mockClear()
+    mockModelSelector.mockClear()
+    mockVideoGenerationModeSelector.mockClear()
+    mockVideoSettingsPopover.mockClear()
     mockTeamSelectorButton.mockClear()
   })
 
@@ -273,5 +322,113 @@ describe('ChatInputControls toolbar actions', () => {
     expect(screen.getByTestId('skill-selector')).toBeInTheDocument()
     expect(screen.getByTestId('clarification-toggle')).toBeInTheDocument()
     expect(screen.getByTestId('correction-toggle')).toBeInTheDocument()
+  })
+
+  it('shows only the video model selector for workflow-managed video chat', () => {
+    const workflowTeam: Team = {
+      ...selectedTeam,
+      mode_spec: {
+        allowedModelCategories: ['video'],
+        hiddenVideoParams: ['duration'],
+      },
+    }
+
+    render(
+      <ChatInputControls
+        {...createProps()}
+        selectedTeam={workflowTeam}
+        teams={[workflowTeam]}
+        showVideoControlsInChat
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+        videoGenerationModes={[
+          { id: 'text_to_video', label: '文生视频' },
+          { id: 'omni_reference', label: '全能参考' },
+        ]}
+        selectedVideoGenerationMode="text_to_video"
+        onVideoGenerationModeChange={jest.fn()}
+      />
+    )
+
+    expect(
+      screen
+        .getAllByTestId('model-selector')
+        .map(selector => selector.getAttribute('data-model-category'))
+    ).toEqual(['video'])
+    expect(screen.getByTestId('model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(workflowTeam.id)
+    )
+    expect(screen.getByTestId('video-generation-mode-selector')).toBeInTheDocument()
+    expect(screen.getByTestId('video-settings-popover')).toHaveAttribute(
+      'data-show-duration',
+      'false'
+    )
+    expect(screen.queryByTestId('agent-skill-selector-button')).not.toBeInTheDocument()
+  })
+
+  it('moves video model and generation mode into more actions in a narrow chat pane', () => {
+    const workflowTeam: Team = {
+      ...selectedTeam,
+      mode_spec: {
+        allowedModelCategories: ['video'],
+      },
+    }
+
+    render(
+      <ChatInputControls
+        {...createProps()}
+        selectedTeam={workflowTeam}
+        teams={[workflowTeam]}
+        showVideoControlsInChat
+        shouldCollapseSelectors
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+        videoGenerationModes={[
+          { id: 'text_to_video', label: '文生视频' },
+          { id: 'omni_reference', label: '全能参考' },
+        ]}
+        selectedVideoGenerationMode="text_to_video"
+        onVideoGenerationModeChange={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('model-selector')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('video-generation-mode-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-settings-popover')).toHaveAttribute(
+      'data-show-duration',
+      'false'
+    )
+    expect(screen.getByTestId('video-settings-popover')).toHaveAttribute('data-icon-only', 'true')
+    expect(screen.getByTestId('input-controls')).toHaveClass('flex-nowrap')
+
+    fireEvent.click(screen.getByTestId('desktop-input-more-actions-button'))
+
+    expect(screen.getByTestId('model-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'menu-item'
+    )
+    expect(screen.getByTestId('model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(workflowTeam.id)
+    )
+    expect(screen.getByTestId('video-generation-mode-selector')).toHaveAttribute(
+      'data-trigger-variant',
+      'menu-item'
+    )
   })
 })

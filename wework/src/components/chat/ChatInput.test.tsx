@@ -37,6 +37,14 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
+  return {
+    ...actual,
+    getAppPreferences: vi.fn().mockResolvedValue(actual.defaultAppPreferences),
+  }
+})
+
 import { ChatInput } from './ChatInput'
 import type { ChatInputHandle, ChatSubmitOptions } from './ChatInput'
 import type { ProjectChatControls, ProjectWorkControls } from './ChatInput'
@@ -169,7 +177,7 @@ describe('ChatInput', () => {
       configurable: true,
       value: originalInnerWidth,
     })
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete window.__WEWORK_RUNTIME_CONFIG__
   })
 
   test('renders the desktop composer sections', () => {
@@ -917,6 +925,32 @@ describe('ChatInput', () => {
     await userEvent.click(interruptButton)
 
     expect(onInterruptAndSendQueuedMessage).toHaveBeenCalledWith('sending-guidance')
+  })
+
+  test('does not expose guidance before the native runtime accepts it', () => {
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        queuedMessages={[
+          {
+            id: 'pending-guidance',
+            content: '等待原生运行时接受',
+            status: 'sending',
+            deliveryMode: 'guidance',
+            awaitingGuidanceAcceptance: true,
+            notice: '正在引导当前对话',
+            createdAt: '2026-08-25T10:30:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    expect(screen.queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
+    expect(screen.queryByText('等待原生运行时接受')).not.toBeInTheDocument()
   })
 
   test('provides left-side drag handles to reorder multiple queued messages', () => {
@@ -2585,15 +2619,12 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-submenu')).toBeInTheDocument()
   })
 
-  test('keeps the desktop model menu in narrow Tauri windows', async () => {
+  test('keeps the desktop model menu in narrow Electron windows', async () => {
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: 500,
     })
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     const model: UnifiedModel = {
       name: 'codex-gpt-5.5',
       type: 'user',
@@ -3725,9 +3756,12 @@ describe('ChatInput', () => {
       )
     })
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/attachments/43/download', {
-      headers: { Authorization: 'Bearer token-123' },
-    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/attachments/43/download',
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer token-123' }),
+      })
+    )
   })
 
   test('uses matching overlay remove buttons for image and document attachments', () => {

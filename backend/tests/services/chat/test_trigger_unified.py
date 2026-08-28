@@ -25,7 +25,11 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
 
     model_config = {
         "modelType": "image",
-        "imageConfig": {"size": "1024x1024", "quality": "high"},
+        "imageConfig": {
+            "size": "1024x1024",
+            "quality": "high",
+            "capabilities": {"supports_image_input": True},
+        },
     }
 
     trigger_unified._apply_image_generation_params(
@@ -36,6 +40,7 @@ def test_apply_image_generation_params_overrides_request_size() -> None:
     assert model_config["imageConfig"] == {
         "size": "1512x648",
         "quality": "high",
+        "capabilities": {"supports_image_input": True},
     }
 
 
@@ -69,9 +74,7 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     def fake_get_execution_config(db, *, user_id, runtime, preferences=None):
         assert user_id == 7
         assert runtime == "codex"
-        assert preferences == {
-            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
-        }
+        assert preferences == {"runtime_configs": {"codex": {"use_user_config": True}}}
         return {
             "runtime": "codex",
             "display_name": "Codex",
@@ -95,11 +98,7 @@ def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
         request=request,
         user=SimpleNamespace(
             id=7,
-            preferences={
-                "runtime_configs": {
-                    "codex": {"use_user_config": True, "use_proxy": True}
-                }
-            },
+            preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
         ),
     )
 

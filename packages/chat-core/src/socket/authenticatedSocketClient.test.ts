@@ -81,6 +81,7 @@ describe('createAuthenticatedSocketClient', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket'],
+        tryAllTransports: true,
         timeout: 20000,
       })
     )
@@ -140,6 +141,7 @@ describe('createAuthenticatedSocketClient', () => {
         forceNew: true,
         multiplex: false,
         transports: ['websocket'],
+        tryAllTransports: true,
       })
     )
     expect(secondSocket.socket.connect).toHaveBeenCalledTimes(1)

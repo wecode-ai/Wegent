@@ -32,7 +32,7 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
     <nav
       data-testid="smart-apps-section-nav"
       aria-label={t('workbench.smart_apps_sections', '智能工作台导航')}
-      className="flex gap-5 border-b border-border/40"
+      className="flex h-11 w-full rounded-lg border border-border/50 bg-surface/60 p-0.5 md:h-9 md:w-[168px]"
     >
       {sections.map(section => {
         const selected = section.id === active
@@ -47,10 +47,10 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
             data-testid={section.testId}
             aria-current={selected ? 'page' : undefined}
             className={cn(
-              '-mb-px min-h-11 border-b-2 px-1 text-sm transition-colors sm:min-h-9',
+              'flex h-full flex-1 items-center justify-center rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30',
               selected
-                ? 'border-text-primary font-medium text-text-primary'
-                : 'border-transparent text-text-secondary hover:text-text-primary'
+                ? 'bg-background font-medium text-text-primary shadow-sm'
+                : 'text-text-secondary hover:bg-background/60 hover:text-text-primary'
             )}
             onClick={() => {
               if (!selected) navigateTo(section.path)

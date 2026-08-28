@@ -13,6 +13,7 @@ from app.schemas.subtask_context import SubtaskContextBrief
 from app.schemas.task import SkillRef
 from app.services.task_fork_history import ForkHistoryItem
 from app.services.task_skill_selection import parse_requested_skill_refs_from_labels
+from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 
 
@@ -125,7 +126,7 @@ def convert_subtasks_to_dict(
                 "parent_id": subtask.parent_id,
                 "status": subtask.status,
                 "progress": subtask.progress,
-                "result": subtask.result,
+                "result": sanitize_client_payload(subtask.result),
                 "error_message": subtask.error_message,
                 "user_id": subtask.user_id,
                 "created_at": (

@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from minio import Minio
 from minio.commonconfig import CopySource
 from minio.error import S3Error
-from minio_release_assets import publish_runtime_asset_pairs
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-beta\.([1-9]\d*))?$")
 
@@ -130,22 +129,103 @@ def upload_channel_manifest(
     bucket: str,
     prefix: str,
     path: Path,
-    replace_only_if_newer: bool = False,
 ) -> None:
     if not path.is_file():
         raise SystemExit(f"Updater channel manifest not found: {path}")
-    candidate = json.loads(path.read_text(encoding="utf-8"))
-    if replace_only_if_newer:
-        current = read_manifest(client, bucket, prefix, path.name)
-        if current is not None and version_parts(candidate["version"]) <= version_parts(
-            current["version"]
-        ):
-            print(
-                f"Keeping newer or equal channel manifest: "
-                f"s3://{bucket}/{storage_key(prefix, path.name)}"
-            )
-            return
     upload_file(client, bucket, prefix, path, "no-cache, no-store")
+
+
+def release_advances_channel(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    path: Path,
+    required_objects: tuple[tuple[str, str], ...] = (),
+) -> bool:
+    if not path.is_file():
+        raise SystemExit(f"Updater channel manifest not found: {path}")
+    candidate = json.loads(path.read_text(encoding="utf-8"))
+    current = read_manifest(client, bucket, prefix, path.name)
+    if current is None:
+        return True
+    candidate_version = candidate["version"]
+    current_version = current["version"]
+    if version_parts(candidate_version) > version_parts(current_version):
+        return True
+
+    complete = all(
+        object_exists(client, bucket, object_prefix, filename)
+        for object_prefix, filename in required_objects
+    )
+    if candidate_version == current_version and not complete:
+        print(
+            f"Repairing incomplete release channel at {candidate_version}: "
+            f"s3://{bucket}/{storage_key(prefix, path.name)}"
+        )
+        return True
+    if (
+        version_parts(current_version) > version_parts(candidate_version)
+        and not complete
+    ):
+        raise SystemExit(
+            f"Newer release channel {current_version} is incomplete; "
+            f"refusing to replace it with {candidate_version}"
+        )
+
+    print(
+        f"Keeping newer or equal release channel: "
+        f"s3://{bucket}/{storage_key(prefix, path.name)}"
+    )
+    return False
+
+
+def object_exists(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    filename: str,
+) -> bool:
+    try:
+        client.stat_object(bucket, storage_key(prefix, filename))
+        return True
+    except S3Error as error:
+        if error.code in {"NoSuchKey", "NoSuchObject"}:
+            return False
+        raise
+
+
+def upload_electron_manifest(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    path: Path,
+) -> None:
+    if not path.is_file():
+        raise SystemExit(f"Electron updater manifest not found: {path}")
+    upload_file(client, bucket, prefix, path, "no-cache, no-store")
+
+
+def publish_channel(
+    client: Minio,
+    bucket: str,
+    prefix: str,
+    output_dir: Path,
+    channel: str,
+) -> bool:
+    channel_manifest = output_dir / f"{channel}-windows-x86_64.json"
+    electron_channel = "latest" if channel == "stable" else "beta"
+    electron_manifest = output_dir / f"{electron_channel}.yml"
+    if not release_advances_channel(
+        client,
+        bucket,
+        prefix,
+        channel_manifest,
+        ((prefix, electron_manifest.name),),
+    ):
+        return False
+    upload_electron_manifest(client, bucket, prefix, electron_manifest)
+    upload_channel_manifest(client, bucket, prefix, channel_manifest)
+    return True
 
 
 def publish_stable_bootstrap_manifest(
@@ -192,35 +272,17 @@ def main() -> None:
             artifact,
             "public, max-age=31536000, immutable",
         )
-    publish_runtime_asset_pairs(
-        client,
-        bucket,
-        prefix,
-        output_dir,
-        lambda path: upload_file(
-            client, bucket, prefix, path, "public, max-age=31536000, immutable"
-        ),
-    )
     manifest = output_dir / "latest.json"
     if not manifest.is_file():
         raise SystemExit(f"Updater manifest not found: {manifest}")
-    upload_channel_manifest(
-        client,
-        bucket,
-        prefix,
-        output_dir / f"{channel}-windows-x86_64.json",
-    )
+    advanced = publish_channel(client, bucket, prefix, output_dir, channel)
     if channel == "stable":
-        upload_channel_manifest(
-            client,
-            bucket,
-            prefix,
-            output_dir / "beta-windows-x86_64.json",
-            replace_only_if_newer=True,
-        )
-        publish_latest_installer(client, bucket, prefix, version, artifacts)
-        publish_stable_bootstrap_manifest(client, bucket, prefix, manifest)
-        print("Uploaded latest.json last so legacy clients stay on stable releases.")
+        publish_channel(client, bucket, prefix, output_dir, "beta")
+    if channel != "stable" or not advanced:
+        return
+    publish_latest_installer(client, bucket, prefix, version, artifacts)
+    publish_stable_bootstrap_manifest(client, bucket, prefix, manifest)
+    print("Uploaded latest.json last so legacy clients stay on stable releases.")
 
 
 if __name__ == "__main__":

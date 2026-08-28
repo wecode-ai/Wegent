@@ -42,7 +42,7 @@ import {
   readFile,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
-  waitForExecutorReadyEvidence,
+  waitForExecutorRuntimeEvidence,
   withTimeout,
 } from './shared.mjs'
 
@@ -271,9 +271,10 @@ async function verifyActiveGoalIdleUnreadLifecycle({ composerSelector, control, 
     control,
     snapshot =>
       snapshot.workbench?.lifecycleCurrentTaskRunning === true &&
-      snapshot.pane?.status?.isAssistantStreaming === true &&
-      snapshot.pane?.status?.isBusy === true,
-    'The active turn did not remain authoritative after receiving stale transcript running state'
+      snapshot.pane?.status?.taskExecution?.running === true &&
+      snapshot.pane?.status?.isBusy === true &&
+      snapshot.pane?.status?.canSendQueuedMessage === false,
+    'The active response did not remain authoritative after receiving stale transcript running state'
   )
   assert.equal(
     staleTranscriptDebugSnapshot.pane?.status?.taskExecution?.running,
@@ -698,13 +699,14 @@ async function verifyGoalRestartRecoveryLifecycle({
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await waitForBlankConversation(control, composerSelector)
-  const executorReadyBeforeRestart = await waitForExecutorReadyEvidence(executorLogPath)
+  const executorReadyBeforeRestart = await waitForExecutorRuntimeEvidence(control, executorLogPath)
   const executorProcessIdBeforeRestart = executorReadyBeforeRestart.processIds.at(-1)
   assert.ok(executorProcessIdBeforeRestart, 'The original executor process ID was not recorded')
 
   await restartDesktopApp()
 
-  const executorReadyAfterRestart = await waitForExecutorReadyEvidence(
+  const executorReadyAfterRestart = await waitForExecutorRuntimeEvidence(
+    control,
     executorLogPath,
     DEFAULT_STEP_TIMEOUT_MS,
     executorReadyBeforeRestart.processIds.length + 1

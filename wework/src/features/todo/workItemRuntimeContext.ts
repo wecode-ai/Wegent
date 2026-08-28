@@ -15,6 +15,7 @@ export function buildWorkItemRuntimeContext(
             type: 'board_task' as const,
             cloudProjectId: String(project.id),
             loopItemId: String(task.id),
+            projectStore: project.project_store,
           },
         }
       : {}),

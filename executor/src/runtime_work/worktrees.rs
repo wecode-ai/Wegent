@@ -11,7 +11,7 @@ use std::{
     process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -215,6 +215,7 @@ pub(crate) struct WorktreeManager {
     execution_owner_id: String,
     persistent_storage_verified: bool,
     mutation_lock: Arc<Mutex<()>>,
+    worktree_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
 }
 
 impl WorktreeManager {
@@ -272,7 +273,23 @@ impl WorktreeManager {
             execution_owner_id: Uuid::new_v4().to_string(),
             persistent_storage_verified,
             mutation_lock: Arc::new(Mutex::new(())),
+            worktree_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn worktree_lock(&self, path: &Path) -> Result<Arc<Mutex<()>>, String> {
+        let key = normalized_path_key(path);
+        let mut locks = self
+            .worktree_locks
+            .lock()
+            .map_err(|_| "Worktree operation locks are unavailable".to_owned())?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+            return Ok(lock);
+        }
+        let lock = Arc::new(Mutex::new(()));
+        locks.insert(key, Arc::downgrade(&lock));
+        Ok(lock)
     }
 
     pub fn settings(&self) -> WorktreeSettings {
@@ -379,6 +396,10 @@ impl WorktreeManager {
         execution_lease: Option<WorktreeExecutionLease>,
         expected_execution: Option<(&str, u64)>,
     ) -> Result<bool, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree execution lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -389,7 +410,6 @@ impl WorktreeManager {
             .records
             .get_mut(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(record, &self.device_id)?;
         if let Some((task_id, execution_id)) = expected_execution {
             match record.execution_lease.as_ref() {
                 Some(lease) if lease.execution_id == execution_id && lease.task_id == task_id => {}
@@ -449,7 +469,15 @@ impl WorktreeManager {
         git_ref: Option<&str>,
         permanent: bool,
     ) -> Result<ManagedWorktree, String> {
-        self.prepare_with_path(source_path, worktree_id, git_ref, permanent, None, None)
+        let plan = self.plan(source_path, worktree_id, git_ref)?;
+        self.prepare_with_path(
+            source_path,
+            worktree_id,
+            git_ref,
+            permanent,
+            Some(&plan.path),
+            Some(&plan.repo_root_fingerprint),
+        )
     }
 
     pub fn prepare_at(
@@ -499,20 +527,24 @@ impl WorktreeManager {
         expected_repo_root_fingerprint: Option<&str>,
     ) -> Result<ManagedWorktree, String> {
         self.ensure_persistent_storage_verified()?;
+        let planned_path = planned_path.ok_or_else(|| {
+            "worktree_target_conflict: Planned worktree path is required".to_owned()
+        })?;
+        let worktree_lock = self.worktree_lock(planned_path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         validate_worktree_id(worktree_id)?;
         let mut state = self.load();
-        let root = match planned_path {
-            Some(path) => path
-                .parent()
-                .and_then(Path::parent)
-                .map(Path::to_path_buf)
-                .ok_or_else(|| format!("Invalid planned worktree path {}", path.display()))?,
-            None => PathBuf::from(&state.settings.resolved_worktree_root),
-        };
+        let root = planned_path
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("Invalid planned worktree path {}", planned_path.display()))?;
         let preflight = worktree_preflight(source_path, git_ref, &root);
         let repository = validated_repository_from_preflight(&preflight)?;
         if expected_repo_root_fingerprint
@@ -532,7 +564,7 @@ impl WorktreeManager {
             .to_owned();
         ensure_safe_root(&root)?;
         let expected_path = root.join(worktree_id).join(&repository_name);
-        let path = planned_path.unwrap_or(&expected_path);
+        let path = planned_path;
         if path != expected_path {
             return Err(worktree_target_conflict(format!(
                 "Planned worktree path {} does not match task {worktree_id}",
@@ -544,7 +576,6 @@ impl WorktreeManager {
         let key = normalized_path_key(path);
         let now = now_ms();
         let mut record = state.records.remove(&key).unwrap_or_default();
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         validate_existing_record_identity(&record, path, worktree_id, &repository.git_common_dir)?;
         record.worktree_id = worktree_id.to_owned();
         record.device_id = self.device_id.clone();
@@ -633,7 +664,7 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, false)?;
+        reconcile_worktree_state(&mut state, &self.execution_owner_id, false)?;
         let mut result = state
             .records
             .values_mut()
@@ -673,51 +704,75 @@ impl WorktreeManager {
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
         discover_worktrees(&mut state, &self.device_id);
-        let reconciled =
-            reconcile_worktree_state(&mut state, &self.device_id, &self.execution_owner_id, true)?;
+        let reconciled = reconcile_worktree_state(&mut state, &self.execution_owner_id, true)?;
         self.save(&state)?;
         Ok(reconciled)
     }
 
     pub fn delete(&self, path: &Path, preserve_snapshot: bool) -> Result<ManagedWorktree, String> {
-        let _guard = self
-            .mutation_lock
-            .lock()
-            .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
-        let mut state = self.load();
-        discover_worktrees(&mut state, &self.device_id);
-        ensure_managed_path(path, &state.known_roots)?;
-        let key = normalized_path_key(path);
-        let mut record = state
-            .records
-            .remove(&key)
-            .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
-        if path.exists() {
-            validate_record_worktree_identity(&record, path)?;
-        }
-        if path.exists() && preserve_snapshot {
-            let snapshot =
-                snapshot_worktree(path, self.state_path.parent().unwrap_or(Path::new(".")))?;
-            record.snapshot_ref = Some(snapshot.reference);
-            record.snapshot_commit = Some(snapshot.commit);
-            record.snapshot_at = Some(now_ms());
-            record.git_common_dir = Some(snapshot.git_common_dir);
-        }
-        if path.exists() {
-            remove_git_worktree(path)?;
-        }
-        if !preserve_snapshot {
-            if let (Some(git_common_dir), Some(reference)) = (
-                record.git_common_dir.as_deref(),
-                record.snapshot_ref.as_deref(),
-            ) {
-                delete_snapshot_ref(Path::new(git_common_dir), reference)?;
+        let snapshot_dir = self
+            .state_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .to_path_buf();
+        self.delete_with_operation(path, preserve_snapshot, |record| {
+            if path.exists() && preserve_snapshot {
+                let snapshot = snapshot_worktree(path, &snapshot_dir)?;
+                record.snapshot_ref = Some(snapshot.reference);
+                record.snapshot_commit = Some(snapshot.commit);
+                record.snapshot_at = Some(now_ms());
+                record.git_common_dir = Some(snapshot.git_common_dir);
             }
-            record.snapshot_ref = None;
-            record.snapshot_commit = None;
-            record.snapshot_at = None;
-        }
+            if path.exists() {
+                remove_git_worktree(path)?;
+            }
+            if !preserve_snapshot {
+                if let (Some(git_common_dir), Some(reference)) = (
+                    record.git_common_dir.as_deref(),
+                    record.snapshot_ref.as_deref(),
+                ) {
+                    delete_snapshot_ref(Path::new(git_common_dir), reference)?;
+                }
+                record.snapshot_ref = None;
+                record.snapshot_commit = None;
+                record.snapshot_at = None;
+            }
+            Ok(())
+        })
+    }
+
+    fn delete_with_operation(
+        &self,
+        path: &Path,
+        preserve_snapshot: bool,
+        operation: impl FnOnce(&mut ManagedWorktree) -> Result<(), String>,
+    ) -> Result<ManagedWorktree, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
+        let key = normalized_path_key(path);
+        let mut record = {
+            let _guard = self
+                .mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+            let mut state = self.load();
+            discover_worktrees(&mut state, &self.device_id);
+            ensure_managed_path(path, &state.known_roots)?;
+            let record = state
+                .records
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| "Managed worktree was not found".to_owned())?;
+            if path.exists() {
+                validate_record_worktree_identity(&record, path)?;
+            }
+            record
+        };
+
+        operation(&mut record)?;
+
         record.state = if preserve_snapshot && record.snapshot_ref.is_some() {
             STATE_RESTORABLE
         } else {
@@ -726,10 +781,30 @@ impl WorktreeManager {
         .to_owned();
         record.updated_at = now_ms();
         record.last_error = None;
-        if preserve_snapshot {
-            state.records.insert(key, record.clone());
+        {
+            let _guard = self
+                .mutation_lock
+                .lock()
+                .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
+            let mut state = self.load();
+            discover_worktrees(&mut state, &self.device_id);
+            if let Some(current) = state.records.get(&key) {
+                if current.worktree_id != record.worktree_id
+                    || !same_path(&current.path, &record.path)
+                {
+                    return Err(worktree_target_conflict(format!(
+                        "Managed worktree {} changed while deletion was in progress",
+                        path.display()
+                    )));
+                }
+            }
+            if preserve_snapshot {
+                state.records.insert(key, record.clone());
+            } else {
+                state.records.remove(&key);
+            }
+            self.save(&state)?;
         }
-        self.save(&state)?;
         remove_empty_worktree_container(path)?;
         Ok(record)
     }
@@ -739,6 +814,10 @@ impl WorktreeManager {
         path: &Path,
         worktree_id: &str,
     ) -> Result<Option<ManagedWorktree>, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -755,7 +834,6 @@ impl WorktreeManager {
             }
             return Ok(None);
         };
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if record.worktree_id != worktree_id {
             state.records.insert(key, record);
             return Err(worktree_target_conflict(format!(
@@ -803,6 +881,10 @@ impl WorktreeManager {
     }
 
     pub fn restore(&self, path: &Path) -> Result<ManagedWorktree, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
@@ -814,7 +896,6 @@ impl WorktreeManager {
             .records
             .remove(&key)
             .ok_or_else(|| "Managed worktree was not found".to_owned())?;
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if path.exists() {
             validate_record_worktree_identity(&record, path)?;
             record.state = STATE_ACTIVE.to_owned();
@@ -850,15 +931,18 @@ impl WorktreeManager {
     }
 
     pub fn forget_if_known(&self, path: &Path) -> Result<bool, String> {
+        let worktree_lock = self.worktree_lock(path)?;
+        let _worktree_guard = worktree_lock
+            .lock()
+            .map_err(|_| "Worktree operation lock is unavailable".to_owned())?;
         let _guard = self
             .mutation_lock
             .lock()
             .map_err(|_| "Worktree mutation lock is unavailable".to_owned())?;
         let mut state = self.load();
-        let Some(mut record) = state.records.remove(&normalized_path_key(path)) else {
+        let Some(record) = state.records.remove(&normalized_path_key(path)) else {
             return Ok(false);
         };
-        validate_or_bind_record_device(&mut record, &self.device_id)?;
         if let (Some(git_common_dir), Some(reference)) = (
             record.git_common_dir.as_deref(),
             record.snapshot_ref.as_deref(),
@@ -1606,23 +1690,6 @@ fn normalize_device_id(device_id: &str) -> String {
     }
 }
 
-fn validate_or_bind_record_device(
-    record: &mut ManagedWorktree,
-    device_id: &str,
-) -> Result<(), String> {
-    if record.device_id.trim().is_empty() {
-        record.device_id = device_id.to_owned();
-        return Ok(());
-    }
-    if record.device_id != device_id {
-        return Err(format!(
-            "worktree_device_mismatch: Managed worktree {} belongs to device {}",
-            record.path, record.device_id
-        ));
-    }
-    Ok(())
-}
-
 fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> Result<(), String> {
     let expected_git_common_dir = if let Some(git_common_dir) = record.git_common_dir.as_deref() {
         PathBuf::from(git_common_dir)
@@ -1648,13 +1715,11 @@ fn validate_record_worktree_identity(record: &ManagedWorktree, path: &Path) -> R
 
 fn reconcile_worktree_state(
     state: &mut WorktreeState,
-    device_id: &str,
     execution_owner_id: &str,
     recover_interrupted_execution: bool,
 ) -> Result<Vec<WorktreeReconciliation>, String> {
     let mut reconciled = Vec::new();
     for record in state.records.values_mut() {
-        validate_or_bind_record_device(record, device_id)?;
         let path = PathBuf::from(&record.path);
         if record.state == STATE_PREPARING {
             let result = if path.exists() {
@@ -1821,16 +1886,13 @@ fn ensure_safe_root(root: &Path) -> Result<(), String> {
 
 fn ensure_managed_path(path: &Path, roots: &[String]) -> Result<(), String> {
     ensure_concrete_absolute_path(path, "Worktree path")?;
-    let normalized = normalized_path_key(path);
     let matching_root = roots.iter().find_map(|root| {
-        let root = Path::new(root);
-        if ensure_safe_root(root).is_err() {
+        let root_path = Path::new(root);
+        if ensure_safe_root(root_path).is_err() {
             return None;
         }
-        let normalized_root = normalized_path_key(root);
-        (normalized.starts_with(&format!("{normalized_root}/"))
-            && normalized[normalized_root.len() + 1..].split('/').count() == 2)
-            .then_some(root)
+        let relative = path.strip_prefix(root_path).ok()?;
+        (relative.components().count() == 2).then_some(root_path)
     });
     let Some(matching_root) = matching_root else {
         return Err("Worktree path is outside managed roots".to_owned());
@@ -1961,7 +2023,13 @@ fn home_dir() -> PathBuf {
 }
 
 fn normalized_path_key(path: &Path) -> String {
-    path.to_string_lossy().trim_end_matches('/').to_owned()
+    let value = path.to_string_lossy();
+    let value = if cfg!(windows) {
+        value.replace('\\', "/")
+    } else {
+        value.into_owned()
+    };
+    value.trim_end_matches('/').to_owned()
 }
 
 fn same_path(left: &str, right: &str) -> bool {
@@ -2054,7 +2122,14 @@ fn now_ms() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
 
     use super::*;
     use serde_json::Value;
@@ -2130,6 +2205,31 @@ mod tests {
         assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id/repo"), &roots).is_ok());
         assert!(ensure_managed_path(Path::new("/tmp/wegent-worktrees/id"), &roots).is_err());
         assert!(ensure_managed_path(Path::new("/tmp/outside/id/repo"), &roots).is_err());
+    }
+
+    #[test]
+    fn normalized_path_key_unifies_separators() {
+        if cfg!(windows) {
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\task-1\repository")),
+                "C:/wegent/worktrees/task-1/repository"
+            );
+            assert_eq!(
+                normalized_path_key(Path::new(r"C:\wegent\worktrees\")),
+                "C:/wegent/worktrees"
+            );
+        } else {
+            // On POSIX, backslash is a literal filename character and must not
+            // be conflated with the path separator.
+            assert_eq!(
+                normalized_path_key(Path::new(r"/tmp/wegent-worktrees/task-1\repository")),
+                r"/tmp/wegent-worktrees/task-1\repository"
+            );
+        }
+        assert_eq!(
+            normalized_path_key(Path::new("/tmp/wegent-worktrees/task-1/repository/")),
+            "/tmp/wegent-worktrees/task-1/repository"
+        );
     }
 
     #[test]
@@ -2573,55 +2673,12 @@ mod tests {
     }
 
     #[test]
-    fn managed_worktree_operations_reject_a_different_device() {
-        let root = test_directory("wegent-worktree-device-identity-test");
+    fn different_device_id_does_not_block_managed_worktree_operations() {
+        let root = test_directory("wegent-worktree-device-id-metadata-test");
         let source = root.join("source");
         initialize_repository(&source);
         let state_path = root.join("runtime-work/worktrees.json");
-        let manager_a = WorktreeManager::new_for_device(state_path.clone(), "device-a");
-        manager_a
-            .update_settings(WorktreeSettingsPatch {
-                worktree_root: Some(root.join("managed").display().to_string()),
-                ..WorktreeSettingsPatch::default()
-            })
-            .unwrap();
-        let plan = manager_a.plan(&source, "task-1", None).unwrap();
-        let record = manager_a
-            .prepare_planned(
-                &source,
-                "task-1",
-                None,
-                false,
-                &plan.path,
-                &plan.repo_root_fingerprint,
-            )
-            .unwrap();
-        assert_eq!(record.device_id, "device-a");
-
-        let manager_b = WorktreeManager::new_for_device(state_path, "device-b");
-        for error in [
-            manager_b
-                .prepare_at(&source, "task-1", None, false, &plan.path)
-                .unwrap_err(),
-            manager_b.reconcile().unwrap_err(),
-            manager_b.delete(&plan.path, true).unwrap_err(),
-        ] {
-            assert!(error.starts_with("worktree_device_mismatch:"));
-        }
-
-        manager_a.delete(&plan.path, true).unwrap();
-        let restore_error = manager_b.restore(&plan.path).unwrap_err();
-        assert!(restore_error.starts_with("worktree_device_mismatch:"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn legacy_managed_worktree_records_bind_to_the_current_device() {
-        let root = test_directory("wegent-worktree-legacy-device-binding-test");
-        let source = root.join("source");
-        initialize_repository(&source);
-        let manager =
-            WorktreeManager::new_for_device(root.join("runtime-work/worktrees.json"), "device-a");
+        let manager = WorktreeManager::new_for_device(state_path.clone(), "device-a");
         manager
             .update_settings(WorktreeSettingsPatch {
                 worktree_root: Some(root.join("managed").display().to_string()),
@@ -2630,14 +2687,26 @@ mod tests {
             .unwrap();
         let record = manager.prepare(&source, "task-1", None, false).unwrap();
         let key = normalized_path_key(Path::new(&record.path));
-        let mut state = manager.load();
-        state.records.get_mut(&key).unwrap().device_id.clear();
-        manager.save(&state).unwrap();
+        let mut persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        persisted["records"][&key]["deviceId"] = Value::String("legacy-device".to_owned());
+        fs::write(&state_path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
 
-        manager.reconcile().unwrap();
+        let restarted = WorktreeManager::new_for_device(state_path.clone(), "device-b");
+        restarted.reconcile().unwrap();
+        restarted
+            .begin_execution(Path::new(&record.path), "task-1", 1)
+            .unwrap();
+        assert!(restarted
+            .finish_execution(Path::new(&record.path), "task-1", 1)
+            .unwrap());
 
-        assert_eq!(manager.load().records[&key].device_id, "device-a");
-        manager.delete(Path::new(&record.path), false).unwrap();
+        let persisted: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+        assert_eq!(persisted["records"][&key]["deviceId"], "legacy-device");
+        let deleted = restarted.delete(Path::new(&record.path), true).unwrap();
+        assert_eq!(deleted.device_id, "legacy-device");
+        let restored = restarted.restore(Path::new(&record.path)).unwrap();
+        assert_eq!(restored.device_id, "legacy-device");
+        restarted.delete(Path::new(&record.path), false).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 
@@ -2697,6 +2766,72 @@ mod tests {
             fs::read_to_string(path.join("untracked.txt")).unwrap(),
             "new\n"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleting_one_worktree_does_not_block_execution_on_another() {
+        let root = test_directory("wegent-worktree-delete-concurrency-test");
+        let source = root.join("source");
+        initialize_repository(&source);
+        let manager = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+        manager
+            .update_settings(WorktreeSettingsPatch {
+                worktree_root: Some(root.join("managed").display().to_string()),
+                ..WorktreeSettingsPatch::default()
+            })
+            .unwrap();
+        let deleting = manager
+            .prepare(&source, "task-deleting", None, false)
+            .unwrap();
+        let executing = manager
+            .prepare(&source, "task-executing", None, false)
+            .unwrap();
+        let deleting_path = PathBuf::from(&deleting.path);
+        let executing_path = PathBuf::from(&executing.path);
+        let (delete_started_tx, delete_started_rx) = mpsc::channel();
+        let (release_delete_tx, release_delete_rx) = mpsc::channel();
+        let deleting_manager = manager.clone();
+        let deleting_path_for_thread = deleting_path.clone();
+        let delete_thread = thread::spawn(move || {
+            deleting_manager.delete_with_operation(&deleting_path_for_thread, true, |_record| {
+                delete_started_tx.send(()).unwrap();
+                release_delete_rx.recv().unwrap();
+                Err("delete interrupted by test".to_owned())
+            })
+        });
+        delete_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("deletion must reach the slow operation");
+
+        let (execution_tx, execution_rx) = mpsc::channel();
+        let executing_manager = manager.clone();
+        let executing_path_for_thread = executing_path.clone();
+        let execution_thread = thread::spawn(move || {
+            execution_tx
+                .send(executing_manager.begin_execution(
+                    &executing_path_for_thread,
+                    "task-executing",
+                    1,
+                ))
+                .unwrap();
+        });
+        let execution_result = execution_rx.recv_timeout(Duration::from_secs(5));
+        release_delete_tx.send(()).unwrap();
+        assert_eq!(
+            delete_thread.join().unwrap().unwrap_err(),
+            "delete interrupted by test"
+        );
+        execution_thread.join().unwrap();
+        execution_result
+            .expect("execution lease on another worktree must not wait for deletion")
+            .unwrap();
+
+        assert!(manager
+            .finish_execution(&executing_path, "task-executing", 1)
+            .unwrap());
+        manager.delete(&deleting_path, false).unwrap();
+        manager.delete(&executing_path, false).unwrap();
         let _ = fs::remove_dir_all(root);
     }
 

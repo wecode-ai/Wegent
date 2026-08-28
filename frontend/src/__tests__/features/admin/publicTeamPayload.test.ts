@@ -7,6 +7,7 @@ import {
   buildPublicTeamJson,
   buildPublicTeamUpdateData,
   resolvePublicTeamName,
+  syncPublicTeamVideoModeSpec,
 } from '@/features/admin/utils/publicTeamPayload'
 
 const makeEditingTeam = (): AdminPublicTeam => ({
@@ -116,5 +117,53 @@ describe('publicTeamPayload', () => {
         },
       },
     })
+  })
+
+  it('stores video mode behavior without duplicating the Bot model binding', () => {
+    const modeSpec = syncPublicTeamVideoModeSpec(
+      {
+        allowedModelCategories: ['llm'],
+        defaultModelRefs: {
+          video: { name: 'legacy-video-model', namespace: 'default' },
+        },
+      },
+      true
+    )
+
+    const teamJson = buildPublicTeamJson({
+      name: 'test-video-team',
+      displayName: 'One-minute Video',
+      description: 'Test video team',
+      bindMode: ['chat'],
+      icon: null,
+      requiresWorkspace: true,
+      mode: 'solo',
+      modeSpec,
+      members: [{ botName: 'test-video-bot', botPrompt: '' }],
+    })
+
+    expect(teamJson).toMatchObject({
+      spec: {
+        modeSpec: {
+          allowedModelCategories: ['video'],
+          hiddenVideoParams: ['duration'],
+        },
+      },
+    })
+    expect((teamJson.spec as Record<string, unknown>).modeSpec).not.toHaveProperty(
+      'defaultModelRefs'
+    )
+  })
+
+  it('removes video-only modeSpec when the Bot returns to an LLM model', () => {
+    const modeSpec = syncPublicTeamVideoModeSpec(
+      {
+        allowedModelCategories: ['video'],
+        hiddenVideoParams: ['duration'],
+      },
+      false
+    )
+
+    expect(modeSpec).toBeNull()
   })
 })

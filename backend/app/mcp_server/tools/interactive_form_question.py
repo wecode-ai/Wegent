@@ -35,6 +35,9 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.mcp_server.auth import TaskTokenInfo
 from app.mcp_server.tools.decorator import mcp_tool
+from app.services.interactive_form_extensions import (
+    normalize_interactive_form_questions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -330,6 +333,10 @@ def build_render_payload_from_tool_input(
     questions = tool_input.get("questions")
     if not isinstance(questions, list) or not questions:
         return None
+    questions = normalize_interactive_form_questions(
+        task_id=task_id,
+        questions=questions,
+    )
 
     normalized_questions = []
     for raw_question in questions:

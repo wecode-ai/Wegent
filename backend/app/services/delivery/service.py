@@ -32,6 +32,7 @@ from app.schemas.delivery import (
     DeliveryFulfillment,
     LoopItemTaskBind,
 )
+from app.schemas.issue_workflow import workflow_node_execution_mode
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
@@ -556,13 +557,13 @@ class DeliveryService:
         )
         if (
             node is None
-            or not node.get("automation_rule_id")
+            or workflow_node_execution_mode(node) != "robot"
             or node.get("status") != "awaiting_deliverables"
             or missing_requirement_ids(db, node)
         ):
             return
         node["status"] = "completed"
-        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+        apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
 
     @staticmethod
     def fulfillment_values(delivery: Delivery) -> list[dict[str, Any]]:

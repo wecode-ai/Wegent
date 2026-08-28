@@ -141,26 +141,30 @@ export function readStoredCloudConnection(): StoredCloudConnection | null {
   try {
     const value = localStorage.getItem(CLOUD_CONNECTION_STORAGE_KEY)
     if (!value) return null
-    const parsed = JSON.parse(value) as Partial<StoredCloudConnection>
-    if (
-      !parsed ||
-      typeof parsed.backendUrl !== 'string' ||
-      typeof parsed.apiBaseUrl !== 'string' ||
-      typeof parsed.socketBaseUrl !== 'string' ||
-      typeof parsed.socketPath !== 'string' ||
-      (parsed.socketBaseUrlOverride !== undefined &&
-        typeof parsed.socketBaseUrlOverride !== 'string') ||
-      typeof parsed.token !== 'string' ||
-      !parsed.user ||
-      typeof parsed.user !== 'object' ||
-      typeof parsed.connectedAt !== 'string'
-    ) {
-      return null
-    }
-    return parsed as StoredCloudConnection
+    return normalizeStoredCloudConnection(JSON.parse(value))
   } catch {
     return null
   }
+}
+
+export function normalizeStoredCloudConnection(value: unknown): StoredCloudConnection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const parsed = value as Partial<StoredCloudConnection>
+  if (
+    typeof parsed.backendUrl !== 'string' ||
+    typeof parsed.apiBaseUrl !== 'string' ||
+    typeof parsed.socketBaseUrl !== 'string' ||
+    typeof parsed.socketPath !== 'string' ||
+    (parsed.socketBaseUrlOverride !== undefined &&
+      typeof parsed.socketBaseUrlOverride !== 'string') ||
+    typeof parsed.token !== 'string' ||
+    !parsed.user ||
+    typeof parsed.user !== 'object' ||
+    typeof parsed.connectedAt !== 'string'
+  ) {
+    return null
+  }
+  return parsed as StoredCloudConnection
 }
 
 export function saveStoredCloudConnection(connection: StoredCloudConnection): void {

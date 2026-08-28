@@ -124,8 +124,6 @@
   box-shadow:
     0 8px 16px -4px rgb(0 0 0 / 12%),
     0 0 0 0.5px rgb(0 0 0 / 6%);
-  animation: task-detail-workspace-panel-enter 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transform-origin: right center;
 }
 
 .task-conversation-workspace-panel {
@@ -157,18 +155,6 @@
   font-size: var(--text-sm);
 }
 
-@keyframes task-detail-workspace-panel-enter {
-  from {
-    opacity: 0;
-    transform: translateX(24px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
 @keyframes task-conversation-workspace-panel-enter {
   from {
     opacity: 0;
@@ -183,8 +169,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .todo-panel-backdrop,
-  .task-conversation-workspace-panel,
-  .task-detail-workspace-panel-shell {
+  .task-conversation-workspace-panel {
     animation: none;
   }
 }
@@ -885,29 +870,20 @@
   padding: 4px;
 }
 
-.task-detail-attachment-footer {
-  display: flex;
-  min-height: 40px;
+.task-detail-workspace-attachments {
   flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-  margin: 0 16px 14px;
-  padding: 9px 13px;
-  border-radius: 10px;
-  color: rgb(var(--color-text-muted));
-  background: rgb(var(--color-muted));
-  font-size: var(--text-xs);
+  margin: 0 20px 14px;
+  padding: 0;
+  border-top: 1px solid rgb(var(--color-border));
+  background: transparent;
 }
 
-.task-detail-attachment-upload {
-  cursor: pointer;
-  border-radius: 6px;
-  padding: 4px 6px;
+.task-detail-workspace-attachments .task-detail-rail-section {
+  border-top: 0;
 }
 
-.task-detail-attachment-upload:hover {
-  color: rgb(var(--color-text-primary));
-  background: rgb(var(--color-bg-base));
+.task-detail-workspace-attachments .task-detail-section-label {
+  margin: 0;
 }
 
 .task-detail-id-row {
@@ -1352,6 +1328,36 @@
   color: rgb(var(--color-text-primary));
 }
 
+.task-detail-ai-run-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgb(var(--color-text-secondary));
+  font-size: var(--text-sm);
+  line-height: 1.65;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.task-detail-ai-run-open-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  color: rgb(var(--color-focus));
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.task-detail-ai-run-open-task:hover {
+  text-decoration: underline;
+}
+
+.task-detail-ai-run-open-task:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgb(var(--color-focus) / 70%);
+  outline-offset: 2px;
+}
+
 .task-detail-comment-bar {
   position: sticky;
   z-index: 2;
@@ -1749,6 +1755,33 @@
   color: rgb(var(--color-text-primary));
 }
 
+.task-detail-rail-file {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 36px;
+  padding: 0;
+}
+
+.task-detail-rail-download {
+  display: grid;
+  min-width: 0;
+  min-height: 36px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.task-detail-rail-download:focus-visible {
+  outline: 2px solid rgb(var(--color-focus) / 55%);
+  outline-offset: -2px;
+}
+
+.task-detail-rail-download:disabled {
+  cursor: default;
+}
+
 .task-detail-rail-file:hover,
 .task-detail-rail-execution:hover,
 .task-detail-rail-delivery:hover {
@@ -1757,22 +1790,20 @@
 
 .task-detail-rail-icon {
   display: grid;
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  max-width: 32px;
-  min-height: 32px;
-  max-height: 32px;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  max-width: 24px;
+  min-height: 24px;
+  max-height: 24px;
   overflow: hidden;
   place-items: center;
-  border-radius: 9px;
-  background: rgb(var(--color-muted) / 0.72);
   color: rgb(var(--color-text-muted));
 }
 
 .task-detail-rail-icon .icon {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 .task-detail-rail-name {
@@ -1865,7 +1896,7 @@
   inset: 0 0 0 auto;
   align-items: center;
   justify-content: flex-end;
-  width: 72px;
+  width: 56px;
   padding-right: 6px;
   background: linear-gradient(90deg, rgb(var(--color-muted) / 0), rgb(var(--color-muted)) 46%);
   color: rgb(var(--color-text-muted));

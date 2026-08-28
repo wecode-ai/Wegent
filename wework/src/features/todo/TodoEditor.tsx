@@ -26,6 +26,7 @@ import {
   History,
   Link2,
   ListTodo,
+  LoaderCircle,
   Maximize2,
   Minimize2,
   Package,
@@ -46,6 +47,8 @@ import type {
   CloudProjectMember,
   Delivery,
   DeliveryDetail,
+  IssueWorkflowInstance,
+  LoopItemTaskBinding,
   WorkflowPlan,
 } from '@/api/deliveries'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
@@ -294,6 +297,7 @@ function TodoAttachmentSection({
   error,
   editable,
   compactRail = false,
+  downloadingId,
   onAdd,
   onOpen,
   onRemove,
@@ -303,10 +307,12 @@ function TodoAttachmentSection({
   error: string | null
   editable: boolean
   compactRail?: boolean
+  downloadingId?: string | null
   onAdd: (files: FileList | null) => Promise<void>
   onOpen?: (attachment: AttachmentRow) => Promise<void>
   onRemove: (attachment: AttachmentRow) => Promise<void>
 }) {
+  const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const visibleRows = compactRail && !expanded ? attachments.slice(0, 2) : attachments
@@ -369,24 +375,31 @@ function TodoAttachmentSection({
             <div className="task-detail-rail-list">
               {visibleRows.map(attachment => (
                 <div key={attachment.id} className="task-detail-rail-file group">
-                  <span className="task-detail-rail-icon">
-                    <File className="icon" />
-                  </span>
                   <button
                     type="button"
                     data-testid={`cloud-todo-attachment-download-${attachment.id}`}
-                    disabled={!onOpen}
+                    disabled={!onOpen || downloadingId === attachment.id}
                     onClick={() => {
                       if (onOpen) void onOpen(attachment)
                     }}
-                    className="task-detail-rail-name text-left"
+                    className="task-detail-rail-download"
                     title={attachment.display_name}
+                    aria-label={`下载 ${attachment.display_name}`}
                   >
-                    {attachment.display_name}
+                    <span className="task-detail-rail-icon">
+                      {downloadingId === attachment.id ? (
+                        <LoaderCircle className="icon animate-spin" />
+                      ) : (
+                        <File className="icon" />
+                      )}
+                    </span>
+                    <span className="task-detail-rail-name">{attachment.display_name}</span>
+                    <span className="task-detail-rail-meta">
+                      {downloadingId === attachment.id
+                        ? t('todo.file_downloading', '下载中…')
+                        : formatAttachmentSize(attachment.size_bytes)}
+                    </span>
                   </button>
-                  <span className="task-detail-rail-meta">
-                    {formatAttachmentSize(attachment.size_bytes)}
-                  </span>
                   {editable && (
                     <button
                       type="button"
@@ -467,11 +480,16 @@ function TodoAttachmentSection({
                 <button
                   type="button"
                   data-testid={`cloud-todo-attachment-download-${attachment.id}`}
+                  disabled={downloadingId === attachment.id}
                   onClick={() => void onOpen(attachment)}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-hover hover:text-text-primary group-hover:opacity-100"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-hover hover:text-text-primary group-hover:opacity-100 disabled:opacity-50"
                   aria-label={`下载 ${attachment.display_name}`}
                 >
-                  <Download className="h-3.5 w-3.5" />
+                  {downloadingId === attachment.id ? (
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
                 </button>
               )}
               {editable && (
@@ -620,6 +638,9 @@ export function TodoEditor(props: TodoEditorProps) {
           : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
+  const [workflowDraft, setWorkflowDraft] = useState<IssueWorkflowInstance | null>(
+    item?.workflow ?? null
+  )
   const [tagDraft, setTagDraft] = useState('')
   // Track the item version the local editable state mirrors. External updates
   // (for example the project AI completing a run) bump the version; sync the
@@ -662,8 +683,22 @@ export function TodoEditor(props: TodoEditorProps) {
       setAssigneeTarget(nextAssigneeTarget)
     }
     if (!sameTask || tagsMatch(tags, previous?.tags ?? [])) setTags(item.tags ?? [])
+    if (!sameTask || workflowDraft === previous?.workflow) {
+      setWorkflowDraft(item.workflow ?? null)
+    }
     syncedItemRef.current = item
-  }, [item, title, description, status, priority, parentId, dueDate, assigneeTarget, tags])
+  }, [
+    item,
+    title,
+    description,
+    status,
+    priority,
+    parentId,
+    dueDate,
+    assigneeTarget,
+    tags,
+    workflowDraft,
+  ])
   // A create draft or initial parent can reference a task that was archived
   // since; a deleted parent is not in the live item list, so fall back to a
   // top-level task instead of sending a parent id the backend rejects.
@@ -687,16 +722,7 @@ export function TodoEditor(props: TodoEditorProps) {
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [selectedDelivery, setSelectedDelivery] = useState<DeliveryDetail | null>(null)
-  const [tasks, setTasks] = useState<
-    Array<{
-      id: number
-      device_id: string
-      task_id: string
-      task_title: string | null
-      workflow_node_id?: string | null
-      linked_at?: string
-    }>
-  >([])
+  const [tasks, setTasks] = useState<LoopItemTaskBinding[]>([])
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([])
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
@@ -721,6 +747,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const [collaboratorError, setCollaboratorError] = useState<string | null>(null)
   const [attachmentBusy, setAttachmentBusy] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
   const [expandedRailSections, setExpandedRailSections] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
@@ -746,9 +773,13 @@ export function TodoEditor(props: TodoEditorProps) {
     return Array.from(merged.values())
   }, [attachments, description])
   const displayedWorkflow = useMemo(
-    () => (item?.workflow ? reconcileIssueWorkflowForTaskBindings(item.workflow, tasks) : null),
-    [item?.workflow, tasks]
+    () => (workflowDraft ? reconcileIssueWorkflowForTaskBindings(workflowDraft, tasks) : null),
+    [workflowDraft, tasks]
   )
+  const refreshTaskBindings = useCallback(async () => {
+    if (editItemId == null) return
+    setTasks(await api.listTaskBindings(editItemId))
+  }, [api, editItemId])
 
   useEffect(() => {
     const node = detailScrollRef.current
@@ -764,6 +795,8 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks([])
     setAttachments([])
     setCollaborators([])
+    setDownloadingAttachmentId(null)
+    setAttachmentError(null)
   }, [editItemId])
 
   // Edit mode loads everything tied to the item id.
@@ -918,6 +951,7 @@ export function TodoEditor(props: TodoEditorProps) {
   const itemTags = item?.tags ?? []
   const tagsDirty =
     tags.length !== itemTags.length || tags.some((tag, index) => tag !== itemTags[index])
+  const workflowDirty = JSON.stringify(workflowDraft) !== JSON.stringify(item?.workflow ?? null)
   const dirty = item
     ? title.trim() !== item.title ||
       description !== normalizedItemDescription ||
@@ -933,7 +967,8 @@ export function TodoEditor(props: TodoEditorProps) {
               ? `user:${item.assignee_user_id}`
               : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
-      tagsDirty
+      tagsDirty ||
+      workflowDirty
     : false
   const hasDraftContent = Boolean(
     title ||
@@ -1080,6 +1115,7 @@ export function TodoEditor(props: TodoEditorProps) {
         parent_id: parentId || null,
         due_at: dueDate || null,
         tags,
+        ...(workflowDirty ? { workflow: workflowDraft } : {}),
       })
       const currentAssigneeTarget = current.assignee_team_id
         ? `team:${current.assignee_team_id}`
@@ -1229,7 +1265,20 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function openAttachment(attachment: AttachmentRow) {
-    await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
+    if (downloadingAttachmentId) return
+    setDownloadingAttachmentId(attachment.id)
+    setAttachmentError(null)
+    try {
+      await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
+    } catch (cause) {
+      setAttachmentError(
+        cause instanceof Error
+          ? cause.message
+          : t('todo.attachment_download_failed', '附件下载失败')
+      )
+    } finally {
+      setDownloadingAttachmentId(null)
+    }
   }
 
   async function removeAttachment(attachment: AttachmentRow) {
@@ -1331,6 +1380,9 @@ export function TodoEditor(props: TodoEditorProps) {
         workflowManagerRunId={workflowManager?.id}
         onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
         onWorkflowManagerFinished={refreshWorkflowPlan}
+        taskBindings={tasks}
+        onOpenTask={props.onOpenTaskConversation}
+        onRefreshTaskBindings={refreshTaskBindings}
         linear
       />
     ) : null
@@ -1794,12 +1846,13 @@ export function TodoEditor(props: TodoEditorProps) {
             twoColumn
               ? workspacePanel
                 ? 'grid grid-cols-1 overflow-hidden bg-background'
-                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-visible'
+                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-hidden'
               : 'overflow-y-auto'
           )}
         >
           <div
             ref={twoColumn ? detailScrollRef : undefined}
+            data-testid={twoColumn ? 'cloud-todo-detail-scroll' : undefined}
             className={cn(
               'pb-6 pt-2.5',
               twoColumn ? 'task-detail-left md:min-h-0' : 'px-14',
@@ -2142,8 +2195,11 @@ export function TodoEditor(props: TodoEditorProps) {
                       ) : null}
                       {workflowManager ||
                       ['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
-                        <div
-                          className="mt-2 rounded-lg border border-border bg-background px-3 py-2"
+                        <button
+                          type="button"
+                          disabled={!openWorkflowManagerExecution}
+                          onClick={openWorkflowManagerExecution ?? undefined}
+                          className="mt-2 block w-full rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-muted/40 disabled:cursor-default"
                           data-testid="cloud-todo-workflow-manager-run"
                         >
                           <div className="flex items-center gap-2 text-xs">
@@ -2158,15 +2214,13 @@ export function TodoEditor(props: TodoEditorProps) {
                                   : workflowPlanStatusLabel)}
                             </span>
                             {openWorkflowManagerExecution ? (
-                              <button
-                                type="button"
+                              <span
                                 data-testid="cloud-todo-workflow-manager-open-execution"
-                                onClick={openWorkflowManagerExecution}
                                 className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                               >
                                 <ExternalLink className="h-3.5 w-3.5" />
                                 {t('workbench.task_activity_view_execution')}
-                              </button>
+                              </span>
                             ) : null}
                           </div>
                           <p className="mt-1 truncate text-xs text-text-muted">
@@ -2174,7 +2228,7 @@ export function TodoEditor(props: TodoEditorProps) {
                               .filter(Boolean)
                               .join(' · ')}
                           </p>
-                        </div>
+                        </button>
                       ) : null}
                       {planItems.length > 0 ? (
                         <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
@@ -2287,6 +2341,7 @@ export function TodoEditor(props: TodoEditorProps) {
                         nodes={displayedWorkflow.nodes}
                         tasks={tasks}
                         deliveries={deliveries}
+                        executionError={item?.execution_error}
                         selectedTaskId={props.selectedTaskId}
                         onCreateTask={props.onCreateTask}
                         onRunAutomation={props.onRunWorkflowNode}
@@ -2572,6 +2627,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     busy={attachmentBusy}
                     error={attachmentError}
                     editable
+                    downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onOpen={isCreate ? undefined : openAttachment}
                     onRemove={isCreate ? removePendingFile : removeAttachment}
@@ -2879,6 +2935,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     error={attachmentError}
                     editable
                     compactRail
+                    downloadingId={downloadingAttachmentId}
                     onAdd={addAttachments}
                     onOpen={openAttachment}
                     onRemove={removeAttachment}
@@ -3005,37 +3062,22 @@ export function TodoEditor(props: TodoEditorProps) {
         </div>
 
         {workspacePanel && item ? (
-          <footer
+          <div
             data-testid="cloud-todo-attachment-footer"
-            className="task-detail-attachment-footer"
+            className="task-detail-workspace-attachments task-detail-rail-sections"
           >
-            <span className="flex min-w-0 items-center gap-2">
-              <Paperclip className="h-4 w-4 shrink-0" />
-              <span>附件</span>
-            </span>
-            {attachmentError ? (
-              <span className="min-w-0 flex-1 truncate text-destructive" role="alert">
-                {attachmentError}
-              </span>
-            ) : (
-              <span className="flex-1" />
-            )}
-            <span>{visibleAttachments.length}</span>
-            <label className="task-detail-attachment-upload">
-              {attachmentBusy ? '上传中…' : '＋ 上传'}
-              <input
-                data-testid="cloud-todo-attachment-input"
-                type="file"
-                multiple
-                disabled={attachmentBusy}
-                onChange={event => {
-                  void addAttachments(event.target.files)
-                  event.target.value = ''
-                }}
-                className="sr-only"
-              />
-            </label>
-          </footer>
+            <TodoAttachmentSection
+              attachments={visibleAttachments}
+              busy={attachmentBusy}
+              error={attachmentError}
+              editable
+              compactRail
+              downloadingId={downloadingAttachmentId}
+              onAdd={addAttachments}
+              onOpen={openAttachment}
+              onRemove={removeAttachment}
+            />
+          </div>
         ) : null}
 
         {!twoColumn ? (

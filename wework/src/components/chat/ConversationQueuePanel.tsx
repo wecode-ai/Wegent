@@ -44,21 +44,29 @@ export function ConversationQueuePanel({
   const { t } = useTranslation('chat')
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
-  const queuedMessageIds = useMemo(
-    () => queuedMessages.filter(message => message.status === 'queued').map(message => message.id),
+  const visibleQueuedMessages = useMemo(
+    () => queuedMessages.filter(message => !message.awaitingGuidanceAcceptance),
     [queuedMessages]
+  )
+  const queuedMessageIds = useMemo(
+    () =>
+      visibleQueuedMessages
+        .filter(message => message.status === 'queued')
+        .map(message => message.id),
+    [visibleQueuedMessages]
   )
   const displayedQueuedMessages = useMemo(
     () =>
-      [...queuedMessages].sort(
+      [...visibleQueuedMessages].sort(
         (left, right) =>
           queuedMessageDisplayPriority(left.status) - queuedMessageDisplayPriority(right.status)
       ),
-    [queuedMessages]
+    [visibleQueuedMessages]
   )
-  const activeMessage = queuedMessages.find(message => message.id === activeMessageId) ?? null
+  const activeMessage =
+    visibleQueuedMessages.find(message => message.id === activeMessageId) ?? null
 
-  if (queuedMessages.length === 0 && guidanceMessages.length === 0) {
+  if (visibleQueuedMessages.length === 0 && guidanceMessages.length === 0) {
     return null
   }
 
@@ -87,7 +95,7 @@ export function ConversationQueuePanel({
       >
         <SortableContext items={queuedMessageIds} strategy={verticalListSortingStrategy}>
           <div className="flex flex-col">
-            {queuePaused && queuedMessages.length > 0 && (
+            {queuePaused && visibleQueuedMessages.length > 0 && (
               <div className="flex h-8 items-center justify-between gap-2 px-2 text-xs text-text-muted">
                 <span>{t('queue.paused')}</span>
                 <button

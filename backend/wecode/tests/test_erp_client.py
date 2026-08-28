@@ -45,6 +45,38 @@ class TestErpClient:
         client.base_url = ""
         assert client.search_departments("test") == []
 
+    def test_search_hidden_department_ids_uses_t2_keyword(self):
+        client = ErpClient()
+        client.base_url = "https://erp.example.com"
+        client._access_token = "token"
+        client._token_expires_at = time.time() + 3600
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": {
+                "departments": [
+                    {"department_id": 1001},
+                    {"department_id": "1002"},
+                    {"department_id": 1001},
+                    {"name": "missing id"},
+                ]
+            }
+        }
+
+        with patch("httpx.Client.get", return_value=mock_response) as mock_get:
+            result = client.search_hidden_department_ids()
+
+        assert result == {"1001", "1002"}
+        assert mock_get.call_args.kwargs["params"] == {"keyword": "T2"}
+
+    def test_search_hidden_department_ids_returns_none_on_request_failure(self):
+        client = ErpClient()
+        client.base_url = "https://erp.example.com"
+
+        with patch("httpx.Client.get", side_effect=httpx.RequestError("failed")):
+            assert client.search_hidden_department_ids() is None
+
     def test_search_employee_prefers_exact_match(self):
         client = ErpClient()
         client.base_url = "https://erp.example.com"

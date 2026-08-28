@@ -54,13 +54,14 @@ sidebar_position: 4
 ```bash
 bash executor/scripts/dev-cloud-device.sh start    # 启动并保持在线（可重复执行）
 bash executor/scripts/dev-cloud-device.sh status   # 查看运行与在线状态
-bash executor/scripts/dev-cloud-device.sh restart  # 重启（会重新构建/拉起最新代码）
+bash executor/scripts/dev-cloud-device.sh restart  # 手动重启
 bash executor/scripts/dev-cloud-device.sh stop     # 停止
 ```
 
 - 默认设备 id 为 `cloud-device-dev`（可用 `DEVICE_ID` 覆盖），注册后出现在设备列表的“云端设备”中。
-- 脚本会自动构建最新 executor、从 `backend/.env` 读取密钥签发 30 天 token，并使用独立的
-  executor home 与 Codex home（不读取个人 Codex 凭据）。
+- 脚本会自动构建最新 executor，并持续监听 `executor/src`、`Cargo.toml` 和 `Cargo.lock`；
+  源码变化后会增量编译并动态重启 executor。它还会从 `backend/.env` 读取密钥签发 30 天
+  token，并使用独立的 executor home 与 Codex home（不读取个人 Codex 凭据）。
 - 创建机器人时执行环境选择“云端”、执行设备选择 `cloud-device-dev`，指派任务后即在本机按
   云端设备协议执行并写回评论与执行记录。
 - 运行数据与日志位于 `~/.wegent-executor-cloud-device/`。

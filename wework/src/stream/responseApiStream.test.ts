@@ -456,6 +456,37 @@ describe('emitResponseApiEvent', () => {
     })
   })
 
+  test('emits processing block content deltas', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'text-1',
+          updates: {
+            content_delta: 'next',
+            status: 'streaming',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'text-1',
+      contentDelta: 'next',
+      status: 'streaming',
+    })
+  })
+
   test('restores a missing block from a block update snapshot before applying updates', () => {
     const calls: string[] = []
     const onBlockCreated = vi.fn(() => calls.push('created'))
@@ -541,6 +572,37 @@ describe('emitResponseApiEvent', () => {
       toolOutputTruncated: false,
       completedAt: 1_780_000_004_750,
       durationMs: 3_500,
+    })
+  })
+
+  test('emits text block content delta updates', () => {
+    const onBlockUpdated = vi.fn()
+
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      'response.block.updated',
+      {
+        taskId: 'task-1',
+        subtaskId: '2',
+        deviceId: 'device-1',
+        data: {
+          block_id: 'message-1',
+          updates: {
+            status: 'streaming',
+            content_delta: 'next',
+          },
+        },
+      },
+      createResponseApiStreamState()
+    )
+
+    expect(onBlockUpdated).toHaveBeenCalledWith({
+      taskId: 'task-1',
+      subtaskId: '2',
+      deviceId: 'device-1',
+      blockId: 'message-1',
+      status: 'streaming',
+      contentDelta: 'next',
     })
   })
 

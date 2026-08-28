@@ -10,7 +10,7 @@ import type {
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
-import { getAppPreferences } from '@/tauri/appPreferences'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
@@ -593,8 +593,9 @@ export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
 
   try {
     const url = new URL(trimmed)
+    const host = url.protocol === 'ssh:' || url.protocol === 'git+ssh:' ? url.hostname : url.host
     return {
-      host: url.host,
+      host,
       repoPath: url.pathname.replace(/^\/+/, ''),
     }
   } catch {

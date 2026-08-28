@@ -33,6 +33,8 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import * as changeRequestMonitor from '@/features/workbench/changeRequestMonitor'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
 
@@ -100,7 +102,6 @@ function createSidebarProps(overrides: Partial<Parameters<typeof DesktopSidebar>
     onOpenSearch: vi.fn(),
     onSelectProject: vi.fn(),
     onStartNewProjectChat: vi.fn(),
-    onOpenPlugins: vi.fn(),
     onUpdateProjectName: vi.fn(),
     onRemoveProject: vi.fn(),
     onGetDeviceHomeDirectory: vi.fn().mockResolvedValue('/Users/alice'),
@@ -170,11 +171,11 @@ function renderSidebar(
   return render(tree)
 }
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = {
+    ...window.__WEWORK_RUNTIME_CONFIG__,
+    desktopHost: 'electron',
+  }
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
@@ -202,10 +203,12 @@ async function waitForSidebarPointerSensorCleanup() {
 }
 
 describe('DesktopSidebar', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
+    window.history.replaceState({}, '', '/')
     localStorage.clear()
-    enableTauri()
+    enableElectron()
     setActiveKeybindings([])
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
@@ -277,7 +280,6 @@ describe('DesktopSidebar', () => {
   })
 
   test('keeps the sidebar color stable across browser focus changes', () => {
-    Reflect.deleteProperty(window, '__TAURI_INTERNALS__')
     renderSidebar()
     const sidebar = screen.getByTestId('desktop-sidebar')
 
@@ -289,10 +291,7 @@ describe('DesktopSidebar', () => {
   })
 
   test('keeps the shared right border and forces an opaque sidebar on Windows', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    enableElectron()
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
       value:
@@ -1700,9 +1699,8 @@ describe('DesktopSidebar', () => {
     expect(screen.queryByTestId('cloud-connection-dialog')).not.toBeInTheDocument()
   })
 
-  test('shows cloud work availability and opens the cloud work page from the sidebar entry', async () => {
+  test('shows cloud work availability and follows the contributed sidebar path', async () => {
     const onOpenSettings = vi.fn()
-    const onOpenCloudWork = vi.fn()
     renderSidebar({
       devices: [
         localDevice(),
@@ -1716,7 +1714,6 @@ describe('DesktopSidebar', () => {
       cloudWorkStatus: cloudWorkStatus({ availability: 'available' }),
       activeItem: 'cloud-work',
       onOpenSettings,
-      onOpenCloudWork,
     })
 
     const cloudButton = screen.getByTestId('sidebar-cloud-connection-button')
@@ -1743,7 +1740,7 @@ describe('DesktopSidebar', () => {
 
     await userEvent.click(cloudButton)
 
-    expect(onOpenCloudWork).toHaveBeenCalledTimes(1)
+    expect(window.location.pathname).toBe('/cloud-work')
     expect(onOpenSettings).not.toHaveBeenCalled()
   })
 
@@ -1960,24 +1957,59 @@ describe('DesktopSidebar', () => {
     expect(screen.getByTestId('remote-device-startup-command')).toHaveTextContent('wegent-executor')
   })
 
-  test('opens plugins navigation from the desktop sidebar', async () => {
-    const onOpenPlugins = vi.fn()
-    renderSidebar({ onOpenPlugins })
+  test('opens the path contributed by the plugin-center sidebar item', async () => {
+    renderSidebar()
 
     await userEvent.click(screen.getByTestId('plugins-button'))
 
-    expect(onOpenPlugins).toHaveBeenCalledTimes(1)
+    expect(window.location.pathname).toBe('/plugins')
   })
 
-  test('opens Sites navigation from the desktop sidebar', async () => {
-    const onOpenSites = vi.fn()
-    renderSidebar({ onOpenSites, activeItem: 'sites' })
+  test('opens the path contributed by the Applications sidebar item', async () => {
+    renderSidebar({ activeItem: 'sites' })
 
     expect(screen.getByTestId('sites-button')).toHaveAttribute('aria-current', 'page')
     expect(screen.getByTestId('sites-button')).toHaveTextContent('工作台/站点/小程序')
     await userEvent.click(screen.getByTestId('sites-button'))
 
-    expect(onOpenSites).toHaveBeenCalledTimes(1)
+    expect(window.location.pathname).toBe('/sites')
+  })
+
+  test('removes sidebar entries when their DSH plugins stop contributing them', () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const listeners = new Set<() => void>()
+    let navigation = runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation)
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+      subscribe: (slotName, listener) => {
+        if (slotName !== WEWORK_DSH_SLOTS.sidebarNavigation) {
+          return runtime!.subscribe(slotName, listener)
+        }
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+    }
+    renderSidebar()
+
+    expect(screen.getByTestId('sites-button')).toBeInTheDocument()
+    expect(screen.getByTestId('sidebar-cloud-connection-button')).toBeInTheDocument()
+
+    act(() => {
+      navigation = navigation.filter(
+        item => item.id !== 'applications.navigation' && item.id !== 'cloud-work.navigation'
+      )
+      listeners.forEach(listener => listener())
+    })
+
+    expect(screen.queryByTestId('sites-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sidebar-cloud-connection-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('automation-button')).toBeInTheDocument()
+    expect(screen.getByTestId('plugins-button')).toBeInTheDocument()
   })
 
   test('shows Sites while experimental features are disabled', () => {
@@ -3054,6 +3086,68 @@ describe('DesktopSidebar', () => {
     expect(screen.getByText('Local Wegent')).toBeInTheDocument()
     expect(screen.getByTestId('project-folder-icon-8')).toBeInTheDocument()
     expect(screen.getAllByTestId('project-item')).toHaveLength(2)
+  })
+
+  test('shows the device name and original device id in project and task hover cards', async () => {
+    vi.useFakeTimers()
+    renderSidebar({
+      devices: [
+        localDevice(),
+        localDevice({
+          id: 2,
+          device_id: 'remote-device-id',
+          socket_device_id: 'remote-runtime-id',
+          name: '公司云端 MacBook Pro',
+          is_default: false,
+          device_type: 'remote',
+        }),
+      ],
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, key: 'remote-project-id', name: 'Sites' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'remote-runtime-id',
+                deviceName: 'remote-runtime-id',
+                remoteHostId: 'cloud-device-dev',
+                workspacePath: '/Users/alice/Sites',
+                workspaceSource: 'remote',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'remote-hover-task',
+                    title: 'Deploy Sites',
+                    runtime: 'codex',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    })
+
+    const projectRow = screen.getByTestId('project-row-7')
+    fireEvent.mouseEnter(projectRow)
+    await act(async () => vi.advanceTimersByTime(450))
+    const projectHover = screen.getByTestId('project-hover-card-7')
+    expect(projectHover).toHaveTextContent('公司云端 MacBook Pro')
+    expect(projectHover).toHaveTextContent('ID：cloud-device-dev')
+    expect(projectHover).not.toHaveTextContent('remote-runtime-id')
+
+    fireEvent.pointerMove(document.body)
+    await act(async () => vi.advanceTimersByTime(120))
+    fireEvent.click(screen.getByTestId('project-item-button'))
+    const taskRow = screen.getByTestId('runtime-local-task-row-remote-hover-task')
+    fireEvent.mouseEnter(taskRow)
+    await act(async () => vi.advanceTimersByTime(450))
+    const taskHover = screen.getByTestId('runtime-local-task-hover-content-remote-hover-task')
+    expect(taskHover).toHaveTextContent('公司云端 MacBook Pro')
+    expect(taskHover).toHaveTextContent('ID：cloud-device-dev')
+    expect(taskHover).not.toHaveTextContent('remote-runtime-id')
   })
 
   test('shows cached tasks for an offline remote project without allowing them to open', async () => {

@@ -1,16 +1,14 @@
-import { listen } from '@tauri-apps/api/event'
-import { Box, Download, RefreshCw, Trash2 } from 'lucide-react'
+import { Box, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
 import {
-  installExecutionEnvironment,
+  chooseNodeExecutable,
   listExecutionEnvironments,
-  removeExecutionEnvironment,
   type ExecutionEnvironmentStatus,
-} from '@/tauri/executionEnvironments'
+  useBuiltinNode,
+} from '@/desktop/executionEnvironments'
 
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
@@ -34,10 +32,6 @@ export function ExecutionEnvironmentsSettingsPage() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    if (!isTauriRuntime()) {
-      setLoading(false)
-      return
-    }
     try {
       setEnvironments(await listExecutionEnvironments())
       setError(null)
@@ -50,21 +44,8 @@ export function ExecutionEnvironmentsSettingsPage() {
 
   useEffect(() => {
     const initialRefresh = window.setTimeout(() => void refresh(), 0)
-    if (!isTauriRuntime()) {
-      return () => window.clearTimeout(initialRefresh)
-    }
-    let disposed = false
-    let unlisten: (() => void) | undefined
-    void listen('execution-environment-status-changed', () => {
-      if (!disposed) void refresh()
-    }).then(dispose => {
-      if (disposed) dispose()
-      else unlisten = dispose
-    })
     return () => {
       window.clearTimeout(initialRefresh)
-      disposed = true
-      unlisten?.()
     }
   }, [refresh])
 
@@ -145,6 +126,14 @@ export function ExecutionEnvironmentsSettingsPage() {
                     </h2>
                     <span className="text-xs text-text-secondary">
                       {status}
+                      {environment.source === 'electron'
+                        ? ` · ${t(
+                            'workbench.execution_environment_electron_builtin',
+                            'Electron 内置'
+                          )}`
+                        : environment.source === 'configured'
+                          ? ` · ${t('workbench.execution_environment_custom', '自定义')}`
+                          : ''}
                       {environment.version ? ` · ${environment.version}` : ''}
                     </span>
                   </div>
@@ -152,7 +141,7 @@ export function ExecutionEnvironmentsSettingsPage() {
                     {isNode
                       ? t(
                           'workbench.execution_environment_node_description',
-                          '默认后台安装，供 Codex、Claude Code、JavaScript Skills、MCP 和智能工作台使用。'
+                          '由 Wework 的 Electron 运行时直接提供，供 Codex、Claude Code、JavaScript Skills、MCP 和智能工作台使用，不会额外下载 Node。'
                         )
                       : t(
                           'workbench.execution_environment_python_description',
@@ -181,60 +170,64 @@ export function ExecutionEnvironmentsSettingsPage() {
                       {environment.path}
                     </p>
                   )}
+                  {environment.restartRequired && (
+                    <div
+                      data-testid="execution-environment-node-restart-required"
+                      className="mt-2 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-4 text-amber-700"
+                    >
+                      {environment.configuredPath
+                        ? t(
+                            'workbench.execution_environment_custom_restart_required',
+                            '已选择 {{path}}，重启 Wework 后生效。',
+                            { path: environment.configuredPath }
+                          )
+                        : t(
+                            'workbench.execution_environment_builtin_restart_required',
+                            '已恢复 Electron 内置 Node，重启 Wework 后生效。'
+                          )}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {isNode && !installed && !downloading && (
+                    {isNode && (
                       <Button
                         size="sm"
                         variant="outline"
                         disabled={busy}
-                        data-testid="execution-environment-node-install"
+                        data-testid="execution-environment-node-choose"
                         onClick={() =>
-                          void runAction('node', () => installExecutionEnvironment('node'))
+                          void runAction('node', async () => {
+                            await chooseNodeExecutable()
+                          })
                         }
                       >
-                        <Download />
-                        {t('workbench.execution_environment_retry', '重试安装')}
+                        <FolderOpen />
+                        {t('workbench.execution_environment_choose_custom_node', '选择自定义 Node')}
                       </Button>
                     )}
-                    {!isNode && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy}
-                        data-testid="execution-environment-python-refresh"
-                        onClick={() => void runAction('python', refresh)}
-                      >
-                        <RefreshCw />
-                        {t('workbench.execution_environment_refresh', '重新检测')}
-                      </Button>
-                    )}
-                    {isNode && installed && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy}
-                          data-testid="execution-environment-node-reinstall"
-                          onClick={() =>
-                            void runAction('node', () => installExecutionEnvironment('node'))
-                          }
-                        >
-                          <RefreshCw />
-                          {t('workbench.execution_environment_check_update', '检查更新')}
-                        </Button>
+                    {isNode &&
+                      (environment.source === 'configured' ||
+                        Boolean(environment.configuredPath)) && (
                         <Button
                           size="sm"
                           variant="ghost"
                           disabled={busy}
-                          data-testid="execution-environment-node-remove"
-                          onClick={() =>
-                            void runAction('node', () => removeExecutionEnvironment('node'))
-                          }
+                          data-testid="execution-environment-node-use-builtin"
+                          onClick={() => void runAction('node', useBuiltinNode)}
                         >
-                          <Trash2 />
-                          {t('workbench.execution_environment_remove', '删除')}
+                          <RotateCcw />
+                          {t('workbench.execution_environment_use_builtin_node', '使用内置 Node')}
                         </Button>
-                      </>
+                      )}
+                    {!isNode && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid="execution-environment-python-refresh"
+                        onClick={() => void refresh()}
+                      >
+                        <RefreshCw />
+                        {t('workbench.execution_environment_refresh', '重新检测')}
+                      </Button>
                     )}
                   </div>
                 </div>

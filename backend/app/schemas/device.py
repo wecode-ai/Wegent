@@ -88,12 +88,28 @@ class RuntimeWorktreeFeatures(BaseModel):
     )
 
 
+class RuntimeTaskCreateFeatures(BaseModel):
+    """Runtime task creation protocol and semantic feature support."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    schema_versions: List[int] = Field(
+        default_factory=list,
+        alias="schemaVersions",
+    )
+    features: Dict[str, bool] = Field(default_factory=dict)
+
+
 class RuntimeFeatures(BaseModel):
     """Online features implemented by the currently connected Runtime."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     schema_version: int = Field(..., ge=1, alias="schemaVersion")
+    runtime_task_create: Optional[RuntimeTaskCreateFeatures] = Field(
+        default=None,
+        alias="runtimeTaskCreate",
+    )
     worktrees: Optional[RuntimeWorktreeFeatures] = None
 
 

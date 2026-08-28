@@ -89,6 +89,169 @@ function conversationTurn(
 }
 
 describe('CloudTodoBoardCard', () => {
+  it('opens execution configuration from the blocking card action', async () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+    const onClick = vi.fn()
+    const onConfigureExecution = vi.fn()
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          status: 'in_progress',
+          workflow: {
+            version: 1,
+            definition_version: 1,
+            stage_mode: 'dag',
+            advancement_policy: 'manual',
+            execution_config: null,
+            nodes: [
+              {
+                id: 'automatic-stage',
+                name: '自动阶段',
+                execution_mode: 'robot',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'composer',
+                automation_rule_id: 'automation-stage',
+                execution_config: null,
+                execution_config_override: false,
+                status: 'ready',
+                task_ids: [],
+              },
+            ],
+          },
+        }}
+        processingStatus
+        onClick={onClick}
+        onConfigureExecution={onConfigureExecution}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-needs-execution-config-WEG-85')).toHaveTextContent(
+      '待配置'
+    )
+    expect(screen.queryByText('可开始')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('cloud-todo-card-configure-execution-WEG-85'))
+
+    expect(onConfigureExecution).toHaveBeenCalledTimes(1)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('shows the current workflow stage before any task starts', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          status: 'pending',
+          workflow: {
+            version: 1,
+            definition_version: 1,
+            nodes: [
+              {
+                id: 'manual-stage',
+                name: '手动阶段',
+                execution_mode: 'human',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'none',
+                status: 'ready',
+              },
+              {
+                id: 'automatic-stage',
+                name: '自动阶段',
+                execution_mode: 'robot',
+                depends_on: ['manual-stage'],
+                required: true,
+                workspace_policy: 'none',
+                status: 'blocked',
+              },
+            ],
+          },
+        }}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-workflow-stage-WEG-85')).toHaveTextContent(
+      '手动阶段'
+    )
+    expect(screen.getByTestId('cloud-todo-card-workflow-status-WEG-85')).toHaveTextContent('可开始')
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+  })
+
+  it('keeps a failed workflow stage visible after its task stops', () => {
+    changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(null)
+
+    render(
+      <CloudTodoBoardCard
+        item={{
+          ...item,
+          status: 'pending',
+          workflow: {
+            version: 2,
+            definition_version: 1,
+            nodes: [
+              {
+                id: 'automatic-stage',
+                name: '自动阶段',
+                execution_mode: 'robot',
+                depends_on: [],
+                required: true,
+                workspace_policy: 'none',
+                status: 'failed',
+                execution_error: 'Execution model is unavailable',
+              },
+            ],
+          },
+        }}
+        taskBindings={[
+          {
+            id: 85,
+            device_id: 'local',
+            task_id: 'task-85',
+            task_title: 'Run automation',
+            running: false,
+            finalResponseLoaded: true,
+          },
+        ]}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-card-workflow-stage-WEG-85')).toHaveTextContent(
+      '自动阶段'
+    )
+    expect(screen.getByTestId('cloud-todo-card-workflow-status-WEG-85')).toHaveTextContent(
+      '执行失败'
+    )
+    expect(screen.queryByTestId('cloud-todo-card-tasks-WEG-85')).not.toBeInTheDocument()
+  })
+
   it('renders the pull request popup outside the overflow-hidden board card', async () => {
     changeRequestMonitorMocks.useTaskChangeRequest.mockReturnValue(snapshot)
 
@@ -198,6 +361,27 @@ describe('CloudTodoBoardCard', () => {
     expect(screen.getByTestId('cloud-todo-card-tasks-WEG-85')).not.toHaveClass('border-t')
   })
 
+  it('does not open a progress preview when the card has no progress binding', async () => {
+    render(
+      <CloudTodoBoardCard
+        item={item}
+        onClick={vi.fn()}
+        onArchive={vi.fn()}
+        display={{
+          showAssignee: false,
+          showPriority: false,
+          showTags: false,
+          showDate: false,
+        }}
+      />
+    )
+
+    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-WEG-85'))
+
+    await new Promise(resolve => window.setTimeout(resolve, 500))
+    expect(screen.queryByTestId('cloud-todo-card-progress-popup-WEG-85')).not.toBeInTheDocument()
+  })
+
   it('highlights unread cards and keeps full final content in the hover preview', async () => {
     render(
       <CloudTodoBoardCard
@@ -238,12 +422,10 @@ describe('CloudTodoBoardCard', () => {
     const fullResponse = await screen.findByTestId('cloud-todo-card-popup-conversation-WEG-85')
     expect(fullResponse).toHaveTextContent('第一行：完成布局')
     expect(fullResponse).toHaveTextContent('第六行：等待确认')
-    expect(fullResponse).toHaveClass('max-h-[min(68vh,42rem)]', 'overflow-hidden')
+    expect(fullResponse).toHaveClass('max-h-72', 'overflow-hidden')
   })
 
-  it('keeps repeated task text out of the card and narrows the full-card hover preview', async () => {
-    const onSendMessage = vi.fn(async () => true)
-
+  it('keeps repeated task text out of the card and makes the hover preview read-only', async () => {
     render(
       <CloudTodoBoardCard
         item={{ ...item, description: 'This description must be hidden from the card' }}
@@ -273,7 +455,6 @@ describe('CloudTodoBoardCard', () => {
           showTags: false,
           showDate: false,
         }}
-        onSendMessage={onSendMessage}
       />
     )
 
@@ -285,28 +466,14 @@ describe('CloudTodoBoardCard', () => {
 
     fireEvent.mouseEnter(card)
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
-    expect(popup).toHaveClass('w-[480px]', 'overflow-x-hidden')
+    expect(popup).toHaveClass('w-[400px]', 'overflow-hidden')
+    expect(popup).toHaveAttribute('role', 'tooltip')
     expect(popup).toHaveTextContent('Fix the board popup')
     expect(popup).toHaveTextContent('Verify the hover behavior')
-
-    fireEvent.mouseEnter(screen.getByTestId('cloud-todo-card-progress-task-WEG-85-86'))
-    expect(screen.queryByText('Fix the board popup')).not.toBeInTheDocument()
-    expect(screen.getByText('Verify the hover behavior')).toBeInTheDocument()
-
-    const input = screen.getByTestId('cloud-todo-card-popup-input-WEG-85-86')
-    const composer = screen.getByTestId('project-chat-composer-form')
-    expect(composer).toHaveAttribute('data-short-expanded', 'false')
-    fireEvent.click(input)
-    expect(composer).toHaveAttribute('data-short-expanded', 'true')
-
-    await userEvent.type(input, '继续检查 hover 交互{enter}')
-    expect(onSendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 86, task_id: 'task-86' }),
-      '继续检查 hover 交互'
-    )
+    expect(screen.queryByTestId('cloud-todo-card-popup-input-WEG-85-86')).not.toBeInTheDocument()
   })
 
-  it('shows the latest user and assistant round first, then loads older transcript pages', async () => {
+  it('shows only the latest user and assistant round in the read-only preview', async () => {
     const loadRuntimeTranscriptForPane = vi.fn(
       async (
         _address,
@@ -383,25 +550,13 @@ describe('CloudTodoBoardCard', () => {
     expect(await popupQueries.findByText('最新一轮用户消息')).toBeInTheDocument()
     expect(popupQueries.getByText('最新一轮 AI 回复')).toBeInTheDocument()
     expect(popupQueries.queryByText('上一轮用户消息')).not.toBeInTheDocument()
-
-    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
     expect(
-      popupQueries.queryByTestId('cloud-todo-card-progress-popup-WEG-85-close')
+      popupQueries.queryByTestId('load-older-runtime-transcript-button')
     ).not.toBeInTheDocument()
-    expect((await popupQueries.findAllByText('上一轮用户消息')).length).toBeGreaterThan(0)
-    expect(popupQueries.getAllByText('上一轮 AI 回复').length).toBeGreaterThan(0)
-
-    await userEvent.click(popupQueries.getByTestId('load-older-runtime-transcript-button'))
-    expect((await popupQueries.findAllByText('最早一轮用户消息')).length).toBeGreaterThan(0)
-    expect(popupQueries.getAllByText('最早一轮 AI 回复').length).toBeGreaterThan(0)
-    expect(loadRuntimeTranscriptForPane).toHaveBeenCalledTimes(1)
-    expect(loadRuntimeTranscriptForPane).toHaveBeenLastCalledWith(
-      expect.objectContaining({ deviceId: 'local', taskId: 'task-history' }),
-      { limit: 50, beforeCursor: 'older-page' }
-    )
+    expect(loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 
-  it('shows fallback conversation and the loading-older control before prefetch completes', async () => {
+  it('shows fallback conversation without interactive history controls before prefetch completes', async () => {
     const loadRuntimeTranscriptForPane = vi.fn()
     const workbench = {
       state: {
@@ -444,7 +599,9 @@ describe('CloudTodoBoardCard', () => {
     const popup = await screen.findByTestId('cloud-todo-card-progress-popup-WEG-85')
     expect(popup).toHaveTextContent('立即显示的用户消息')
     expect(popup).toHaveTextContent('立即显示的 AI 回复')
-    expect(within(popup).getByTestId('load-older-runtime-transcript-button')).toBeDisabled()
+    expect(
+      within(popup).queryByTestId('load-older-runtime-transcript-button')
+    ).not.toBeInTheDocument()
     expect(loadRuntimeTranscriptForPane).not.toHaveBeenCalled()
   })
 })

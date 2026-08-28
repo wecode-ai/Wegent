@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from types import SimpleNamespace
+
 from app.models.task import TaskResource
 from app.services.execution.request_builder import TaskRequestBuilder
 
@@ -66,3 +68,54 @@ def test_request_builder_extracts_fork_runtime_and_inherited_sessions():
             "threadId": "codex-thread",
         }
     ]
+
+
+def test_request_builder_extracts_latest_persisted_executor_sessions_first():
+    subtasks = [
+        SimpleNamespace(
+            result={
+                "executor_session": {
+                    "agent": "ClaudeCode",
+                    "botId": 654,
+                    "sessionId": "claude-session-old",
+                }
+            }
+        ),
+        SimpleNamespace(result={"executor_session": None}),
+        SimpleNamespace(
+            result={
+                "executor_session": {
+                    "agent": "ClaudeCode",
+                    "botId": 654,
+                    "sessionId": "claude-session-new",
+                }
+            }
+        ),
+    ]
+
+    sessions = TaskRequestBuilder._extract_persisted_sessions(subtasks)
+
+    assert sessions == [
+        {
+            "agent": "ClaudeCode",
+            "botId": 654,
+            "sessionId": "claude-session-new",
+        },
+        {
+            "agent": "ClaudeCode",
+            "botId": 654,
+            "sessionId": "claude-session-old",
+        },
+    ]
+
+
+def test_request_builder_merges_fork_and_persisted_sessions_without_duplicates():
+    session = {
+        "agent": "ClaudeCode",
+        "botId": 654,
+        "sessionId": "claude-session-1",
+    }
+
+    sessions = TaskRequestBuilder._merge_inherited_sessions([session], [session])
+
+    assert sessions == [session]

@@ -12,12 +12,15 @@ const mockToast = jest.fn()
 const mockSendChatGuidance = jest.fn().mockResolvedValue({ success: true })
 const mockRefreshSelectedTaskDetail = jest.fn()
 const mockCheckHealth = jest.fn().mockResolvedValue(undefined)
+const mockRefreshProjects = jest.fn()
+const mockRouterPush = jest.fn()
 
 let isMachineStreamingMock = true
 let derivedIsStreamingMock: boolean | undefined
 let activeStreamSubtaskIdMock: number | undefined = 77
 let taskInputMessageMock = 'next question'
 let currentTaskIdMock: number | null = 42
+let searchParamsMock = new URLSearchParams()
 let selectedTaskDetailMock: TaskDetail | null = {
   id: 42,
   status: 'RUNNING',
@@ -28,8 +31,8 @@ let selectedTaskDetailMock: TaskDetail | null = {
 const getTaskStatusMock = () => selectedTaskDetailMock?.status ?? 'COMPLETED'
 
 jest.mock('next/navigation', () => ({
-  useRouter: () => ({ push: jest.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: mockRouterPush }),
+  useSearchParams: () => searchParamsMock,
   usePathname: () => '/chat',
 }))
 
@@ -74,7 +77,7 @@ jest.mock('@/features/projects/contexts/projectContext', () => ({
   useProjectContext: () => ({
     projects: [],
     projectTaskIds: new Set(),
-    refreshProjects: jest.fn(),
+    refreshProjects: mockRefreshProjects,
     isWorkspaceEnabled: false,
   }),
 }))
@@ -157,6 +160,7 @@ describe('useChatStreamHandlers queue integration', () => {
     activeStreamSubtaskIdMock = 77
     taskInputMessageMock = 'next question'
     currentTaskIdMock = 42
+    searchParamsMock = new URLSearchParams()
     selectedTaskDetailMock = {
       id: 42,
       status: 'RUNNING',
@@ -164,6 +168,61 @@ describe('useChatStreamHandlers queue integration', () => {
       subtasks: [],
     } as unknown as TaskDetail
     mockSendChatGuidance.mockResolvedValue({ success: true })
+  })
+
+  it('repairs a stale task id in the URL after a message is accepted', async () => {
+    isMachineStreamingMock = false
+    currentTaskIdMock = 42
+    searchParamsMock = new URLSearchParams('taskId=41')
+    selectedTaskDetailMock = {
+      id: 42,
+      status: 'COMPLETED',
+      is_group_chat: false,
+      subtasks: [],
+    } as unknown as TaskDetail
+    mockContextSendMessage.mockImplementation(async (_request, options) => {
+      options?.onMessageSent?.('local-user-1', 42, 77)
+      return 42
+    })
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=42')
+  })
+
+  it('associates a new chat with its conversation group without entering device mode', async () => {
+    isMachineStreamingMock = false
+    activeStreamSubtaskIdMock = undefined
+    currentTaskIdMock = null
+    selectedTaskDetailMock = null
+    searchParamsMock = new URLSearchParams({ conversationGroupId: '31' })
+    mockContextSendMessage.mockResolvedValueOnce(-1)
+
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage()
+    })
+
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        project_id: 31,
+        device_id: undefined,
+      }),
+      expect.any(Object)
+    )
+
+    const sendOptions = mockContextSendMessage.mock.calls[0][1]
+    act(() => {
+      sendOptions.onMessageSent('local-user-1', 501)
+    })
+
+    expect(mockRouterPush).toHaveBeenCalledWith('?taskId=501')
+    expect(mockRefreshProjects).toHaveBeenCalledTimes(1)
   })
 
   it('queues a follow-up outside the chat message stream while the active task is streaming', async () => {
@@ -184,6 +243,38 @@ describe('useChatStreamHandlers queue integration', () => {
     expect(mockSetTaskInputMessage).toHaveBeenCalledWith('')
     expect(mockResetAttachment).toHaveBeenCalled()
     expect(mockResetContexts).toHaveBeenCalled()
+  })
+
+  it('sends an interactive form answer immediately instead of queueing it', async () => {
+    const { result } = renderQueueableHook()
+
+    await act(async () => {
+      await result.current.handleSendMessage('formatted answer', {
+        interactiveFormAnswer: {
+          type: 'interactive_form_question',
+          tool_use_id: 'form-tool',
+          task_id: 42,
+          subtask_id: 77,
+          success: true,
+          status: 'answered',
+          answers: { style: '电影感' },
+        },
+      })
+    })
+
+    expect(result.current.queuedMessages).toEqual([])
+    expect(mockContextSendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: 'formatted answer',
+        interactive_form_answer: expect.objectContaining({
+          tool_use_id: 'form-tool',
+          message: 'formatted answer',
+        }),
+      }),
+      expect.objectContaining({
+        pendingUserMessage: 'formatted answer',
+      })
+    )
   })
 
   it('returns a cancelled queued follow-up to the input before it is dispatched', async () => {

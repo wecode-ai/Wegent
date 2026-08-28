@@ -3,12 +3,12 @@ import { createFeedbackApi } from './feedback'
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }))
+vi.mock('@/api/dsh/desktopHost', () => ({ invokeDesktopHost: invokeMock }))
 
 describe('createFeedbackApi', () => {
   beforeEach(() => invokeMock.mockReset())
 
-  test('submits the exported bundle through the native command', async () => {
+  test('submits the staged bundle through the Electron host', async () => {
     invokeMock.mockResolvedValue({ report_id: 'WF-1', item_id: 'FEEDBACK-1' })
     const api = createFeedbackApi('https://feedback.example.com/v1/reports', () => 'token')
 
@@ -19,7 +19,7 @@ describe('createFeedbackApi', () => {
       context: { taskId: 'task-1' },
     })
 
-    expect(invokeMock).toHaveBeenCalledWith('submit_feedback_bundle', {
+    expect(invokeMock).toHaveBeenCalledWith('feedback.submitBundle', {
       request: {
         apiUrl: 'https://feedback.example.com/v1/reports',
         accessToken: 'token',
@@ -43,7 +43,7 @@ describe('createFeedbackApi', () => {
     })
 
     expect(invokeMock).toHaveBeenCalledWith(
-      'submit_feedback_bundle',
+      'feedback.submitBundle',
       expect.objectContaining({
         request: expect.objectContaining({
           apiUrl: `${window.location.origin}/feedback`,

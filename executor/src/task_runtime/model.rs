@@ -108,10 +108,14 @@ pub struct ChatAgentCreate {
     pub execution_device_id: Option<String>,
     #[serde(default = "default_max_concurrent_executions")]
     pub max_concurrent_executions: u64,
+    #[serde(default = "default_workspace_policy")]
+    pub workspace_policy: String,
     #[serde(default)]
     pub local_project_id: Option<i64>,
     #[serde(default)]
     pub created_by_user_id: Option<i64>,
+    #[serde(default)]
+    pub plugins: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -126,9 +130,11 @@ pub struct ChatAgentUpdate {
     pub execution_mode: Option<String>,
     pub execution_device_id: Option<String>,
     pub max_concurrent_executions: Option<u64>,
+    pub workspace_policy: Option<String>,
     /// Explicit `null` clears the binding; a missing key keeps it unchanged.
     #[serde(default)]
     pub local_project_id: Option<Option<i64>>,
+    pub plugins: Option<Vec<Value>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,7 +151,9 @@ pub struct ChatAgent {
     pub execution_mode: String,
     pub execution_device_id: Option<String>,
     pub max_concurrent_executions: u64,
+    pub workspace_policy: String,
     pub local_project_id: Option<i64>,
+    pub plugins: Vec<Value>,
     pub created_by_user_id: i64,
     pub version: i64,
     pub created_at: String,
@@ -208,6 +216,7 @@ pub struct LocalExecution {
     pub agent_system_prompt: String,
     pub agent_model: Option<String>,
     pub agent_max_concurrent_executions: u64,
+    pub agent_plugins: Vec<Value>,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -215,6 +224,10 @@ pub struct LocalExecution {
 
 fn default_max_concurrent_executions() -> u64 {
     1
+}
+
+fn default_workspace_policy() -> String {
+    "project".to_owned()
 }
 
 #[derive(Debug, Clone, Serialize)]

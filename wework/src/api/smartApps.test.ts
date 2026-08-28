@@ -16,6 +16,29 @@ describe('createSmartAppsApi', () => {
     expect(get).toHaveBeenCalledWith('/smart-apps/marketplace?q=research&source=official&tag=data')
   })
 
+  test('resolves a Backend artifact path against the connected cloud API', async () => {
+    const post = vi.fn().mockResolvedValue({
+      smartAppId: 3,
+      releaseId: 8,
+      version: '1.0.0',
+      filename: 'research.zip',
+      downloadUrl: '/api/smart-apps/marketplace/3/artifact?token=ticket',
+      sha256: '0'.repeat(64),
+      sizeBytes: 9,
+      expiresAt: '2026-08-27T10:00:00Z',
+    })
+    const api = createSmartAppsApi(
+      { post } as unknown as HttpClient,
+      'https://api.example.test/api'
+    )
+
+    const descriptor = await api.getDownload(3)
+
+    expect(descriptor.downloadUrl).toBe(
+      'https://api.example.test/api/smart-apps/marketplace/3/artifact?token=ticket'
+    )
+  })
+
   test('uploads a package before completing the two-phase submission', async () => {
     const post = vi
       .fn()
@@ -55,7 +78,7 @@ describe('createSmartAppsApi', () => {
       expect.objectContaining({
         filename: 'app.zip',
         sizeBytes: 3,
-        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        sha256: '039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81',
         extensions: { 'io.wegent.test': { owner: 'api-test' } },
         releaseExtensions: { 'io.wegent.build': { pipeline: 'test' } },
       })

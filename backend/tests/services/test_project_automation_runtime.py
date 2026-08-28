@@ -4,21 +4,29 @@
 """Runtime boundaries for manual assignment and AI-managed assignment."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.project_automation_domain import assignment_mode, manager_type
-from app.services.project_automation_execution import ProjectAutomationExecution
+from app.services.project_automation_domain import (
+    ProjectAutomationEvent,
+    assignment_mode,
+    manager_type,
+)
+from app.services.project_automation_execution import (
+    ProjectAutomationExecution,
+    ProjectAutomationProcessor,
+    project_automation_execution,
+)
 
 
-@pytest.mark.parametrize("value", [{}, {"assignment_mode": "automatic"}])
+@pytest.mark.parametrize("value", [{}, {"action": "automatic"}])
 def test_assignment_mode_rejects_missing_or_unknown_rules(value):
     with pytest.raises(ValueError, match="missing or invalid"):
         assignment_mode(value)
 
 
-@pytest.mark.parametrize("value", [{"manager_type": "robot"}])
+@pytest.mark.parametrize("value", [{"manager": {"type": "robot"}}])
 def test_manager_type_rejects_unknown_sources(value):
     with pytest.raises(ValueError, match="invalid"):
         manager_type(value)
@@ -51,9 +59,339 @@ def _dispatch_objects(configuration: dict[str, object]):
 
 
 @pytest.mark.asyncio
+async def test_event_processing_wakes_cloud_executor_after_dispatch(monkeypatch):
+    rule = SimpleNamespace(
+        id="rule-1",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [rule]
+    db = MagicMock()
+    db.query.return_value = query
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ) as wake:
+        dispatched = await processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.created",
+                project_id="project-1",
+                subject_id="task-1",
+                source="local",
+                actor_user_id=7,
+                payload={"title": "Wake immediately"},
+            ),
+        )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, rule, run)
+    wake.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_status_event_dispatches_only_when_processing_boundary_is_crossed(
+    monkeypatch,
+):
+    matching_rule = SimpleNamespace(
+        id="matching-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    other_rule = SimpleNamespace(
+        id="other-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [matching_rule, other_rule]
+    db = MagicMock()
+    db.query.return_value = query
+    db.get.return_value = SimpleNamespace(metadata_json={})
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    with patch(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        new=AsyncMock(),
+    ):
+        dispatched = await processor.process(
+            db,
+            ProjectAutomationEvent(
+                event_type="task.status_changed",
+                project_id="project-1",
+                subject_id="task-1",
+                source="board",
+                actor_user_id=7,
+                payload={
+                    "title": "Start implementation",
+                    "status": "in_progress",
+                    "previous_status": "inbox",
+                },
+            ),
+        )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, matching_rule, run)
+    assert run.metadata_json["event"]["type"] == "task.status_changed"
+    assert run.metadata_json["event"]["payload"]["previous_status"] == "inbox"
+
+
+@pytest.mark.asyncio
+async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
+    monkeypatch,
+):
+    rules = [
+        SimpleNamespace(
+            id="rule-1",
+            status="enabled",
+            metadata_json={
+                "trigger_type": "event",
+                "event_type": "task.created",
+            },
+        ),
+        SimpleNamespace(
+            id="rule-2",
+            status="enabled",
+            metadata_json={
+                "trigger_type": "event",
+                "event_type": "task.created",
+            },
+        ),
+    ]
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = rules
+    item_query = MagicMock()
+    item_query.filter.return_value = item_query
+    item_query.one_or_none.return_value = SimpleNamespace(metadata_json={})
+    db = MagicMock()
+    db.query.side_effect = [rule_query, item_query]
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock())
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={"title": "Choose one"},
+        ),
+    )
+
+    assert dispatched == 0
+    dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bound_issue_dispatches_only_its_matching_automation(monkeypatch):
+    bound_rule = SimpleNamespace(
+        id="rule-1",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    other_rule = SimpleNamespace(
+        id="rule-2",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.status_changed",
+            "event_config": {"transition": "entered_processing"},
+        },
+    )
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = [bound_rule, other_rule]
+    item_query = MagicMock()
+    item_query.filter.return_value = item_query
+    item_query.one_or_none.return_value = SimpleNamespace(
+        metadata_json={"workflow_automation": {"rule_id": "rule-1"}}
+    )
+    db = MagicMock()
+    db.query.side_effect = [rule_query, item_query]
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.status_changed",
+            project_id="project-1",
+            subject_id="task-1",
+            source="board",
+            actor_user_id=7,
+            payload={
+                "title": "Continue",
+                "previous_status": "inbox",
+                "status": "pending",
+            },
+        ),
+    )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, bound_rule, run)
+
+
+@pytest.mark.asyncio
+async def test_ai_workflow_defers_only_its_coordinator_rule(monkeypatch):
+    coordinator = SimpleNamespace(
+        id="coordinator-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    ordinary = SimpleNamespace(
+        id="ordinary-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    query = MagicMock()
+    query.filter.return_value = query
+    query.all.return_value = [coordinator, ordinary]
+    db = MagicMock()
+    db.query.return_value = query
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={
+                "title": "AI workflow task",
+                "workflow": {
+                    "advancement_policy": "ai",
+                    "ai_automation_rule_id": coordinator.id,
+                    "execution_config": {
+                        "execution_device_id": None,
+                        "model": None,
+                    },
+                },
+            },
+        ),
+    )
+
+    assert dispatched == 1
+    dispatch.assert_awaited_once_with(db, ordinary, run)
+
+
+@pytest.mark.asyncio
+async def test_ai_workflow_defers_coordinator_rule_when_no_runtime_override(
+    monkeypatch,
+):
+    coordinator = SimpleNamespace(
+        id="coordinator-rule",
+        status="enabled",
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "task.created",
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="",
+        task_title="",
+        metadata_json={},
+    )
+    rule_query = MagicMock()
+    rule_query.filter.return_value = rule_query
+    rule_query.all.return_value = [coordinator]
+    db = MagicMock()
+    db.query.return_value = rule_query
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    processor = ProjectAutomationProcessor(run_factory=MagicMock(return_value=run))
+
+    dispatched = await processor.process(
+        db,
+        ProjectAutomationEvent(
+            event_type="task.created",
+            project_id="project-1",
+            subject_id="task-1",
+            source="local",
+            actor_user_id=7,
+            payload={
+                "title": "AI workflow task",
+                "workflow": {
+                    "advancement_policy": "ai",
+                    "ai_automation_rule_id": coordinator.id,
+                    "execution_config": None,
+                },
+            },
+        ),
+    )
+
+    assert dispatched == 0
+    dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_manual_assignment_enters_only_existing_project_robot_path(monkeypatch):
     service = ProjectAutomationExecution()
-    db, _owner, _project, rule, run = _dispatch_objects({"assignment_mode": "manual"})
+    db, _owner, _project, rule, run = _dispatch_objects(
+        {"action": "execute", "role": {"source": "agent"}}
+    )
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
     assign = MagicMock()
     custom = MagicMock()
@@ -71,10 +409,47 @@ async def test_manual_assignment_enters_only_existing_project_robot_path(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_invalid_workflow_definition_fails_before_creating_issue(monkeypatch):
+    service = ProjectAutomationExecution()
+    db, _owner, _project, rule, run = _dispatch_objects(
+        {
+            "action": "execute",
+            "role": {"source": "generic"},
+            "event_config": {
+                "runtime_workflow_definition": {
+                    "version": 1,
+                    "stage_mode": "dag",
+                    "advancement_policy": "manual",
+                    "nodes": [
+                        {
+                            "id": "execute",
+                            "name": "",
+                            "execution_mode": "robot",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    ensure_task = MagicMock()
+    fail_run = MagicMock()
+    monkeypatch.setattr(service, "_ensure_run_task", ensure_task)
+    monkeypatch.setattr(service, "_fail_run", fail_run)
+
+    await service.dispatch(db, rule, run)
+
+    ensure_task.assert_not_called()
+    fail_run.assert_called_once()
+    assert (
+        "String should have at least 1 character" in fail_run.call_args.kwargs["error"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_custom_ai_is_only_a_manager_transport(monkeypatch):
     service = ProjectAutomationExecution()
     db, _owner, _project, rule, run = _dispatch_objects(
-        {"assignment_mode": "ai_managed", "manager_type": "custom"}
+        {"action": "ai_assign", "manager": {"type": "custom"}}
     )
     activity = SimpleNamespace(message_id="manager-message")
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
@@ -99,7 +474,10 @@ async def test_custom_ai_is_only_a_manager_transport(monkeypatch):
 async def test_wegent_agent_is_only_a_manager_transport(monkeypatch):
     service = ProjectAutomationExecution()
     db, _owner, _project, rule, run = _dispatch_objects(
-        {"assignment_mode": "ai_managed", "manager_type": "wegent"}
+        {
+            "action": "ai_assign",
+            "manager": {"type": "wegent", "wegent_team_id": 42},
+        }
     )
     activity = SimpleNamespace(message_id="manager-message")
     monkeypatch.setattr(service, "_ensure_run_task", MagicMock())
@@ -118,6 +496,64 @@ async def test_wegent_agent_is_only_a_manager_transport(monkeypatch):
     wegent.assert_awaited_once()
     assign.assert_not_called()
     custom.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_wegent_manager_dispatch_reads_team_from_manager_config(monkeypatch):
+    service = ProjectAutomationExecution()
+    db = MagicMock()
+    owner = SimpleNamespace(id=7)
+    project = SimpleNamespace(id="project-1")
+    rule = SimpleNamespace(
+        id="rule-1",
+        title="Assign new task",
+        metadata_json={
+            "action": "ai_assign",
+            "manager": {"type": "wegent", "wegent_team_id": 42},
+        },
+    )
+    run = SimpleNamespace(
+        id="run-1",
+        task_id="task-1",
+        status="pending",
+        version=1,
+        backend_task_id=0,
+    )
+    activity = SimpleNamespace(message_id="message-1")
+    refreshed_activity = SimpleNamespace(metadata_json={}, status="pending")
+    db.get.return_value = run
+    db.query.return_value.filter.return_value.one.return_value = refreshed_activity
+    monkeypatch.setattr(service, "_managed_prompt", MagicMock(return_value="prompt"))
+
+    with (
+        patch(
+            "app.services.project_automation_execution.runnable_wegent_team",
+            return_value=SimpleNamespace(id=42),
+        ) as resolve_team,
+        patch(
+            "app.services.project_automation_managed_execution."
+            "project_automation_managed_execution_service.dispatch",
+            new=AsyncMock(return_value=SimpleNamespace(task_id=101, subtask_id=202)),
+        ),
+        patch(
+            "app.services.project_automation_execution.project_chat_service.to_view",
+            return_value=MagicMock(model_dump=MagicMock(return_value={})),
+        ),
+        patch("app.services.project_automation_execution.push_project_chat_message"),
+    ):
+        await service._dispatch_wegent_manager(
+            db,
+            owner=owner,
+            project=project,
+            rule=rule,
+            run=run,
+            activity=activity,
+            context={},
+        )
+
+    resolve_team.assert_called_once_with(db, owner.id, 42)
+    assert run.backend_task_id == 101
+    assert run.status == "queued"
 
 
 def test_manager_prompt_is_minimal_visible_assignment_input():
@@ -184,6 +620,7 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         id=61,
         executor_type="automation_manager",
         execution_device_id="device-1",
+        runtime_task_id="codex-queue-61",
     )
     find_activity = MagicMock(return_value=activity)
     monkeypatch.setattr(ProjectAutomationExecution, "_activity", find_activity)
@@ -201,7 +638,10 @@ def test_manager_activity_binding_persists_execution_identity(monkeypatch):
         "executor_type": "automation_manager",
         "run_status": "queued",
         "execution_device_id": "device-1",
+        "runtime_task_id": "codex-queue-61",
     }
+    assert activity.runtime_device_id == "device-1"
+    assert activity.runtime_task_id == "codex-queue-61"
 
 
 def test_manager_plan_submission_rejects_non_owner_before_writes(

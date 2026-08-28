@@ -17,6 +17,7 @@ import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarn
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 
 const launchingIds = new Set<string>()
 
@@ -45,6 +46,7 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
         }
         if (installation.state === 'running' && installation.webUrl) {
           registerHarnessAppTab(installation)
+          if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
           return
         }
         const model = modelOptions.find(option => option.key === installation.modelKey)
@@ -85,6 +87,7 @@ export function HarnessAppAutoLauncher({ installationId }: { installationId: str
           await storeHarnessAppProxyToken(installationId, launch.proxyToken)
           if (contextToken) await storeHarnessAppContextToken(installationId, contextToken)
           registerHarnessAppTab(running)
+          if (isElectronRuntime()) clearHarnessAppLaunch(installationId)
         } catch (error) {
           console.warn(`[Wework] failed to auto-launch Smart app ${installationId}`, error)
           if (started) {

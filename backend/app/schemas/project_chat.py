@@ -5,7 +5,7 @@
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _to_camel(value: str) -> str:
@@ -17,10 +17,77 @@ BotVisibility = Literal["private", "creator_admin", "public"]
 BotExecutionEnvironment = Literal["local", "cloud"]
 BotExecutionMode = Literal["auto", "manual_approval"]
 BotRuntime = Literal["codex", "wegent"]
+BotWorkspacePolicy = Literal["project", "git_worktree"]
+WorkspaceBindingType = Literal["backend_project", "device_project", "standalone"]
 
 
 class ProjectChatSchema(BaseModel):
     model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+
+
+class ProjectChatWorkspaceBinding(ProjectChatSchema):
+    """Stable robot workspace intent; device paths are resolved at dispatch."""
+
+    type: WorkspaceBindingType
+    project_id: int | None = Field(default=None, ge=1)
+    device_workspace_id: int | None = Field(default=None, ge=1)
+    device_id: str | None = Field(default=None, min_length=1, max_length=100)
+    runtime_project_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+    )
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> "ProjectChatWorkspaceBinding":
+        if self.type == "backend_project":
+            if self.project_id is None:
+                raise ValueError("backend_project binding requires projectId")
+            if self.runtime_project_key is not None:
+                raise ValueError(
+                    "backend_project binding cannot include runtimeProjectKey"
+                )
+        elif self.type == "device_project":
+            if not self.device_id or not self.runtime_project_key:
+                raise ValueError(
+                    "device_project binding requires deviceId and runtimeProjectKey"
+                )
+            if self.project_id is not None or self.device_workspace_id is not None:
+                raise ValueError(
+                    "device_project binding cannot include Backend project identity"
+                )
+        elif any(
+            value is not None
+            for value in (
+                self.project_id,
+                self.device_workspace_id,
+                self.device_id,
+                self.runtime_project_key,
+            )
+        ):
+            raise ValueError("standalone binding cannot include workspace identity")
+        return self
+
+
+class ProjectChatWorkspaceBindingView(ProjectChatSchema):
+    type: Literal[
+        "backend_project",
+        "device_project",
+        "standalone",
+        "legacy_project",
+    ]
+    status: Literal["ready", "needs_rebind"]
+    project_id: int | None = None
+    device_workspace_id: int | None = None
+    device_id: str | None = None
+    runtime_project_key: str | None = None
+
+
+class ProjectChatAgentPlugin(ProjectChatSchema):
+    id: str = Field(min_length=1, max_length=255)
+    plugin_name: str = Field(min_length=1, max_length=255)
+    marketplace_id: str = Field(min_length=1, max_length=255)
+    display_name: str = Field(min_length=1, max_length=255)
 
 
 class ProjectChatAgentCreate(ProjectChatSchema):
@@ -28,14 +95,21 @@ class ProjectChatAgentCreate(ProjectChatSchema):
     runtime: BotRuntime = "codex"
     wegent_team_id: int | None = Field(default=None, ge=1)
     model: str | None = Field(default=None, max_length=255)
+    model_type: Literal["public", "user", "group", "runtime"] | None = None
+    model_options: dict[str, str] = Field(default_factory=dict)
     system_prompt: str = Field(default="", max_length=20_000)
     capability_description: str = Field(default="", max_length=2_000)
     visibility: BotVisibility = "creator_admin"
     execution_environment: BotExecutionEnvironment = "local"
     execution_mode: BotExecutionMode = "auto"
     execution_device_id: str | None = Field(default=None, max_length=100)
+    workspace_binding: ProjectChatWorkspaceBinding | None = None
+    # V1 compatibility only. New clients must send workspaceBinding.
     local_project_id: int | None = Field(default=None)
     max_concurrent_executions: int = Field(default=1, ge=1, le=20)
+    workspace_policy: BotWorkspacePolicy = "project"
+    default_runtime_profile_id: str | None = Field(default=None, max_length=64)
+    plugins: list[ProjectChatAgentPlugin] = Field(default_factory=list, max_length=50)
 
 
 class ProjectChatAgentUpdate(ProjectChatSchema):
@@ -44,6 +118,8 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     wegent_team_id: int | None = Field(default=None, ge=1)
     name: str | None = Field(default=None, min_length=1, max_length=100)
     model: str | None = Field(default=None, max_length=255)
+    model_type: Literal["public", "user", "group", "runtime"] | None = None
+    model_options: dict[str, str] | None = None
     system_prompt: str | None = Field(default=None, max_length=20_000)
     capability_description: str | None = Field(default=None, max_length=2_000)
     status: Literal["active", "archived"] | None = None
@@ -51,8 +127,13 @@ class ProjectChatAgentUpdate(ProjectChatSchema):
     execution_environment: BotExecutionEnvironment | None = None
     execution_mode: BotExecutionMode | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
+    workspace_binding: ProjectChatWorkspaceBinding | None = None
+    # V1 compatibility only. New clients must send workspaceBinding.
     local_project_id: int | None = Field(default=None)
     max_concurrent_executions: int | None = Field(default=None, ge=1, le=20)
+    workspace_policy: BotWorkspacePolicy | None = None
+    default_runtime_profile_id: str | None = Field(default=None, max_length=64)
+    plugins: list[ProjectChatAgentPlugin] | None = Field(default=None, max_length=50)
 
 
 class ProjectChatAgentView(ProjectChatSchema):
@@ -62,6 +143,8 @@ class ProjectChatAgentView(ProjectChatSchema):
     runtime: BotRuntime
     wegent_team_id: int | None
     model: str | None
+    model_type: Literal["public", "user", "group", "runtime"] | None
+    model_options: dict[str, str]
     system_prompt: str
     capability_description: str
     status: Literal["active", "archived"]
@@ -69,8 +152,12 @@ class ProjectChatAgentView(ProjectChatSchema):
     execution_environment: BotExecutionEnvironment
     execution_mode: BotExecutionMode
     execution_device_id: str | None
+    workspace_binding: ProjectChatWorkspaceBindingView
     local_project_id: int | None
     max_concurrent_executions: int
+    workspace_policy: BotWorkspacePolicy
+    default_runtime_profile_id: str | None
+    plugins: list[ProjectChatAgentPlugin]
     created_by_user_id: int | None
     created_by_user_name: str | None = None
     version: int
@@ -105,17 +192,6 @@ class LoopItemExecutionClaim(ProjectChatSchema):
     execution_environment: Literal["local", "cloud"] = "local"
     lease_seconds: int = Field(default=300, ge=60, le=3600)
     assigner_user_id: int | None = Field(default=None)
-
-
-class LoopItemExecutionDeviceClaim(ProjectChatSchema):
-    """Claim the next queued local run for any robot bound to a device."""
-
-    model_config = ConfigDict(
-        alias_generator=_to_camel, populate_by_name=True, extra="forbid"
-    )
-
-    execution_device_id: str = Field(min_length=1, max_length=100)
-    lease_seconds: int = Field(default=300, ge=60, le=3600)
 
 
 class LoopItemExecutionHeartbeat(ProjectChatSchema):
@@ -173,6 +249,7 @@ class LoopItemExecutionView(ProjectChatSchema):
     team_id: int | None = None
     backend_task_id: int | None = None
     automation_run_id: str = ""
+    executor_owner_user_id: int | None = None
     assigner_user_id: int
     execution_environment: str
     execution_device_id: str | None
@@ -205,6 +282,10 @@ class LoopItemExecutionView(ProjectChatSchema):
     runtime_device_id: str | None = None
     runtime_task_id: str | None = None
     agent_max_concurrent_executions: int = 1
+    runtime_profile_id: str | None = None
+    runtime_source: str | None = None
+    can_select_runtime: bool = False
+    waiting_runtime_reason: str | None = None
     # Materialized only for an authenticated device claim. It is never stored
     # on the execution row because model credentials are resolved just in time.
     runtime_payload: Any | None = None

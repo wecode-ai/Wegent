@@ -5,6 +5,14 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { requestWorkbenchComposerFocus } from '@/lib/workbenchComposerFocus'
 import { BufferedChatInput } from './BufferedChatInput'
 
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
+    if (capability === 'preferences.get') return {}
+    if (capability === 'preferences.update') return params.patch ?? {}
+    return {}
+  }),
+}))
+
 function createProjectChat(scopeKey: string) {
   return {
     models: [],
@@ -485,8 +493,22 @@ describe('BufferedChatInput', () => {
   test('focuses a selected conversation after its composer mounts', async () => {
     requestWorkbenchComposerFocus('runtime:device-1:task-1')
 
-    render(
+    const { rerender } = render(
       <BufferedChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        projectChat={createProjectChat('runtime:device-1:task-1')}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('chat-message-input')).toHaveFocus())
+
+    rerender(<div />)
+    rerender(
+      <BufferedChatInput
+        key="remounted"
         value=""
         onChange={vi.fn()}
         onSubmit={vi.fn()}

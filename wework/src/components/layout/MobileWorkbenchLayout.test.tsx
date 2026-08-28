@@ -18,6 +18,14 @@ import {
 } from '@/features/workbench/runtimeTaskLifecycle'
 import '@/i18n'
 
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
+    if (capability === 'preferences.get') return {}
+    if (capability === 'preferences.update') return params.patch ?? {}
+    return {}
+  }),
+}))
+
 const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
@@ -70,7 +78,6 @@ const originalInnerWidth = window.innerWidth
 
 const baseState = {
   user: { id: 1, user_name: 'MI', email: 'mi@example.com' },
-  defaultTeam: null,
   projects: [
     {
       id: 1,

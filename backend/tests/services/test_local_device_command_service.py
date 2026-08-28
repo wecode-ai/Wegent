@@ -719,8 +719,11 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert "per_page=100" in git_github_pull_requests_batch_definition.command
     assert "--jq" in git_github_pull_requests_batch_definition.command
     assert git_github_pull_request_merge_queue_batch_definition is not None
-    assert (
-        git_github_pull_request_merge_queue_batch_definition.command == "gh api graphql"
+    assert "$HOME/.wecode/git-auth/env.sh" in (
+        git_github_pull_request_merge_queue_batch_definition.command
+    )
+    assert git_github_pull_request_merge_queue_batch_definition.command.endswith(
+        "-- gh api graphql"
     )
     assert git_gitlab_merge_requests_definition is not None
     assert "glab mr list --all" in git_gitlab_merge_requests_definition.command
@@ -2241,6 +2244,36 @@ async def test_execute_configured_device_command_rejects_unowned_device(monkeypa
             device_id="device-abc",
             command_key="pwd",
         )
+
+
+@pytest.mark.asyncio
+async def test_execute_configured_device_command_hides_internal_git_sync_key(
+    monkeypatch,
+):
+    """The generic command API must not expose the secret-bearing sync command."""
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock()
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda *_args: object(),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandUnknownKeyError):
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="device-abc",
+            command_key="sync_git_credentials",
+        )
+
+    execute_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

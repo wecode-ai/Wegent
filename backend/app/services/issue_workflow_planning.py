@@ -284,6 +284,15 @@ class IssueWorkflowPlanningService:
             trigger="workflow_review_approved",
             by_user_id=user_id,
         )
+        from app.services.project_workflow_projection import (
+            sync_workflow_automation_status,
+        )
+
+        sync_workflow_automation_status(
+            db,
+            issue,
+            run_status="succeeded",
+        )
         db.commit()
         db.refresh(run)
         return self._view(db, issue, run)

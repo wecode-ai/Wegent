@@ -260,6 +260,9 @@ async function configureHarnesses(control, executables, timeoutMs, capturePage) 
   await control.command('click', '[data-testid="settings-menu-button"]')
   const settingsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!settingsSnapshot.testIds.includes('settings-nav-harnesses')) {
+    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
+      timeoutMs,
+    })
     await control.command('click', '[data-testid="general-experimental-features-toggle"]')
     await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
   }

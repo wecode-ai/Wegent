@@ -1,0 +1,9 @@
+dist/
+dummy-non-existing-folder/
+node_modules/
+public/
+release/
+release-installer/
+release-minio/
+resources/
+.package-staging/

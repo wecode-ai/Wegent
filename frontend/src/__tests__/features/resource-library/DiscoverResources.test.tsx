@@ -804,6 +804,56 @@ describe('DiscoverResources', () => {
     expect(mockToast).not.toHaveBeenCalled()
   })
 
+  it('opens an installed marketplace agent when refreshing teams fails', async () => {
+    const refreshError = new Error('refresh failed')
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation()
+    mockRefreshTeams.mockRejectedValue(refreshError)
+    mockResourceLibraryApi.listListings.mockResolvedValue({
+      items: [
+        createListing({
+          id: 82,
+          resource_type: 'agent',
+          name: 'published-agent',
+          display_name: 'Published Agent',
+          publisher_user_id: 3,
+        }),
+      ],
+      has_more: false,
+      next_cursor: null,
+      limit: 20,
+    })
+    mockResourceLibraryApi.installListing.mockResolvedValue({
+      id: 10,
+      listing_id: 82,
+      version_id: 10,
+      user_id: 2,
+      resource_type: 'agent',
+      installed_kind_id: 13,
+      installed_reference: {
+        namespace: 'default',
+        name: 'published-agent',
+        team_id: 128,
+      },
+      install_status: 'installed',
+      installed_at: '2026-05-27T00:00:00',
+      updated_at: '2026-05-27T00:00:00',
+    })
+
+    render(<DiscoverResources resourceType="agent" />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '去对话 Published Agent' }))
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/chat?teamId=128')
+    })
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      'Failed to refresh teams after marketplace install:',
+      refreshError
+    )
+    expect(mockToast).not.toHaveBeenCalled()
+    consoleErrorSpy.mockRestore()
+  })
+
   it.each([
     {
       bindModes: ['code'],

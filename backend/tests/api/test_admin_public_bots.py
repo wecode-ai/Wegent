@@ -2,7 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints.admin.public_bots import _bot_to_response
+from app.api.endpoints.admin.public_bots import (
+    _bot_to_response,
+    _build_bot_json_from_form_data,
+    _validate_bot_resource_references,
+)
 from app.models.kind import Kind
 from app.schemas.admin import PublicBotCreate, PublicBotUpdate
 
@@ -52,6 +56,40 @@ def test_public_bot_update_accepts_preload_skill_fields():
     assert _dump_refs(payload.preload_skill_refs) == _preload_skill_refs()
 
 
+def test_public_bot_form_data_accepts_planning_llm() -> None:
+    payload = PublicBotCreate.model_validate(
+        {
+            "name": "test-video-bot",
+            "shell_name": "Chat",
+            "secondary_model_name": "planning-llm",
+            "secondary_model_namespace": "default",
+        }
+    )
+
+    assert payload.secondary_model_name == "planning-llm"
+    assert payload.secondary_model_namespace == "default"
+
+
+def test_public_bot_json_persists_planning_llm() -> None:
+    bot_json = _build_bot_json_from_form_data(
+        bot_name="test-video-bot",
+        namespace="default",
+        shell_name="Chat",
+        shell_namespace="default",
+        ghost_name="test-video-ghost",
+        model_ref_name="video-model",
+        model_ref_namespace="default",
+        secondary_model_name="planning-llm",
+        secondary_model_namespace="default",
+    )
+
+    assert bot_json["spec"]["modelRef"]["name"] == "video-model"
+    assert bot_json["spec"]["secondaryModelRef"] == {
+        "name": "planning-llm",
+        "namespace": "default",
+    }
+
+
 def test_public_bot_response_includes_preload_skill_fields(test_db):
     ghost = Kind(
         user_id=0,
@@ -88,6 +126,10 @@ def test_public_bot_response_includes_preload_skill_fields(test_db):
                     "namespace": "default",
                 },
                 "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+                "secondaryModelRef": {
+                    "name": "planning-llm",
+                    "namespace": "default",
+                },
             },
         },
         is_active=True,
@@ -100,3 +142,85 @@ def test_public_bot_response_includes_preload_skill_fields(test_db):
 
     assert response.preload_skills == ["repo-reader"]
     assert _dump_refs(response.preload_skill_refs) == _preload_skill_refs()
+    assert response.secondary_model_name == "planning-llm"
+    assert response.secondary_model_namespace == "default"
+
+
+def test_public_bot_rejects_video_model_as_planning_model(test_db) -> None:
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="invalid-planning-video-model",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {
+                "name": "invalid-planning-video-model",
+                "namespace": "default",
+            },
+            "spec": {
+                "modelType": "video",
+                "modelConfig": {"model": "video-model"},
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    is_valid, error = _validate_bot_resource_references(
+        test_db,
+        {
+            "spec": {
+                "secondaryModelRef": {
+                    "name": model.name,
+                    "namespace": model.namespace,
+                }
+            }
+        },
+    )
+
+    assert is_valid is False
+    assert error == (
+        "Invalid bot JSON: 'spec.secondaryModelRef' must reference an LLM model"
+    )
+
+
+def test_public_video_bot_requires_planning_llm(test_db) -> None:
+    model = Kind(
+        user_id=0,
+        kind="Model",
+        name="video-model",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Model",
+            "metadata": {"name": "video-model", "namespace": "default"},
+            "spec": {
+                "modelType": "video",
+                "modelConfig": {"model": "video-model"},
+            },
+        },
+        is_active=True,
+    )
+    test_db.add(model)
+    test_db.commit()
+
+    is_valid, error = _validate_bot_resource_references(
+        test_db,
+        {
+            "spec": {
+                "modelRef": {
+                    "name": model.name,
+                    "namespace": model.namespace,
+                }
+            }
+        },
+    )
+
+    assert is_valid is False
+    assert error == (
+        "Invalid bot JSON: video Bots require 'spec.secondaryModelRef' "
+        "to reference an LLM model"
+    )

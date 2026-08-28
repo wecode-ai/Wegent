@@ -123,6 +123,12 @@ describe('useWorkbenchCloudProjectContext', () => {
     })
 
     expect(submission?.cloudProjectId).toBe(cloudProject.id)
+    expect(submission?.origin).toEqual({
+      type: 'board_task',
+      projectStore: cloudProject.project_store,
+      cloudProjectId: cloudProject.id,
+      loopItemId: item.id,
+    })
     expect(submission?.additionalContext?.cloudCollaboration.value).toContain(
       `Current task: ${item.id} — ${item.title}.`
     )

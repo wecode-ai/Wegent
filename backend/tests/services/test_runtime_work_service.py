@@ -5,7 +5,7 @@
 import asyncio
 import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -628,11 +628,22 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
                     "workspacePath": "/repo/Wegent",
                     "tasks": [
                         {
-                            "taskId": "codex-1",
+                            "taskId": "codex-queue-293",
                             "workspacePath": "/repo/Wegent",
                             "title": "Fix reconnect",
                             "runtime": "codex",
                             "workspaceKind": "workspace",
+                            "runtimeHandle": {
+                                "threadId": "private-thread",
+                                "modelSelection": {
+                                    "modelName": "moonshot-kimi-k2.7-code-highspeed",
+                                    "modelType": "public",
+                                    "options": {
+                                        "weworkCloudModelNamespace": "default",
+                                        "weworkCloudModelResourceUserId": "0",
+                                    },
+                                },
+                            },
                             "createdAt": "2026-06-20T01:00:00Z",
                             "updatedAt": "2026-06-20T02:00:00Z",
                             "running": False,
@@ -705,7 +716,19 @@ async def test_list_runtime_work_groups_executor_workspaces_without_project_mapp
     assert response.projects[0].device_workspaces[0].id is None
     assert response.projects[0].device_workspaces[0].project_id is None
     assert response.projects[0].device_workspaces[0].mapped is True
-    assert response.projects[0].device_workspaces[0].tasks[0].local_task_id == "codex-1"
+    cloud_task = response.projects[0].device_workspaces[0].tasks[0]
+    assert cloud_task.local_task_id == "codex-queue-293"
+    assert cloud_task.model_selection is not None
+    assert cloud_task.model_selection.model_name == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
+    serialized_cloud_task = response.model_dump(by_alias=True)["projects"][0][
+        "deviceWorkspaces"
+    ][0]["tasks"][0]
+    assert "runtimeHandle" not in serialized_cloud_task
+    assert serialized_cloud_task["modelSelection"]["modelName"] == (
+        "moonshot-kimi-k2.7-code-highspeed"
+    )
     claude_task = response.projects[1].device_workspaces[0].tasks[0]
     assert claude_task.created_at == 1781924400000
     assert claude_task.updated_at == 1781928000000
@@ -2269,7 +2292,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
             to_dict=lambda: {
                 "task_id": 1001,
                 "subtask_id": 2001,
-                "team_id": kwargs["request"].team_id,
+                "team_id": 0,
                 "prompt": kwargs["request"].message,
                 "workspace_source": "local_path",
                 "project_workspace_path": "/repo/Wegent",
@@ -2293,7 +2316,6 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
             localTaskId="runtime-client-1",
-            teamId=3,
             runtime="claude_code",
             message="create runtime task",
             title="Create runtime task",
@@ -2326,7 +2348,7 @@ async def test_create_runtime_task_dispatches_to_project_device_without_task_row
             "executionRequest": {
                 "task_id": 1001,
                 "subtask_id": 2001,
-                "team_id": 3,
+                "team_id": 0,
                 "prompt": "create runtime task",
                 "workspace_source": "local_path",
                 "project_workspace_path": "/repo/Wegent",
@@ -2380,7 +2402,6 @@ async def test_create_runtime_task_uses_executor_worktree_workspace_path(
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
-            teamId=3,
             runtime="codex",
             message="create worktree task",
             execution={"workspace": {"source": "git_worktree"}},
@@ -2391,6 +2412,201 @@ async def test_create_runtime_task_uses_executor_worktree_workspace_path(
     assert response.accepted is True
     assert response.workspace_path == worktree_path
     assert response.error_code is None
+
+
+@pytest.mark.asyncio
+async def test_create_runtime_task_preserves_v2_initial_goal_and_supervisor(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _local_path_project(test_db, test_user.id)
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_build_runtime_execution_request",
+        lambda **kwargs: SimpleNamespace(to_dict=lambda: {"prompt": "ship it"}),
+    )
+    rpc = AsyncMock(
+        return_value={
+            "success": True,
+            "accepted": True,
+            "taskId": "runtime-v2",
+            "workspacePath": "/repo/Wegent",
+            "runtime": "codex",
+        }
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    response = await runtime_work_service.create_runtime_task(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            projectId=project.id,
+            taskId="runtime-v2",
+            runtime="codex",
+            message="ship it",
+            initialGoal={
+                "objective": "Complete the implementation",
+                "tokenBudget": 50_000,
+            },
+            initialSupervisor={
+                "mode": "auto",
+                "instructions": "Verify the implementation",
+                "modelSelection": {
+                    "modelName": "supervisor-model",
+                    "modelType": "cloud",
+                    "options": {},
+                },
+                "intervalSeconds": 60,
+            },
+        ),
+    )
+
+    assert response.accepted is True
+    payload = rpc.await_args.kwargs["payload"]
+    assert payload["schemaVersion"] == 2
+    assert payload["taskId"] == "runtime-v2"
+    assert payload["initialGoal"] == {
+        "objective": "Complete the implementation",
+        "tokenBudget": 50_000,
+    }
+    assert payload["initialSupervisor"] == {
+        "mode": "auto",
+        "instructions": "Verify the implementation",
+        "modelSelection": {
+            "modelName": "supervisor-model",
+            "modelType": "cloud",
+            "options": {},
+        },
+        "intervalSeconds": 60,
+    }
+
+
+def test_materialize_initial_runtime_supervisor_model(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeSupervisorCreateInput
+    from app.services import runtime_work_service
+
+    model_config = {"model_id": "runtime-supervisor"}
+    resolver = Mock(return_value=(model_config, None, False))
+    monkeypatch.setattr(
+        runtime_work_service,
+        "_runtime_model_override_values",
+        resolver,
+    )
+
+    payload = runtime_work_service._materialize_initial_supervisor(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        supervisor=RuntimeSupervisorCreateInput(
+            mode="suggest",
+            modelSelection={
+                "modelName": "runtime-model",
+                "modelType": "runtime",
+                "options": {"permissionMode": "workspace-write"},
+            },
+            intervalSeconds=30,
+        ),
+    )
+
+    assert payload["modelConfig"] == model_config
+    resolver.assert_called_once_with(
+        db=test_db,
+        user_id=test_user.id,
+        runtime="codex",
+        model_id="runtime-model",
+        model_type="runtime",
+        model_options={"permissionMode": "workspace-write"},
+    )
+
+
+def test_compile_explicit_bot_request_resolves_backend_project_workspace(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _local_path_project(
+        test_db,
+        test_user.id,
+        device_id="cloud-device-1",
+        path="/srv/workspaces/Wegent",
+    )
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    compiled = runtime_work_service.compile_runtime_task_create(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            projectId=project.id,
+            deviceId="cloud-device-1",
+            taskId="codex-queue-44",
+            runtime="codex",
+            message="Implement the issue",
+            bot=[{"id": "robot-1", "name": "Robot", "shell_type": "Codex"}],
+            origin={
+                "type": "board_task",
+                "cloudProjectId": "9",
+                "loopItemId": "issue-1",
+            },
+        ),
+    )
+
+    assert compiled.target.workspace_path == "/srv/workspaces/Wegent"
+    assert compiled.payload["workspacePath"] == "/srv/workspaces/Wegent"
+    assert compiled.payload["schemaVersion"] == 2
+    assert "local_project_id" not in compiled.payload
+    assert compiled.payload["executionRequest"]["project_workspace_path"] == (
+        "/srv/workspaces/Wegent"
+    )
+
+
+def test_compile_rejects_project_bound_to_another_device(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    project = _local_path_project(
+        test_db,
+        test_user.id,
+        device_id="cloud-device-1",
+    )
+
+    with pytest.raises(HTTPException, match="requested device"):
+        runtime_work_service.compile_runtime_task_create(
+            db=test_db,
+            user_id=test_user.id,
+            request=RuntimeTaskCreateRequest(
+                schemaVersion=2,
+                projectId=project.id,
+                deviceId="cloud-device-2",
+                runtime="codex",
+                message="Implement the issue",
+                bot=[{"id": "robot-1", "shell_type": "Codex"}],
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -2483,7 +2699,6 @@ def test_direct_runtime_task_target_applies_requested_worktree_source(
         RuntimeTaskCreateRequest(
             deviceId="device-1",
             workspacePath="/repo/Wegent",
-            teamId=3,
             runtime="codex",
             message="create worktree task",
             execution={"workspace": {"source": "git_worktree"}},
@@ -2516,7 +2731,7 @@ async def test_create_runtime_task_uses_absolute_git_checkout_path_without_prefi
         "_build_runtime_execution_request",
         lambda **kwargs: SimpleNamespace(
             to_dict=lambda: {
-                "team_id": kwargs["request"].team_id,
+                "team_id": 0,
                 "prompt": kwargs["request"].message,
                 "project_workspace_path": kwargs["target"].workspace_path,
             }
@@ -2538,7 +2753,6 @@ async def test_create_runtime_task_uses_absolute_git_checkout_path_without_prefi
         user_id=test_user.id,
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
-            teamId=3,
             runtime="codex",
             message="create runtime task",
         ),
@@ -2789,7 +3003,7 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
         "_build_runtime_execution_request",
         lambda **kwargs: SimpleNamespace(
             to_dict=lambda: {
-                "team_id": kwargs["request"].team_id,
+                "team_id": 0,
                 "prompt": kwargs["request"].message,
                 "project_workspace_path": kwargs["target"].workspace_path,
             }
@@ -2812,7 +3026,6 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
         request=RuntimeTaskCreateRequest(
             projectId=project.id,
             deviceWorkspaceId=mapping.id,
-            teamId=3,
             runtime="claude_code",
             message="create runtime task",
         ),
@@ -2831,7 +3044,7 @@ async def test_create_runtime_task_uses_device_workspace_id_as_trusted_target(
             "message": "create runtime task",
             "title": "create runtime task",
             "executionRequest": {
-                "team_id": 3,
+                "team_id": 0,
                 "prompt": "create runtime task",
                 "project_workspace_path": "/repo/Wegent",
             },
@@ -2867,7 +3080,6 @@ async def test_create_runtime_task_rejects_device_workspace_from_another_project
             request=RuntimeTaskCreateRequest(
                 projectId=target_project.id,
                 deviceWorkspaceId=mapping.id,
-                teamId=3,
                 runtime="claude_code",
                 message="create runtime task",
             ),
@@ -4202,7 +4414,6 @@ def test_runtime_model_override_resolves_crd_name_to_env_model_id(
         api_model_id="deepseek-chat",
     )
     request = RuntimeTaskCreateRequest(
-        teamId=1,
         runtime="codex",
         message="hello",
         modelId="doubaofortest",
@@ -4233,7 +4444,6 @@ def test_runtime_model_override_falls_back_to_request_model_id_for_unknown_model
     from app.services import runtime_work_service
 
     request = RuntimeTaskCreateRequest(
-        teamId=1,
         runtime="codex",
         message="hello",
         modelId="unknown-model",
@@ -4254,103 +4464,12 @@ def test_runtime_model_override_falls_back_to_request_model_id_for_unknown_model
     assert force_override is False
 
 
-def _runtime_team_with_bot(test_db, user_id: int) -> Kind:
-    """Create a minimal Team + Bot + Shell + Ghost for runtime request building."""
-    model = _codex_provider_model(
-        test_db,
-        user_id,
-        name="codex-model",
-        api_model_id="gpt-test",
-    )
-    shell = Kind(
-        user_id=user_id,
-        kind="Shell",
-        name="ClaudeCode",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Shell",
-            "metadata": {"name": "ClaudeCode", "namespace": "default"},
-            "spec": {"shellType": "ClaudeCode", "baseImage": "wegent/claude-code"},
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-    )
-    test_db.add(shell)
-
-    ghost = Kind(
-        user_id=user_id,
-        kind="Ghost",
-        name="ghost",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Ghost",
-            "metadata": {"name": "ghost", "namespace": "default"},
-            "spec": {"systemPrompt": "You are a helpful assistant."},
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-    )
-    test_db.add(ghost)
-
-    bot = Kind(
-        user_id=user_id,
-        kind="Bot",
-        name="codex-bot",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Bot",
-            "metadata": {"name": "codex-bot", "namespace": "default"},
-            "spec": {
-                "ghostRef": {"name": "ghost", "namespace": "default"},
-                "shellRef": {"name": "ClaudeCode", "namespace": "default"},
-                "modelRef": {"name": model.name, "namespace": model.namespace},
-            },
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-    )
-    test_db.add(bot)
-
-    team = Kind(
-        user_id=user_id,
-        kind="Team",
-        name="codex-team",
-        namespace="default",
-        json={
-            "apiVersion": "agent.wecode.io/v1",
-            "kind": "Team",
-            "metadata": {"name": "codex-team", "namespace": "default"},
-            "spec": {
-                "members": [{"botRef": {"name": "codex-bot", "namespace": "default"}}],
-                "collaborationModel": "solo",
-            },
-            "status": {"state": "Available"},
-        },
-        is_active=True,
-    )
-    test_db.add(team)
-    test_db.commit()
-    test_db.refresh(team)
-    return team
-
-
 def test_build_runtime_send_execution_request_uses_complete_create_request(
     test_db,
     test_user,
-    monkeypatch,
 ):
     from app.schemas.runtime_work import RuntimeTaskAddress
     from app.services import runtime_work_service
-
-    team = _runtime_team_with_bot(test_db, test_user.id)
-    monkeypatch.setattr(
-        runtime_work_service.settings,
-        "DEFAULT_TEAM_TASK",
-        f"{team.name}#{team.namespace}",
-    )
 
     execution_request = runtime_work_service._build_runtime_send_execution_request(
         db=test_db,
@@ -4370,22 +4489,91 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
         },
     )
 
-    assert execution_request.team_id == team.id
+    assert execution_request.team_id == 0
     assert execution_request.project_workspace_path == "/repo/Wegent"
     assert execution_request.device_id == "device-1"
     assert execution_request.prompt.endswith("continue")
     assert "terminal output" in execution_request.prompt
 
 
-def test_build_runtime_send_execution_request_preserves_selected_model_and_catalog(
+def test_compile_runtime_task_create_materializes_attachment_ids_once(
     test_db,
     test_user,
     monkeypatch,
 ):
+    from app.models.subtask_context import ContextStatus, ContextType, SubtaskContext
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    attachment = SubtaskContext(
+        subtask_id=0,
+        user_id=test_user.id,
+        context_type=ContextType.ATTACHMENT.value,
+        name="requirements.md",
+        status=ContextStatus.READY.value,
+        type_data={
+            "original_filename": "requirements.md",
+            "file_extension": ".md",
+            "file_size": 2048,
+            "mime_type": "text/markdown",
+        },
+    )
+    test_db.add(attachment)
+    test_db.commit()
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+
+    compiled = runtime_work_service.compile_runtime_task_create(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeTaskCreateRequest(
+            schemaVersion=2,
+            deviceId="cloud-device",
+            workspacePath="/repo/Wegent",
+            runtime="codex",
+            message="Use the requirement",
+            attachmentIds=[attachment.id],
+            attachments=[
+                {
+                    "id": attachment.id,
+                    "original_filename": "stale-name.md",
+                },
+                {
+                    "id": "external-1",
+                    "original_filename": "external.txt",
+                },
+            ],
+        ),
+    )
+
+    expected = [
+        {
+            "id": attachment.id,
+            "original_filename": "requirements.md",
+            "mime_type": "text/markdown",
+            "file_size": 2048,
+            "subtask_id": 0,
+            "file_extension": ".md",
+        },
+        {
+            "id": "external-1",
+            "original_filename": "external.txt",
+        },
+    ]
+    assert compiled.payload["attachments"] == expected
+    assert compiled.payload["executionRequest"]["attachments"] == expected
+
+
+def test_build_runtime_send_execution_request_preserves_selected_model_and_catalog(
+    test_db,
+    test_user,
+):
     from app.schemas.runtime_work import RuntimeModelSelection, RuntimeTaskAddress
     from app.services import runtime_work_service
 
-    team = _runtime_team_with_bot(test_db, test_user.id)
     _codex_provider_model(
         test_db,
         test_user.id,
@@ -4398,12 +4586,6 @@ def test_build_runtime_send_execution_request_preserves_selected_model_and_catal
         name="selected-gpt",
         api_model_id="deepseek-v4-pro",
     )
-    monkeypatch.setattr(
-        runtime_work_service.settings,
-        "DEFAULT_TEAM_TASK",
-        f"{team.name}#{team.namespace}",
-    )
-
     execution_request = runtime_work_service._build_runtime_send_execution_request(
         db=test_db,
         user_id=test_user.id,
@@ -4461,7 +4643,6 @@ def test_runtime_model_override_rejects_incomplete_cloud_identity(
         api_model_id="wrong-private-model",
     )
     request = RuntimeTaskCreateRequest(
-        teamId=1,
         runtime="codex",
         message="hello",
         modelId="selected-gpt",
@@ -4494,7 +4675,6 @@ def test_runtime_model_override_does_not_fall_back_to_same_named_user_model(
         api_model_id="wrong-private-model",
     )
     request = RuntimeTaskCreateRequest(
-        teamId=1,
         runtime="codex",
         message="hello",
         modelId="selected-gpt",
@@ -4678,10 +4858,49 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
     assert "executionRequest" not in payload
 
 
+def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path(
+    test_db,
+    test_user,
+):
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+
+    _codex_provider_model(
+        test_db,
+        test_user.id,
+        name="direct-codex",
+        api_model_id="doubao-seed-2.0-lite",
+    )
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=2,
+        runtime="codex",
+        message="hello",
+        modelId="direct-codex",
+        modelType=runtime_work_service.RUNTIME_MODEL_TYPE,
+        deviceId="device-1",
+        workspacePath="/repo/Wegent",
+    )
+
+    execution_request = runtime_work_service._build_runtime_execution_request(
+        db=test_db,
+        user_id=test_user.id,
+        request=request,
+        target=runtime_work_service.RuntimeTaskTarget(
+            device_id="device-1",
+            workspace_path="/repo/Wegent",
+            project=None,
+            workspace_source="local_path",
+        ),
+    )
+
+    assert execution_request.team_id == 0
+    assert execution_request.bot == []
+    assert execution_request.model_config["model_id"] == "doubao-seed-2.0-lite"
+
+
 def test_build_runtime_execution_request_resolves_crd_model_id(
     test_db,
     test_user,
-    monkeypatch,
 ):
     """Full runtime request path must send spec.modelConfig.env.model_id to executor."""
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
@@ -4693,16 +4912,7 @@ def test_build_runtime_execution_request_resolves_crd_model_id(
         name="not-model-id",
         api_model_id="doubao-seed-2.0-lite",
     )
-    team = _runtime_team_with_bot(test_db, test_user.id)
-
-    monkeypatch.setattr(
-        runtime_work_service.device_service,
-        "get_device_by_device_id",
-        lambda db, user_id, device_id: object(),
-    )
-
     request = RuntimeTaskCreateRequest(
-        teamId=team.id,
         runtime="codex",
         message="hello",
         modelId="not-model-id",

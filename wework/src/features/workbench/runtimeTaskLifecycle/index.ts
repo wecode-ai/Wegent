@@ -6,6 +6,7 @@ export {
   RuntimeTaskLifecycleStore,
 } from './RuntimeTaskLifecycleStore'
 export { RuntimeTaskLifecycleProvider } from './RuntimeTaskLifecycleProvider'
+export { registerRuntimeTaskLifecycleAutomation } from './automation'
 export { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
 export {
   useRuntimeTaskLifecycle,

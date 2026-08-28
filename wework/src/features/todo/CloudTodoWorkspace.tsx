@@ -79,12 +79,11 @@ import type {
 } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
@@ -99,10 +98,7 @@ import {
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
-import {
-  resolveAutomaticModel,
-  selectedModelExecutionFields,
-} from '@/features/workbench/runtimeModelSelection'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import {
   runtimeMessagesToWorkbenchMessages,
@@ -111,10 +107,17 @@ import {
 import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
 import { hydrateRuntimeTaskAddress } from '@/features/workbench/workbenchRuntimeHelpers'
 import { AITableView } from '@/features/todo/AITableView'
+import {
+  AutomationSelectionDialog,
+  type AutomationSelectionCandidate,
+} from '@/features/todo/AutomationSelectionDialog'
 import type {
+  CloneGitRepositoryInput,
+  CreatedRuntimeProject,
   ProjectWithTasks,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
   User as UserProfile,
@@ -123,6 +126,7 @@ import type { WorkbenchMessage } from '@/types/workbench'
 import { CloudTodoModal as Modal } from './CloudTodoModal'
 import { CloudMyWorkView } from './CloudMyWorkView'
 import { stopLocalRobotQueueExecution } from './localRobotQueueDispatcher'
+import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import {
   CloudTodoBoardCard,
   CloudTodoCardContent,
@@ -150,8 +154,13 @@ import { BoardQuickCreate } from './BoardQuickCreate'
 import { parseDingTalkAITableLink, repositoryProviderConfig } from './projectProviderConfig'
 import { isRuntimeMyWorkItem, runtimeMyWorkItems } from './runtimeMyWork'
 import { finalAssistantTranscriptText } from './runtimeTaskResponsePreview'
+import { requestBoardTaskStatusRecovery } from './taskStatusRecovery'
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
+import {
+  IssueExecutionConfigDialog,
+  type IssueExecutionConfigResult,
+} from './IssueExecutionConfigDialog'
 import { IssueComposer } from './IssueComposer'
 import { issueDraftFromText } from './issueComposerDraft'
 import { preferNewestLoopItemSnapshot } from '@/api/issueWorkflow'
@@ -161,11 +170,9 @@ import { boardStatusColorClasses, columnDotClasses, columns, reorderLaneItems } 
 import { AiChatModal } from './AiChatModal'
 import { BackgroundTaskStarter } from './BackgroundTaskStarter'
 import {
-  shouldDeferWorkItemMoveUntilTaskCreated,
   shouldPrepareWorkItemTask,
   shouldRevealWorkItemWorkflowActions,
   workItemTaskInput,
-  workflowStageTaskInput,
 } from './workItemTaskInput'
 import type { WorkflowDeliverableDraft } from './WorkflowStageCompletionDialog'
 
@@ -208,6 +215,18 @@ function formatCompactFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 type NativeBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
+type PendingExecutionConfiguration = {
+  item: LocatedLoopItem
+  continuation:
+    | {
+        type: 'move'
+        columnKey: string
+        beforeItemId: string | null
+      }
+    | {
+        type: 'save'
+      }
+}
 
 const nativeBoardGroupFields: AITableField[] = [
   { id: 'status', name: '状态', type: 'status', config: null, raw: {} },
@@ -472,6 +491,7 @@ type TaskComposerRequest = {
   workItemId: string
   initialInput: string
   backgroundAfterSend: boolean
+  taskRequest?: RuntimeTaskCreateRequest
   workflowNodeId?: string
   inheritFromTask?: RuntimeTaskAddress | null
 }
@@ -515,6 +535,15 @@ interface CloudTodoWorkspaceProps {
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
+  onCreateLocalCodeProject?: (data: {
+    deviceId: string
+    name: string
+    roots: string[]
+  }) => Promise<CreatedRuntimeProject>
+  onGetDeviceHomeDirectory?: (deviceId: string) => Promise<string>
+  onListDeviceDirectories?: (deviceId: string, path: string) => Promise<string[]>
+  onCreateDeviceDirectory?: (deviceId: string, path: string) => Promise<void>
+  onCloneGitRepository?: (deviceId: string, input: CloneGitRepositoryInput) => Promise<void>
   onArchiveRuntimeTask?: (
     address: RuntimeTaskAddress,
     options?: ArchiveRuntimeTaskOptions
@@ -658,6 +687,43 @@ function cloudProjectRequestError(cause: unknown): string {
     return '项目空间接口返回 404，请重启当前分支的 Backend 后重试'
   }
   return cause.message || `创建项目空间失败（HTTP ${cause.status}）`
+}
+
+function automationSelectionCandidates(cause: unknown): AutomationSelectionCandidate[] | null {
+  if (
+    !(cause instanceof ApiError) ||
+    cause.status !== 409 ||
+    cause.errorCode !== 'automation_selection_required'
+  ) {
+    return null
+  }
+  const detail = cause.detail
+  if (!detail || typeof detail !== 'object' || !('candidates' in detail)) return null
+  const candidates = (detail as { candidates?: unknown }).candidates
+  if (!Array.isArray(candidates)) return null
+  const normalized = candidates.flatMap(candidate => {
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      !('id' in candidate) ||
+      !('name' in candidate) ||
+      typeof candidate.id !== 'string' ||
+      typeof candidate.name !== 'string'
+    ) {
+      return []
+    }
+    return [
+      {
+        id: candidate.id,
+        name: candidate.name,
+        description:
+          'description' in candidate && typeof candidate.description === 'string'
+            ? candidate.description
+            : '',
+      },
+    ]
+  })
+  return normalized.length > 1 ? normalized : null
 }
 
 function ProjectDialog({
@@ -1015,6 +1081,11 @@ export function CloudTodoWorkspace({
   onFocusedItemHandled,
   onActiveProjectChange,
   onOpenRuntimeTask,
+  onCreateLocalCodeProject,
+  onGetDeviceHomeDirectory,
+  onListDeviceDirectories,
+  onCreateDeviceDirectory,
+  onCloneGitRepository,
   onArchiveRuntimeTask,
   onOpenSettings,
   onLogout,
@@ -1127,6 +1198,11 @@ export function CloudTodoWorkspace({
   )
   const [issueComposerBusy, setIssueComposerBusy] = useState(false)
   const [issueComposerError, setIssueComposerError] = useState<string | null>(null)
+  const [pendingAutomationSelection, setPendingAutomationSelection] = useState<{
+    candidates: AutomationSelectionCandidate[]
+    onCancel: () => void
+    onConfirm: (automationId: string) => Promise<void>
+  } | null>(null)
   const [boardParentId, setBoardParentId] = useState<string | null>(null)
   const [projectAssistantOpen, setProjectAssistantOpen] = useState(false)
   const openProjectAssistant = () => {
@@ -1135,9 +1211,21 @@ export function CloudTodoWorkspace({
   }
   const [selectedTaskBinding, setSelectedTaskBinding] = useState<SelectedTaskBinding | null>(null)
   const [taskComposerRequest, setTaskComposerRequest] = useState<TaskComposerRequest | null>(null)
+  const [taskPanelSessionId, setTaskPanelSessionId] = useState(0)
+  const taskPanelSessionIdRef = useRef(0)
+  const advanceTaskPanelSession = useCallback(() => {
+    taskPanelSessionIdRef.current += 1
+    setTaskPanelSessionId(taskPanelSessionIdRef.current)
+  }, [])
   const openTaskComposer = (request: TaskComposerRequest) => {
     workbench?.projectChat.requestCatalogs?.()
+    advanceTaskPanelSession()
     setTaskComposerRequest(request)
+  }
+  const openTaskBinding = (binding: SelectedTaskBinding) => {
+    advanceTaskPanelSession()
+    setTaskComposerRequest(null)
+    setSelectedTaskBinding(binding)
   }
   const [aitableFields, setAitableFields] = useState<AITableField[]>([])
   const [aitableGroupFieldId, setAitableGroupFieldId] = useState('')
@@ -1149,6 +1237,9 @@ export function CloudTodoWorkspace({
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const [activeDragItemId, setActiveDragItemId] = useState<string | null>(null)
+  const [pendingExecutionConfiguration, setPendingExecutionConfiguration] =
+    useState<PendingExecutionConfiguration | null>(null)
+  const executionFailureByItemRef = useRef(new Map<string, boolean>())
   const boardSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
   )
@@ -1326,15 +1417,32 @@ export function CloudTodoWorkspace({
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
     // eslint-disable-next-line react-hooks/preserve-manual-memoization -- React state setters are stable.
-    (spaceKey: string, fetchedItems: CloudLoopItem[], error: string | null) => {
+    (spaceKey: string, fetchedItems: LocatedLoopItem[], error: string | null) => {
       console.info('[Wework project board] snapshot applied', {
         projectSpace: spaceKey,
         itemCount: fetchedItems.length,
         outcome: error ? 'failed' : 'loaded',
       })
+      let newlyFailed: LocatedLoopItem | null = null
+      for (const candidate of fetchedItems) {
+        const failed =
+          candidate.execution_state === 'failed' ||
+          Boolean(candidate.workflow?.nodes.some(node => node.status === 'failed'))
+        const previous = executionFailureByItemRef.current.get(candidate.id)
+        if (previous === false && failed && candidate.can_view_detail !== false) {
+          newlyFailed = candidate
+        }
+        executionFailureByItemRef.current.set(candidate.id, failed)
+      }
       setItems(fetchedItems)
       setItemsProjectKey(spaceKey)
       setBoardError(error)
+      if (newlyFailed) {
+        setBackgroundTaskItemId(null)
+        setSelectedTaskBinding(null)
+        setTaskComposerRequest(null)
+        setSelectedItem(newlyFailed)
+      }
     },
     []
   )
@@ -1543,54 +1651,24 @@ export function CloudTodoWorkspace({
       deviceId: binding.device_id,
       taskId: binding.task_id,
     })
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message: buildChangeRequestRepairPrompt(
-        changeRequest,
-        binding.task_title || binding.task_id,
-        selectedProject.pull_request_automation?.prompt
-      ),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
+    const prompt = buildChangeRequestRepairPrompt(
+      changeRequest,
+      binding.task_title || binding.task_id,
+      selectedProject.pull_request_automation?.prompt
+    )
+    const optimisticUserMessage = createRuntimeUserMessage(prompt)
+    const accepted = await workbench.sendRuntimePaneMessage(
+      {
+        address,
+        message: prompt,
+        source: { source: 'manual' },
+        cloudProjectId: String(selectedProject.id),
+      },
+      { optimisticUserMessage }
+    )
     if (!accepted) {
       throw new Error(t('workbench.change_request_continue_repair_failed', '无法继续任务'))
     }
-  }
-  async function sendBoardTaskMessage(
-    binding: CloudTodoBoardTaskBinding,
-    message: string
-  ): Promise<boolean> {
-    if (!workbench || !selectedProject) return false
-    const address = hydrateRuntimeTaskAddress(runtimeWork, {
-      deviceId: binding.device_id,
-      taskId: binding.task_id,
-    })
-    const scopeKey = getRuntimeTaskChatScopeKey(address)
-    const projectChat = workbench.projectChat
-    const attachmentState = projectChat.attachmentStateByScope[scopeKey]
-    if (attachmentState?.uploadingFiles.size) return false
-
-    const selectedModel =
-      projectChat.getSelectedModel?.() ??
-      projectChat.selectedModel ??
-      resolveAutomaticModel(projectChat.models)
-    const selectedModelOptions =
-      projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
-    const selectedAttachments = attachmentState?.attachments ?? []
-    const attachmentIds = remoteAttachmentIds(selectedAttachments)
-    const attachments = localRuntimeAttachments(selectedAttachments)
-    const accepted = await workbench.sendRuntimePaneMessage({
-      address,
-      message,
-      ...selectedModelExecutionFields(selectedModel, selectedModelOptions),
-      ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-      ...(attachments.length > 0 ? { attachments } : {}),
-      source: { source: 'manual' },
-      cloudProjectId: String(selectedProject.id),
-    })
-    if (accepted) projectChat.resetAttachmentsForScope(scopeKey)
-    return accepted
   }
   const projectForItem = (item: Pick<LocatedLoopItem, 'cloud_project_id' | 'project_store'>) => {
     if (item.project_store) {
@@ -1633,6 +1711,12 @@ export function CloudTodoWorkspace({
   )
   const selectedProjectServices = selectedProject
     ? services.projectSpaceDetailServices?.[selectedProject.location]
+    : undefined
+  const pendingExecutionProject = pendingExecutionConfiguration
+    ? projectForItem(pendingExecutionConfiguration.item)
+    : undefined
+  const pendingExecutionServices = pendingExecutionProject
+    ? services.projectSpaceDetailServices?.[pendingExecutionProject.location]
     : undefined
   const selectedProjectApi =
     selectedProject?.task_provider === 'dingtalk_aitable'
@@ -1735,6 +1819,15 @@ export function CloudTodoWorkspace({
       color: nativeBoardStatusColors[column.status],
     }))
   const visibleNativeStatuses = nativeStatuses
+  const processingStartStatusId =
+    selectedProject?.board_config?.processing_start_status_id ?? nativeStatuses[1]?.id ?? null
+  const processingStartIndex = processingStartStatusId
+    ? nativeStatuses.findIndex(status => status.id === processingStartStatusId)
+    : -1
+  const isProcessingStatus = (status: string) => {
+    const statusIndex = nativeStatuses.findIndex(candidate => candidate.id === status)
+    return processingStartIndex >= 0 && statusIndex >= processingStartIndex
+  }
 
   useEffect(() => {
     if (!selectedProject || isAITableProject) return
@@ -2232,7 +2325,22 @@ export function CloudTodoWorkspace({
     return locatedItem
   }
 
-  async function createTodoInBoardColumn(status: CloudLoopItem['status'], content: string) {
+  function requestCreatedItemExecutionConfiguration(item: LocatedLoopItem): boolean {
+    if (!isProcessingStatus(item.status) || !itemNeedsExecutionConfiguration(item)) {
+      return false
+    }
+    setPendingExecutionConfiguration({
+      item,
+      continuation: { type: 'save' },
+    })
+    return true
+  }
+
+  async function createTodoInBoardColumn(
+    status: CloudLoopItem['status'],
+    content: string,
+    automationRuleId?: string
+  ) {
     if (!selectedProject || !selectedProjectApi) throw new Error('项目空间接口当前不可用')
     if (isMyTasksBoard && status !== 'inbox' && !selectedLocalProject) {
       throw new Error(t('todo.select_local_project_before_create', '请先选择要修改的本地项目'))
@@ -2255,10 +2363,25 @@ export function CloudTodoWorkspace({
         ...(selectedProject.current_user_name
           ? { creator_name: selectedProject.current_user_name }
           : {}),
+        ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
       })
-      addCreatedTodo(created, selectedProject)
+      const locatedItem = addCreatedTodo(created, selectedProject)
+      requestCreatedItemExecutionConfiguration(locatedItem)
       setQuickCreateStatus(null)
     } catch (cause) {
+      const candidates = automationSelectionCandidates(cause)
+      if (candidates) {
+        setQuickCreateStatus(null)
+        setPendingAutomationSelection({
+          candidates,
+          onCancel: () => setPendingAutomationSelection(null),
+          onConfirm: async automationId => {
+            await createTodoInBoardColumn(status, content, automationId)
+            setPendingAutomationSelection(null)
+          },
+        })
+        return
+      }
       track('operation_failed', { operation: 'board_item_action' })
       throw cause
     }
@@ -2331,6 +2454,7 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (!selectedProject || !selectedProjectId || !selectedProjectKey || !selectedProjectApi) return
     let active = true
+    let recoveryRequested = false
     const refreshItems = () => {
       const prepare =
         selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
@@ -2362,6 +2486,15 @@ export function CloudTodoWorkspace({
       void readBoard()
         .then(response => {
           if (!active) return
+          if (!recoveryRequested && services.runtimeWorkApi?.replayRuntimeTaskStatuses) {
+            recoveryRequested = true
+            void requestBoardTaskStatusRecovery({
+              api: services.runtimeWorkApi,
+              projectKey: selectedProjectKey,
+              items: response.items,
+              bindings: response.task_bindings ?? [],
+            })
+          }
           setDingtalkAuthPrompt(false)
           const boardContext = response.task_bindings
             ? {
@@ -2473,6 +2606,7 @@ export function CloudTodoWorkspace({
     runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
+    services.runtimeWorkApi,
   ])
   useEffect(
     () =>
@@ -2711,29 +2845,78 @@ export function CloudTodoWorkspace({
     }
   }, [apiForProject, locateItems, selectedItem, selectedItemProject, selectedProjectRef])
 
-  async function moveItem(itemId: string, columnKey: string, beforeItemId: string | null = null) {
+  async function saveExecutionConfiguration(
+    item: LocatedLoopItem,
+    result: IssueExecutionConfigResult
+  ): Promise<void> {
+    const project = projectForItem(item)
+    const itemApi = apiForProject(project)
+    if (!project || !itemApi) throw new Error('项目空间当前不可用')
+
+    setBoardError(null)
+    const updated = await itemApi.updateLoopItem(item.id, {
+      version: item.version,
+      ...result,
+    })
+    const locatedUpdated = { ...updated, project_store: item.project_store }
+    const projectKey = projectSpaceKey(projectSpaceRef(project))
+
+    setItems(current =>
+      current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+    )
+    setDetailItems(current =>
+      current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
+    )
+    setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
+    setProjectItems(current => ({
+      ...current,
+      [projectKey]: (current[projectKey] ?? []).map(candidate =>
+        candidate.id === updated.id ? locatedUpdated : candidate
+      ),
+    }))
+  }
+
+  async function moveItem(
+    itemId: string,
+    columnKey: string,
+    beforeItemId: string | null = null,
+    executionResult?: IssueExecutionConfigResult,
+    automationRuleId?: string
+  ): Promise<boolean> {
     const item = items.find(candidate => candidate.id === itemId)
     const column = boardColumns.find(candidate => candidate.key === columnKey)
-    if (!item || !column || item.can_edit === false || isAITableProject) return
+    if (!item || !column || item.can_edit === false || isAITableProject) return false
+    const enteringExecution = nativeGroupBy === 'status' && isProcessingStatus(column.status)
+    let executionItem = item
+    if (enteringExecution && !item.workflow && item.can_view_detail !== false) {
+      const itemApi = apiForProject(projectForItem(item))
+      if (!itemApi) {
+        setBoardError('项目空间当前不可用')
+        return false
+      }
+      try {
+        const refreshed = await itemApi.getLoopItem(item.id)
+        executionItem = { ...refreshed, project_store: item.project_store }
+        setItems(current =>
+          current.map(candidate => (candidate.id === item.id ? executionItem : candidate))
+        )
+      } catch (cause) {
+        setBoardError(cause instanceof Error ? cause.message : '读取 Issue 配置失败')
+        return false
+      }
+    }
+    const needsExecutionConfig = enteringExecution && itemNeedsExecutionConfiguration(executionItem)
+    if (needsExecutionConfig && !executionResult) {
+      setPendingExecutionConfiguration({
+        item: executionItem,
+        continuation: { type: 'move', columnKey, beforeItemId },
+      })
+      return false
+    }
     const taskBindingCount = Math.max(
       itemTaskBindings[item.id]?.length ?? 0,
       runtimeAddressesByWorkItem.get(`${item.cloud_project_id}:${item.id}`)?.length ?? 0
     )
-    if (
-      nativeGroupBy === 'status' &&
-      (column.status === 'pending' || column.status === 'in_progress') &&
-      shouldDeferWorkItemMoveUntilTaskCreated(item, column.status, taskBindingCount)
-    ) {
-      setSelectedTaskBinding(null)
-      setSelectedItem(item)
-      setBackgroundTaskItemId(null)
-      openTaskComposer({
-        workItemId: item.id,
-        initialInput: workItemTaskInput(item),
-        backgroundAfterSend: true,
-      })
-      return
-    }
     const reordered =
       nativeGroupBy === 'status' && !isMyTasksBoard
         ? reorderLaneItems(items, itemId, column.status, beforeItemId)
@@ -2780,7 +2963,11 @@ export function CloudTodoWorkspace({
       if (!itemApi) throw new Error('项目空间当前不可用')
       const update =
         nativeGroupBy === 'status'
-          ? { status: column.status }
+          ? {
+              status: column.status,
+              ...executionResult,
+              ...(automationRuleId ? { automation_rule_id: automationRuleId } : {}),
+            }
           : nativeGroupBy === 'priority'
             ? { priority: column.groupValue as CloudLoopItem['priority'] }
             : nativeGroupBy === 'assignee'
@@ -2808,6 +2995,30 @@ export function CloudTodoWorkspace({
         current.map(candidate => (candidate.id === updated.id ? locatedUpdated : candidate))
       )
       setSelectedItem(current => (current?.id === updated.id ? locatedUpdated : current))
+      const automationAddedIncompleteWorkflow =
+        enteringExecution && !executionResult && itemNeedsExecutionConfiguration(locatedUpdated)
+      console.info('[Wework project board] status update execution snapshot', {
+        itemId: locatedUpdated.id,
+        previousStatus: item.status,
+        status: locatedUpdated.status,
+        enteringExecution,
+        executionConfigProvided: Boolean(executionResult),
+        hasWorkflow: Boolean(locatedUpdated.workflow),
+        workflowNodeIds: locatedUpdated.workflow?.nodes.map(node => node.id) ?? [],
+        workflowNodeStatuses: locatedUpdated.workflow?.nodes.map(node => node.status) ?? [],
+        needsExecutionConfiguration: automationAddedIncompleteWorkflow,
+      })
+      if (automationAddedIncompleteWorkflow) {
+        console.info('[Wework project board] execution route selected', {
+          itemId: locatedUpdated.id,
+          route: 'workflow_configuration',
+        })
+        setPendingExecutionConfiguration({
+          item: locatedUpdated,
+          continuation: { type: 'save' },
+        })
+        return false
+      }
       if (reordered) {
         await itemApi.reorderLoopItems(item.cloud_project_id, {
           parent_id: item.parent_id,
@@ -2816,9 +3027,17 @@ export function CloudTodoWorkspace({
         })
       }
       const shouldOpenTaskComposer =
-        nativeGroupBy === 'status' &&
-        (column.status === 'pending' || column.status === 'in_progress') &&
-        shouldPrepareWorkItemTask(item, column.status, taskBindingCount)
+        enteringExecution &&
+        shouldPrepareWorkItemTask(locatedUpdated, item.status, taskBindingCount)
+      console.info('[Wework project board] execution route selected', {
+        itemId: locatedUpdated.id,
+        route: shouldOpenTaskComposer
+          ? 'single_task'
+          : locatedUpdated.workflow
+            ? 'workflow'
+            : 'none',
+        taskBindingCount,
+      })
       if (shouldOpenTaskComposer) {
         setSelectedTaskBinding(null)
         setSelectedItem(locatedUpdated)
@@ -2829,9 +3048,11 @@ export function CloudTodoWorkspace({
           backgroundAfterSend: column.status === 'in_progress',
         })
       } else if (
-        nativeGroupBy === 'status' &&
-        column.status === 'pending' &&
-        shouldRevealWorkItemWorkflowActions(item, column.status) &&
+        enteringExecution &&
+        shouldRevealWorkItemWorkflowActions(
+          locatedUpdated,
+          item.status !== locatedUpdated.status
+        ) &&
         locatedUpdated.can_view_detail !== false
       ) {
         setBackgroundTaskItemId(null)
@@ -2843,10 +3064,40 @@ export function CloudTodoWorkspace({
         reordered: beforeItemId !== null,
         source: projectForItem(item)?.location ?? 'unknown',
       })
+      return true
     } catch (cause) {
       setItems(previousItems)
+      const candidates = automationSelectionCandidates(cause)
+      if (candidates && !automationRuleId) {
+        setBoardError(null)
+        setPendingAutomationSelection({
+          candidates,
+          onCancel: () => setPendingAutomationSelection(null),
+          onConfirm: async selectedAutomationId => {
+            const moved = await moveItem(
+              itemId,
+              columnKey,
+              beforeItemId,
+              executionResult,
+              selectedAutomationId
+            )
+            if (!moved) {
+              throw new Error(
+                t('todo.automation_selection_move_failed', '移动 Issue 失败，请重新选择')
+              )
+            }
+            setPendingAutomationSelection(null)
+          },
+        })
+        return false
+      }
       setBoardError(cause instanceof Error ? cause.message : '移动任务失败')
+      if (executionResult && item.can_view_detail !== false) {
+        setSelectedItem(item)
+      }
       track('operation_failed', { operation: 'board_item_move' })
+      if (executionResult) throw cause
+      return false
     }
   }
 
@@ -2898,6 +3149,7 @@ export function CloudTodoWorkspace({
         version: selectedProject.version,
         board_config: {
           group_by: nativeGroupBy,
+          processing_start_status_id: processingStartStatusId,
           statuses: nativeStatuses,
         },
       })
@@ -2941,12 +3193,13 @@ export function CloudTodoWorkspace({
     description: string
     files: File[]
     createTask: boolean
-    localProjectId: number | null
+    taskRequest?: RuntimeTaskCreateRequest
     continueCreating?: boolean
     status?: CloudLoopItem['status']
     priority?: CloudLoopItem['priority']
     tags?: string[]
     assigneeUserId?: number | null
+    automationRuleId?: string
   }) {
     const targetProject = projects.find(
       project => projectSpaceKey(projectSpaceRef(project)) === input.boardKey
@@ -2956,14 +3209,16 @@ export function CloudTodoWorkspace({
     setIssueComposerBusy(true)
     setIssueComposerError(null)
     try {
+      const taskRuntimeProjectId = runtimeTaskProjectUiId(runtimeWork, input.taskRequest)
       const issueLocalProject =
-        localProjectOptions.find(project => project.id === input.localProjectId) ?? null
+        localProjectOptions.find(project => project.id === taskRuntimeProjectId) ?? null
       let created = await targetApi.createLoopItem(targetProject.id, {
         title: input.title,
         description: input.description,
         status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.tags ? { tags: input.tags } : {}),
+        ...(input.automationRuleId ? { automation_rule_id: input.automationRuleId } : {}),
         parent_id: null,
         ...(input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
           ? {
@@ -3025,17 +3280,33 @@ export function CloudTodoWorkspace({
       setProjectView('board')
       setBoardParentId(null)
       if (input.continueCreating) {
+        setIssueComposerOpen(true)
         setSelectedItem(null)
       } else {
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      if (input.createTask) {
+      const needsExecutionConfiguration = requestCreatedItemExecutionConfiguration(locatedItem)
+      if (input.createTask && !needsExecutionConfiguration) {
         setBackgroundTaskItemId(locatedItem.id)
         openTaskComposer({
           workItemId: locatedItem.id,
           initialInput: workItemTaskInput(locatedItem),
           backgroundAfterSend: true,
+          taskRequest: input.taskRequest
+            ? {
+                ...input.taskRequest,
+                message: workItemTaskInput(locatedItem),
+                title: locatedItem.title,
+                cloudProjectId: String(targetProject.id),
+                origin: {
+                  type: 'board_task',
+                  cloudProjectId: String(targetProject.id),
+                  loopItemId: String(locatedItem.id),
+                  projectStore: targetProject.project_store,
+                },
+              }
+            : undefined,
         })
       }
       track('board_item_created', {
@@ -3044,6 +3315,27 @@ export function CloudTodoWorkspace({
       })
       return true
     } catch (cause) {
+      const candidates = automationSelectionCandidates(cause)
+      if (candidates) {
+        setIssueComposerOpen(false)
+        setPendingAutomationSelection({
+          candidates,
+          onCancel: () => {
+            setPendingAutomationSelection(null)
+            setIssueComposerOpen(true)
+          },
+          onConfirm: async automationId => {
+            const created = await createIssue({ ...input, automationRuleId: automationId })
+            if (!created) {
+              throw new Error(
+                t('todo.automation_selection_create_failed', '创建 Issue 失败，请重新选择')
+              )
+            }
+            setPendingAutomationSelection(null)
+          },
+        })
+        return false
+      }
       setIssueComposerError(cause instanceof Error ? cause.message : '创建 Issue 失败')
       return false
     } finally {
@@ -3092,16 +3384,17 @@ export function CloudTodoWorkspace({
     }
   }, [selectedItem, selectedItemApi, taskPanelOpen])
 
-  function closeTaskPanel() {
+  const closeTaskPanel = useCallback(() => {
+    advanceTaskPanelSession()
     setSelectedTaskBinding(null)
     setTaskComposerRequest(null)
-  }
+  }, [advanceTaskPanelSession])
 
-  function closeIssuePanelStack() {
+  const closeIssuePanelStack = useCallback(() => {
     setBackgroundTaskItemId(null)
     setSelectedItem(null)
     closeTaskPanel()
-  }
+  }, [closeTaskPanel])
 
   function closeTopPanel() {
     closeIssuePanelStack()
@@ -3180,14 +3473,11 @@ export function CloudTodoWorkspace({
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
-      setBackgroundTaskItemId(null)
-      setSelectedItem(null)
-      setSelectedTaskBinding(null)
-      setTaskComposerRequest(null)
+      closeIssuePanelStack()
     }
     window.addEventListener('keydown', handleEscape, true)
     return () => window.removeEventListener('keydown', handleEscape, true)
-  }, [backgroundTaskItemId, selectedItem])
+  }, [backgroundTaskItemId, closeIssuePanelStack, selectedItem])
 
   return (
     <div
@@ -3477,9 +3767,7 @@ export function CloudTodoWorkspace({
               key={`${issueComposerBoardKey}:${issueComposerStatus}:${issueComposerInitialContent}`}
               projects={projects}
               initialBoardKey={issueComposerBoardKey}
-              initialStartExecution={
-                issueComposerStatus === 'pending' || issueComposerStatus === 'in_progress'
-              }
+              initialStartExecution={isProcessingStatus(issueComposerStatus)}
               initialContent={issueComposerInitialContent}
               localProjects={localProjectOptions}
               projectMembers={projectMembers}
@@ -3592,7 +3880,7 @@ export function CloudTodoWorkspace({
                 {projectHeaderLevel < 2 ? (
                   <nav
                     ref={projectHeaderTabsRef}
-                    className="relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
+                    className="electron-titlebar-interactive-region relative z-10 ml-8 flex shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
                   >
                     <button
                       type="button"
@@ -3672,7 +3960,7 @@ export function CloudTodoWorkspace({
                 ) : (
                   <span
                     ref={projectHeaderTabsRef}
-                    className="relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
+                    className="electron-titlebar-interactive-region relative z-10 ml-2 inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary"
                   >
                     <select
                       aria-label="视图切换"
@@ -3707,7 +3995,7 @@ export function CloudTodoWorkspace({
                       data-testid="cloud-project-ask-ai"
                       aria-label={t('workbench.project_chat')}
                       onClick={openProjectAssistant}
-                      className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
+                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-3 text-sm font-medium text-text-primary transition hover:bg-muted"
                     >
                       <Bot className="h-3.5 w-3.5" />
                       {projectHeaderLevel < 1 ? t('workbench.project_chat') : null}
@@ -3735,7 +4023,7 @@ export function CloudTodoWorkspace({
                             : t('todo.search_issues', '搜索 Issue')
                         }
                         onClick={() => setProjectSearchOpen(current => !current)}
-                        className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
+                        className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-border bg-background px-2.5 text-xs text-text-secondary transition hover:bg-muted"
                       >
                         <Search className="h-3.5 w-3.5" />
                         {projectHeaderLevel < 1
@@ -3767,7 +4055,7 @@ export function CloudTodoWorkspace({
                           onClick={() =>
                             boardParent ? openTodoCreation(boardParent) : openIssueCreation()
                           }
-                          className="relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
+                          className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           {projectHeaderLevel < 1
@@ -3786,7 +4074,7 @@ export function CloudTodoWorkspace({
                     testId="cloud-project-header-more"
                     icon={Ellipsis}
                     placement="bottom-end"
-                    triggerClassName="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                    triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
                     items={[
                       ...(!projectAssistantOpen
                         ? [
@@ -3834,7 +4122,7 @@ export function CloudTodoWorkspace({
                       onClick={() =>
                         boardParent ? openTodoCreation(boardParent) : openIssueCreation()
                       }
-                      className="relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
+                      className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
                     >
                       <Plus className="h-3.5 w-3.5" />
                     </button>
@@ -3869,14 +4157,24 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
+                  runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
-                  deviceApi={selectedProjectServices?.deviceApi}
-                  modelApi={selectedProjectServices?.modelApi}
+                  deviceApi={services.deviceApi}
+                  modelApi={services.modelApi}
                   teamApi={selectedProjectServices?.teamApi}
-                  localProjects={localProjects}
+                  pluginApi={selectedProjectServices?.pluginApi}
+                  localProjects={localProjectOptions}
                   runtimeWork={runtimeWork}
+                  onCreateLocalCodeProject={onCreateLocalCodeProject}
+                  onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
+                  onListDeviceDirectories={onListDeviceDirectories}
+                  onCreateDeviceDirectory={onCreateDeviceDirectory}
+                  onCloneGitRepository={onCloneGitRepository}
                   project={selectedProject}
                   currentUserId={selectedProject.current_user_id}
+                  projectMembers={
+                    selectedProjectKey ? (projectMembers[selectedProjectKey] ?? []) : []
+                  }
                   canManageAgents={['Owner', 'Maintainer'].includes(
                     selectedProject.access_role ?? 'Owner'
                   )}
@@ -4273,6 +4571,7 @@ export function CloudTodoWorkspace({
                                     <CloudTodoBoardCard
                                       key={item.id}
                                       item={item}
+                                      processingStatus={isProcessingStatus(item.status)}
                                       taskBindings={
                                         itemTaskBindingsProjectKey === selectedProjectKey
                                           ? (boardTaskBindings[item.id] ?? [])
@@ -4281,11 +4580,16 @@ export function CloudTodoWorkspace({
                                       onClick={() => {
                                         if (item.can_view_detail !== false) {
                                           setBackgroundTaskItemId(null)
-                                          setSelectedTaskBinding(null)
-                                          setTaskComposerRequest(null)
+                                          closeTaskPanel()
                                           setSelectedItem(item)
                                         }
                                       }}
+                                      onConfigureExecution={() =>
+                                        setPendingExecutionConfiguration({
+                                          item,
+                                          continuation: { type: 'save' },
+                                        })
+                                      }
                                       onArchive={() => {
                                         setArchiveError(null)
                                         setArchiveItem(item)
@@ -4299,7 +4603,7 @@ export function CloudTodoWorkspace({
                                         if (!binding) return
                                         setBackgroundTaskItemId(null)
                                         setSelectedItem(item)
-                                        setSelectedTaskBinding({
+                                        openTaskBinding({
                                           id: binding.id,
                                           device_id: binding.device_id,
                                           task_id: binding.task_id,
@@ -4310,12 +4614,14 @@ export function CloudTodoWorkspace({
                                       display={boardCardDisplay}
                                       agentNames={agentNameById}
                                       dragDisabled={isAITableProject}
+                                      previewDisabled={
+                                        selectedItem !== null || activeDragItemId !== null
+                                      }
                                       archiveDisabled={selectedProject.task_provider !== 'local'}
                                       changeRequestMonitor={changeRequestMonitor}
                                       onContinueChangeRequestRepair={
                                         workbench ? continueChangeRequestRepair : undefined
                                       }
-                                      onSendMessage={workbench ? sendBoardTaskMessage : undefined}
                                     />
                                   ))}
                                   {columnItems.length === 0 &&
@@ -4387,6 +4693,9 @@ export function CloudTodoWorkspace({
                               <CloudTodoCardContent
                                 item={items.find(item => item.id === activeDragItemId)!}
                                 display={boardCardDisplay}
+                                processingStatus={isProcessingStatus(
+                                  items.find(item => item.id === activeDragItemId)!.status
+                                )}
                                 agentNames={agentNameById}
                               />
                             </div>
@@ -4400,6 +4709,42 @@ export function CloudTodoWorkspace({
             </>
           )}
         </main>
+        {pendingAutomationSelection ? (
+          <AutomationSelectionDialog
+            candidates={pendingAutomationSelection.candidates}
+            onCancel={pendingAutomationSelection.onCancel}
+            onConfirm={pendingAutomationSelection.onConfirm}
+          />
+        ) : null}
+        {pendingExecutionConfiguration ? (
+          <IssueExecutionConfigDialog
+            item={pendingExecutionConfiguration.item}
+            projectChatAgentApi={
+              pendingExecutionServices?.projectChatAgentApi ?? services.projectChatAgentApi
+            }
+            runtimeProfileApi={
+              pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
+            }
+            modelApi={services.modelApi}
+            deviceApi={services.deviceApi}
+            localProjects={localProjects}
+            onClose={() => setPendingExecutionConfiguration(null)}
+            onConfirm={async result => {
+              const pending = pendingExecutionConfiguration
+              if (pending.continuation.type === 'move') {
+                await moveItem(
+                  pending.item.id,
+                  pending.continuation.columnKey,
+                  pending.continuation.beforeItemId,
+                  result
+                )
+              } else {
+                await saveExecutionConfiguration(pending.item, result)
+              }
+              setPendingExecutionConfiguration(null)
+            }}
+          />
+        ) : null}
         {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
           <button
             type="button"
@@ -4487,8 +4832,7 @@ export function CloudTodoWorkspace({
                           data-testid={`cloud-todo-resource-conversation-${binding.id}`}
                           data-selected={selected ? 'true' : 'false'}
                           onClick={() => {
-                            setTaskComposerRequest(null)
-                            setSelectedTaskBinding({
+                            openTaskBinding({
                               ...binding,
                               work_item_id: selectedItem.id,
                             })
@@ -4530,8 +4874,7 @@ export function CloudTodoWorkspace({
                           type="button"
                           data-testid={`cloud-todo-resource-child-${child.id}`}
                           onClick={() => {
-                            setSelectedTaskBinding(null)
-                            setTaskComposerRequest(null)
+                            closeTaskPanel()
                             setSelectedItem(child)
                           }}
                           className="task-conversation-resource-row"
@@ -4587,8 +4930,7 @@ export function CloudTodoWorkspace({
                     ...child,
                     project_store: selectedItem.project_store,
                   }
-                  setSelectedTaskBinding(null)
-                  setTaskComposerRequest(null)
+                  closeTaskPanel()
                   setSelectedItem(locatedChild)
                 }}
                 onCreateTask={async workflowNodeId => {
@@ -4598,6 +4940,12 @@ export function CloudTodoWorkspace({
                   const workflowNode = selectedItem.workflow?.nodes.find(
                     node => node.id === workflowNodeId
                   )
+                  const stageContext = workflowNode
+                    ? await selectedItemApi.getWorkflowStageContext(
+                        selectedItem.id,
+                        workflowNode.id
+                      )
+                    : null
                   if (
                     workflowNode?.workspace_policy === 'inherit' &&
                     workflowNode.depends_on.length > 0
@@ -4613,12 +4961,11 @@ export function CloudTodoWorkspace({
                       })
                     }
                   }
-                  const backgroundAfterSend = selectedItem.status === 'pending' && !workflowNodeId
-                  setBackgroundTaskItemId(backgroundAfterSend ? selectedItem.id : null)
+                  setBackgroundTaskItemId(null)
                   openTaskComposer({
                     workItemId: selectedItem.id,
-                    initialInput: workflowNode ? workflowStageTaskInput(workflowNode) : '',
-                    backgroundAfterSend,
+                    initialInput: stageContext?.compiled_task_instruction ?? '',
+                    backgroundAfterSend: false,
                     workflowNodeId,
                     inheritFromTask,
                   })
@@ -4732,8 +5079,7 @@ export function CloudTodoWorkspace({
                 }}
                 onClose={closeIssuePanelStack}
                 onOpenTaskConversation={task => {
-                  setTaskComposerRequest(null)
-                  setSelectedTaskBinding({
+                  openTaskBinding({
                     ...task,
                     work_item_id: selectedItem.id,
                   })
@@ -4765,8 +5111,15 @@ export function CloudTodoWorkspace({
                 localProjects={localProjects}
                 task={selectedItem}
                 initialLocalProjectId={
-                  localProjectIdForItem(selectedItem) ??
-                  (isMyTasksBoard ? selectedLocalProject?.id : null)
+                  taskComposerRequest?.workItemId === selectedItem.id
+                    ? runtimeTaskProjectUiId(runtimeWork, taskComposerRequest.taskRequest)
+                    : (localProjectIdForItem(selectedItem) ??
+                      (isMyTasksBoard ? selectedLocalProject?.id : null))
+                }
+                initialTaskRequest={
+                  taskComposerRequest?.workItemId === selectedItem.id
+                    ? taskComposerRequest.taskRequest
+                    : undefined
                 }
                 inheritFromTask={
                   taskComposerRequest?.workItemId === selectedItem.id
@@ -4804,10 +5157,12 @@ export function CloudTodoWorkspace({
                 onClose={closeIssuePanelStack}
                 onBack={closeTaskPanel}
                 onAddressChange={address => {
-                  const backgroundAfterSend =
-                    taskComposerRequest?.workItemId === selectedItem.id &&
-                    taskComposerRequest.backgroundAfterSend
-                  if (backgroundAfterSend) {
+                  if (taskPanelSessionId !== taskPanelSessionIdRef.current) return
+                  const activeTaskComposerRequest =
+                    taskComposerRequest?.workItemId === selectedItem.id ? taskComposerRequest : null
+                  if (!activeTaskComposerRequest) return
+                  advanceTaskPanelSession()
+                  if (activeTaskComposerRequest.backgroundAfterSend) {
                     setBackgroundTaskItemId(null)
                     setSelectedItem(null)
                     setSelectedTaskBinding(null)
@@ -4846,10 +5201,7 @@ export function CloudTodoWorkspace({
             inheritFromTask={taskComposerRequest.inheritFromTask}
             workflowNodeId={taskComposerRequest.workflowNodeId}
             onAddressChange={() => {
-              setBackgroundTaskItemId(null)
-              setSelectedItem(null)
-              setSelectedTaskBinding(null)
-              setTaskComposerRequest(null)
+              closeIssuePanelStack()
               setBoardRefreshNonce(value => value + 1)
             }}
             prepareTask={prepareSelectedItemTask}

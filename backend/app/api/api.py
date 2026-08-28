@@ -22,6 +22,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    dsh_plugin_storage,
     external_tasks,
     feedback,
     grey,
@@ -49,6 +50,7 @@ from app.api.endpoints import (
     remote_devices,
     repository,
     resource_library,
+    runtime_profiles,
     runtime_work,
     share,
     sites,
@@ -169,6 +171,21 @@ api_router.include_router(
     project_automations.router,
     prefix="/v1/cloud-projects",
     tags=["project-automations"],
+)
+api_router.include_router(
+    runtime_profiles.router,
+    prefix="/v1/runtime-profiles",
+    tags=["runtime-profiles"],
+)
+api_router.include_router(
+    dsh_plugin_storage.router,
+    prefix="/v1/dsh-plugin-storage",
+    tags=["dsh-plugin-storage"],
+)
+api_router.include_router(
+    runtime_profiles.project_router,
+    prefix="/v1/cloud-projects",
+    tags=["runtime-profiles"],
 )
 api_router.include_router(
     project_incoming_hooks.router,

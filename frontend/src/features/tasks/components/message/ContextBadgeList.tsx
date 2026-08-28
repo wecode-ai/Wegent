@@ -149,7 +149,7 @@ export function ContextBadgeList({
   }
 
   return (
-    <div className="flex flex-wrap gap-2 mb-3">
+    <div className="flex flex-wrap items-start gap-2 mb-3">
       {groupMessageContexts(contexts).map(group => (
         <ContextBadgeItem
           key={group.key}

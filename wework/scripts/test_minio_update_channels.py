@@ -180,6 +180,176 @@ def test_stable_versions_sort_after_beta_versions() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "script_name",
+    ["upload-mac-release-to-s3.py", "upload-windows-release-to-s3.py"],
+)
+def test_rolling_channels_never_move_backwards(
+    script_name: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.4"}
+    ).encode()
+
+    assert not module.release_advances_channel(
+        client,
+        "releases",
+        "wework",
+        path,
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_same_version_repairs_incomplete_rolling_channels(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.3"}
+    ).encode()
+
+    assert module.release_advances_channel(
+        client,
+        "releases",
+        "wework",
+        path,
+        (("wework", electron_manifest),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_older_release_rejects_incomplete_newer_rolling_channels(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.4"}
+    ).encode()
+
+    with pytest.raises(SystemExit, match="Newer release channel 1.2.4 is incomplete"):
+        module.release_advances_channel(
+            client,
+            "releases",
+            "wework",
+            path,
+            (("wework", electron_manifest),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_complete_same_version_rolling_channels_are_reused(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    path = tmp_path / "stable-platform.json"
+    path.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    client.objects["wework/stable-platform.json"] = json.dumps(
+        {"version": "1.2.3"}
+    ).encode()
+    client.objects[f"wework/{electron_manifest}"] = b"version: 1.2.3\n"
+
+    assert not module.release_advances_channel(
+        client,
+        "releases",
+        "wework",
+        path,
+        (("wework", electron_manifest),),
+    )
+
+
+@pytest.mark.parametrize(
+    ("script_name", "electron_manifest"),
+    [
+        ("upload-mac-release-to-s3.py", "latest-mac.yml"),
+        ("upload-windows-release-to-s3.py", "latest.yml"),
+    ],
+)
+def test_channel_repair_uploads_electron_manifest_before_channel_entry(
+    script_name: str,
+    electron_manifest: str,
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    module = load_script(script_name)
+    client = FakeClient()
+    channel_manifest = tmp_path / "stable-windows-x86_64.json"
+    if script_name == "upload-mac-release-to-s3.py":
+        channel_manifest = tmp_path / "stable-darwin-aarch64.json"
+    channel_manifest.write_text(json.dumps({"version": "1.2.3"}), encoding="utf-8")
+    (tmp_path / electron_manifest).write_text("version: 1.2.3\n", encoding="utf-8")
+    remote_channel = f"wework/{channel_manifest.name}"
+    client.objects[remote_channel] = json.dumps({"version": "1.2.3"}).encode()
+    uploaded = []
+    monkeypatch.setattr(
+        module,
+        "upload_electron_manifest",
+        lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
+    )
+    monkeypatch.setattr(
+        module,
+        "upload_channel_manifest",
+        lambda _client, _bucket, _prefix, path: uploaded.append(path.name),
+    )
+
+    if script_name == "upload-mac-release-to-s3.py":
+        repaired = module.publish_channel(
+            client,
+            "releases",
+            "wework",
+            "wework",
+            tmp_path,
+            "stable",
+            "darwin-aarch64",
+        )
+    else:
+        repaired = module.publish_channel(
+            client,
+            "releases",
+            "wework",
+            tmp_path,
+            "stable",
+        )
+
+    assert repaired
+    assert uploaded == [electron_manifest, channel_manifest.name]
+
+
 def write_runtime_pair(tmp_path: Path, kind: str, suffix: str) -> tuple[Path, Path]:
     archive = tmp_path / f"{kind}-runtime-macos-arm64-{suffix}.tar.gz"
     descriptor = archive.with_name(archive.name.removesuffix(".tar.gz") + ".json")
@@ -441,24 +611,56 @@ def test_runtime_asset_pairs_reject_descriptor_only_publications(
         )
 
 
-def test_minio_macos_build_inherits_the_complete_tauri_resource_list() -> None:
+def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
 
-    assert 'BASE_CONFIG="$WEWORK_DIR/src-tauri/tauri.conf.json"' in script
-    assert 'CODEX_TARGET="$MACOS_BUILD_TARGET"' in script
+    assert "pnpm --filter wework build:release" in script
+    assert "prepare-desktop-release-assets.mjs" in script
+    assert "generate-desktop-update-manifests.mjs" in script
+    assert 'WEWORK_RELEASE_TARGETS="macos-$arch"' in script
+    assert 'WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL"' in script
     assert 'WEWORK_RUNTIME_TARGET="$MACOS_BUILD_TARGET"' in script
-    assert "verify_runtime_descriptors_in_app" in script
-    assert "verify_codex_targets_in_app" in script
-    assert "contains Codex for unexpected target" in script
-    assert "bundled-execution-runtimes/node.json" in script
-    assert "bundled-harness-runtime/runtimes.json" in script
-    assert 'bash "$SCRIPT_DIR/release-mac-app.sh"' not in script
+    assert "wework_configure_internal_updater_key" in script
+    assert "src-tauri" not in script
+    assert "pnpm exec tauri build" not in script
 
 
-def test_minio_windows_build_prepares_target_platform_runtimes() -> None:
+def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
 
+    assert "pnpm --filter wework build:release" in script
+    assert "prepare-desktop-release-assets.mjs" in script
+    assert "generate-desktop-update-manifests.mjs" in script
+    assert "WEWORK_RELEASE_TARGETS=windows-x64" in script
+    assert 'WEWORK_UPDATE_BASE_URL="$UPDATE_BASE_URL"' in script
     assert 'WEWORK_RUNTIME_TARGET="$WINDOWS_BUILD_TARGET"' in script
+    assert "node -p process.platform" in script
+    assert "cargo-xwin" not in script
+    assert "src-tauri" not in script
+    assert "pnpm exec tauri build" not in script
+
+
+@pytest.mark.parametrize(
+    "script_name",
+    ["upload-mac-release-to-s3.py", "upload-windows-release-to-s3.py"],
+)
+def test_minio_uploads_electron_manifests_without_runtime_sidecars(
+    script_name: str,
+) -> None:
+    script = (SCRIPT_DIR / script_name).read_text(encoding="utf-8")
+
+    assert "upload_electron_manifest" in script
+    assert "publish_runtime_asset_pairs" not in script
+
+
+def test_electron_release_bakes_the_minio_update_base_url() -> None:
+    builder = (SCRIPT_DIR.parent / "electron/electron-builder.config.cjs").read_text(
+        encoding="utf-8"
+    )
+    main = (SCRIPT_DIR.parent / "electron/src/main.ts").read_text(encoding="utf-8")
+
+    assert "weworkUpdateBaseUrl: updateBaseUrl" in builder
+    assert "packageMetadata.weworkUpdateBaseUrl?.trim()" in main
 
 
 def test_node_runtime_format_version_avoids_legacy_minio_asset_names() -> None:

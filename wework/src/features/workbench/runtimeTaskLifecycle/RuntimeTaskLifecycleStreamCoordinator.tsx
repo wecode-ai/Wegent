@@ -8,15 +8,42 @@ import {
   reconcileRuntimeConversationSnapshot,
   runtimeConversationKey,
 } from '../runtimeConversationCache'
+import { subscribeSystemResume } from '@/desktop/systemResume'
 import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { projectRuntimePaneTranscript } from './projection'
+import { runtimeTaskLifecycleTransitionChanged } from './RuntimeTaskLifecycleStore'
+import { isRuntimePaneTranscriptConfirmedIdle, projectRuntimePaneTranscript } from './projection'
 import type { RuntimeTaskAddress } from '@/types/api'
 
-type ReconciliationReason = 'event_lagged' | 'runtime_replaced'
+type ReconciliationReason = 'event_lagged' | 'runtime_replaced' | 'system_resume'
 
-interface TerminalEventPayload {
+interface LifecycleEventPayload {
   taskId?: string
+  subtaskId?: string
   deviceId?: string
+}
+
+function matchingLifecycleAddress(
+  store: RuntimeTaskLifecycleStore,
+  payload: LifecycleEventPayload
+): RuntimeTaskAddress | null {
+  if (!payload.taskId) return null
+  const snapshot = store.getSnapshot()
+  for (const lifecycle of snapshot.tasks.values()) {
+    if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
+    if (
+      payload.deviceId &&
+      lifecycle.address.deviceId !== payload.deviceId &&
+      store.getTask({ ...lifecycle.address, deviceId: payload.deviceId })?.key !== lifecycle.key
+    ) {
+      continue
+    }
+    return lifecycle.address
+  }
+  if (!payload.deviceId) return null
+  return {
+    deviceId: payload.deviceId,
+    taskId: payload.taskId,
+  }
 }
 
 export function RuntimeTaskLifecycleStreamCoordinator({
@@ -30,6 +57,7 @@ export function RuntimeTaskLifecycleStreamCoordinator({
     () => createExecutorClientForWorkbenchServices(services),
     [services]
   )
+  const recoverRuntimeConnections = services.recoverRuntimeConnections
 
   useEffect(() => {
     let disposed = false
@@ -92,24 +120,82 @@ export function RuntimeTaskLifecycleStreamCoordinator({
       })
     }
 
+    const unsubscribeSystemResume = subscribeSystemResume(() => {
+      void Promise.resolve()
+        .then(() => recoverRuntimeConnections?.())
+        .catch(error => {
+          console.warn('[Wework] Runtime transport recovery after system resume failed', error)
+        })
+        .finally(() => reconcile('system_resume'))
+    })
+
     const settleMatchingTask = (
-      payload: TerminalEventPayload,
+      payload: LifecycleEventPayload,
       outcome: 'succeeded' | 'failed' | 'cancelled'
+    ): { address: RuntimeTaskAddress; settled: boolean } | null => {
+      const address = matchingLifecycleAddress(store, payload)
+      if (!address) return null
+      const terminalTurnId = payload.subtaskId?.trim() || null
+      const activeTurnId = store.getTask(address)?.turn.id
+      if (terminalTurnId && activeTurnId && terminalTurnId !== activeTurnId) {
+        return { address, settled: false }
+      }
+      store.turnSettled(address, terminalTurnId, outcome)
+      return { address, settled: true }
+    }
+
+    const reconcileTerminalTranscript = async (
+      address: RuntimeTaskAddress,
+      outcome?: 'succeeded' | 'failed' | 'cancelled'
     ) => {
-      if (!payload.taskId) return
-      const snapshot = store.getSnapshot()
-      for (const key of snapshot.runningTaskKeys) {
-        const lifecycle = snapshot.tasks.get(key)
-        if (!lifecycle || lifecycle.address.taskId !== payload.taskId) continue
-        if (payload.deviceId && lifecycle.address.deviceId !== payload.deviceId) continue
-        store.turnSettled(lifecycle.address, null, outcome)
+      const expectedSnapshot = store.getTask(address)
+      try {
+        const transcriptResponse = await executorClient.runtime.getRuntimeTranscript({
+          ...address,
+          limit: 50,
+          refresh: true,
+        })
+        if (disposed) return
+        if (runtimeTaskLifecycleTransitionChanged(expectedSnapshot, store.getTask(address))) return
+        const transcript = projectRuntimePaneTranscript(transcriptResponse)
+        reconcileRuntimeConversationSnapshot(address, transcript.turns)
+        store.syncTranscript(address, transcript)
+        if (outcome && isRuntimePaneTranscriptConfirmedIdle(transcript)) {
+          store.turnSettled(address, null, outcome)
+        }
+      } catch (error) {
+        console.warn('[Wework] Runtime terminal transcript reconciliation failed', {
+          deviceId: address.deviceId,
+          taskId: address.taskId,
+          error,
+        })
       }
     }
 
     const unsubscribe = services.chatStream.subscribe({
-      onChatDone: payload => settleMatchingTask(payload, 'succeeded'),
-      onChatError: payload =>
-        settleMatchingTask(payload, isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'),
+      onChatStart: payload => {
+        const address = matchingLifecycleAddress(store, payload)
+        if (!address) return
+        store.turnStarted(address, payload.subtaskId?.trim() || null)
+      },
+      onChatDone: payload => {
+        const match = settleMatchingTask(payload, 'succeeded')
+        if (match) {
+          void reconcileTerminalTranscript(match.address, 'succeeded')
+        }
+      },
+      onChatError: payload => {
+        const match = settleMatchingTask(
+          payload,
+          isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
+        )
+        if (match && !match.settled) {
+          void reconcileTerminalTranscript(
+            match.address,
+            isCancelledTerminalEvent(payload) ? 'cancelled' : 'failed'
+          )
+        }
+      },
       onRuntimeEventLagged: payload => {
         console.warn('[Wework] Runtime event stream lagged; reconciling task state', payload)
         reconcile('event_lagged')
@@ -119,9 +205,10 @@ export function RuntimeTaskLifecycleStreamCoordinator({
 
     return () => {
       disposed = true
+      unsubscribeSystemResume()
       unsubscribe()
     }
-  }, [executorClient, services.chatStream, store])
+  }, [executorClient, recoverRuntimeConnections, services.chatStream, store])
 
   return null
 }

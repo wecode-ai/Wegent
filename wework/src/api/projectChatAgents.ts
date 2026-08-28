@@ -1,4 +1,35 @@
 import type { HttpClient } from './http'
+import type { ModelType, RuntimeProjectPluginRef } from '@/types/api'
+
+export type ProjectChatWorkspaceBinding =
+  | {
+      type: 'backend_project'
+      status: 'ready' | 'needs_rebind'
+      projectId: number
+      deviceWorkspaceId?: number | null
+      deviceId?: string | null
+    }
+  | {
+      type: 'device_project'
+      status: 'ready' | 'needs_rebind'
+      deviceId: string
+      runtimeProjectKey: string
+    }
+  | {
+      type: 'standalone'
+      status: 'ready' | 'needs_rebind'
+    }
+  | {
+      type: 'legacy_project'
+      status: 'needs_rebind'
+      projectId: number
+      deviceId?: string | null
+    }
+
+export type ProjectChatWorkspaceBindingInput =
+  | Omit<Extract<ProjectChatWorkspaceBinding, { type: 'backend_project' }>, 'status'>
+  | Omit<Extract<ProjectChatWorkspaceBinding, { type: 'device_project' }>, 'status'>
+  | Omit<Extract<ProjectChatWorkspaceBinding, { type: 'standalone' }>, 'status'>
 
 export interface ProjectChatAgent {
   id: string
@@ -7,6 +38,8 @@ export interface ProjectChatAgent {
   runtime: 'codex' | 'wegent'
   wegentTeamId?: number | null
   model: string | null
+  modelType: ModelType | null
+  modelOptions: Record<string, string>
   systemPrompt: string
   capabilityDescription?: string
   status: 'active' | 'archived'
@@ -14,14 +47,33 @@ export interface ProjectChatAgent {
   executionEnvironment: 'local' | 'cloud'
   executionMode: 'auto' | 'manual_approval'
   executionDeviceId: string | null
-  /** The bound local code project (task feature) this robot runs in. */
+  workspaceBinding: ProjectChatWorkspaceBinding
+  /** V1 compatibility projection. New writes use workspaceBinding. */
   localProjectId: number | null
   maxConcurrentExecutions: number
+  workspacePolicy: 'project' | 'git_worktree'
+  defaultRuntimeProfileId: string | null
+  plugins: RuntimeProjectPluginRef[]
   createdByUserId: number | null
   createdByUserName?: string | null
   version: number
   createdAt: string
   updatedAt: string
+}
+
+export function projectChatAgentWorkspaceBinding(
+  agent: Pick<ProjectChatAgent, 'workspaceBinding' | 'localProjectId' | 'executionDeviceId'>
+): ProjectChatWorkspaceBinding {
+  if (agent.workspaceBinding) return agent.workspaceBinding
+  if (agent.localProjectId != null) {
+    return {
+      type: 'legacy_project',
+      status: 'needs_rebind',
+      projectId: agent.localProjectId,
+      deviceId: agent.executionDeviceId,
+    }
+  }
+  return { type: 'standalone', status: 'ready' }
 }
 
 export type ProjectChatAgentInput = Pick<
@@ -30,15 +82,19 @@ export type ProjectChatAgentInput = Pick<
   | 'runtime'
   | 'wegentTeamId'
   | 'model'
+  | 'modelType'
+  | 'modelOptions'
   | 'systemPrompt'
   | 'capabilityDescription'
   | 'visibility'
   | 'executionEnvironment'
   | 'executionMode'
   | 'executionDeviceId'
-  | 'localProjectId'
   | 'maxConcurrentExecutions'
->
+  | 'workspacePolicy'
+  | 'defaultRuntimeProfileId'
+  | 'plugins'
+> & { workspaceBinding?: ProjectChatWorkspaceBindingInput | null }
 
 export function createProjectChatAgentApi(client: HttpClient) {
   return {
@@ -58,6 +114,8 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'runtime'
           | 'wegentTeamId'
           | 'model'
+          | 'modelType'
+          | 'modelOptions'
           | 'systemPrompt'
           | 'capabilityDescription'
           | 'status'
@@ -65,11 +123,14 @@ export function createProjectChatAgentApi(client: HttpClient) {
           | 'executionEnvironment'
           | 'executionMode'
           | 'executionDeviceId'
-          | 'localProjectId'
           | 'maxConcurrentExecutions'
+          | 'workspacePolicy'
+          | 'defaultRuntimeProfileId'
+          | 'plugins'
         >
-      > &
-        Pick<ProjectChatAgent, 'version'>
+      > & {
+        workspaceBinding?: ProjectChatWorkspaceBindingInput | null
+      } & Pick<ProjectChatAgent, 'version'>
     ) {
       return client.patch<ProjectChatAgent>(
         `/v1/cloud-projects/${projectId}/chat-agents/${agentId}`,

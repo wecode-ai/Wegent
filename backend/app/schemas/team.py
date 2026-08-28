@@ -8,7 +8,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel
 
 from app.schemas.bot import BotInDB
-from app.schemas.kind import TeamDisplayConfig, TeamInputPlaceholder
+from app.schemas.kind import ModeSpec, TeamDisplayConfig, TeamInputPlaceholder
 from app.schemas.quick_launch import QuickPhraseMixin
 from app.schemas.user import UserInDB
 
@@ -53,6 +53,7 @@ class TeamBase(QuickPhraseMixin):
     bots: List[BotInfo]
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    mode_spec: Optional[ModeSpec] = None
     is_active: bool = True
     icon: Optional[str] = None  # Icon ID from preset icon library
     display_config: Optional[TeamDisplayConfig] = None
@@ -79,6 +80,7 @@ class TeamUpdate(QuickPhraseMixin):
     bots: Optional[List[BotInfo]] = None
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    mode_spec: Optional[ModeSpec] = None
     is_active: Optional[bool] = None
     namespace: Optional[str] = None  # Group namespace
     icon: Optional[str] = None  # Icon ID from preset icon library

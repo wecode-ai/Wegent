@@ -48,7 +48,7 @@ interface SplitWorkbenchPaneStackProps {
   layout: WorkbenchLayoutState
   validRuntimeKeys: string[]
   retainedResourceKeys?: string[]
-  activeTestId: string
+  activeTestId: string | null
   workbenchVisible: boolean
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
   getPaneTitle: (pane: WorkbenchPaneIdentity) => string
@@ -399,7 +399,7 @@ function WorkbenchLayoutRenderer({
   node: WorkbenchLayoutNode
   canonicalLayout: WorkbenchLayoutState
   totalPanes: number
-  activeTestId: string
+  activeTestId: string | null
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null
@@ -537,7 +537,7 @@ function WorkbenchPaneView({
   focused: boolean
   focusedView: boolean
   totalPanes: number
-  activeTestId: string
+  activeTestId: string | null
   dragged: boolean
   dropTarget: DropTarget | null
   resolvePane: (paneKey: string) => WorkbenchPaneIdentity | null

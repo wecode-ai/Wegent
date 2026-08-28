@@ -33,6 +33,7 @@ from app.schemas.kind import (
     Bot,
     Ghost,
     Model,
+    ModeSpec,
     Shell,
     Task,
     Team,
@@ -246,6 +247,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         bind_mode = getattr(obj_in, "bind_mode", None)
         if bind_mode is not None:
             spec["bind_mode"] = bind_mode
+
+        mode_spec = getattr(obj_in, "mode_spec", None)
+        if mode_spec is not None:
+            spec["modeSpec"] = mode_spec.model_dump(mode="json", exclude_none=True)
 
         # Handle description - get from obj_in directly
         description = getattr(obj_in, "description", None)
@@ -1440,6 +1445,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "bind_mode" in update_data:
             team_crd.spec.bind_mode = update_data["bind_mode"]
 
+        if "mode_spec" in update_data:
+            mode_spec = update_data["mode_spec"]
+            team_crd.spec.modeSpec = (
+                ModeSpec.model_validate(mode_spec) if mode_spec else None
+            )
+
         # Handle description update
         if "description" in update_data:
             team_crd.spec.description = update_data["description"]
@@ -1947,6 +1958,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -1995,6 +2011,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
@@ -2162,6 +2179,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Get bind_mode from spec (directly, not from workflow)
         bind_mode = team_crd.spec.bind_mode
+        mode_spec = (
+            team_crd.spec.modeSpec.model_dump(mode="json", exclude_none=True)
+            if team_crd.spec.modeSpec
+            else None
+        )
 
         # Derive recommended_mode from bind_mode
         # 'both' if both modes, 'code' if only code, 'chat' otherwise
@@ -2204,6 +2226,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "bots": bots,
             "workflow": workflow,
             "bind_mode": bind_mode,
+            "mode_spec": mode_spec,
             "recommended_mode": recommended_mode,  # Add recommended_mode field
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
@@ -2281,12 +2304,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 # Try to find in public_models cache (by name only)
                 public_model = public_models_cache.get(model_ref_name)
 
-                if public_model:
-                    # Public model - return bind_model format with type
-                    agent_config = {
-                        "bind_model": public_model.name,
-                        "bind_model_type": "public",
-                    }
+                if public_model and public_model.json:
+                    model_crd = Model.model_validate(public_model.json)
+                    if model_crd.spec.isCustomConfig:
+                        model_config = model_crd.spec.modelConfig or {}
+                        agent_config = dict(model_config)
+                        if model_crd.spec.protocol:
+                            agent_config["protocol"] = model_crd.spec.protocol
+                    else:
+                        # Public predefined model - return bind_model format with type
+                        agent_config = {
+                            "bind_model": public_model.name,
+                            "bind_model_type": "public",
+                        }
 
         return {
             "name": bot.name,

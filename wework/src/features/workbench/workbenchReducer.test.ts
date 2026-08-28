@@ -472,7 +472,19 @@ describe('workbenchReducer', () => {
         ...initialWorkbenchState,
         standaloneChatKey: 4,
       },
-      { type: 'blank_chat_committed' }
+      { type: 'blank_chat_committed', standaloneChatKey: 4 }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('ignores a late blank chat commit after a newer draft scope is active', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 5,
+      },
+      { type: 'blank_chat_committed', standaloneChatKey: 4 }
     )
 
     expect(state.standaloneChatKey).toBe(5)

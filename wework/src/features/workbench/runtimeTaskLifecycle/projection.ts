@@ -26,6 +26,11 @@ export function projectRuntimePaneTranscript(
   }
 }
 
+export function isRuntimePaneTranscriptConfirmedIdle(transcript: RuntimePaneTranscript): boolean {
+  if (transcript.running !== false) return false
+  return !transcript.turns.some(turn => isRuntimeTurnRunningStatus(turn.status))
+}
+
 export function runtimeTaskBoardState(task: RuntimeTaskSummary): RuntimeTaskBoardState {
   const normalizedTask = normalizeRuntimeTaskSummary(task)
   const status = normalizedTask.status?.trim().toLowerCase()
@@ -104,6 +109,9 @@ export function shouldReplaceRuntimeTaskProjection(
 ): boolean {
   const current = normalizeRuntimeTaskSummary(currentTask)
   const candidate = normalizeRuntimeTaskSummary(candidateTask)
+  if (current.cachedProjection !== candidate.cachedProjection) {
+    return current.cachedProjection === true
+  }
   const currentCompleted = isRuntimeTaskAuthoritativeCompletion(current)
   const candidateCompleted = isRuntimeTaskAuthoritativeCompletion(candidate)
 
@@ -167,6 +175,16 @@ function isRuntimeTaskQueued(task: RuntimeTaskSummary): boolean {
 function isRuntimeTaskRunningStatus(status: string | null | undefined): boolean {
   const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
   return normalized === 'active' || normalized === 'inprogress' || normalized === 'running'
+}
+
+function isRuntimeTurnRunningStatus(status: string | null | undefined): boolean {
+  const normalized = status?.replace(/[_-]/g, '').trim().toLowerCase()
+  return (
+    normalized === 'active' ||
+    normalized === 'inprogress' ||
+    normalized === 'pending' ||
+    normalized === 'streaming'
+  )
 }
 
 function runtimeTaskProjectionTime(task: RuntimeTaskSummary): number {

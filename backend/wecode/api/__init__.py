@@ -66,6 +66,7 @@ import wecode.service.cloud_device_patch  # noqa: F401  register CloudDeviceProv
 import wecode.service.dispatch_tasks_patch  # noqa: F401  patch executor_kinds_service.dispatch_tasks to replace API key placeholders (push mode)
 import wecode.service.executor_job_patch  # noqa: F401  patch JobService with K8s orphan pod cleanup capabilities
 import wecode.service.executor_kinds_patch  # noqa: F401  patch executor_kinds_service with K8s orphan pod cleanup methods
+import wecode.service.git_execution_credentials  # noqa: F401  register task-scoped Git token resolution
 import wecode.service.jobs  # noqa: F401  register notification and evaluation grading monitor background workers
 import wecode.service.knowledge.weibo_dispatch_validator  # noqa: F401  register Weibo dispatch validator (replaces weibo_multimodal_patch monkeypatch)
 import wecode.service.knowledge.weibo_video_upload_provider  # noqa: F401  register Weibo VideoUploadProvider (two-phase KB video upload)
@@ -106,6 +107,7 @@ from wecode.api.transition_page import router as transition_page_router
 from wecode.api.user_search_with_erp import router as user_search_with_erp_router
 from wecode.config.task_sharding_config import task_sharding_settings
 from wecode.runtime import initialize_internal_runtime
+from wecode.video.api.router import router as aigc_video_router
 
 initialize_internal_runtime()
 
@@ -176,6 +178,7 @@ api_router.include_router(
     tags=["wecode", "agent-usage"],
 )
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])
+api_router.include_router(aigc_video_router, prefix="/aigc-video", tags=["aigc-video"])
 # Internal multimodal endpoints (converter-facing): GCS proxy + fid→CDN resolver.
 # attachments_video provides GET /attachments/{id}/video-download-url (injected
 # into MultimodalDispatchContext.video_download_url_path by weibo_multimodal_patch).

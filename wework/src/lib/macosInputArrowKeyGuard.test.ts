@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
-const isTauriRuntimeMock = vi.hoisted(() => vi.fn())
+const isElectronRuntimeMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/runtime-environment', () => ({
-  isTauriRuntime: isTauriRuntimeMock,
+  isElectronRuntime: isElectronRuntimeMock,
 }))
 
 import { installMacOSInputArrowKeyGuard } from './macosInputArrowKeyGuard'
@@ -13,7 +13,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
 
   beforeEach(() => {
     userAgent = ''
-    isTauriRuntimeMock.mockReset()
+    isElectronRuntimeMock.mockReset()
     vi.stubGlobal('navigator', {
       ...navigator,
       get userAgent() {
@@ -45,8 +45,8 @@ describe('installMacOSInputArrowKeyGuard', () => {
     return event
   }
 
-  test('is a no-op when not running in Tauri', () => {
-    isTauriRuntimeMock.mockReturnValue(false)
+  test('is a no-op when not running in desktop', () => {
+    isElectronRuntimeMock.mockReturnValue(false)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('', 0, 0)
@@ -56,7 +56,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('is a no-op on non-macOS platforms', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Windows NT 10.0; Win64; x64'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('', 0, 0)
@@ -66,7 +66,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('prevents ArrowRight at the end of an input', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 5, 5)
@@ -76,7 +76,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('prevents ArrowLeft at the start of an input', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 0, 0)
@@ -86,7 +86,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('does not prevent ArrowLeft in the middle of an input', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 2, 2)
@@ -96,7 +96,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('does not prevent ArrowRight before the end of an input', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 2, 2)
@@ -106,7 +106,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('ignores non-input targets', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const div = document.createElement('div')
@@ -116,7 +116,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('ignores IME composing events', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 5, 5)
@@ -132,7 +132,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('ignores events with non-collapsed selection', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const input = createInput('hello', 1, 4)
@@ -142,7 +142,7 @@ describe('installMacOSInputArrowKeyGuard', () => {
   })
 
   test('ignores disabled and read-only inputs', () => {
-    isTauriRuntimeMock.mockReturnValue(true)
+    isElectronRuntimeMock.mockReturnValue(true)
     userAgent = 'Macintosh; Intel Mac OS X 10_15_7'
     const dispose = installMacOSInputArrowKeyGuard()
     const disabledInput = createInput('hello', 5, 5)

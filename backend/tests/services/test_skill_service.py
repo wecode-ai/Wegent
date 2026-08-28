@@ -49,6 +49,9 @@ description: "Test skill for debugging"
 version: "1.0.0"
 author: "Test Author"
 tags: ["test", "debug"]
+runtime:
+  returnDirectTools:
+    - create_async_video_card
 ---
 
 # Test Skill
@@ -66,6 +69,7 @@ This is a test skill.
         assert result["version"] == "1.0.0"
         assert result["author"] == "Test Author"
         assert result["tags"] == ["test", "debug"]
+        assert result["runtime"] == {"returnDirectTools": ["create_async_video_card"]}
         assert result["file_size"] == len(zip_content)
         assert len(result["file_hash"]) == 64  # SHA256 hex length
 

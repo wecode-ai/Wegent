@@ -4,7 +4,8 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { ProjectSpaceDetailServiceMap } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { getLocalExecutorStatus } from '@/tauri/localExecutor'
+import { getLocalExecutorStatus } from '@/desktop/localExecutor'
+import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import type { DeviceInfo } from '@/types/devices'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
 import type { LocatedProjectSpace } from './projectSpaceSelection'
@@ -43,17 +44,6 @@ const CREATE_TASK_EXAMPLE = `curl -X POST 'https://<host>/api/v1/cloud-projects/
   -H 'Content-Type: application/json' \\
   -H 'Authorization: Bearer wg-<personal-api-key>' \\
   -d '{"title":"检查云端运行状态","description":"通过 API 创建","priority":"high","tags":["api"]}'`
-
-function deviceIsCurrent(device: DeviceInfo, localDeviceId: string | null): boolean {
-  if (localDeviceId) {
-    return (
-      device.device_id === localDeviceId ||
-      device.app_device_id === localDeviceId ||
-      device.socket_device_id === localDeviceId
-    )
-  }
-  return device.device_type === 'app'
-}
 
 function CodeExample({ testId, value }: { testId: string; value: string }) {
   const { t } = useTranslation('common')
@@ -203,8 +193,8 @@ export function ProjectSpaceSettings({
     () =>
       [...devices].sort((left, right) => {
         const currentOrder =
-          Number(deviceIsCurrent(right, localDeviceId)) -
-          Number(deviceIsCurrent(left, localDeviceId))
+          Number(isCurrentAppDevice(right, [localDeviceId])) -
+          Number(isCurrentAppDevice(left, [localDeviceId]))
         return currentOrder || left.name.localeCompare(right.name)
       }),
     [devices, localDeviceId]
@@ -304,7 +294,7 @@ export function ProjectSpaceSettings({
             ) : (
               <div className="divide-y divide-border">
                 {orderedDevices.map(device => {
-                  const current = deviceIsCurrent(device, localDeviceId)
+                  const current = isCurrentAppDevice(device, [localDeviceId])
                   const offline = device.status === 'offline'
                   return (
                     <div

@@ -54,6 +54,15 @@ export function macosSigningFingerprint(platform, identity) {
   return `developer-id:${identityHash}`
 }
 
+export function macosCodesignKeychainArguments(keychainPath) {
+  const normalizedPath = keychainPath?.trim()
+  return normalizedPath ? ['--keychain', normalizedPath] : []
+}
+
+export function macosCodesignIdentityArguments(identity, keychainPath) {
+  return [...macosCodesignKeychainArguments(keychainPath), '--sign', identity]
+}
+
 export async function signPreparedMacOsBinaries(
   directory,
   {
@@ -72,8 +81,7 @@ export async function signPreparedMacOsBinaries(
     if (!description.includes('Mach-O')) continue
 
     const args = ['--force', '--timestamp', '--options', 'runtime']
-    if (keychainPath) args.push('--keychain', keychainPath)
-    args.push('--sign', identity, candidate)
+    args.push(...macosCodesignIdentityArguments(identity, keychainPath), candidate)
     logger(`Signing bundled DeepSeek Harness binary: ${path.relative(directory, candidate)}`)
     await execute('codesign', args, directory)
     signed.push(candidate)

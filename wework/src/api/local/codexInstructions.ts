@@ -1,4 +1,4 @@
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/desktop/localExecutor'
 
 const READ_CODEX_INSTRUCTIONS_METHOD = 'runtime.codex.instructions.read'
 const WRITE_CODEX_INSTRUCTIONS_METHOD = 'runtime.codex.instructions.write'

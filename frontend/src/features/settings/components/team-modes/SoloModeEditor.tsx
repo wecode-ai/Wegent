@@ -46,6 +46,7 @@ export interface SoloModeEditorProps {
   /** Group name when scope is 'group' */
   groupName?: string
   modelCategoryType?: ModelCategoryType
+  allowGenerationPrimaryModel?: boolean
 }
 
 export default function SoloModeEditor({
@@ -63,6 +64,7 @@ export default function SoloModeEditor({
   scope,
   groupName,
   modelCategoryType,
+  allowGenerationPrimaryModel,
 }: SoloModeEditorProps) {
   const { t } = useTranslation()
 
@@ -314,6 +316,7 @@ export default function SoloModeEditor({
               scope={scope}
               groupName={groupName}
               modelCategoryType={modelCategoryType}
+              allowGenerationPrimaryModel={allowGenerationPrimaryModel}
             />
           </div>
         ) : selectedBotId !== null ? (
@@ -335,6 +338,7 @@ export default function SoloModeEditor({
               scope={scope}
               groupName={groupName}
               modelCategoryType={modelCategoryType}
+              allowGenerationPrimaryModel={allowGenerationPrimaryModel}
             />
           </div>
         ) : (

@@ -7,7 +7,16 @@ import { cn } from '@/lib/utils'
 export interface MenuOption {
   value: string
   label: string
+  icon?: ReactNode
+  ariaLabel?: string
   disabled?: boolean
+}
+
+interface MenuAction {
+  label: string
+  testId: string
+  icon?: ReactNode
+  onSelect: () => void
 }
 
 export function MenuSelect({
@@ -15,19 +24,25 @@ export function MenuSelect({
   value,
   options,
   onChange,
+  action,
   pill = false,
   disabled = false,
   placeholder,
   invalid = false,
+  field = false,
+  fullWidth = false,
 }: {
   testId: string
   value: string
   options: MenuOption[]
   onChange: (value: string) => void
+  action?: MenuAction
   pill?: boolean
   disabled?: boolean
   placeholder?: string
   invalid?: boolean
+  field?: boolean
+  fullWidth?: boolean
 }) {
   const selected = options.find(option => option.value === value)
   const selectionState = value ? 'selected' : 'unselected'
@@ -36,42 +51,69 @@ export function MenuSelect({
       testId={testId}
       disabled={disabled}
       invalid={invalid}
+      fullWidth={fullWidth}
       trigger={
         <span
           data-selection-state={selectionState}
+          data-value={value}
           data-invalid={invalid || undefined}
           className={cn(
             'inline-flex h-8 max-w-64 items-center justify-end gap-1.5 rounded-full px-2 text-sm font-medium',
+            field &&
+              'h-9 w-full max-w-none justify-between rounded-lg border border-border bg-background',
             pill && 'bg-surface',
             selectionState === 'selected' && 'text-text-primary',
             selectionState === 'unselected' && 'text-text-muted',
             invalid && 'text-destructive ring-1 ring-destructive/40'
           )}
         >
-          <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {selected?.icon}
+            <span className="truncate">{selected?.label ?? placeholder ?? value}</span>
+          </span>
           <ChevronDown className="h-4 w-4 shrink-0 text-text-secondary" />
         </span>
       }
     >
-      {close =>
-        options.map(option => (
-          <button
-            key={option.value}
-            type="button"
-            data-testid={`${testId}-option-${option.value}`}
-            disabled={option.disabled}
-            onClick={() => {
-              if (option.disabled) return
-              onChange(option.value)
-              close()
-            }}
-            className="flex h-10 w-full items-center rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            <span className="min-w-0 flex-1 truncate">{option.label}</span>
-            {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
-          </button>
-        ))
-      }
+      {close => (
+        <>
+          {options.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              data-testid={`${testId}-option-${option.value}`}
+              disabled={option.disabled}
+              aria-label={option.ariaLabel}
+              onClick={() => {
+                if (option.disabled) return
+                onChange(option.value)
+                close()
+              }}
+              className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              {option.icon}
+              <span className="min-w-0 flex-1 truncate">{option.label}</span>
+              {option.value === value ? <Check className="h-4 w-4 shrink-0" /> : null}
+            </button>
+          ))}
+          {action ? (
+            <div className="mt-1 border-t border-border pt-1">
+              <button
+                type="button"
+                data-testid={action.testId}
+                onClick={() => {
+                  action.onSelect()
+                  close()
+                }}
+                className="flex h-10 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium hover:bg-surface"
+              >
+                {action.icon}
+                <span className="min-w-0 flex-1 truncate">{action.label}</span>
+              </button>
+            </div>
+          ) : null}
+        </>
+      )}
     </PopupMenu>
   )
 }
@@ -178,6 +220,9 @@ export function PopupMenu({
   disabled = false,
   invalid = false,
   menuWidth,
+  fullWidth = false,
+  triggerClassName,
+  onOpen,
 }: {
   testId: string
   trigger: ReactNode
@@ -186,6 +231,9 @@ export function PopupMenu({
   disabled?: boolean
   invalid?: boolean
   menuWidth?: number
+  fullWidth?: boolean
+  triggerClassName?: string
+  onOpen?: () => void
 }) {
   const rootRef = useRef<HTMLSpanElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -231,14 +279,21 @@ export function PopupMenu({
   }, [close, open])
 
   return (
-    <span ref={rootRef} className="inline-flex">
+    <span ref={rootRef} className={cn('inline-flex', fullWidth && 'w-full')}>
       <button
         type="button"
         data-testid={testId}
         disabled={disabled}
         aria-invalid={invalid || undefined}
-        onClick={() => setOpen(current => !current)}
-        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={() => {
+          if (!open) onOpen?.()
+          setOpen(current => !current)
+        }}
+        className={cn(
+          'rounded-full outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:cursor-not-allowed disabled:opacity-50',
+          fullWidth && 'w-full',
+          triggerClassName
+        )}
         aria-haspopup="menu"
         aria-expanded={open}
       >

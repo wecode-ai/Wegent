@@ -6,13 +6,13 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   updateAppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import {
   getAppshotsStatus,
   openAppshotsPermissionSettings,
   type AppshotPermission,
   type AppshotsStatus,
-} from '@/tauri/appshots'
+} from '@/desktop/appshots'
 import {
   SettingsGroup,
   SettingsPage,

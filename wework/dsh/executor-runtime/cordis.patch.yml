@@ -1,0 +1,6 @@
+- insert:
+    - id: wework-executor-runtime
+      name: '@wegent/dsh-executor-runtime'
+      inject:
+        - webServer
+        - sessions

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { chmod, cp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
@@ -10,7 +11,7 @@ import { extract } from 'tar'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const lockPath = join(weworkDir, 'codex-binaries.lock.json')
-const outputRoot = join(weworkDir, 'src-tauri', 'binaries', 'codex')
+const outputRoot = join(weworkDir, 'resources', 'binaries', 'codex')
 const legacyCacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
 const DOWNLOAD_ATTEMPTS = 3
 const DOWNLOAD_RETRY_DELAY_MS = 1_000
@@ -319,9 +320,7 @@ async function main() {
     await import('node:fs/promises').then(fs => fs.readFile(lockPath, 'utf8'))
   )
   const envTarget = normalizeTarget(
-    process.env.WEWORK_CODEX_TARGET ||
-      process.env.TAURI_TARGET_TRIPLE ||
-      process.env.CARGO_BUILD_TARGET
+    process.env.WEWORK_CODEX_TARGET || process.env.CARGO_BUILD_TARGET
   )
   const requestedTarget = normalizeTarget(args.target) || envTarget || hostTarget()
   const targets = args.all

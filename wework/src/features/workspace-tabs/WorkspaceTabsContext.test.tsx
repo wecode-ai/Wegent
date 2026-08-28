@@ -12,10 +12,10 @@ const labels = {
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
-    plugins: '插件',
-    sites: '站点',
-    automations: '已安排',
-    cloud: '云端工作',
+    '/plugins': '插件',
+    '/sites': '站点',
+    '/automations': '已安排',
+    '/cloud-work': '云端工作',
   },
 }
 
@@ -31,6 +31,7 @@ function TabsState() {
       <div data-testid="active-tab-title">{activeTab.title}</div>
       <div data-testid="active-tab-route">{activeTab.contentRoute}</div>
       <div data-testid="board-tab-title">{boardTab?.title}</div>
+      <div data-testid="tab-ids">{tabs.map(tab => tab.id).join(',')}</div>
       <button type="button" onClick={() => openTab('board')}>
         新建项目空间标签
       </button>
@@ -216,6 +217,88 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(window.location.search).toContain('workspaceTab=fixed-board')
   })
 
+  test('replaces bootstrap defaults when fixed tabs load after the provider mounts', () => {
+    const fixedTabs = [
+      {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      },
+      {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+        fixed: true,
+      },
+      {
+        id: 'fixed-agent',
+        kind: 'agent' as const,
+        title: '智能体',
+        contentRoute: '/app/wegent',
+        fixed: true,
+      },
+    ]
+    const { rerender } = render(<RoutingHarness fixedTabs={[]} restoreSessionTabs={false} />)
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+
+    rerender(
+      <RoutingHarness fixedTabs={fixedTabs} startupTabId="fixed-task" restoreSessionTabs={false} />
+    )
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+    expect(screen.getByTestId('tab-ids')).toHaveTextContent('fixed-task,fixed-board,fixed-agent')
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-task')
+  })
+
+  test('keeps the current task route when delayed fixed tabs replace bootstrap tabs', () => {
+    window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-1')
+    const fixedTabs = [
+      {
+        id: 'fixed-task',
+        kind: 'task' as const,
+        title: '任务',
+        contentRoute: '/',
+        fixed: true,
+      },
+      {
+        id: 'fixed-board',
+        kind: 'board' as const,
+        title: '项目空间',
+        contentRoute: '/todo',
+        fixed: true,
+      },
+      {
+        id: 'fixed-agent',
+        kind: 'agent' as const,
+        title: '智能体',
+        contentRoute: '/app/wegent',
+        fixed: true,
+      },
+    ]
+    const { rerender } = render(<RoutingHarness fixedTabs={[]} restoreSessionTabs={false} />)
+
+    const bootstrapTaskId = screen.getByTestId('active-tab-id').textContent
+    expect(bootstrapTaskId).toMatch(/^task-/)
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-1'
+    )
+
+    rerender(
+      <RoutingHarness fixedTabs={fixedTabs} startupTabId="fixed-task" restoreSessionTabs={false} />
+    )
+
+    expect(screen.getByTestId('tab-count')).toHaveTextContent('3')
+    expect(screen.getByTestId('tab-ids')).not.toHaveTextContent(bootstrapTaskId!)
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('fixed-task')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/runtime-tasks?deviceId=local-device&taskId=runtime-1'
+    )
+  })
+
   test('renames the persisted default board tab without changing named project tabs', () => {
     localStorage.setItem(
       'wework.workspaceTabs.v3:context-test',
@@ -277,6 +360,35 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(screen.getByTestId('active-tab-title')).not.toHaveTextContent('旧标签')
     expect(localStorage.getItem('wework.workspaceTabs.v3:context-test')).toContain('old-tab')
+  })
+
+  test('does not persist a plugin route whose contribution disables session restoration', () => {
+    const defaultRuntime = window.__WEWORK_DSH_UI__
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot =>
+        slot === 'wework.route'
+          ? [
+              {
+                id: 'transient.route',
+                path: '/transient-route',
+                restorePolicy: 'none',
+                telemetryFeature: 'apps',
+              },
+            ]
+          : (defaultRuntime?.getEntries(slot) ?? []),
+      subscribe: defaultRuntime?.subscribe ?? (() => () => {}),
+      attach: defaultRuntime?.attach ?? (() => ({ update: () => {}, dispose: () => {} })),
+    }
+
+    render(<RoutingHarness />)
+    act(() => navigateTo('/transient-route'))
+
+    const persisted = JSON.parse(
+      localStorage.getItem('wework.workspaceTabs.v3:context-test') ?? 'null'
+    ) as { tabs?: Array<{ contentRoute?: string }> } | null
+    expect(persisted?.tabs?.some(tab => tab.contentRoute === '/transient-route')).toBe(false)
+
+    window.__WEWORK_DSH_UI__ = defaultRuntime
   })
 
   test('selects and updates an existing board tab for a concrete project task', () => {

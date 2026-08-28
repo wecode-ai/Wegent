@@ -7,7 +7,7 @@ sidebar_position: 26
 Wework separates product analytics, desktop error diagnostics, and service observability:
 
 - PostHog receives allowlisted product events.
-- Sentry receives React WebView errors and Tauri/Rust panics.
+- Sentry receives React WebView errors and Electron main-process exceptions.
 - Backend services and Executors continue to export traces and metrics through the OpenTelemetry Collector.
 
 ## Privacy Boundary
@@ -16,7 +16,7 @@ On first launch, Wework explicitly asks whether the user allows anonymous usage 
 
 Product analytics events must never contain chats, prompts, model responses, code, file names, file paths, repository names, terminal content, credentials, or authentication data. Product code may only call `src/telemetry/client.ts`; it must not call the PostHog or Sentry SDK directly. New events must be added to both `AnalyticsEventMap` and the runtime property allowlist.
 
-Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Tauri Sentry events remove requests, users, breadcrumbs, extra context, original exception text, source excerpts, local file paths, and local variables. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries, fragments, and credentials are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
+Before transmission, PostHog applies the event-specific allowlist again to remove SDK-added URLs, referrers, person-profile data, and other unnecessary properties; unregistered SDK-generated events are dropped. WebView and native Electron Sentry events remove requests, users, breadcrumbs, extra context, original exception text, source excerpts, local file paths, and local variables. WebView stack traces retain file locations, functions, line and column numbers, and source-map Debug IDs only for trusted Wework application resources; URL queries, fragments, and credentials are removed, while user files, external pages, and other untrusted paths are represented as `<redacted>`. Desktop E2E uses a local receiver to verify that no request is made before the user chooses, transmission starts only after explicit consent, and the real request body does not contain the test workspace path, authentication tokens, model key, or user email.
 
 Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `installation_id` tag stored in localStorage and a per-session `telemetry_session_id`; PostHog uses the SDK-generated `distinct_id` and `$session_id`. These identifiers are anonymous, independent of the authenticated account, and rotated when telemetry is disabled so data collected after re-enabling cannot be linked to data from before revocation.
 
@@ -24,21 +24,21 @@ Wework does not send account user IDs to PostHog or Sentry. Sentry uses an `inst
 
 Events cover feature adoption, funnel outcomes, and reliability outcomes that support product decisions. Ordinary button clicks are not tracked.
 
-| Domain                         | Events                                                                                     |
-| ------------------------------ | ------------------------------------------------------------------------------------------ |
-| App, navigation, and auth      | `app_started`, `feature_opened`, `authentication_completed`                                |
-| Projects and conversations     | `project_opened`, `project_created`, `project_removed`, `conversation_created`             |
+| Domain                         | Events                                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| App, navigation, and auth      | `app_started`, `feature_opened`, `authentication_completed`                                      |
+| Projects and conversations     | `project_opened`, `project_created`, `project_removed`, `conversation_created`                   |
 | Task execution                 | `task_started`, `first_response_completed`, `task_completed`, `task_interrupted`, `task_retried` |
-| Project spaces and boards      | `board_view_opened`, `board_item_created`, `board_item_moved`, `feature_action_completed`  |
-| Plugins                        | `plugin_center_opened`, `plugin_installed`, `plugin_enabled_changed`, `plugin_uninstalled` |
-| Automations                    | `automation_action_completed`                                                              |
-| Built-in browser               | `browser_navigation_completed`, `browser_download_completed`                               |
-| Cloud, deliveries, and updates | `cloud_connection_changed`, `delivery_completed`, `app_update_install_started`             |
-| Feedback and Appshots          | `feedback_submitted`, `appshot_received`                                                   |
-| Workspace panels               | `workspace_panel_added`, `workspace_panel_removed`                                          |
-| Settings                       | `setting_changed`                                                                          |
-| AI analytics                   | `$ai_trace`, `$ai_generation`, `ai_output_action_completed`, `generation_regenerated`      |
-| Privacy preference             | `telemetry_preference_changed`, emitted only after telemetry is re-enabled                 |
+| Project spaces and boards      | `board_view_opened`, `board_item_created`, `board_item_moved`, `feature_action_completed`        |
+| Plugins                        | `plugin_center_opened`, `plugin_installed`, `plugin_enabled_changed`, `plugin_uninstalled`       |
+| Automations                    | `automation_action_completed`                                                                    |
+| Built-in browser               | `browser_navigation_completed`, `browser_download_completed`                                     |
+| Cloud, deliveries, and updates | `cloud_connection_changed`, `delivery_completed`, `app_update_install_started`                   |
+| Feedback and Appshots          | `feedback_submitted`, `appshot_received`                                                         |
+| Workspace panels               | `workspace_panel_added`, `workspace_panel_removed`                                               |
+| Settings                       | `setting_changed`                                                                                |
+| AI analytics                   | `$ai_trace`, `$ai_generation`, `ai_output_action_completed`, `generation_regenerated`            |
+| Privacy preference             | `telemetry_preference_changed`, emitted only after telemetry is re-enabled                       |
 
 Cross-domain resource operations use `feature_action_completed` with bounded `domain` and `action` enums for project spaces, board items, task bindings, attachments and workspace files, AI tables, plugins, skills, MCP servers, hooks, Sites, models, Git, cloud devices, quick phrases, and archived conversations. Handled failures for critical operations use `operation_failed` with a bounded operation type and never include the error message. Resource IDs, project names, plugin names, URLs, file paths, and user input are never event properties; the only exception is the AI correlation identifiers described below, which are opaque per-run tokens rather than the raw IDs. Feature code must emit success events only after the API or native operation succeeds; rollback paths must not report success.
 
@@ -46,10 +46,10 @@ Cross-domain resource operations use `feature_action_completed` with bounded `do
 
 Wework emits PostHog AI analytics events for agent task traces, LLM generations, and user feedback. These events follow the same privacy boundary: they contain only metadata and bounded categorical values, never prompts, outputs, user text, file paths, or credentials.
 
-| Event             | Purpose                                                                                       | Key properties                                                                                                                                                                                                                                                          |
-| ----------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$ai_trace`       | One task run, emitted at run start and end.                                                   | `$ai_trace_id` (opaque per-run id minted when the run starts), `$ai_trace_phase` (`start` or `end`), `execution_target`, `duration_ms` (end only), `result` (`success`, `failure`, or `cancelled`; end only), `failure_reason` (bounded failure category; end only when result is `failure`). |
-| `$ai_generation`  | Each LLM-backed assistant response, measured from assistant start to settled.                 | `$ai_generation_id`, `$ai_trace_id` (the run's opaque trace id; the PostHog-required property that groups generations into a trace), `$ai_parent_id` (same per-run id, kept for tree nesting), `$ai_model` (runtime catalog enum), `$ai_provider` (bounded known-provider enum), `$ai_input_tokens`, `$ai_output_tokens`, `$ai_total_tokens`, `$ai_latency` (seconds), `$ai_cost` (best-effort USD estimate when the model is recognized), `result`. |
+| Event            | Purpose                                                                       | Key properties                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$ai_trace`      | One task run, emitted at run start and end.                                   | `$ai_trace_id` (opaque per-run id minted when the run starts), `$ai_trace_phase` (`start` or `end`), `execution_target`, `duration_ms` (end only), `result` (`success`, `failure`, or `cancelled`; end only), `failure_reason` (bounded failure category; end only when result is `failure`).                                                                                                                                                        |
+| `$ai_generation` | Each LLM-backed assistant response, measured from assistant start to settled. | `$ai_generation_id`, `$ai_trace_id` (the run's opaque trace id; the PostHog-required property that groups generations into a trace), `$ai_parent_id` (same per-run id, kept for tree nesting), `$ai_model` (runtime catalog enum), `$ai_provider` (bounded known-provider enum), `$ai_input_tokens`, `$ai_output_tokens`, `$ai_total_tokens`, `$ai_latency` (seconds), `$ai_cost` (best-effort USD estimate when the model is recognized), `result`. |
 
 A task is a stable resource that can be run repeatedly, so trace correlation must be scoped to a single run rather than to the task id. When a run starts, the client mints an opaque `t-<base36>` trace id and every `$ai_trace` and `$ai_generation` emitted while that run is active shares it; when the run settles the id is discarded and the next run mints a fresh one. Reusing one trace id for every run of a task would collapse separate runs into a single PostHog trace and corrupt per-run duration, token, and cost metrics. Each `$ai_generation` captures the run's trace id at assistant start, so generations stay correlated even if the run settles concurrently. If the window closes while a run is active, an `$ai_trace` `end` with `result=cancelled` is flushed so no trace is left open. The runtime allowlist enforces that `$ai_trace_id` and `$ai_parent_id` match the hashed `t-<base36>` format and `$ai_generation_id` is a UUID, so an un-hashed raw task ID can never be transmitted as a correlation property.
 
@@ -76,22 +76,22 @@ Beyond the lifecycle and AI analytics events above, the client reports bounded m
 
 Frontend build variables:
 
-| Variable                                | Purpose                                                     |
-| --------------------------------------- | ----------------------------------------------------------- |
-| `VITE_WEWORK_POSTHOG_KEY`               | PostHog project key; product events are disabled when empty |
+| Variable                                | Purpose                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `VITE_WEWORK_POSTHOG_KEY`               | PostHog project key; product events are disabled when empty                                                               |
 | `VITE_WEWORK_POSTHOG_HOST`              | PostHog ingestion endpoint; defaults to `https://us.i.posthog.com`; use `https://eu.i.posthog.com` for EU-hosted projects |
-| `VITE_WEWORK_SENTRY_DSN`                | WebView Sentry DSN                                          |
-| `VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE` | WebView performance sample rate, default `0.05`             |
-| `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`, `staging`, or `production`                   |
-| `VITE_WEWORK_RELEASE_CHANNEL`           | Release channel                                             |
+| `VITE_WEWORK_SENTRY_DSN`                | WebView Sentry DSN                                                                                                        |
+| `VITE_WEWORK_SENTRY_TRACES_SAMPLE_RATE` | WebView performance sample rate, default `0.05`                                                                           |
+| `VITE_WEWORK_TELEMETRY_ENVIRONMENT`     | `development`, `staging`, or `production`                                                                                 |
+| `VITE_WEWORK_RELEASE_CHANNEL`           | Release channel                                                                                                           |
 
-The WebView layer reads `VITE_WEWORK_SENTRY_DSN` at build time, while the native Tauri layer reads `WEWORK_SENTRY_DSN` at runtime (or embeds it at build time). Both should point to the same Sentry project; keep the two variables in sync in deployment and local development configuration. The native Tauri layer also reads `WEWORK_TELEMETRY_ENVIRONMENT`.
+The WebView layer reads `VITE_WEWORK_SENTRY_DSN` at build time, while the Electron main process reads `WEWORK_SENTRY_DSN` at runtime (or embeds it at build time). Both should point to the same Sentry project; keep the two variables in sync in deployment and local development configuration. The Electron main process also reads `WEWORK_TELEMETRY_ENVIRONMENT`.
 
 ## Defense-in-depth deployment settings
 
 Client-side scrubbing is the first line of defense, but project-level server settings must also minimize retained data.
 
-For the Sentry project used by WebView and native Tauri:
+For the Sentry project used by WebView and native Electron:
 
 - Enable `scrubIPAddresses` so Sentry does not store client IP addresses.
 - Enable `dataScrubberDefaults` and `enhancedPrivacy` to apply built-in PII scrubbing to events, breadcrumbs, and trace data.
@@ -118,7 +118,12 @@ For the Sentry project used by WebView and native Tauri:
     }
   },
   "applications": {
-    "freeform": ["remove_ips", "remove_emails", "remove_paths", "remove_tokens"],
+    "freeform": [
+      "remove_ips",
+      "remove_emails",
+      "remove_paths",
+      "remove_tokens"
+    ],
     "username": ["remove_ips", "remove_emails"],
     "$string": ["remove_emails", "remove_paths", "remove_tokens"]
   }

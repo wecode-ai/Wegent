@@ -164,13 +164,16 @@ export function HoverCard({
 
   const handleFocusCapture = useCallback(
     (event: FocusEvent<HTMLDivElement>) => {
+      const focusIsInsideAnchor =
+        event.target instanceof Node && Boolean(anchorRef.current?.contains(event.target))
       if (
         shouldPinInteraction(event.target) &&
         event.target instanceof Node &&
-        !anchorRef.current?.contains(event.target)
+        !focusIsInsideAnchor
       ) {
         pin()
       }
+      if (focusIsInsideAnchor && !openOnFocus) return
       focusWithinRef.current = true
       if (openOnFocus) {
         open()
@@ -181,12 +184,18 @@ export function HoverCard({
     [keepOpen, open, openOnFocus, pin, shouldPinInteraction]
   )
 
-  const handleBlurCapture = useCallback(() => {
-    focusWithinRef.current = false
-    window.queueMicrotask(() => {
-      if (!focusWithinRef.current) scheduleClose()
-    })
-  }, [scheduleClose])
+  const handleBlurCapture = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      focusWithinRef.current = false
+      if (event.relatedTarget instanceof Node && anchorRef.current?.contains(event.relatedTarget)) {
+        return
+      }
+      window.queueMicrotask(() => {
+        if (!focusWithinRef.current) scheduleClose()
+      })
+    },
+    [scheduleClose]
+  )
 
   useEffect(
     () => () => {
