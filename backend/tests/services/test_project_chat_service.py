@@ -2141,6 +2141,123 @@ def test_device_runtime_projection_invalidates_only_material_issue_changes(
     ]
 
 
+def test_device_runtime_event_projects_directly_bound_issue_status(
+    test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = create_project(test_db, test_user)
+    task = LoopItem(
+        id="CHAT-RUNTIME-DIRECT-1",
+        cloud_project_id=project.id,
+        sequence_number=2,
+        title="Direct runtime projection",
+        description="",
+        status="in_review",
+        priority="none",
+        sort_order=0,
+        created_by_user_id=test_user.id,
+    )
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project.id),
+        loop_item_id=task.id,
+        task_user_id=test_user.id,
+        device_id="local-device",
+        task_id="runtime-direct-1",
+        linked_by_user_id=test_user.id,
+    )
+    test_db.add_all([task, binding])
+    test_db.commit()
+
+    @contextmanager
+    def same_session() -> Iterator[Session]:
+        try:
+            yield test_db
+            test_db.commit()
+        except Exception:
+            test_db.rollback()
+            raise
+
+    published: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.get_db_session",
+        same_session,
+    )
+    monkeypatch.setattr(
+        "app.api.ws.device_namespace.publish_loop_item_changed",
+        lambda db, *, item, reason, actor_user_id: published.append(
+            (item.id, reason)
+        ),
+    )
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 1,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_progress"
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.completed",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 2,
+                "data": {"value": "Done"},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_review"
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 1,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_review"
+
+    _project_chat_runtime_event_sync(
+        "local-device",
+        {
+            "event": "response.created",
+            "payload": {
+                "taskId": "runtime-direct-1",
+                "eventSeq": 3,
+                "data": {},
+            },
+        },
+        test_user.id,
+    )
+
+    test_db.refresh(task)
+    assert task.status == "in_progress"
+    assert published == [
+        (task.id, "runtime_execution_status"),
+        (task.id, "runtime_execution_status"),
+        (task.id, "runtime_execution_status"),
+    ]
+
+
 def test_device_runtime_event_projects_bound_workflow_task_status(
     test_db: Session, test_user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
