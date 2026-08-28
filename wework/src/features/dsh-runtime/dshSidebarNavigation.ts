@@ -8,7 +8,7 @@ import { getDshSlotEntries, WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from './
 export interface WeworkDshSidebarNavigationItem extends WeworkDshSlotEntry {
   activeItem?: string
   experimental?: boolean
-  icon?: 'alarm-clock' | 'applications' | 'plug'
+  icon?: string
   label: string
   labelKey?: string
   module?: string

@@ -1975,6 +1975,43 @@ describe('DesktopSidebar', () => {
     expect(window.location.pathname).toBe('/sites')
   })
 
+  test('keeps a dynamic DSH navigation icon mounted across unrelated sidebar rerenders', async () => {
+    const runtime = window.__WEWORK_DSH_UI__
+    expect(runtime).toBeDefined()
+    const navigation = [
+      ...runtime!.getEntries(WEWORK_DSH_SLOTS.sidebarNavigation),
+      {
+        id: 'shield.navigation',
+        label: 'Shield',
+        icon: 'shield',
+        path: '/shield',
+        surface: 'route',
+        testId: 'shield-button',
+      },
+    ]
+    window.__WEWORK_DSH_UI__ = {
+      ...runtime!,
+      getEntries: slotName =>
+        slotName === WEWORK_DSH_SLOTS.sidebarNavigation
+          ? navigation
+          : runtime!.getEntries(slotName),
+    }
+    renderSidebar()
+
+    const shieldButton = screen.getByTestId('shield-button')
+    const shieldIcon = await waitFor(() => {
+      const icon = shieldButton.querySelector('.lucide-shield')
+      expect(icon).toBeInTheDocument()
+      return icon
+    })
+
+    fireEvent.scroll(screen.getByTestId('sidebar-worklists-scroll'), {
+      target: { scrollTop: 24 },
+    })
+
+    expect(shieldButton.querySelector('.lucide-shield')).toBe(shieldIcon)
+  })
+
   test('removes sidebar entries when their DSH plugins stop contributing them', () => {
     const runtime = window.__WEWORK_DSH_UI__
     expect(runtime).toBeDefined()
