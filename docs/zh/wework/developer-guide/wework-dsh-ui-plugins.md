@@ -15,6 +15,7 @@ client 插件通过 slot 注入。不要再创建 Wework 私有 manifest、动�
 | ------------------------------ | ------------------------ | --------------------------------- |
 | `wework.app`                   | 产品切换器与应用 surface | `id`、`label`、`mode`             |
 | `wework.route`                 | 顶层辅助页面             | `id`、`path`、`telemetryFeature`  |
+| `wework.sidebar.navigation`    | 左侧边栏导航入口         | `id`、`path`、`label`             |
 | `wework.settings.page`         | 设置导航与设置内容       | `id`、`path`、`label`、`category` |
 | `wework.workspace.tab`         | 顶部可关闭工作区 Tab     | `id`、`label`                     |
 | `wework.workspace.sidebar.tab` | 右侧工作区面板 Tab       | `id`、`label`                     |
@@ -72,6 +73,12 @@ export function apply(ctx) {
 `wework` 静态属性，再调用 `ctx.slots.register`。因此发现、依赖、渲染与释放仍由
 DSH 管理，没有第二套 Wework 注册表。
 
+`wework.route` 与 `wework.sidebar.navigation` 的 `icon` 字段接受任意有效的
+[Lucide 图标名称](https://lucide.dev/icons/)，使用 kebab-case，例如
+`shield`、`rocket` 或 `gamepad-2`。Wework 会按名称动态加载图标；名称无效或
+未填写时回退为默认九宫格图标。旧插件使用的 `applications` 名称会继续映射到
+默认应用图标，无需逐个在 Wework 核心中注册图标白名单。
+
 不要直接调用 `ctx.slots.register` 注册到尚未存活的 Wework slot，也不要把
 Wework 描述直接塞进 DSH options。DSH 会在宿主 slot 挂载、卸载或重建时重新执行
 `slots.inject` 回调，并自动收敛插件生命周期。
@@ -91,6 +98,28 @@ Wework 当前随 Core DSH 打包以下 UI 插件：
 声明 Wework 私有的 `component` id，由 Wework React 树渲染已有页面实现，以继承
 Auth、Cloud、Workbench 等宿主 Context。第三方插件不应使用该字段，应把自己的
 React 组件传给 `ctx.wework.ui.register` 的第四个参数。
+
+## 插件同步与指纹重载
+
+Core DSH 的受管插件（`weworkCorePlugins` 组件，包含上节列出的内置插件以及
+`@wegent/dsh-app-wework` 等宿主插件）在 prepare profile 时同步到 profile 的
+`node_modules`。profile 写入 `.wework-runtime.json` stamp，记录 `dshVersion`、
+`sourceFingerprint`（宿主）、`managedUiPlugins` 与 `corePluginsFingerprint`
+（插件内容指纹）。
+
+DSH 进程每次启动都会重新加载插件 JS；stamp 只决定是否需要重刷 profile：
+
+- 宿主指纹（版本或 `sourceFingerprint`）变化 → 完整重刷：重写 `package.json`
+  依赖路径并重新同步受管插件副本。
+- 插件指纹变化 → 删除并重新复制受管插件副本，清理源中已不存在的残留文件。
+- 两者都未变化 → fast path：不动文件，仅修复 node-pty 权限。
+
+插件指纹优先取 `WEWORK_CORE_PLUGINS_SHA256`（来自组件更新激活态的
+`contentSha256`，生产零成本）；未提供时对插件根目录做确定性内容哈希兜底，
+算法与组件内容指纹一致，因此 dev 兜底值与生产环境变量值对同一内容相同。
+旧版 stamp 缺少 `corePluginsFingerprint` 时自动视为不匹配，首次升级重刷一次
+后保持稳定。用户手动安装的插件仍通过 `recoverInstalledDshDependencies`
+保留，不受重刷影响。
 
 ## 打包与验证
 

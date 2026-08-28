@@ -726,6 +726,7 @@ function mergeRuntimeProjects(
             kind: 'remote',
             source: 'remote_project',
             name: existing.project.name,
+            sidebarOrder: existing.project.sidebarOrder,
             pinned: existing.project.pinned,
             pinnedOrder: existing.project.pinnedOrder,
             active: existing.project.active,
@@ -752,6 +753,18 @@ function mergeRuntimeProjects(
   secondaryProjects.forEach(upsertProject)
 
   return Array.from(projects.values())
+    .map((project, index) => ({ project, index }))
+    .sort((left, right) => {
+      const leftOrder = left.project.project.sidebarOrder
+      const rightOrder = right.project.project.sidebarOrder
+      if (leftOrder != null && rightOrder != null && leftOrder !== rightOrder) {
+        return leftOrder - rightOrder
+      }
+      if (leftOrder != null && rightOrder == null) return -1
+      if (leftOrder == null && rightOrder != null) return 1
+      return left.index - right.index
+    })
+    .map(({ project }) => project)
 }
 
 function isRuntimeRemoteProjectDescriptor(project: RuntimeProjectWork): boolean {

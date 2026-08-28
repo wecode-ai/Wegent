@@ -931,7 +931,7 @@ describe('CloudTodoWorkspace', () => {
     expect(progressPopup).toHaveTextContent('先检查项目看板如何组织运行中的消息。')
     expect(progressPopup).toHaveTextContent('pnpm test')
     expect(screen.getByTestId('cloud-todo-card-popup-scroll-WEG-1')).toHaveClass(
-      'max-h-72',
+      'max-h-[min(68vh,42rem)]',
       'overflow-y-auto'
     )
 

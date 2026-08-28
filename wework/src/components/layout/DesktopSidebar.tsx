@@ -12,7 +12,6 @@ import {
   FolderPlus,
   Globe2,
   GitCompareArrows,
-  Grid3X3,
   Laptop,
   Loader2,
   MessageCircle,
@@ -20,7 +19,6 @@ import {
   MessageSquarePlus,
   Pause,
   Pin,
-  Plug,
   Plus,
   RotateCw,
   Search,
@@ -56,6 +54,7 @@ import { AppReleaseNotesDialog } from '@/features/app-update/AppReleaseNotesDial
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import type { WeworkInstalledReleaseNotes } from '@/features/app-update/app-release-notes'
 import type { WeworkDshSidebarNavigationItem } from '@/features/dsh-runtime/dshSidebarNavigation'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { getRuntimeTaskReminderItemKey } from '@/features/workbench/runtimeTaskReminders'
@@ -402,11 +401,6 @@ interface ArchiveConversationsConfirmDialogProps {
 const RUNTIME_ARCHIVE_UNDO_DELAY_MS = 3000
 const EMPTY_RUNTIME_TASK_KEYS: ReadonlySet<string> = new Set()
 const EMPTY_SPLIT_GROUP_MEMBERSHIPS: Readonly<Record<string, WorkbenchSplitGroupMembership>> = {}
-const DSH_SIDEBAR_NAVIGATION_ICONS = {
-  'alarm-clock': AlarmClock,
-  applications: Grid3X3,
-  plug: Plug,
-} as const
 const PROJECT_APPEARANCE_COLORS = [
   'blue',
   'green',
@@ -4056,11 +4050,16 @@ export function DesktopSidebar({
                   )
                 }
 
-                const Icon = DSH_SIDEBAR_NAVIGATION_ICONS[item.icon ?? 'applications'] ?? Grid3X3
                 return (
                   <DesktopSidebarNavItem
                     key={item.id}
-                    icon={Icon}
+                    iconElement={
+                      <DshIcon
+                        name={item.icon}
+                        aria-hidden="true"
+                        className="h-4 w-4 text-current"
+                      />
+                    }
                     label={t(item.labelKey ?? item.id, item.label)}
                     testId={item.testId ?? `dsh-sidebar-navigation-${item.id}`}
                     selected={activeItem === (item.activeItem ?? item.id)}
