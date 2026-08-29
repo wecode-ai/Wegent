@@ -3344,7 +3344,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     return ensurePromise
   }
 
-  const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const getLocalDeviceId = async () => localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
 
   const executeCommand = async (
     deviceId: string,

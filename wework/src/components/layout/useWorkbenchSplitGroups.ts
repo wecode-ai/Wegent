@@ -104,17 +104,12 @@ export function useWorkbenchSplitGroups({
     ) {
       return
     }
-    const isInitialActivation =
-      previousActivePane === null ||
-      previousActivePane.storageKey !== storageKey ||
-      previousActivePane.legacyStorageKey !== legacyStorageKey
     previousActivePaneRef.current = {
       storageKey,
       legacyStorageKey,
       paneKey: activePaneKey,
     }
     if (
-      isInitialActivation &&
       activePaneKey.startsWith('blank:') &&
       collectWorkbenchPaneKeys(getActiveWorkbenchLayout(state).root).some(key =>
         key.startsWith('runtime:')
