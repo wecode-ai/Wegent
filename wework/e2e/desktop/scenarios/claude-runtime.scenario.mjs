@@ -163,6 +163,7 @@ async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
         stableSince = null
       }
     } catch (error) {
+      stableSince = null
       lastError = error
     }
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
