@@ -144,27 +144,35 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
 
 async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
   const taskId = taskRowTestId.slice('runtime-local-task-row-'.length)
-  const runningSelector =
-    `${ACTIVE_WORKSPACE_TAB_SELECTOR} ` + `[data-testid="runtime-local-task-running-${taskId}"]`
   const startedAt = Date.now()
+  let stableSince = null
+  let lastStatus = null
   let lastError = null
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      if (
-        Number(
-          await control.command('getElementCount', runningSelector, {
-            visible: true,
-          })
-        ) === 0
-      ) {
-        return
+      const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      lastStatus = snapshot.pane?.status ?? null
+      const ready =
+        snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+        lastStatus?.isBusy === false &&
+        lastStatus.canSendQueuedMessage === true
+      if (ready) {
+        stableSince ??= Date.now()
+        if (Date.now() - stableSince >= 500) return
+      } else {
+        stableSince = null
       }
     } catch (error) {
       lastError = error
     }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw lastError ?? new Error(`Claude Code task ${taskId} did not become visibly idle`)
+  throw (
+    lastError ??
+    new Error(
+      `Claude Code task ${taskId} did not become ready for follow-up: ${JSON.stringify(lastStatus)}`
+    )
+  )
 }
 
 async function configureClaude(control, executablePath, version, timeoutMs) {
