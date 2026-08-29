@@ -1,6 +1,7 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import i18n from '@/i18n'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { EMPTY_TRAY_MENU_TASK_GROUPS, type TrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
 
@@ -47,6 +48,8 @@ export function syncTrayMenuState(
 }
 
 export function installTraySettingsNavigation() {
+  if (getDesktopWindowLabel() !== 'main') return
+
   if (!trayActionPollingInstalled) {
     trayActionPollingInstalled = true
     subscribeDesktopHostEvents(event => {

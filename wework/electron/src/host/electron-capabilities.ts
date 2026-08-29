@@ -168,10 +168,7 @@ export function createElectronCapabilityRouter(
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
-    desktopServices.events.wait(
-      integerParam(params, 'after') ?? 0,
-      integerParam(params, 'timeoutMs') ?? 30_000
-    )
+    desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>

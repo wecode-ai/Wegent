@@ -7,10 +7,12 @@ describe('desktop host events', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
-  test('shares one long-poll loop across subscribers and advances the cursor', async () => {
+  test('shares one bounded poll loop across subscribers and advances the cursor', async () => {
+    vi.useFakeTimers()
     let resolveFirstRequest:
       | ((value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void)
       | null = null
@@ -25,7 +27,7 @@ describe('desktop host events', () => {
       .mockImplementation(
         () =>
           new Promise(() => {
-            // Keep the next long poll pending until the listeners are removed.
+            // Keep the next poll pending until the listeners are removed.
           })
       )
     vi.stubGlobal('fetch', fetchMock)
@@ -48,16 +50,20 @@ describe('desktop host events', () => {
       }),
     })
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(firstHandler).toHaveBeenCalledOnce())
     expect(firstHandler).toHaveBeenCalledOnce()
     expect(secondHandler).toHaveBeenCalledOnce()
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       capability: 'desktop.events',
-      params: { after: 0, timeoutMs: 30_000 },
+      params: { after: 0 },
     })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       capability: 'desktop.events',
-      params: { after: 1, timeoutMs: 30_000 },
+      params: { after: 1 },
     })
     expect(window.sessionStorage.getItem('wework.desktopHostEventCursor')).toBe('1')
 

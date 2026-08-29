@@ -1,14 +1,12 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import { DesktopHostEventBroker } from './desktop-host-events.js'
 
 describe('DesktopHostEventBroker', () => {
-  test('resolves a pending wait when an event is published', async () => {
+  test('returns events published after the requested sequence', () => {
     const broker = new DesktopHostEventBroker()
-    const pending = broker.wait(0)
-
     broker.publish('tray.action', { type: 'open-settings' })
 
-    await expect(pending).resolves.toEqual({
+    expect(broker.read(0)).toEqual({
       events: [
         {
           sequence: 1,
@@ -21,18 +19,16 @@ describe('DesktopHostEventBroker', () => {
     })
   })
 
-  test('returns an empty heartbeat batch after the requested timeout', async () => {
-    vi.useFakeTimers()
+  test('reports when the requested sequence fell out of retained history', () => {
     const broker = new DesktopHostEventBroker()
-    const pending = broker.wait(0, 100)
+    for (let index = 0; index < 1026; index += 1) {
+      broker.publish('browser.event', { index })
+    }
 
-    await vi.advanceTimersByTimeAsync(100)
-
-    await expect(pending).resolves.toEqual({
-      events: [],
-      latestSequence: 0,
-      historyLost: false,
-    })
-    vi.useRealTimers()
+    const batch = broker.read(1)
+    expect(batch.historyLost).toBe(true)
+    expect(batch.latestSequence).toBe(1026)
+    expect(batch.events).toHaveLength(1024)
+    expect(batch.events[0]?.sequence).toBe(3)
   })
 })

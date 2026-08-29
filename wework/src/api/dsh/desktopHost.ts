@@ -32,6 +32,7 @@ type DesktopHostEventHandler = (event: DesktopHostEvent) => void
 
 const desktopHostEventHandlers = new Set<DesktopHostEventHandler>()
 const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
+const DESKTOP_HOST_EVENT_POLL_INTERVAL_MS = 500
 let desktopHostEventAfter = loadDesktopHostEventCursor()
 let desktopHostEventLoop: Promise<void> | null = null
 let desktopHostEventLoopGeneration = 0
@@ -83,19 +84,24 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
     try {
       const batch = await invokeDesktopHost<DesktopHostEventBatch>('desktop.events', {
         after: desktopHostEventAfter,
-        timeoutMs: 30_000,
       })
+      if (desktopHostEventLoopGeneration !== generation) return
       desktopHostEventAfter = batch.latestSequence
       saveDesktopHostEventCursor(desktopHostEventAfter)
       for (const event of batch.events) {
         desktopHostEventHandlers.forEach(handler => handler(event))
       }
+      await waitForNextDesktopHostEventPoll()
     } catch (error) {
       if (desktopHostEventLoopGeneration !== generation) return
       console.error('[Wework] Failed to receive Electron host events', error)
-      await new Promise(resolve => window.setTimeout(resolve, 1_000))
+      await waitForNextDesktopHostEventPoll()
     }
   }
+}
+
+function waitForNextDesktopHostEventPoll(): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, DESKTOP_HOST_EVENT_POLL_INTERVAL_MS))
 }
 
 function loadDesktopHostEventCursor(): number {
