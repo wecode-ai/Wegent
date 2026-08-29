@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
@@ -22,6 +22,8 @@ const labels = {
 function TabsState() {
   const { activeTab, closeTab, openTab, selectTab, tabs, updateActiveTab } = useWorkspaceTabs()
   const boardTab = tabs.find(tab => tab.kind === 'board')
+  const backgroundTabIdRef = useRef<string | null>(null)
+  const capturedCloseTabRef = useRef<typeof closeTab | null>(null)
 
   return (
     <>
@@ -55,6 +57,45 @@ function TabsState() {
         onClick={() => updateActiveTab({ contentRoute: '/sites?app_type=smart_app' })}
       >
         打开智能工作台市场
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const tab = openTab('auxiliary', {
+            title: '后台智能工作台',
+            contentRoute: '/app/harness-background',
+          })
+          backgroundTabIdRef.current = tab.id
+        }}
+      >
+        打开后台智能工作台
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const applicationsTab = tabs.find(tab => tab.contentRoute.startsWith('/sites?'))
+          if (applicationsTab) selectTab(applicationsTab.id)
+        }}
+      >
+        返回智能工作台列表
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          capturedCloseTabRef.current = closeTab
+        }}
+      >
+        开始异步关闭
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (backgroundTabIdRef.current) {
+            capturedCloseTabRef.current?.(backgroundTabIdRef.current)
+          }
+        }}
+      >
+        完成异步关闭
       </button>
     </>
   )
@@ -458,6 +499,29 @@ describe('WorkspaceTabsProvider routing', () => {
         }}
       />
     )
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('app_type')).toBe('smart_app')
+    expect(params.has('view')).toBe(false)
+  })
+
+  test('does not restore a stale route when an asynchronous tab close finishes', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
+    )
+    render(<RoutingHarness />)
+
+    act(() => screen.getByRole('button', { name: '打开后台智能工作台' }).click())
+    act(() => screen.getByRole('button', { name: '返回智能工作台列表' }).click())
+    act(() => screen.getByRole('button', { name: '开始异步关闭' }).click())
+    act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+
+    act(() => screen.getByRole('button', { name: '完成异步关闭' }).click())
 
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
     const params = new URLSearchParams(window.location.search)
