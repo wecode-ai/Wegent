@@ -1149,7 +1149,6 @@ async function main() {
       WEWORK_EXECUTOR_SIDECAR: executorBinary,
       WEWORK_DESKTOP_RUNTIME: 'electron',
       WEWORK_EXECUTOR_PATH: executorBinary,
-      WEWORK_APP_IDENTIFIER: appIdentifier,
       WEWORK_USER_DATA_DIR: electronUserDataDirectory,
       ...(RUNS_PLUGIN_E2E && shouldRunPluginSegment('core-dsh-ui-plugin-composition')
         ? { WEWORK_E2E_EMPTY_CORE_DSH_UI_PROFILE: '1' }
@@ -1190,6 +1189,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
