@@ -209,7 +209,21 @@ where
         )
     }
 
-    pub(crate) fn new_for_app_sidecar_with_shared_runtime_work_handler(
+    pub fn new_for_app_sidecar_with_shared_runtime_work_handler(
+        config: LocalBackendConfig,
+        transport: T,
+        runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
+        runtime_event_rx: broadcast::Receiver<Value>,
+    ) -> Self {
+        Self::new_for_app_sidecar_with_event_hub(
+            config,
+            transport,
+            runtime_work_handler,
+            ExecutorEventHub::from_receiver(runtime_event_rx),
+        )
+    }
+
+    pub(crate) fn new_for_app_sidecar_with_event_hub(
         config: LocalBackendConfig,
         transport: T,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
@@ -393,6 +407,7 @@ where
                                 event_sequence(&event).unwrap_or(delivered_sequence);
                         }
                         Err(error) => {
+                            connection_status.store(false, Ordering::Release);
                             write_executor_error_line(&format_executor_log(
                                 "runtime event relay paused until reconnect",
                                 &[("error", error)],
@@ -425,13 +440,11 @@ where
                             {
                                 Ok(()) => delivered_sequence = sequence,
                                 Err(error) => {
+                                    connection_status.store(false, Ordering::Release);
                                     write_executor_error_line(&format_executor_log(
                                         "runtime event relay paused until reconnect",
                                         &[("error", error)],
                                     ));
-                                    while connection_status.load(Ordering::Acquire) {
-                                        sleep(RUNTIME_EVENT_CONNECTION_POLL_INTERVAL).await;
-                                    }
                                     break;
                                 }
                             }
@@ -1436,7 +1449,7 @@ mod tests {
         let runtime_work_handler: Arc<dyn RuntimeWorkHandler> = Arc::new(
             RuntimeWorkRpcHandler::with_event_sender("local-app-device", "/bin/false", event_tx),
         );
-        let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        let runner = LocalBackendRunner::new_for_app_sidecar_with_event_hub(
             backend_config("local-device"),
             SocketIoTransport::default(),
             runtime_work_handler,

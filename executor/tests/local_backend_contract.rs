@@ -670,12 +670,14 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         handler,
         event_tx.subscribe(),
     );
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_emit_event("device:heartbeat").await;
 
     event_tx
         .send(json!({
@@ -685,27 +687,24 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         }))
         .unwrap();
 
-    timeout(Duration::from_secs(3), async {
-        loop {
-            if !transport.emits().is_empty() {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    transport.wait_for_emit_event("runtime:event").await;
+    runner_task.abort();
+    let _ = runner_task.await;
 
-    let emits = transport.emits();
+    let emits = transport.emits_for_event("runtime:event");
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "runtime:event");
     assert_eq!(emits[0].payload["event"], "runtime.task.completed");
 }
 
 #[tokio::test]
-async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
+async fn local_backend_replays_runtime_events_after_reconnecting() {
     let transport = RecordingTransport::with_emit_results(vec![
+        Ok(()),
         Err("Socket.IO client is not connected".to_owned()),
+        Err("heartbeat failed before reconnect".to_owned()),
+        Err("heartbeat failed before reconnect".to_owned()),
+        Ok(()),
         Ok(()),
     ]);
     let (event_tx, _) = broadcast::channel(8);
@@ -714,12 +713,19 @@ async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
-        local_backend_config(),
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(100);
+    config.heartbeat_timeout = Duration::from_millis(5);
+    config.reconnect_delay = Duration::from_millis(1);
+    config.reconnect_delay_max = Duration::from_millis(1);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        config,
         transport.clone(),
         handler,
         event_tx.subscribe(),
     );
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_emit_event("device:heartbeat").await;
     let event = json!({
         "type": "event",
         "event": "runtime.task.completed",
@@ -728,12 +734,14 @@ async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
 
     event_tx.send(event.clone()).unwrap();
 
-    let emits = transport.wait_for_emits(2).await;
+    let emits = transport.wait_for_emit_count("runtime:event", 2).await;
+    runner_task.abort();
+    let _ = runner_task.await;
     assert_eq!(emits.len(), 2);
     assert_eq!(emits[0].event, "runtime:event");
-    assert_eq!(emits[0].payload, event);
     assert_eq!(emits[1].event, "runtime:event");
-    assert_eq!(emits[1].payload, event);
+    assert_eq!(emits[0].payload["event"], "runtime.task.completed");
+    assert_eq!(emits[1].payload["event"], "runtime.task.completed");
 }
 
 #[test]
@@ -877,6 +885,27 @@ impl RecordingTransport {
         })
         .await
         .unwrap()
+    }
+
+    async fn wait_for_emit_count(&self, event: &str, count: usize) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let emits = self.emits_for_event(event);
+                if emits.len() >= count {
+                    return emits;
+                }
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    fn emits_for_event(&self, event: &str) -> Vec<RecordedCall> {
+        self.emits()
+            .into_iter()
+            .filter(|emit| emit.event == event)
+            .collect()
     }
 }
 

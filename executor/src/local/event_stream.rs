@@ -64,7 +64,18 @@ impl ExecutorEventHub {
         }
     }
 
+    pub fn from_receiver(receiver: broadcast::Receiver<Value>) -> Self {
+        let (raw_tx, _) = broadcast::channel(1);
+        let hub = Self::new(raw_tx);
+        hub.start(receiver);
+        hub
+    }
+
     pub fn ensure_started(&self) {
+        self.start(self.raw_tx.subscribe());
+    }
+
+    fn start(&self, mut receiver: broadcast::Receiver<Value>) {
         if self
             .started
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -73,7 +84,6 @@ impl ExecutorEventHub {
             return;
         }
 
-        let mut receiver = self.raw_tx.subscribe();
         let hub = self.clone();
         tokio::spawn(async move {
             let mut pending = VecDeque::<(String, Value)>::new();
