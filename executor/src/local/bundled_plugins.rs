@@ -4,15 +4,18 @@
 
 use std::{
     env, fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 pub const BUNDLED_PLUGIN_MARKETPLACE_SOURCE_ENV: &str = "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const MARKETPLACE_ID: &str = "wework-personal";
+const CONTENT_HASH_FILE: &str = ".wework-content-sha256";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +24,7 @@ pub struct BundledPluginMarketplace {
     path: String,
     plugin_count: usize,
     default_plugin_names: Vec<String>,
+    content_hash: String,
 }
 
 pub fn initialize_bundled_plugin_marketplace() -> Result<BundledPluginMarketplace, String> {
@@ -51,6 +55,20 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         return Err("Bundled Codex and Claude plugin names must match".to_owned());
     }
     let default_plugin_names = marketplace_default_plugin_names(&codex_manifest)?;
+    let content_hash = directory_content_hash(source)?;
+
+    if destination.is_dir()
+        && fs::read_to_string(destination.join(CONTENT_HASH_FILE))
+            .is_ok_and(|stored| stored.trim() == content_hash)
+    {
+        return Ok(BundledPluginMarketplace {
+            id: MARKETPLACE_ID.to_owned(),
+            path: destination.display().to_string(),
+            plugin_count: codex_plugins.len(),
+            default_plugin_names,
+            content_hash,
+        });
+    }
 
     let parent = destination.parent().ok_or_else(|| {
         format!(
@@ -66,6 +84,12 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         let _ = remove_existing_path(&staging);
         return Err(error);
     }
+    fs::write(staging.join(CONTENT_HASH_FILE), format!("{content_hash}\n")).map_err(|error| {
+        format!(
+            "Failed to write bundled marketplace content hash in {}: {error}",
+            staging.display()
+        )
+    })?;
     remove_existing_path(destination)?;
     fs::rename(&staging, destination).map_err(|error| {
         format!(
@@ -79,7 +103,71 @@ fn initialize_bundled_plugin_marketplace_from_paths(
         path: destination.display().to_string(),
         plugin_count: codex_plugins.len(),
         default_plugin_names,
+        content_hash,
     })
+}
+
+fn directory_content_hash(root: &Path) -> Result<String, String> {
+    let mut hasher = Sha256::new();
+    hash_directory_contents(root, root, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn hash_directory_contents(
+    root: &Path,
+    directory: &Path,
+    hasher: &mut Sha256,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("Failed to read {}: {error}", directory.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to read {}: {error}", directory.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| format!("Failed to hash {}: {error}", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+        if file_type.is_symlink() {
+            return Err(format!(
+                "Bundled plugin marketplace may not contain symbolic links: {}",
+                path.display()
+            ));
+        }
+        if file_type.is_dir() {
+            hasher.update(b"directory\0");
+            hasher.update(relative.as_bytes());
+            hasher.update(b"\0");
+            hash_directory_contents(root, &path, hasher)?;
+        } else if file_type.is_file() {
+            hash_file(&path, &relative, hasher)?;
+        }
+    }
+    Ok(())
+}
+
+fn hash_file(path: &Path, relative: &str, hasher: &mut Sha256) -> Result<(), String> {
+    hasher.update(b"file\0");
+    hasher.update(relative.as_bytes());
+    hasher.update(b"\0");
+    let mut file = fs::File::open(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+        if read == 0 {
+            return Ok(());
+        }
+        hasher.update(&buffer[..read]);
+    }
 }
 
 fn marketplace_plugin_names(path: &Path) -> Result<Vec<String>, String> {
@@ -244,6 +332,38 @@ mod tests {
         assert_eq!(
             fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
             "builder"
+        );
+        assert!(!marketplace.content_hash.is_empty());
+        assert_eq!(
+            fs::read_to_string(destination.join(CONTENT_HASH_FILE))
+                .unwrap()
+                .trim(),
+            marketplace.content_hash
+        );
+
+        fs::write(destination.join("local-marker"), "preserved").unwrap();
+        let unchanged =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        assert_eq!(unchanged.content_hash, marketplace.content_hash);
+        assert_eq!(
+            fs::read_to_string(destination.join("local-marker")).unwrap(),
+            "preserved"
+        );
+
+        fs::write(
+            source.join("plugins/smart-app-builder/README.md"),
+            "updated builder",
+        )
+        .unwrap();
+        let updated =
+            initialize_bundled_plugin_marketplace_from_paths(&source, &destination).unwrap();
+
+        assert_ne!(updated.content_hash, marketplace.content_hash);
+        assert!(!destination.join("local-marker").exists());
+        assert_eq!(
+            fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
+            "updated builder"
         );
     }
 

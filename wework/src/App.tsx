@@ -50,6 +50,8 @@ import {
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
+import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
+import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
@@ -1034,6 +1036,12 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />
+        ) : null}
+        {isMainWindow && isElectron ? (
+          <>
+            <IdleTaskCoordinator active={workbenchStartupReady || workbenchStartupRevealTimedOut} />
+            <WeworkIdleTasks />
+          </>
         ) : null}
         {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />

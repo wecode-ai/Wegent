@@ -1143,6 +1143,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
           plugins: workbenchPlugins,
@@ -1320,9 +1321,6 @@ if (hasSingleInstanceLock) {
       app.dock?.hide()
       dockVisible = false
     }
-    await cleanupStaleTemporaryImages().catch(error => {
-      console.error('[context-menu] failed to remove stale temporary images', error)
-    })
     preferences = new PreferencesStore(app.getPath('userData'))
     popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
       console.error('[popout-window] global shortcut failed', error)

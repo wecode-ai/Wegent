@@ -583,7 +583,11 @@ impl AppIpcServer {
                 return serde_json::to_value(marketplace)
                     .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
             }
-            let marketplace = initialize_bundled_plugin_marketplace()
+            let marketplace = tokio::task::spawn_blocking(initialize_bundled_plugin_marketplace)
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("bundled_plugins_initialize_failed", error.to_string())
+                })?
                 .map_err(|error| AppIpcError::new("bundled_plugins_initialize_failed", error))?;
             *initialized = Some(marketplace.clone());
             return serde_json::to_value(marketplace)
