@@ -183,8 +183,11 @@ describe('WorkspaceTabsProvider routing', () => {
     render(<RoutingHarness startupTabKind="board" />)
 
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/todo?projectId=default-work-items'
+    )
     expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('projectId=default-work-items')
     expect(window.location.search).toContain('workspaceTab=board-')
   })
 
@@ -218,7 +221,9 @@ describe('WorkspaceTabsProvider routing', () => {
 
     expect(screen.getByTestId('tab-count')).toHaveTextContent('2')
     expect(screen.getByTestId('active-tab-kind')).toHaveTextContent('board')
-    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/todo')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent(
+      '/todo?projectId=default-work-items'
+    )
   })
 
   test('synchronizes a missing fixed startup tab before selecting it', () => {

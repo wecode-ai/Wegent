@@ -100,6 +100,7 @@ import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
+  verifyCodexCatalogOverride,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
   verifyTelemetryPreference,
@@ -151,6 +152,8 @@ import {
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
+  FOLLOW_UP_COMPLETION_TEXT,
+  FOLLOW_UP_PROMPT,
   GIT_SEED_CONTENT,
   GIT_SEED_NAME,
   GOAL_BUSY_ONLY,
@@ -272,6 +275,7 @@ import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
+  verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
   verifyDefaultWorkspaceStartupTab,
@@ -1186,6 +1190,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
@@ -1935,6 +1940,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('telemetry-consent')) {
       phase = 'telemetry-preference'
       await verifyTelemetryPreference(control)
+      phase = 'codex-catalog-override'
+      await verifyCodexCatalogOverride(control, DEFAULT_MODEL_ID)
       verifyTelemetryRemainsDisabled(control)
       if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
@@ -2379,6 +2386,27 @@ last_updated = "2026-07-30T00:00:00Z"`
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         await verifyTrackedTaskSettledStatus(control)
+        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        control.setScenario('follow_up')
+        await sendPromptUntilScenarioRequest(
+          control,
+          composerSelector,
+          FOLLOW_UP_PROMPT,
+          'follow_up'
+        )
+        try {
+          await verifyTrackedTaskBoardRunningStatus(control, null)
+        } finally {
+          control.releaseFollowUpResponse()
+        }
+        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: FOLLOW_UP_COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,

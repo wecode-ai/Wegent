@@ -1573,6 +1573,40 @@ function RuntimePaneSessionIdentityProbe() {
   )
 }
 
+function RuntimePaneAddressHydrationProbe() {
+  const [address, setAddress] = useState<RuntimeTaskAddress>({
+    deviceId: 'device-1',
+    taskId: 'runtime-a',
+  })
+  const paneSession = useWorkbenchPaneSession({ currentRuntimeTask: address })
+
+  return (
+    <div>
+      <span data-testid="hydrated-runtime-messages">
+        {paneSession.messages.map(message => message.content).join('|')}
+      </span>
+      <span data-testid="hydrated-runtime-transcript-error">
+        {paneSession.transcriptError ?? 'none'}
+      </span>
+      <span data-testid="hydrated-runtime-goal">{paneSession.goal?.objective ?? 'none'}</span>
+      <button
+        type="button"
+        onClick={() =>
+          setAddress({
+            deviceId: 'device-1',
+            taskId: 'runtime-a',
+            runtime: 'codex',
+            threadId: 'thread-a',
+            workspacePath: '/workspace/project-alpha',
+          })
+        }
+      >
+        hydrate runtime address
+      </button>
+    </div>
+  )
+}
+
 function RuntimePlanScopeProbe() {
   const { workbench, paneSession } = useWorkbenchProbeSession()
   const runtimeTask = {
@@ -11067,6 +11101,58 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(paneSubscribeCount()).toBe(0)
   })
 
+  test('reloads an empty runtime transcript after the task address is hydrated', async () => {
+    const getRuntimeTranscript = vi.fn((address: RuntimeTaskAddress) => {
+      if (!address.workspacePath) {
+        return Promise.resolve({
+          taskId: 'runtime-a',
+          messages: [],
+        } satisfies RuntimeTranscriptResponse)
+      }
+      return Promise.resolve({
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        messages: [
+          { id: 'runtime-a:user:1', role: 'user', content: 'restored user message' },
+          {
+            id: 'runtime-a:assistant:1',
+            role: 'assistant',
+            content: 'restored assistant message',
+          },
+        ],
+      } satisfies RuntimeTranscriptResponse)
+    })
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeTranscript })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimePaneAddressHydrationProbe />, services)
+
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('hydrated-runtime-messages')).toBeEmptyDOMElement()
+    expect(screen.getByTestId('hydrated-runtime-transcript-error')).toHaveTextContent('none')
+
+    await userEvent.click(screen.getByText('hydrate runtime address'))
+
+    await waitFor(() => expect(getRuntimeTranscript).toHaveBeenCalledTimes(2))
+    expect(getRuntimeTranscript).toHaveBeenLastCalledWith({
+      deviceId: 'device-1',
+      taskId: 'runtime-a',
+      runtime: 'codex',
+      threadId: 'thread-a',
+      workspacePath: '/workspace/project-alpha',
+      limit: 50,
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('hydrated-runtime-messages')).toHaveTextContent(
+        'restored user message|restored assistant message'
+      )
+    )
+    expect(screen.getByTestId('hydrated-runtime-transcript-error')).toHaveTextContent('none')
+  })
+
   test('clears the task plan progress when starting a new chat', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
@@ -12860,6 +12946,55 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('恢复中的目标')
     )
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
+  test('reloads the runtime goal after the persisted task address is hydrated', async () => {
+    const getRuntimeGoal = vi.fn().mockImplementation(({ address }) =>
+      Promise.resolve(
+        address.workspacePath
+          ? {
+              accepted: true,
+              goal: createRuntimeGoal({
+                objective: '重载后恢复的目标',
+                status: 'active',
+              }),
+            }
+          : {
+              accepted: false,
+              goal: null,
+              error: 'runtime task was not found',
+            }
+      )
+    )
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeGoal })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimePaneAddressHydrationProbe />, services)
+
+    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledTimes(1))
+    expect(getRuntimeGoal).toHaveBeenLastCalledWith({
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+      },
+    })
+    expect(screen.getByTestId('hydrated-runtime-goal')).toHaveTextContent('none')
+
+    await userEvent.click(screen.getByText('hydrate runtime address'))
+
+    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledTimes(2))
+    expect(getRuntimeGoal).toHaveBeenLastCalledWith({
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        runtime: 'codex',
+        threadId: 'thread-a',
+        workspacePath: '/workspace/project-alpha',
+      },
+    })
+    expect(screen.getByTestId('hydrated-runtime-goal')).toHaveTextContent('重载后恢复的目标')
   })
 
   test('restores a goal task as running when reopened with a streaming transcript', async () => {

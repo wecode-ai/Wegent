@@ -216,6 +216,111 @@ describe('SystemDragBridge', () => {
     expect(mocks.invoke).not.toHaveBeenCalledWith('systemDrag.showPanel')
   })
 
+  test('keeps managed selection actions while its rendered rectangle is temporarily unavailable', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+
+    act(() => {
+      publishSelectedTextSelection('workspace-preview:/workspace/index.ts', 'selected text', {
+        left: 100,
+        top: 200,
+        width: 80,
+        height: 20,
+      })
+    })
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+
+    act(() => {
+      publishSelectedTextSelection('workspace-preview:/workspace/index.ts', 'selected text')
+    })
+    expect(screen.getByTestId('workspace-selection-actions')).toBeInTheDocument()
+  })
+
+  test('offers selection actions for Markdown workspace previews', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const root = document.createElement('div')
+    root.dataset.testid = 'workspace-markdown-preview'
+    const textNode = document.createTextNode('selected markdown')
+    root.append(textNode)
+    document.body.append(root)
+    vi.spyOn(root, 'getBoundingClientRect').mockReturnValue({
+      left: 100,
+      top: 200,
+      right: 180,
+      bottom: 220,
+      width: 80,
+      height: 20,
+      x: 100,
+      y: 200,
+      toJSON: () => ({}),
+    })
+    vi.spyOn(document, 'getSelection').mockReturnValue({
+      anchorNode: textNode,
+      focusNode: textNode,
+      getRangeAt: () => ({
+        getBoundingClientRect: () => ({
+          left: 0,
+          top: 0,
+          width: 0,
+          height: 0,
+        }),
+      }),
+      isCollapsed: false,
+      rangeCount: 1,
+      toString: () => 'selected markdown',
+    } as unknown as Selection)
+
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+  })
+
+  test('keeps captured workspace document actions across a transient selectionchange', async () => {
+    render(<SystemDragBridge />)
+    await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())
+    const root = document.createElement('div')
+    root.dataset.testid = 'workspace-markdown-preview'
+    const textNode = document.createTextNode('selected markdown')
+    root.append(textNode)
+    document.body.append(root)
+    let selectionActive = true
+    vi.spyOn(document, 'getSelection').mockImplementation(
+      () =>
+        ({
+          anchorNode: selectionActive ? textNode : null,
+          focusNode: selectionActive ? textNode : null,
+          getRangeAt: () => ({
+            getBoundingClientRect: () => ({
+              left: 100,
+              top: 200,
+              width: 80,
+              height: 20,
+            }),
+          }),
+          isCollapsed: !selectionActive,
+          rangeCount: selectionActive ? 1 : 0,
+          toString: () => (selectionActive ? 'selected markdown' : ''),
+        }) as unknown as Selection
+    )
+
+    act(() => {
+      document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    })
+    expect(await screen.findByTestId('workspace-selection-actions')).toBeInTheDocument()
+
+    selectionActive = false
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'))
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-selection-actions')).toBeInTheDocument()
+    )
+  })
+
   test('writes managed workspace selections when their drag source has no native selection data', async () => {
     render(<SystemDragBridge />)
     await waitFor(() => expect(mocks.getAppPreferences).toHaveBeenCalled())

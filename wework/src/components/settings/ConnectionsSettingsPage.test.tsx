@@ -3,6 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import {
+  deleteLocalCodexModelCatalogOverride,
+  getLocalCodexModelCatalogOverrides,
+  getLocalCodexOfficialModels,
+  saveLocalCodexModelCatalogOverride,
+} from '@/api/local/codexOfficialModels'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
 import {
@@ -76,6 +82,9 @@ vi.mock('@/api/local/codexOfficialModels', () => ({
     providers: [],
     models: [],
   }),
+  getLocalCodexModelCatalogOverrides: vi.fn().mockResolvedValue([]),
+  saveLocalCodexModelCatalogOverride: vi.fn().mockResolvedValue(undefined),
+  deleteLocalCodexModelCatalogOverride: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
@@ -129,6 +138,10 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
+const getLocalCodexOfficialModelsMock = vi.mocked(getLocalCodexOfficialModels)
+const getLocalCodexModelCatalogOverridesMock = vi.mocked(getLocalCodexModelCatalogOverrides)
+const saveLocalCodexModelCatalogOverrideMock = vi.mocked(saveLocalCodexModelCatalogOverride)
+const deleteLocalCodexModelCatalogOverrideMock = vi.mocked(deleteLocalCodexModelCatalogOverride)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -216,6 +229,10 @@ describe('ConnectionsSettingsPage', () => {
     await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
+    getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
+    getLocalCodexModelCatalogOverridesMock.mockResolvedValue([])
+    saveLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
+    deleteLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
     localStorage.clear()
     delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
@@ -615,6 +632,98 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('edits and restores the catalog for a visible Codex model', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const model = {
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      modelId: 'gpt-5.6-sol',
+      providerId: 'openai',
+      providerName: 'CodeX',
+      providerType: 'official' as const,
+      providerCurrent: true,
+      description: 'Agentic coding model',
+      hidden: false,
+      isDefault: true,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['high'],
+      supportsFastMode: false,
+    }
+    getLocalCodexOfficialModelsMock.mockResolvedValue({
+      providers: [
+        {
+          id: 'openai',
+          displayName: 'CodeX',
+          type: 'official',
+          current: true,
+          available: true,
+          error: null,
+          models: [model],
+        },
+      ],
+      models: [model],
+    })
+    const baseline = createDefaultLocalModelCatalogEntry({
+      id: 'official-gpt',
+      displayName: 'GPT 5.6 Sol',
+      toolProfile: 'custom',
+      contextWindow: 272_000,
+    })
+    baseline.slug = 'gpt-5.6-sol'
+    baseline.visibility = 'list'
+    getLocalCodexModelCatalogOverridesMock
+      .mockResolvedValueOnce([
+        {
+          slug: 'gpt-5.6-sol',
+          baseline,
+          effective: baseline,
+          overridden: false,
+        },
+      ])
+      .mockResolvedValue([
+        {
+          slug: 'gpt-5.6-sol',
+          baseline,
+          effective: { ...baseline, context_window: 300_000, max_context_window: 300_000 },
+          overridden: true,
+        },
+      ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await userEvent.click(await screen.findByTestId('codex-model-provider-toggle-openai'))
+    const editButton = await screen.findByTestId('codex-catalog-edit-openai-gpt-5.6-sol')
+    await waitFor(() => expect(editButton).toBeEnabled())
+    await userEvent.click(editButton)
+
+    const contextWindow = screen.getByTestId('local-model-context-window-input')
+    await userEvent.clear(contextWindow)
+    await userEvent.type(contextWindow, '300000')
+    await userEvent.click(screen.getByTestId('codex-catalog-editor-save'))
+
+    await waitFor(() =>
+      expect(saveLocalCodexModelCatalogOverrideMock).toHaveBeenCalledWith(
+        'gpt-5.6-sol',
+        expect.objectContaining({
+          slug: 'gpt-5.6-sol',
+          context_window: 300_000,
+          max_context_window: 300_000,
+        })
+      )
+    )
+    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+      ifIdle: true,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-catalog-restore-openai-gpt-5.6-sol')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('codex-catalog-restore-openai-gpt-5.6-sol'))
+    await waitFor(() =>
+      expect(deleteLocalCodexModelCatalogOverrideMock).toHaveBeenCalledWith('gpt-5.6-sol')
+    )
   })
 
   test('waits for a provider selection before showing model fields', async () => {
