@@ -17,6 +17,7 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { pruneHarnessRuntime } from './lib/harness-runtime-pruning.mjs'
 import { assertPortableHarnessRuntime } from './lib/portable-runtime.mjs'
 import { acquireProcessLock } from './lib/process-lock.mjs'
+import { resolveHarnessRuntimeCachePaths } from './lib/harness-runtime-cache.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const coreDshVersion = '0.1.1-rc.2'
@@ -27,13 +28,12 @@ const pluginsDirectory = path.join(source, 'plugins')
 const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
-const cacheDirectory =
-  process.env.WEWORK_HARNESS_RUNTIME_CACHE_ROOT?.trim() || path.join(root, 'node_modules', '.cache')
-const assetCacheDirectory =
-  process.env.WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT?.trim() || cacheDirectory
-const assetDirectory = path.join(assetCacheDirectory, 'harness-runtime-assets')
-const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
-const prepareLockPath = path.join(assetCacheDirectory, 'harness-runtime-prepare.lock')
+const {
+  assetDirectory,
+  cacheRoot: cacheDirectory,
+  materializedRoot,
+  prepareLockPath,
+} = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
 const materializeRequested = process.argv.includes('--materialize')
