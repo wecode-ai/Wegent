@@ -2028,6 +2028,14 @@ describe('CloudTodoWorkspace', () => {
     })
     expect(screen.getByText('Issue')).toBeInTheDocument()
     expect(screen.getByText('0 个 Issue')).toBeInTheDocument()
+    expect(screen.getByTestId('cloud-board-quick-start')).toBeVisible()
+    expect(screen.getByTestId('cloud-board-quick-start-create-action')).toBeEnabled()
+    expect(screen.getByTestId('cloud-todo-column-empty-add-inbox')).toHaveTextContent(
+      '创建第一个 Issue'
+    )
+    expect(screen.getByTestId('cloud-todo-column-empty-add-inbox')).toHaveTextContent(
+      '先记录一个需要推进的问题、目标或交付。'
+    )
   })
 
   it('clears the previous project items and shows a skeleton while switching projects', async () => {
@@ -4043,6 +4051,9 @@ describe('CloudTodoWorkspace', () => {
       const emptyAdd = screen.getByTestId(`cloud-todo-column-empty-add-${state}`)
       expect(emptyAdd).toBeVisible()
       expect(emptyAdd).toContainElement(emptyAdd.querySelector('svg'))
+      expect(emptyAdd).toHaveTextContent(
+        state === 'inbox' ? '创建第一个 Issue' : '创建 Issue 到待开始'
+      )
       expect(screen.getByTestId(`cloud-todo-column-dropzone-${state}`)).toContainElement(emptyAdd)
       expect(screen.queryByTestId(`cloud-todo-column-bottom-add-${state}`)).not.toBeInTheDocument()
     }
