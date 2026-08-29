@@ -838,6 +838,11 @@ function ScrollableMessagePaneContent({
       preserveLatestUserTurnRef.current = true
     }
 
+    if (virtualInitialPositionOwnerRef.current?.key === currentScrollKey) {
+      clearScheduledScrolls()
+      return
+    }
+
     if (messages.length === 0) {
       return
     }

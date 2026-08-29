@@ -108,6 +108,12 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     })
 
     rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="long-b"
+        messages={[message('b'), message('b-follow-up')]}
+      />
+    )
     const callback = resizeObserverCallback
     expect(callback).not.toBeNull()
     act(() => {
