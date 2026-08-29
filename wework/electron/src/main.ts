@@ -113,9 +113,10 @@ const updateBaseUrl =
 const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
-const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
-app.setPath('userData', resolve(userDataPath))
+const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
+const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+app.setPath('userData', userDataPath)
+if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
@@ -173,7 +174,11 @@ const appUpdates = new AppUpdateService({
   isPackaged: () => app.isPackaged,
   prepareInstall: async () => {
     await prepareApplicationShutdown()
-    await appUpdateLogger.flush()
+    await appUpdateLogger
+      .flush()
+      .catch(error =>
+        console.error('[app-update] failed to flush updater log before installation', error)
+      )
   },
   updateBaseUrl,
 })

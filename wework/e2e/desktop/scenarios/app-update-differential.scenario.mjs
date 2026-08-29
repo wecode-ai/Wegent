@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { appendFile, cp, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -17,6 +16,7 @@ const electronPackage = resolve(
 )
 
 export async function createDesktopScenario({
+  electronUserDataDirectory,
   homePath,
   resultDir,
   uiTimeoutMs,
@@ -56,7 +56,7 @@ export async function createDesktopScenario({
   const appUpdateConfig = await readFile(join(resourcesRoot, 'app-update.yml'), 'utf8')
   const updaterCacheDirName = yamlScalar(appUpdateConfig, 'updaterCacheDirName')
   const updaterCache = join(homePath, 'Library', 'Caches', updaterCacheDirName)
-  const appUpdateLogs = await captureAppUpdateLogs(homePath)
+  const appUpdateLogs = await captureAppUpdateLogs(electronUserDataDirectory)
   await rm(updaterCache, { recursive: true, force: true })
   await mkdir(updaterCache, { recursive: true })
   await cp(oldZip, join(updaterCache, 'update.zip'))
@@ -256,22 +256,16 @@ async function waitFor(predicate, message, timeoutMs = 30_000) {
   throw new Error(message)
 }
 
-async function captureAppUpdateLogs(homePath) {
-  const packageMetadata = JSON.parse(await readFile(electronPackage, 'utf8'))
-  const appName = packageMetadata.name
-  assert.equal(typeof appName, 'string')
-  const candidates = [
-    join(homePath, 'Library', 'Logs', appName, 'app-update.log'),
-    join(homedir(), 'Library', 'Logs', appName, 'app-update.log'),
-  ]
-  return Promise.all(
-    [...new Set(candidates)].map(async path => ({
+async function captureAppUpdateLogs(electronUserDataDirectory) {
+  const path = join(electronUserDataDirectory, 'logs', 'app-update.log')
+  return [
+    {
       path,
       offset: await stat(path)
         .then(value => value.size)
         .catch(() => 0),
-    }))
-  )
+    },
+  ]
 }
 
 async function waitForAppUpdateLog(candidates) {
