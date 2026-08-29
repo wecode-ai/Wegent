@@ -40,6 +40,7 @@ interface ManagedTextSelection {
 const SELECTION_ACTION_GAP = 8
 const WORKSPACE_SELECTION_ROOT_SELECTOR = [
   '[data-testid="workspace-file-preview"]',
+  '[data-testid="workspace-markdown-preview"]',
   '[data-testid="workspace-file-editor"]',
   '[data-testid="embedded-local-terminal"]',
   '[data-testid="remote-terminal"]',
@@ -71,6 +72,31 @@ function selectionInsideWorkspace(selection: Selection): boolean {
     closestComposed(anchor, WORKSPACE_SELECTION_ROOT_SELECTOR) &&
     closestComposed(focus, WORKSPACE_SELECTION_ROOT_SELECTOR)
   )
+}
+
+function usableSelectionRect(selection: Selection): SelectedTextRect | null {
+  const rangeRect = selection.getRangeAt(0).getBoundingClientRect()
+  if (rangeRect.width > 0 && rangeRect.height > 0) {
+    return {
+      left: rangeRect.left,
+      top: rangeRect.top,
+      width: rangeRect.width,
+      height: rangeRect.height,
+    }
+  }
+
+  const endpointRects = [selection.anchorNode, selection.focusNode]
+    .map(selectionElement)
+    .filter((element): element is Element => element !== null)
+    .map(element => element.getBoundingClientRect())
+    .filter(rect => rect.width > 0 && rect.height > 0)
+  if (endpointRects.length === 0) return null
+
+  const left = Math.min(...endpointRects.map(rect => rect.left))
+  const top = Math.min(...endpointRects.map(rect => rect.top))
+  const right = Math.max(...endpointRects.map(rect => rect.right))
+  const bottom = Math.max(...endpointRects.map(rect => rect.bottom))
+  return { left, top, width: right - left, height: bottom - top }
 }
 
 async function dismissSystemDragPanel(): Promise<void> {
@@ -126,7 +152,7 @@ export function SystemDragBridge() {
   }, [])
 
   useEffect(() => {
-    const updateDocumentSelection = () => {
+    const updateDocumentSelection = (preserveCapturedSelection = false) => {
       const selection = document.getSelection()
       if (
         !selection ||
@@ -134,34 +160,38 @@ export function SystemDragBridge() {
         selection.rangeCount === 0 ||
         !selectionInsideWorkspace(selection)
       ) {
-        setManagedSelection(current => (current?.source === 'workspace-document' ? null : current))
+        if (!preserveCapturedSelection) {
+          setManagedSelection(current =>
+            current?.source === 'workspace-document' ? null : current
+          )
+        }
         return
       }
       const text = selection.toString().trim()
-      const rect = selection.getRangeAt(0).getBoundingClientRect()
-      if (!text || rect.width <= 0 || rect.height <= 0) {
-        setManagedSelection(current => (current?.source === 'workspace-document' ? null : current))
+      const rect = usableSelectionRect(selection)
+      if (!text || !rect) {
+        if (!preserveCapturedSelection) {
+          setManagedSelection(current =>
+            current?.source === 'workspace-document' ? null : current
+          )
+        }
         return
       }
       setManagedSelection({
         source: 'workspace-document',
         text,
-        rect: {
-          left: rect.left,
-          top: rect.top,
-          width: rect.width,
-          height: rect.height,
-        },
+        rect,
       })
     }
-    const scheduleUpdate = () => requestAnimationFrame(updateDocumentSelection)
+    const scheduleUpdate = () => requestAnimationFrame(() => updateDocumentSelection(true))
+    const finalizeUpdate = () => updateDocumentSelection()
     document.addEventListener('selectionchange', scheduleUpdate)
-    document.addEventListener('pointerup', updateDocumentSelection)
-    document.addEventListener('keyup', updateDocumentSelection)
+    document.addEventListener('pointerup', finalizeUpdate)
+    document.addEventListener('keyup', finalizeUpdate)
     return () => {
       document.removeEventListener('selectionchange', scheduleUpdate)
-      document.removeEventListener('pointerup', updateDocumentSelection)
-      document.removeEventListener('keyup', updateDocumentSelection)
+      document.removeEventListener('pointerup', finalizeUpdate)
+      document.removeEventListener('keyup', finalizeUpdate)
     }
   }, [])
 
@@ -181,6 +211,7 @@ export function SystemDragBridge() {
       const { source, text, rect } = (event as CustomEvent<SelectedTextChangedDetail>).detail
       setManagedSelection(current => {
         if (text && rect) return { source, text, rect }
+        if (text) return current?.source === source ? current : null
         return current?.source === source ? null : current
       })
     }

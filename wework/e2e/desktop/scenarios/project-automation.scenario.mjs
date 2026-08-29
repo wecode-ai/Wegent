@@ -1559,6 +1559,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'Automation detail panel remained visible after clearing the canvas selection',
       uiTimeoutMs
     )
+    await control.command('waitFor', '[data-testid="automation-trigger-node"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+      stableMs: 250,
+    })
     await control.command('click', '[data-testid="automation-trigger-node"]', {
       visible: true,
     })
