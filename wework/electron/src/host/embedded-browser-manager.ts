@@ -1,4 +1,14 @@
-import { BrowserWindow, session, shell, type DownloadItem, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  session,
+  shell,
+  type ContextMenuParams,
+  type DownloadItem,
+  type MenuItemConstructorOptions,
+  type WebContents,
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -56,6 +66,7 @@ export interface BrowserHostEvent {
     | 'open-request'
     | 'page-state'
     | 'popup'
+    | 'annotation-request'
   payload: Record<string, unknown>
 }
 
@@ -175,6 +186,24 @@ export class EmbeddedBrowserManager {
       historyId: null,
       historyGeneration: this.historyGeneration,
     }
+    contents.on('before-input-event', (event, input) => {
+      const isBareF12 =
+        input.type === 'keyDown' &&
+        (input.key === 'F12' || input.code === 'F12') &&
+        !input.isAutoRepeat &&
+        !input.isComposing &&
+        !input.alt &&
+        !input.control &&
+        !input.meta &&
+        !input.shift
+      if (!isBareF12) return
+      event.preventDefault()
+      if (contents.isDevToolsOpened()) contents.closeDevTools()
+      else contents.openDevTools({ mode: 'detach', activate: true })
+    })
+    contents.on('context-menu', (_event, params) => {
+      this.showContextMenu(entry, params)
+    })
     contents.setWindowOpenHandler(({ url }) => {
       if (isBrowserUrl(url)) {
         this.emit('popup', {
@@ -747,6 +776,56 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
+  private showContextMenu(entry: BrowserEntry, params: ContextMenuParams): void {
+    const contents = entry.contents
+    const labels = embeddedBrowserContextMenuLabels(app.getLocale())
+    const requestAnnotation = (mode: 'quick' | 'batch') => {
+      this.emit('annotation-request', {
+        label: entry.label,
+        nativeLabel: entry.nativeLabel,
+        mode,
+        x: params.x,
+        y: params.y,
+      })
+    }
+    const items: MenuItemConstructorOptions[] = [
+      {
+        label: labels.quickAnnotate,
+        click: () => requestAnnotation('quick'),
+      },
+      {
+        label: labels.annotate,
+        click: () => requestAnnotation('batch'),
+      },
+      { type: 'separator' },
+    ]
+    if (isPlainBrowserContext(params)) {
+      items.push(
+        {
+          label: labels.back,
+          enabled: contents.navigationHistory.canGoBack(),
+          click: () => contents.navigationHistory.goBack(),
+        },
+        {
+          label: labels.forward,
+          enabled: contents.navigationHistory.canGoForward(),
+          click: () => contents.navigationHistory.goForward(),
+        },
+        {
+          label: labels.reload,
+          enabled: Boolean(this.currentVisibleUrl(entry) || entry.requestedUrl),
+          click: () => contents.reload(),
+        },
+        { type: 'separator' }
+      )
+    }
+    items.push({
+      label: labels.inspect,
+      click: () => contents.inspectElement(params.x, params.y),
+    })
+    Menu.buildFromTemplate(items).popup()
+  }
+
   private emit(type: BrowserHostEvent['type'], payload: Record<string, unknown>): void {
     this.onEvent({
       sequence: ++this.eventSequence,
@@ -869,6 +948,47 @@ function isBrowserUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+interface EmbeddedBrowserContextMenuLabels {
+  quickAnnotate: string
+  annotate: string
+  back: string
+  forward: string
+  reload: string
+  inspect: string
+}
+
+function embeddedBrowserContextMenuLabels(language: string): EmbeddedBrowserContextMenuLabels {
+  if (language.trim().toLowerCase().startsWith('zh')) {
+    return {
+      quickAnnotate: '快速评论',
+      annotate: '评论',
+      back: '返回',
+      forward: '前进',
+      reload: '重新加载',
+      inspect: '检查',
+    }
+  }
+  return {
+    quickAnnotate: 'Quick annotate',
+    annotate: 'Annotate',
+    back: 'Back',
+    forward: 'Forward',
+    reload: 'Reload',
+    inspect: 'Inspect',
+  }
+}
+
+function isPlainBrowserContext(params: ContextMenuParams): boolean {
+  return (
+    !params.isEditable &&
+    params.formControlType === 'none' &&
+    params.mediaType === 'none' &&
+    !params.linkURL &&
+    !params.srcURL &&
+    !params.selectionText.trim()
+  )
 }
 
 function isHistoryRecordableUrl(value: string): boolean {
