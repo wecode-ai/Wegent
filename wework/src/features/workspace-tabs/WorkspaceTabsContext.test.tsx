@@ -412,22 +412,19 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(window.location.search).toContain('itemId=WEG-1')
   })
 
-  test('updates the active tab before replacing its route', () => {
+  test('updates the active tab and URL without broadcasting a global navigation', () => {
     window.history.replaceState(
       {},
       '',
       '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
     )
     render(<RoutingHarness />)
-    let routeAtPopState = ''
-    const onPopState = () => {
-      routeAtPopState = screen.getByTestId('active-tab-route').textContent ?? ''
-    }
+    const onPopState = vi.fn()
     window.addEventListener('popstate', onPopState)
 
     act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
 
-    expect(routeAtPopState).toBe('/sites?app_type=smart_app')
+    expect(onPopState).not.toHaveBeenCalled()
     expect(screen.getByTestId('active-tab-id')).toHaveTextContent('auxiliary-apps')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('应用')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')

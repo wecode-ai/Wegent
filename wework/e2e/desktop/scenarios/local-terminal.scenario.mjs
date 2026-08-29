@@ -21,17 +21,17 @@ const CLAUDE_PARALLEL_TOOL_COMPLETION = 'Parallel Claude tools completed'
 const CLAUDE_PARALLEL_TOOL_CALLS = [
   {
     id: 'call_00_wework_parallel',
-    command: "printf 'call-00'",
+    command: 'true',
     description: 'Complete the first parallel tool immediately',
   },
   {
     id: 'call_01_wework_parallel',
-    command: "sleep 0.4; printf 'call-01'",
+    command: 'sleep 0.4',
     description: 'Complete the second parallel tool last',
   },
   {
     id: 'call_02_wework_parallel',
-    command: "sleep 0.15; printf 'call-02'",
+    command: 'sleep 0.15',
     description: 'Complete the third parallel tool second',
   },
 ]

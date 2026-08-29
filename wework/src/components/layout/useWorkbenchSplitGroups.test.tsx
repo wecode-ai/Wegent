@@ -94,6 +94,46 @@ describe('useWorkbenchSplitGroups', () => {
     expect(localStorage.getItem(restoredStorageKey)).not.toContain('blank:0')
   })
 
+  it('isolates delayed updates from the previous workspace tab storage scope', async () => {
+    const bootstrapStorageKey = 'workbench-split-groups-bootstrap'
+    const restoredStorageKey = 'workbench-split-groups-fixed-task'
+    localStorage.setItem(
+      restoredStorageKey,
+      serializeWorkbenchSplitGroups(createWorkbenchSplitGroupsState(restoredRuntimePaneKey))
+    )
+
+    const { result, rerender } = renderHook(
+      ({ currentStorageKey }) =>
+        useWorkbenchSplitGroups({
+          storageKey: currentStorageKey,
+          legacyStorageKey,
+          activePaneKey: 'blank:0',
+          validRuntimeKeys: [restoredRuntimePaneKey],
+          runtimeKeysReady: true,
+        }),
+      {
+        initialProps: {
+          currentStorageKey: bootstrapStorageKey,
+        },
+      }
+    )
+    const bootstrapController = result.current
+
+    rerender({ currentStorageKey: restoredStorageKey })
+
+    await waitFor(() =>
+      expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
+    )
+
+    act(() => {
+      bootstrapController.activatePane('blank:delayed-bootstrap')
+    })
+
+    expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
+    expect(localStorage.getItem(restoredStorageKey)).toContain(restoredRuntimePaneKey)
+    expect(localStorage.getItem(restoredStorageKey)).not.toContain('blank:delayed-bootstrap')
+  })
+
   it('replaces a stale persisted blank pane with the current startup blank pane', async () => {
     localStorage.setItem(
       storageKey,

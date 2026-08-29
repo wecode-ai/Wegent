@@ -25,12 +25,6 @@ interface UseWorkbenchSplitGroupsOptions {
   runtimeKeysReady: boolean
 }
 
-interface ScopedWorkbenchSplitGroupsState {
-  storageKey: string
-  legacyStorageKey: string
-  value: WorkbenchSplitGroupsState
-}
-
 export function workbenchSplitStorageKeys(scope: string) {
   return {
     storageKey: `wework:workbench-split-groups:v3:${scope}`,
@@ -61,36 +55,36 @@ export function useWorkbenchSplitGroups({
   validRuntimeKeys,
   runtimeKeysReady,
 }: UseWorkbenchSplitGroupsOptions) {
-  const [scopedState, setScopedState] = useState<ScopedWorkbenchSplitGroupsState>(() => ({
-    storageKey,
-    legacyStorageKey,
-    value: loadWorkbenchSplitGroupsState(storageKey, legacyStorageKey, activePaneKey),
-  }))
-  const stateRef = useRef(scopedState.value)
+  const scopeKey = `${storageKey}\u0000${legacyStorageKey}`
+  const loadedState = useMemo(
+    () => loadWorkbenchSplitGroupsState(storageKey, legacyStorageKey, activePaneKey),
+    [activePaneKey, legacyStorageKey, storageKey]
+  )
+  const [statesByScope, setStatesByScope] = useState(() => new Map([[scopeKey, loadedState]]))
+  const statesByScopeRef = useRef(statesByScope)
   const previousActivePaneRef = useRef<{
     storageKey: string
     legacyStorageKey: string
     paneKey: string
   } | null>(null)
-  let state = scopedState.value
-  if (scopedState.storageKey !== storageKey || scopedState.legacyStorageKey !== legacyStorageKey) {
-    state = loadWorkbenchSplitGroupsState(storageKey, legacyStorageKey, activePaneKey)
-    setScopedState({ storageKey, legacyStorageKey, value: state })
-  }
+  const state = statesByScope.get(scopeKey) ?? loadedState
   useLayoutEffect(() => {
-    stateRef.current = state
-  }, [state])
+    statesByScopeRef.current = statesByScope
+  }, [statesByScope])
 
   const commit = useCallback(
     (update: (current: WorkbenchSplitGroupsState) => WorkbenchSplitGroupsState) => {
-      const current = stateRef.current
+      const currentStates = statesByScopeRef.current
+      const current = currentStates.get(scopeKey) ?? loadedState
       const next = update(current)
-      if (next === current) return next
-      stateRef.current = next
-      setScopedState({ storageKey, legacyStorageKey, value: next })
+      if (next === current && currentStates.has(scopeKey)) return next
+      const nextStates = new Map(currentStates)
+      nextStates.set(scopeKey, next)
+      statesByScopeRef.current = nextStates
+      setStatesByScope(nextStates)
       return next
     },
-    [legacyStorageKey, storageKey]
+    [loadedState, scopeKey]
   )
 
   useEffect(() => {
@@ -122,14 +116,14 @@ export function useWorkbenchSplitGroups({
     if (
       isInitialActivation &&
       activePaneKey.startsWith('blank:') &&
-      collectWorkbenchPaneKeys(getActiveWorkbenchLayout(stateRef.current).root).some(key =>
+      collectWorkbenchPaneKeys(getActiveWorkbenchLayout(state).root).some(key =>
         key.startsWith('runtime:')
       )
     ) {
       return
     }
     commit(current => activateWorkbenchPane(current, activePaneKey))
-  }, [activePaneKey, commit, legacyStorageKey, storageKey])
+  }, [activePaneKey, commit, legacyStorageKey, state, storageKey])
 
   useEffect(() => {
     if (!runtimeKeysReady) return

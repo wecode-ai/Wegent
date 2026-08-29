@@ -139,7 +139,6 @@ function loadPersistedTabs(
 function replaceTabRoute(tab: WorkspaceTab) {
   const browserPath = toBrowserPath(workspaceTabRoute(tab))
   window.history.replaceState({}, '', browserPath)
-  window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
 function sessionRestorableTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
