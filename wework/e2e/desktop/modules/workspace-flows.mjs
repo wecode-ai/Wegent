@@ -12,6 +12,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+  TASK_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
@@ -980,6 +981,10 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: TASK_PROMPT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('waitFor', '[data-testid="pause-response-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

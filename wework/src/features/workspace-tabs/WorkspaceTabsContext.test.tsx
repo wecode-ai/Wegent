@@ -65,11 +65,13 @@ function RoutingHarness({
   startupTabId,
   fixedTabs,
   restoreSessionTabs,
+  labels: routingLabels = labels,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
   startupTabId?: string
   fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
   restoreSessionTabs?: boolean
+  labels?: Parameters<typeof WorkspaceTabsProvider>[0]['labels']
 } = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
@@ -91,7 +93,7 @@ function RoutingHarness({
       pathname={location.pathname}
       search={location.search}
       storageScope="context-test"
-      labels={labels}
+      labels={routingLabels}
       fixedTabs={fixedTabs}
       startupTabId={startupTabId}
       startupTabKind={startupTabKind}
@@ -412,19 +414,22 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(window.location.search).toContain('itemId=WEG-1')
   })
 
-  test('updates the active tab and URL without broadcasting a global navigation', () => {
+  test('updates the active tab before broadcasting the replaced URL', () => {
     window.history.replaceState(
       {},
       '',
       '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
     )
     render(<RoutingHarness />)
-    const onPopState = vi.fn()
+    let routeAtPopState = ''
+    const onPopState = () => {
+      routeAtPopState = screen.getByTestId('active-tab-route').textContent ?? ''
+    }
     window.addEventListener('popstate', onPopState)
 
     act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
 
-    expect(onPopState).not.toHaveBeenCalled()
+    expect(routeAtPopState).toBe('/sites?app_type=smart_app')
     expect(screen.getByTestId('active-tab-id')).toHaveTextContent('auxiliary-apps')
     expect(screen.getByTestId('active-tab-title')).toHaveTextContent('应用')
     expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
@@ -434,5 +439,29 @@ describe('WorkspaceTabsProvider routing', () => {
     expect(params.get('workspaceTab')).toBe('auxiliary-apps')
     expect(params.get('workspaceTabTitle')).toBe('应用')
     window.removeEventListener('popstate', onPopState)
+  })
+
+  test('does not restore a stale route when route labels change after active-tab navigation', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
+    )
+    const { rerender } = render(<RoutingHarness />)
+
+    act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
+    rerender(
+      <RoutingHarness
+        labels={{
+          ...labels,
+          auxiliaryRoutes: { ...labels.auxiliaryRoutes, '/dsh/new-route': '新页面' },
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('app_type')).toBe('smart_app')
+    expect(params.has('view')).toBe(false)
   })
 })

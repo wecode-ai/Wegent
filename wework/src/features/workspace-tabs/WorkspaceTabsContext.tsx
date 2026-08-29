@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { navigateTo, toBrowserPath } from '@/lib/navigation'
+import { navigateTo, replaceTo } from '@/lib/navigation'
 import {
   closeWorkspaceTab,
   createWorkspaceTab,
@@ -134,11 +134,6 @@ function loadPersistedTabs(
     ? defaultTabs.map(tab => (tab.id === matchingDefault.id ? routeTab : tab))
     : [...defaultTabs, routeTab]
   return { tabs, activeTabId: routeTab.id, closedTabs: [] }
-}
-
-function replaceTabRoute(tab: WorkspaceTab) {
-  const browserPath = toBrowserPath(workspaceTabRoute(tab))
-  window.history.replaceState({}, '', browserPath)
 }
 
 function sessionRestorableTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
@@ -451,7 +446,7 @@ export function WorkspaceTabsProvider({
       if (!currentTab) return
       const updated = { ...currentTab, ...updates }
       flushSync(() => dispatch({ type: 'updateActive', updates }))
-      replaceTabRoute(updated)
+      replaceTo(workspaceTabRoute(updated))
     },
     [state.activeTabId, state.tabs]
   )
