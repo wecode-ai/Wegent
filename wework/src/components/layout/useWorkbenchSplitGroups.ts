@@ -98,11 +98,10 @@ export function useWorkbenchSplitGroups({
 
   useEffect(() => {
     const previousActivePane = previousActivePaneRef.current
-    if (
+    const sameScope =
       previousActivePane?.storageKey === storageKey &&
-      previousActivePane.legacyStorageKey === legacyStorageKey &&
-      previousActivePane.paneKey === activePaneKey
-    ) {
+      previousActivePane.legacyStorageKey === legacyStorageKey
+    if (sameScope && previousActivePane?.paneKey === activePaneKey) {
       return
     }
     previousActivePaneRef.current = {
@@ -114,7 +113,8 @@ export function useWorkbenchSplitGroups({
       activePaneKey.startsWith('blank:') &&
       collectWorkbenchPaneKeys(getActiveWorkbenchLayout(state).root).some(key =>
         key.startsWith('runtime:')
-      )
+      ) &&
+      (!sameScope || previousActivePane?.paneKey.startsWith('blank:'))
     ) {
       return
     }

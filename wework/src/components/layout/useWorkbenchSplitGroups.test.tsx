@@ -81,6 +81,30 @@ describe('useWorkbenchSplitGroups', () => {
     )
   })
 
+  it('opens a fresh blank pane after leaving an active runtime task', async () => {
+    const { result, rerender } = renderHook(
+      ({ activePaneKey }) =>
+        useWorkbenchSplitGroups({
+          storageKey,
+          legacyStorageKey,
+          activePaneKey,
+          validRuntimeKeys: [restoredRuntimePaneKey],
+          runtimeKeysReady: true,
+        }),
+      {
+        initialProps: {
+          activePaneKey: restoredRuntimePaneKey,
+        },
+      }
+    )
+
+    expect(activePaneKeys(result.current.state)).toEqual([restoredRuntimePaneKey])
+
+    rerender({ activePaneKey: 'blank:1' })
+
+    await waitFor(() => expect(activePaneKeys(result.current.state)).toEqual(['blank:1']))
+  })
+
   it('loads the persisted layout when the workspace tab storage scope becomes available', async () => {
     const bootstrapStorageKey = 'workbench-split-groups-bootstrap'
     const restoredStorageKey = 'workbench-split-groups-fixed-task'

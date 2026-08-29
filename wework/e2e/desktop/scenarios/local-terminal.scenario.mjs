@@ -389,6 +389,7 @@ async function startHarness({
   readyScreenshot,
   presentation = 'terminal',
   expectedAssistantText = 'Local harness CLI reply',
+  responseTimeoutMs = timeoutMs,
 }) {
   await control.command(
     'click',
@@ -453,7 +454,7 @@ async function startHarness({
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
       {
         text: expectedAssistantText,
-        timeoutMs,
+        timeoutMs: responseTimeoutMs,
       }
     )
   }
@@ -727,6 +728,7 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs, wo
         readyScreenshot: 'local-harness-17-claude-code-ready.png',
         presentation: 'conversation',
         expectedAssistantText: CLAUDE_PARALLEL_TOOL_COMPLETION,
+        responseTimeoutMs: Math.max(uiTimeoutMs, 30_000),
       })
       await waitForRequests(
         harnessModelRequests,

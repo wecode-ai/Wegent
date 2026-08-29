@@ -1251,7 +1251,10 @@ export async function createDesktopScenario({ captureScreenshot, resultDir, uiTi
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="workspace-tab-add-smart-app"]')
-      await control.command('click', '[data-testid="smart-apps-section-owned"]')
+      await control.command(
+        'click',
+        `${activeWorkspaceContentSelector} [data-testid="smart-apps-section-owned"]`
+      )
       await control.command('waitFor', managedAppOpen, {
         timeoutMs: uiTimeoutMs,
       })

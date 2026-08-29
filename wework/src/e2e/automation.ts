@@ -1344,7 +1344,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'reloadMainWindow': {
       if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
-      reloadMainWindowLocalStorageInput(command)
+      const storageInput = reloadMainWindowLocalStorageInput(command)
+      if (storageInput) {
+        window.localStorage.setItem(storageInput.key, storageInput.value)
+      }
+      await flushDesktopLocalStoragePersistence()
       return ''
     }
     case 'getTestIdOrder':
@@ -2162,10 +2166,6 @@ async function runDesktopControlClient(url: string, windowLabel: string): Promis
         } else if (command.action === 'requestMainWindowClose') {
           await invokeDesktopHost('e2e.closeMainWindow')
         } else if (command.action === 'reloadMainWindow') {
-          const storageInput = reloadMainWindowLocalStorageInput(command)
-          if (storageInput) {
-            window.localStorage.setItem(storageInput.key, storageInput.value)
-          }
           window.location.reload()
           return
         }
