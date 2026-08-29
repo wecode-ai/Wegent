@@ -367,6 +367,54 @@ describe('SmartAppsMarketplacePage', () => {
     expect(await screen.findByTestId('harness-app-open-research-desk')).toBeInTheDocument()
   })
 
+  test('does not replace marketplace results when an owned-page stop finishes late', async () => {
+    const ownedItem = item({
+      id: 8,
+      name: 'owned-desk',
+      displayName: '我的工作台',
+      sourceType: 'user',
+      accessRole: 'owner',
+    })
+    const marketplaceItem = item({
+      id: 7,
+      name: 'official-desk',
+      displayName: '官方工作台',
+    })
+    const smartAppsApi = api()
+    vi.mocked(smartAppsApi.listOwned).mockResolvedValue({ items: [ownedItem] })
+    vi.mocked(smartAppsApi.listMarketplace).mockResolvedValue({ items: [marketplaceItem] })
+    listInstalled.mockResolvedValue([
+      {
+        ...importedInstallation,
+        id: 'owned-installation',
+        smartAppId: 8,
+        state: 'running',
+        webUrl: 'http://127.0.0.1:3080',
+      },
+    ])
+    let resolveStop: () => void = () => undefined
+    stopInstalled.mockReturnValueOnce(
+      new Promise<void>(resolve => {
+        resolveStop = resolve
+      })
+    )
+    const { rerender } = render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
+
+    fireEvent.click(await screen.findByTestId('smart-app-actions-owned-installation'))
+    fireEvent.pointerDown(screen.getByTestId('smart-app-stop-menu-owned-installation'))
+    await waitFor(() => expect(stopInstalled).toHaveBeenCalledWith('owned-installation'))
+
+    rerender(<SmartAppsMarketplacePage api={smartAppsApi} mode="marketplace" />)
+    expect(await screen.findByTestId('smart-app-marketplace-item-7')).toBeInTheDocument()
+
+    await act(async () => resolveStop())
+
+    expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(1)
+    expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('smart-app-marketplace-item-7')).toBeInTheDocument()
+    expect(screen.queryByTestId('smart-app-marketplace-item-8')).not.toBeInTheDocument()
+  })
+
   test('allows plugin and source development while a linked workbench is running', async () => {
     listInstalled.mockResolvedValue([
       {

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+} from 'react'
 import JSZip from 'jszip'
 import {
   Box,
@@ -250,15 +258,23 @@ export function SmartAppsMarketplacePage({
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const refreshRequestRef = useRef(0)
+  const activeModeRef = useRef(mode)
+
+  useLayoutEffect(() => {
+    activeModeRef.current = mode
+  }, [mode])
 
   const refresh = useCallback(async () => {
+    if (activeModeRef.current !== mode) return
     const requestId = ++refreshRequestRef.current
+    const isCurrentRequest = () =>
+      requestId === refreshRequestRef.current && activeModeRef.current === mode
     setLoading(true)
     setError(null)
     try {
       const localPromise = harnessAppsApi.list().catch(() => [])
       const local = await localPromise
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setInstalled(local)
       if (!api) {
         setItems([])
@@ -276,12 +292,12 @@ export function SmartAppsMarketplacePage({
         mode === 'owned' ? api.listMarketplace() : null,
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setItems(catalog.items)
       setMarketItems(marketplace?.items ?? catalog.items)
       setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
     } catch (loadError) {
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setError(
         smartAppErrorMessage(
           loadError,
@@ -290,7 +306,7 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      if (requestId === refreshRequestRef.current) setLoading(false)
+      if (isCurrentRequest()) setLoading(false)
     }
   }, [api, mode, query, source, t, tag])
 
