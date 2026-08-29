@@ -66,6 +66,7 @@ import {
 } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
@@ -110,7 +111,10 @@ const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
-const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
+const applicationId =
+  process.env.WEWORK_APP_IDENTIFIER?.trim() ||
+  packageMetadata.weworkAppId?.trim() ||
+  'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
 const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
@@ -930,8 +934,9 @@ function dispatchTrayAction(action: TrayAction): void {
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {

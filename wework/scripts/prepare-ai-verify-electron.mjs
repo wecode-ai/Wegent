@@ -8,8 +8,7 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const repositoryDir = resolve(weworkDir, '..')
-const executorTargetDir =
-  process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+const executorTargetDir = join(repositoryDir, 'executor', 'target', 'ai-verify')
 const executorPath = join(
   resolve(executorTargetDir),
   'debug',
