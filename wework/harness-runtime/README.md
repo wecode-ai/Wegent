@@ -32,10 +32,11 @@ pnpm run prepare:harness-runtime
 pnpm run prepare:harness-runtime -- --materialize
 ```
 
-生成的运行时归档必须完全自包含。准备脚本强制使用归档目录内的
-`node_modules/.pnpm`，不能保留指向构建机全局 pnpm store 的依赖链接；归档前会
-遍历检查软链接，发现损坏链接或逃出运行时根目录的链接时立即终止构建。修改依赖布局
-或归档语义时必须同时升级 `archiveFormatVersion`，避免复用旧格式的已发布资产。
+生成的运行时归档必须完全自包含。准备脚本统一生成扁平、无外部 store 依赖的
+`node_modules`，并通过 Node `tar` 库创建和物化归档，不依赖构建机提供的系统
+`tar` 命令；归档前会遍历检查软链接，发现损坏链接或逃出运行时根目录的链接时立即
+终止构建。修改依赖布局或归档语义时必须同时升级 `archiveFormatVersion`，避免
+复用旧格式的已发布资产。
 
 任务、项目空间和智能体三个固定 Tab 共享一个 Core DSH 进程。智能工作台 App
 Tab 使用独立 Workbench DSH 进程；关闭 Tab 必须终止对应进程。

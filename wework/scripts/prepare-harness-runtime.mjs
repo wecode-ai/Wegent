@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createReadStream, createWriteStream } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import {
   access,
   chmod,
@@ -15,8 +15,8 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
-import { constants as zlibConstants, createGzip } from 'node:zlib'
 import { spawn } from 'node:child_process'
+import { create, extract } from 'tar'
 
 import {
   macosSigningFingerprint,
@@ -44,7 +44,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v9'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -157,12 +157,12 @@ async function validateTargetDependencies(staging) {
     'linux-x64': 'linux-x64',
   }[runtimePlatform()]
   if (!packagePlatform) return
-  const files = await listFiles(path.join(staging, 'node_modules', '.pnpm'))
-  for (const packagePrefix of ['@img+sharp-', '@koromix+koffi-']) {
-    if (!files.some(name => name.startsWith(`${packagePrefix}${packagePlatform}@`))) {
-      throw new Error(
-        `Harness runtime is missing ${packagePrefix}${packagePlatform} for ${runtimePlatform()}`
-      )
+  for (const packagePrefix of ['@img/sharp-', '@koromix/koffi-']) {
+    const packageName = `${packagePrefix}${packagePlatform}`
+    try {
+      await access(path.join(staging, 'node_modules', ...packageName.split('/'), 'package.json'))
+    } catch {
+      throw new Error(`Harness runtime is missing ${packageName} for ${runtimePlatform()}`)
     }
   }
 }
@@ -338,7 +338,11 @@ async function materializeRuntime(runtime, descriptor) {
   await rm(temporary, { recursive: true, force: true })
   await mkdir(temporary, { recursive: true })
   try {
-    await run('tar', ['-xzf', runtime.assetPath, '-C', temporary], root)
+    await extract({
+      cwd: temporary,
+      file: runtime.assetPath,
+      strict: true,
+    })
     await rm(destination, { recursive: true, force: true })
     await rename(temporary, destination)
   } finally {
@@ -372,11 +376,9 @@ async function buildRuntime(runtime) {
     `wework-harness-runtime-${runtime.dshVersion}-${process.pid}`
   )
   const temporaryArchive = `${runtime.assetPath}.${process.pid}.tar.gz`
-  const temporaryTar = temporaryArchive.slice(0, -3)
   try {
     await rm(staging, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true })
-    await rm(temporaryTar, { force: true })
     await mkdir(staging, { recursive: true })
     for (const entry of runtime.entries) {
       const destination = path.join(staging, entry.name)
@@ -391,9 +393,9 @@ async function buildRuntime(runtime) {
       'install',
       '--prod',
       '--frozen-lockfile',
-      '--virtual-store-dir=node_modules/.pnpm',
       '--package-import-method=copy',
       '--config.enable-global-virtual-store=false',
+      '--config.node-linker=hoisted',
     ]
     if (crossTargetRequested()) installArguments.push('--ignore-scripts')
     await run(pnpmCommand, installArguments, staging, targetInstallEnvironment())
@@ -421,13 +423,14 @@ async function buildRuntime(runtime) {
       await signPreparedMacOsBinaries(staging)
     }
 
-    await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
-      COPYFILE_DISABLE: '1',
-    })
-    await pipeline(
-      createReadStream(temporaryTar),
-      createGzip({ level: zlibConstants.Z_BEST_SPEED }),
-      createWriteStream(temporaryArchive)
+    await create(
+      {
+        cwd: staging,
+        file: temporaryArchive,
+        gzip: true,
+        portable: true,
+      },
+      ['.']
     )
     const descriptor = {
       dshVersion: runtime.dshVersion,
@@ -449,7 +452,6 @@ async function buildRuntime(runtime) {
   } finally {
     await rm(staging, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true })
-    await rm(temporaryTar, { force: true })
   }
 }
 
