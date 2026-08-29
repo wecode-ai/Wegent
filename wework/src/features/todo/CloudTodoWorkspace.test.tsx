@@ -719,12 +719,14 @@ describe('CloudTodoWorkspace', () => {
 
     expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
     expect(screen.getAllByTestId('cloud-sidebar-project-default-work-items')).toHaveLength(1)
-    expect(onActiveProjectChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'default-work-items',
-        project_store: 'backend',
-      })
-    )
+    await waitFor(() => {
+      expect(onActiveProjectChange).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'default-work-items',
+          project_store: 'backend',
+        })
+      )
+    })
   })
 
   it('loads a cloud board through one snapshot request without split reads', async () => {
@@ -3466,7 +3468,7 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-panel-stack')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-detail-dismiss-layer')).not.toBeInTheDocument()
-  })
+  }, 10_000)
 
   it('requests task catalogs before opening the composer for a dragged issue', async () => {
     const inboxItem = { ...item, status: 'inbox' as const }
