@@ -212,10 +212,11 @@ function isApplicationPluginSyncConfirmed(
 }
 
 interface SitesPageProps {
+  onNavigate?: (path: string) => void
   search?: string
 }
 
-export function SitesPage({ search = window.location.search }: SitesPageProps) {
+export function SitesPage({ onNavigate, search = window.location.search }: SitesPageProps) {
   const { t } = useTranslation('sites')
   const { t: commonT } = useTranslation('common')
   const { logout } = useAuth()
@@ -657,9 +658,9 @@ export function SitesPage({ search = window.location.search }: SitesPageProps) {
           smartAppsEnabled={experimentalFeatures.enabled}
           smartAppsContent={
             smartAppsView === 'owned' ? (
-              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" onNavigate={onNavigate} />
             ) : (
-              <SmartAppsMarketplacePage api={smartAppsApi} />
+              <SmartAppsMarketplacePage api={smartAppsApi} onNavigate={onNavigate} />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}

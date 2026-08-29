@@ -4,8 +4,6 @@ import { SmartAppsSectionNav } from './SmartAppsSectionNav'
 
 const mocks = vi.hoisted(() => ({
   navigateTo: vi.fn(),
-  updateActiveTab: vi.fn(),
-  workspaceTabs: null as { updateActiveTab: (updates: { contentRoute: string }) => void } | null,
 }))
 
 vi.mock('@/hooks/useTranslation', () => ({
@@ -18,20 +16,14 @@ vi.mock('@/lib/navigation', () => ({
   navigateTo: (path: string) => mocks.navigateTo(path),
 }))
 
-vi.mock('@/features/workspace-tabs/workspaceTabsContextValue', () => ({
-  useOptionalWorkspaceTabs: () => mocks.workspaceTabs,
-}))
-
 describe('SmartAppsSectionNav', () => {
   beforeEach(() => {
     mocks.navigateTo.mockReset()
-    mocks.updateActiveTab.mockReset()
-    mocks.workspaceTabs = null
   })
 
-  test('updates the active workspace tab when opening My apps', () => {
-    mocks.workspaceTabs = { updateActiveTab: mocks.updateActiveTab }
-    render(<SmartAppsSectionNav active="marketplace" />)
+  test('uses the owning route navigator when opening My apps', () => {
+    const onNavigate = vi.fn()
+    render(<SmartAppsSectionNav active="marketplace" onNavigate={onNavigate} />)
 
     expect(screen.getByTestId('smart-apps-section-marketplace')).toHaveAttribute(
       'aria-current',
@@ -39,9 +31,7 @@ describe('SmartAppsSectionNav', () => {
     )
     fireEvent.click(screen.getByTestId('smart-apps-section-owned'))
 
-    expect(mocks.updateActiveTab).toHaveBeenCalledWith({
-      contentRoute: '/sites?app_type=smart_app&view=owned',
-    })
+    expect(onNavigate).toHaveBeenCalledWith('/sites?app_type=smart_app&view=owned')
     expect(mocks.navigateTo).not.toHaveBeenCalled()
   })
 
@@ -52,7 +42,6 @@ describe('SmartAppsSectionNav', () => {
     fireEvent.click(screen.getByTestId('smart-apps-section-marketplace'))
 
     expect(mocks.navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
-    expect(mocks.updateActiveTab).not.toHaveBeenCalled()
   })
 
   test('exposes exactly Marketplace and My as peer sections', () => {

@@ -62,6 +62,7 @@ export function useWorkbenchSplitGroups({
   )
   const [statesByScope, setStatesByScope] = useState(() => new Map([[scopeKey, loadedState]]))
   const statesByScopeRef = useRef(statesByScope)
+  const observedRuntimeKeysByScopeRef = useRef(new Map<string, Set<string>>())
   const previousActivePaneRef = useRef<{
     storageKey: string
     legacyStorageKey: string
@@ -122,9 +123,26 @@ export function useWorkbenchSplitGroups({
 
   useEffect(() => {
     if (!runtimeKeysReady) return
-    const validKeys = new Set([...validRuntimeKeys, activePaneKey])
-    commit(current => pruneWorkbenchSplitGroups(current, validKeys, activePaneKey))
-  }, [activePaneKey, commit, runtimeKeysReady, validRuntimeKeys])
+    const observedRuntimeKeys =
+      observedRuntimeKeysByScopeRef.current.get(scopeKey) ?? new Set<string>()
+    validRuntimeKeys.forEach(key => observedRuntimeKeys.add(key))
+    observedRuntimeKeysByScopeRef.current.set(scopeKey, observedRuntimeKeys)
+    commit(current => {
+      const validKeys = new Set([...validRuntimeKeys, activePaneKey])
+      const layouts = [
+        getActiveWorkbenchLayout(current),
+        ...current.groups.map(group => group.layout),
+      ]
+      layouts.forEach(layout => {
+        collectWorkbenchPaneKeys(layout.root).forEach(key => {
+          if (key.startsWith('runtime:') && !observedRuntimeKeys.has(key)) {
+            validKeys.add(key)
+          }
+        })
+      })
+      return pruneWorkbenchSplitGroups(current, validKeys, activePaneKey)
+    })
+  }, [activePaneKey, commit, runtimeKeysReady, scopeKey, validRuntimeKeys])
 
   const activeLayout = getActiveWorkbenchLayout(state)
   const memberships = useMemo(() => getWorkbenchSplitGroupMemberships(state), [state])

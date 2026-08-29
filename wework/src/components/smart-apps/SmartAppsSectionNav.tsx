@@ -1,5 +1,4 @@
 import { useTranslation } from '@/hooks/useTranslation'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 
@@ -7,6 +6,7 @@ type SmartAppsSection = 'marketplace' | 'owned'
 
 interface SmartAppsSectionNavProps {
   active: SmartAppsSection
+  onNavigate?: (path: string) => void
 }
 
 const sections: Array<{
@@ -26,9 +26,8 @@ const sections: Array<{
   },
 ]
 
-export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
+export function SmartAppsSectionNav({ active, onNavigate = navigateTo }: SmartAppsSectionNavProps) {
   const { t } = useTranslation('common')
-  const workspaceTabs = useOptionalWorkspaceTabs()
 
   return (
     <nav
@@ -56,11 +55,7 @@ export function SmartAppsSectionNav({ active }: SmartAppsSectionNavProps) {
             )}
             onClick={() => {
               if (selected) return
-              if (workspaceTabs) {
-                workspaceTabs.updateActiveTab({ contentRoute: section.path })
-                return
-              }
-              navigateTo(section.path)
+              onNavigate(section.path)
             }}
           >
             {label}

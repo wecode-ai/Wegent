@@ -74,6 +74,7 @@ import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
+  onNavigate?: (path: string) => void
 }
 
 interface PendingInstall {
@@ -215,6 +216,7 @@ async function readManifest(
 export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
+  onNavigate = navigateTo,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -769,7 +771,7 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.smart_apps_manage_in_my', '在我的工作台中管理'),
         icon: Boxes,
         testId: `smart-app-manage-local-${installation.id}`,
-        onSelect: () => navigateTo('/sites?app_type=smart_app&view=owned'),
+        onSelect: () => onNavigate('/sites?app_type=smart_app&view=owned'),
       })
     } else if (item?.accessRole === 'owner') {
       actions.push({
@@ -892,7 +894,12 @@ export function SmartAppsMarketplacePage({
       ) : null}
 
       <ApplicationContextToolbar
-        leading={<SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />}
+        leading={
+          <SmartAppsSectionNav
+            active={mode === 'owned' ? 'owned' : 'marketplace'}
+            onNavigate={onNavigate}
+          />
+        }
         searchLabel={t('workbench.smart_apps_search', '搜索工作台')}
         searchPlaceholder={t('workbench.smart_apps_search', '搜索工作台')}
         searchTestId={
@@ -1025,7 +1032,7 @@ export function SmartAppsMarketplacePage({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => navigateTo('/sites?app_type=smart_app&view=owned')}
+              onClick={() => onNavigate('/sites?app_type=smart_app&view=owned')}
             >
               <PackageCheck className="h-4 w-4" />
               {t('workbench.smart_apps_view_my', '查看我的工作台')}

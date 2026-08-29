@@ -955,12 +955,16 @@ describe('createLocalAppServices', () => {
       ready: true,
       deviceId: 'device-uuid',
     })
-    const request = vi.fn().mockResolvedValue({
-      success: true,
-      stdout: '/Users/me',
-      stderr: '',
-      exit_code: 0,
-    })
+    const request = vi.fn().mockImplementation(async (method: string) =>
+      method === 'runtime.tasks.list'
+        ? { workspaces: [] }
+        : {
+            success: true,
+            stdout: '/Users/me',
+            stderr: '',
+            exit_code: 0,
+          }
+    )
     const services = createLocalAppServices({
       ensure,
       request,
@@ -985,6 +989,11 @@ describe('createLocalAppServices', () => {
       timeout_seconds: 10,
       max_output_bytes: 4096,
     })
+
+    await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(ensure).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenLastCalledWith('runtime.tasks.list', {})
   })
 
   test('routes runtime task creation and device commands through app ipc', async () => {

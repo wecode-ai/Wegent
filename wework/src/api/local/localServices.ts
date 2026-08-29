@@ -3344,7 +3344,9 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     return ensurePromise
   }
 
-  const getLocalDeviceId = async () => localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
+  const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const getDeviceCommandLocalDeviceId = async () =>
+    localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
 
   const executeCommand = async (
     deviceId: string,
@@ -3361,7 +3363,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) =>
     request<DeviceCommandResponse>(
       'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getLocalDeviceId())
+      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
     )
 
   const deviceApi: WorkbenchServices['deviceApi'] = {

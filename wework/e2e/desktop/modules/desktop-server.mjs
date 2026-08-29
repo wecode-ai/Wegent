@@ -1878,6 +1878,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -3130,21 +3145,6 @@ class DesktopE2EServer {
       this.writeSse(response, [
         responseCreated(responseId),
         assistantMessage(OFFICIAL_PLUGIN_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'connector_auth_unmatched_resume') {
-      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
-        'The unmatched connector auth resume scenario did not receive its trigger prompt'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
         responseCompleted(responseId),
       ])
       return
