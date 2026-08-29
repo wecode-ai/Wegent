@@ -49,6 +49,7 @@ import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1843,6 +1844,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return desktopControlSnapshot(command.selector)
     case 'getClipboardText':
       return invokeDesktopHost<string>('e2e.getClipboardText')
+    case 'downloadPendingAppUpdate':
+      await downloadPendingWeworkUpdate()
+      return 'downloaded'
     case 'scrollIntoView': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.visible ? elements.find(desktopControlElementRendered) : elements[0]

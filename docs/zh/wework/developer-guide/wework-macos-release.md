@@ -36,6 +36,12 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 如果所选通道尚未发布 Electron 版本，对应 YAML 清单可以不存在；客户端将其视为
 “暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
 
+macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装器对应的
+`.blockmap`。`electron-updater` 使用上一版本缓存和新旧 blockmap 计算差分，只下载
+变化的数据块；首次更新、缓存被清理或差分失败时才回退到完整安装包。构建产物缺少
+任一 blockmap 时发布流程必须失败。差分计划、实际下载量和回退原因记录在应用日志
+目录的 `app-update.log` 中。
+
 为让已安装的 Tauri 版本直接使用设置页的“升级”迁移到 Electron，同一次发布还会
 生成旧 updater 协议的 JSON 和签名产物：
 

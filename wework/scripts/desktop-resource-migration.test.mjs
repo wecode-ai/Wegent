@@ -204,6 +204,18 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('async function findDirectory')
   })
 
+  test('requires differential update blockmaps in formal release assets', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('const blockmap = `${zip}.blockmap`')
+    expect(source).toContain('const blockmap = `${installer}.blockmap`')
+    expect(source).toContain('await requireFile(blockmap)')
+    expect(source).not.toContain('if (await isFile(blockmap))')
+  })
+
   test('signs legacy updater assets through the Windows command interpreter', async () => {
     const source = await readFile(
       join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
