@@ -24,7 +24,9 @@ function createWebContents(input: {
   captureDataUrl?: string
   captureEmpty?: boolean
   captureError?: Error
+  capturePending?: boolean
   debuggerData?: string
+  debuggerPending?: boolean
 }) {
   let debuggerAttached = false
   const debuggerSession = {
@@ -35,10 +37,14 @@ function createWebContents(input: {
       debuggerAttached = false
     }),
     isAttached: vi.fn(() => debuggerAttached),
-    sendCommand: vi.fn(async () => ({ data: input.debuggerData })),
+    sendCommand: vi.fn(async () => {
+      if (input.debuggerPending) return new Promise<never>(() => undefined)
+      return { data: input.debuggerData }
+    }),
   }
   const contents = {
     capturePage: vi.fn(async () => {
+      if (input.capturePending) return new Promise<never>(() => undefined)
       if (input.captureError) throw input.captureError
       return {
         isEmpty: () => input.captureEmpty ?? false,
@@ -90,6 +96,46 @@ describe('captureWebContentsDataUrl', () => {
       format: 'png',
       fromSurface: true,
     })
+  })
+
+  test('falls back to the debugger when Electron native capture hangs', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        capturePending: true,
+        debuggerData: 'debugger-after-native-timeout',
+      })
+
+      const capture = captureWebContentsDataUrl(contents)
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await expect(capture).resolves.toBe('data:image/png;base64,debugger-after-native-timeout')
+      expect(debuggerSession.sendCommand).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('fails within a bounded time when both screenshot backends hang', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        capturePending: true,
+        debuggerPending: true,
+      })
+
+      const capture = captureWebContentsDataUrl(contents)
+      const rejection = expect(capture).rejects.toThrow(
+        'Electron capturePage failed: Electron capturePage timed out after 10000ms; ' +
+          'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
+      )
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      await rejection
+      expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
