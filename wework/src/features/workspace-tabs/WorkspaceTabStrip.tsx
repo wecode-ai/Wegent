@@ -168,7 +168,7 @@ function WorkspaceTabButton({
           }
           selectTab(
             tab.id,
-            tab.fixed && tab.kind === 'board'
+            !active && tab.fixed && tab.kind === 'board'
               ? {
                   title: t('workbench.workspace_tab_board', '工作空间'),
                   contentRoute: defaultContentRoute('board'),

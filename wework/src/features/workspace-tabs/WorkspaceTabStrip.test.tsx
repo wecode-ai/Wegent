@@ -139,6 +139,26 @@ describe('WorkspaceTabStrip', () => {
     )
   })
 
+  test('keeps the selected project when clicking the active fixed project-space tab', async () => {
+    const user = userEvent.setup()
+    renderStrip(
+      '?projectStore=local&projectId=project-1',
+      undefined,
+      '/todo',
+      true,
+      '/todo?projectStore=local&projectId=project-1'
+    )
+
+    await user.click(screen.getByTestId('workspace-tab-select-fixed-board'))
+
+    expect(screen.getByTestId('workspace-tab-select-fixed-board')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(new URLSearchParams(window.location.search).get('projectStore')).toBe('local')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('project-1')
+  })
+
   test('hides the project-space tab and add action when board is not available', async () => {
     const user = userEvent.setup()
     renderStrip('', ['task', 'agent', 'auxiliary'] satisfies WorkspaceTabKind[])
