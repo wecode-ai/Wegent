@@ -44,7 +44,7 @@ const {
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v8'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -394,7 +394,6 @@ async function buildRuntime(runtime) {
       '--virtual-store-dir=node_modules/.pnpm',
       '--package-import-method=copy',
       '--config.enable-global-virtual-store=false',
-      ...(process.platform === 'win32' ? ['--config.node-linker=hoisted'] : []),
     ]
     if (crossTargetRequested()) installArguments.push('--ignore-scripts')
     await run(pnpmCommand, installArguments, staging, targetInstallEnvironment())

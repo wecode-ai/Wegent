@@ -676,8 +676,9 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v7" in script
+    assert "dsh-runtime-tar-gzip-v8" in script
     assert "supportedArchitectures" in script
+    assert "--config.node-linker=hoisted" not in script
     assert (
         "crossTargetRequested() && entry.name === 'pnpm-workspace.yaml'" not in script
     )
