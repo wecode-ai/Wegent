@@ -100,6 +100,7 @@ import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
+  verifyCodexCatalogOverride,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
   verifyTelemetryPreference,
@@ -1935,6 +1936,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('telemetry-consent')) {
       phase = 'telemetry-preference'
       await verifyTelemetryPreference(control)
+      phase = 'codex-catalog-override'
+      await verifyCodexCatalogOverride(control, DEFAULT_MODEL_ID)
       verifyTelemetryRemainsDisabled(control)
       if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)

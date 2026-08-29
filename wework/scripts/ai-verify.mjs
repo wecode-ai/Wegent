@@ -368,6 +368,7 @@ export async function buildSourceRuntimeEnvironment(
       platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
     ),
     WEWORK_COMPONENT_RESOURCES_ROOT: join(electronDir, 'resources'),
+    WEWORK_CORE_PLUGIN_ROOT: join(electronDir, 'resources', 'wework-core-plugins'),
     WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
   }
 }
