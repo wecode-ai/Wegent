@@ -37,6 +37,7 @@ import {
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
@@ -84,11 +85,14 @@ interface TrayDisplayOption {
 export function GeneralSettingsPage() {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  const appPreferences = useAppPreferencesState()
   const workbench = useContext(WorkbenchContext)
   const runtimeWorkApi = workbench?.services?.runtimeWorkApi
-  const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
+  const [preferences, setPreferences] = useState<AppPreferences>(
+    appPreferences?.loaded ? appPreferences.preferences : defaultAppPreferences
+  )
   const [cloudQuotaName, setCloudQuotaName] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!appPreferences?.loaded)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
@@ -97,6 +101,8 @@ export function GeneralSettingsPage() {
   const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
 
   useEffect(() => {
+    if (appPreferences && !appPreferences.loaded) return
+
     let cancelled = false
 
     const runtimeSettings = Promise.resolve()
@@ -106,7 +112,11 @@ export function GeneralSettingsPage() {
         return null
       })
 
-    Promise.all([getAppPreferences(), runtimeSettings])
+    const preferences = appPreferences
+      ? Promise.resolve(appPreferences.preferences)
+      : getAppPreferences()
+
+    Promise.all([preferences, runtimeSettings])
       .then(([nextPreferences, runtimeSettings]) => {
         if (!cancelled) {
           setPreferences(nextPreferences)
@@ -129,7 +139,7 @@ export function GeneralSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [runtimeWorkApi, t])
+  }, [appPreferences, runtimeWorkApi, t])
 
   useEffect(() => {
     if (!preferences.experimentalFeaturesEnabled) return

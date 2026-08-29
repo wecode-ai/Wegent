@@ -46,6 +46,15 @@ class IndexExecutionDecision:
     reason: str
 
 
+@dataclass(frozen=True)
+class ExternalImportAttemptDecision:
+    """Decision returned when an external import task claims its attempt."""
+
+    should_execute: bool
+    reason: str
+    generation: Optional[int] = None
+
+
 ACTIVE_INDEX_STATUSES = {
     DocumentIndexStatus.QUEUED,
     DocumentIndexStatus.PENDING_CONVERSION,
@@ -139,7 +148,7 @@ def _record_transition(
 @trace_sync(
     span_name="knowledge.prepare_document_index_enqueue",
     tracer_name="knowledge.state_machine",
-    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False: {
+    extract_attributes=lambda db, document_id, allow_if_success=False, replace_active=False, expected_generation=None: {
         "knowledge.document_id": document_id,
         "knowledge.allow_if_success": allow_if_success,
         "knowledge.replace_active": replace_active,
@@ -151,17 +160,20 @@ def prepare_document_index_enqueue(
     *,
     allow_if_success: bool = False,
     replace_active: bool = False,
+    expected_generation: Optional[int] = None,
 ) -> IndexEnqueueDecision:
     """
     Prepare a document for a new indexing generation.
 
     This function is called before sending a Celery task. It updates the
     business state in the database so later duplicate requests can be skipped.
+    A guarded handoff may only advance the generation it already owns.
     """
     document = (
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if document is None:
@@ -179,6 +191,23 @@ def prepare_document_index_enqueue(
         )
 
     current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        expected_generation is not None
+        and document.index_generation != expected_generation
+    ):
+        db.rollback()
+        _record_transition(
+            "knowledge.index.enqueue.skipped",
+            document_id=document_id,
+            generation=expected_generation,
+            reason="stale_generation",
+        )
+        return IndexEnqueueDecision(
+            should_enqueue=False,
+            generation=expected_generation,
+            reason="stale_generation",
+            previous_status=current_status,
+        )
 
     if current_status in ACTIVE_INDEX_STATUSES and not replace_active:
         stale_reason = _get_active_index_stale_reason(document)
@@ -396,6 +425,18 @@ _INDEX_SUCCEEDED_ALLOWED_STATUSES = {
 }
 
 
+def _finalize_external_source_on_success(
+    document: KnowledgeDocument,
+) -> None:
+    """Record import completion without inferring source health from indexing."""
+    if not document.has_external_identity:
+        return
+
+    document.update_external_source_config(
+        last_success_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
 @trace_sync(
     span_name="knowledge.mark_document_index_succeeded",
     tracer_name="knowledge.state_machine",
@@ -413,39 +454,58 @@ def mark_document_index_succeeded(
     chunks: Optional[dict] = None,
     chunk_storage_enabled: bool = False,
 ) -> bool:
-    """Persist a successful indexing result for the active generation."""
-    update_payload = {
-        KnowledgeDocument.index_status: DocumentIndexStatus.SUCCESS,
-        KnowledgeDocument.is_active: True,
-        KnowledgeDocument.status: DocumentStatus.ENABLED,
-    }
+    """Persist a successful indexing result for the active generation.
 
-    if chunk_storage_enabled:
-        update_payload[KnowledgeDocument.chunks] = chunks
-
-    updated = (
+    For an external document, success records source accessibility and the
+    latest successful import time.
+    """
+    document = (
         db.query(KnowledgeDocument)
-        .filter(
-            KnowledgeDocument.id == document_id,
-            KnowledgeDocument.index_generation == generation,
-            KnowledgeDocument.index_status.in_(_INDEX_SUCCEEDED_ALLOWED_STATUSES),
-        )
-        .update(
-            {
-                **update_payload,
-                KnowledgeDocument.updated_at: _utcnow(),
-            },
-            synchronize_session=False,
-        )
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .first()
     )
+    if document is None:
+        db.rollback()
+        _record_transition(
+            "knowledge.index.finalize.success",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_or_already_finalized",
+        )
+        return False
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if (
+        document.index_generation != generation
+        or current_status not in _INDEX_SUCCEEDED_ALLOWED_STATUSES
+    ):
+        db.rollback()
+        _record_transition(
+            "knowledge.index.finalize.success",
+            document_id=document_id,
+            generation=generation,
+            reason="stale_or_already_finalized",
+        )
+        return False
+
+    document.index_status = DocumentIndexStatus.SUCCESS
+    document.is_active = True
+    document.status = DocumentStatus.ENABLED
+    if chunk_storage_enabled:
+        document.chunks = chunks
+    document.updated_at = _utcnow()
+
+    _finalize_external_source_on_success(document)
+
     db.commit()
     _record_transition(
         "knowledge.index.finalize.success",
         document_id=document_id,
         generation=generation,
-        reason="finalized" if updated > 0 else "stale_or_already_finalized",
+        reason="finalized",
     )
-    return updated > 0
+    return True
 
 
 @trace_sync(
@@ -463,11 +523,16 @@ def mark_document_index_failed(
     *,
     error: Optional[DocumentProcessingError] = None,
 ) -> bool:
-    """Persist a failed indexing result for the active generation."""
+    """Persist a failed indexing result for the active generation.
+
+    The document itself is never deleted by a failure, so the user can retry
+    the initial import on the same record.
+    """
     document = (
         db.query(KnowledgeDocument)
         .filter(KnowledgeDocument.id == document_id)
         .with_for_update()
+        .populate_existing()
         .first()
     )
     if document is None:
@@ -503,6 +568,14 @@ def mark_document_index_failed(
     document.set_processing_error_payload(persisted_error.model_dump(mode="json"))
     document.index_status = DocumentIndexStatus.FAILED
     document.updated_at = _utcnow()
+    if (
+        document.has_external_identity
+        and persisted_error.code == "external_source_unavailable"
+    ):
+        document.update_external_source_config(
+            status="inaccessible", last_error=persisted_error.message
+        )
+
     db.commit()
     _record_transition(
         "knowledge.index.finalize.failed",
@@ -511,6 +584,96 @@ def mark_document_index_failed(
         reason="finalized",
     )
     return True
+
+
+def _skip_import_attempt(
+    document_id: int,
+    generation: Optional[int],
+    reason: str,
+    previous_status: Optional[DocumentIndexStatus] = None,
+) -> ExternalImportAttemptDecision:
+    """Record a skip transition and build the matching decision."""
+    _record_transition(
+        "knowledge.external_import.attempt.skipped",
+        document_id=document_id,
+        generation=generation,
+        reason=reason,
+        previous_status=previous_status,
+    )
+    return ExternalImportAttemptDecision(should_execute=False, reason=reason)
+
+
+@trace_sync(
+    span_name="knowledge.begin_external_import_attempt",
+    tracer_name="knowledge.state_machine",
+    extract_attributes=lambda db, document_id, expected_generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.expected_generation": expected_generation,
+    },
+)
+def begin_external_import_attempt(
+    db: Session,
+    document_id: int,
+    expected_generation: int,
+) -> ExternalImportAttemptDecision:
+    """
+    Consume one queued import generation exactly once.
+
+    The row lock makes the generation check and increment atomic. Only the
+    first delivery may claim it; redelivered or older messages cannot replace
+    an attempt that is already fetching, converting or indexing.
+    """
+    document = (
+        db.query(KnowledgeDocument)
+        .filter(KnowledgeDocument.id == document_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if document is None:
+        db.rollback()
+        return _skip_import_attempt(document_id, None, "document_not_found")
+
+    if not document.has_external_identity:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id, document.index_generation, "no_external_identity"
+        )
+
+    current_status = document.index_status or DocumentIndexStatus.NOT_INDEXED
+    if current_status == DocumentIndexStatus.SUCCESS:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id,
+            document.index_generation,
+            "already_imported",
+            previous_status=current_status,
+        )
+
+    if document.index_generation != expected_generation:
+        db.rollback()
+        return _skip_import_attempt(
+            document_id, expected_generation, "stale_generation"
+        )
+    if current_status != DocumentIndexStatus.QUEUED:
+        db.rollback()
+        return _skip_import_attempt(document_id, expected_generation, "not_queued")
+
+    next_generation = expected_generation + 1
+    document.index_generation = next_generation
+    document.index_status = DocumentIndexStatus.QUEUED
+    document.clear_processing_error_payload()
+    db.commit()
+    _record_transition(
+        "knowledge.external_import.attempt.claimed",
+        document_id=document_id,
+        generation=next_generation,
+        reason="claimed",
+        previous_status=current_status,
+    )
+    return ExternalImportAttemptDecision(
+        should_execute=True, reason="claimed", generation=next_generation
+    )
 
 
 @trace_sync(

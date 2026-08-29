@@ -73,11 +73,12 @@ def test_build_qa_query_plan_ignores_non_qa_chunks():
 
 
 def test_build_qa_query_plan_uses_sqlite_json_and_scope_filter():
-    from app.models.knowledge import KnowledgeDocument
+    from app.models.knowledge import KnowledgeDocument, KnowledgeDocumentExternalSource
     from app.services.rag.retrieval_service import RetrievalService
 
     engine = create_engine("sqlite:///:memory:")
     KnowledgeDocument.__table__.create(engine)
+    KnowledgeDocumentExternalSource.__table__.create(engine)
     session_factory = sessionmaker(bind=engine)
 
     with session_factory() as db:

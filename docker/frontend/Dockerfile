@@ -55,7 +55,7 @@ ENV HUSKY=0
 WORKDIR /app/frontend
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate \
-    && pnpm run build
+    && pnpm --config.verify-deps-before-run=false run build
 
 # ---- Production Stage ----
 FROM node:22-slim AS runner

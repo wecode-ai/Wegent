@@ -220,7 +220,7 @@ describe('ComposerProseMirrorEditor', () => {
     expect(onChange).toHaveBeenLastCalledWith('existing pasted text')
   })
 
-  test('moves the caret to the end after pasting text', () => {
+  test('keeps the caret immediately after text pasted in the middle', () => {
     const { editorRef } = renderEditor('before after')
     const editor = screen.getByTestId('composer-editor')
 
@@ -236,9 +236,9 @@ describe('ComposerProseMirrorEditor', () => {
 
     expect(editorRef.current?.getSnapshot()).toMatchObject({
       value: 'before pasted after',
-      selectionOffset: 'before pasted after'.length,
-      selectionStart: 'before pasted after'.length,
-      selectionEnd: 'before pasted after'.length,
+      selectionOffset: 'before pasted '.length,
+      selectionStart: 'before pasted '.length,
+      selectionEnd: 'before pasted '.length,
     })
   })
 

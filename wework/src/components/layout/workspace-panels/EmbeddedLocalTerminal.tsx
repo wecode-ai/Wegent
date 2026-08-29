@@ -14,6 +14,7 @@ import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
+import { installXtermTextDrag } from './xtermTextDrag'
 import {
   installXtermRenderRecovery,
   logXtermRenderState,
@@ -172,6 +173,7 @@ export function EmbeddedLocalTerminal({
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
     const selectionGuard = installXtermSelectionGuard({ container, terminal })
+    const textDrag = installXtermTextDrag({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -280,6 +282,7 @@ export function EmbeddedLocalTerminal({
         dataDisposable.dispose()
         titleDisposable.dispose()
         selectionGuard.dispose()
+        textDrag.dispose()
         inputFallback.dispose()
         unlisteners.forEach(unlisten => unlisten())
         terminal.dispose()

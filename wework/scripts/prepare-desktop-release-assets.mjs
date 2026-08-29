@@ -19,6 +19,7 @@ const componentResourcesRoot = join(weworkRoot, 'electron', 'resources')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const [platform, arch, version, outputDirectory] = process.argv.slice(2)
 const identity = resolveBuildIdentity()
+let packagedComponentResourcesRoot = componentResourcesRoot
 
 if (!platform || !arch || !version || !outputDirectory) {
   throw new Error(
@@ -32,10 +33,12 @@ await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 
 if (platform === 'macos') {
-  const appDirectory = await findDirectory(installerRoot, /^mac(?:-arm64)?$/)
+  const appDirectory = join(installerRoot, arch === 'arm64' ? 'mac-arm64' : 'mac')
+  await requireDirectory(appDirectory)
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
+  packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
@@ -71,7 +74,7 @@ await prepareComponentAssets()
 
 async function prepareComponentAssets() {
   const packaged = JSON.parse(
-    await readFile(join(componentResourcesRoot, 'components.json'), 'utf8')
+    await readFile(join(packagedComponentResourcesRoot, 'components.json'), 'utf8')
   )
   const componentAssets = {}
   for (const id of ['coreDsh', 'weworkCorePlugins', 'bundledPlugins', 'executor', 'codex', 'dws']) {
@@ -79,7 +82,7 @@ async function prepareComponentAssets() {
     if (!component?.path || !component?.sha256 || !component?.version) {
       throw new Error(`Packaged component metadata is incomplete: ${id}`)
     }
-    const sourcePath = join(componentResourcesRoot, component.path)
+    const sourcePath = join(packagedComponentResourcesRoot, component.path)
     const source = await stat(sourcePath)
     const temporaryAssetPath = join(output, `.component-${id}.tar.gz`)
     const archiveOptions = {
@@ -138,13 +141,6 @@ async function signBridge(path) {
     ['--dir', join(weworkRoot, 'electron'), 'exec', 'tauri', 'signer', 'sign', path],
     weworkRoot
   )
-}
-
-async function findDirectory(root, pattern) {
-  for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (entry.isDirectory() && pattern.test(entry.name)) return join(root, entry.name)
-  }
-  throw new Error(`No directory matching ${pattern} under ${root}`)
 }
 
 async function findFile(root, pattern) {

@@ -69,6 +69,18 @@ def test_a_client_cannot_create_a_code_target(schema, extra):
 @pytest.mark.parametrize(
     "schema, extra",
     [
+        (KnowledgeDocumentCreate, {"name": "x", "file_extension": "md"}),
+        (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
+    ],
+)
+def test_a_client_cannot_create_an_external_import_record(schema, extra):
+    with pytest.raises(ValidationError, match="external import API"):
+        schema(source_type="external", **extra)
+
+
+@pytest.mark.parametrize(
+    "schema, extra",
+    [
         (KnowledgeDocumentCreate, {"name": "x", "file_extension": "py"}),
         (KnowledgeDocumentCreateV1, {"knowledge_base_id": 1, "name": "x"}),
     ],

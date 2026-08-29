@@ -45,6 +45,7 @@ export interface AppPreferences {
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  computerUseEnabled?: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
   friendlyTaskTitlesEnabled: boolean
@@ -131,6 +132,7 @@ export interface AppPreferencesPatch {
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  computerUseEnabled?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
   friendlyTaskTitlesEnabled?: boolean
@@ -194,6 +196,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
@@ -372,6 +375,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    computerUseEnabled:
+      typeof record.computerUseEnabled === 'boolean'
+        ? record.computerUseEnabled
+        : defaultAppPreferences.computerUseEnabled,
     popoutWindowShortcut:
       typeof record.popoutWindowShortcut === 'string' && record.popoutWindowShortcut.trim()
         ? record.popoutWindowShortcut.trim()

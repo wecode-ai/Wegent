@@ -19,6 +19,8 @@ interface ChatContextInputProps {
   triggerVariant?: 'button' | 'menu-item'
   /** Render compact icon-only desktop trigger */
   iconOnly?: boolean
+  /** Notify a parent menu so it can hide while the selector is open. */
+  onSelectorOpenChange?: (open: boolean) => void
 }
 
 /**
@@ -35,8 +37,17 @@ export default function ChatContextInput({
   excludeKnowledgeBaseId,
   triggerVariant = 'button',
   iconOnly = false,
+  onSelectorOpenChange,
 }: ChatContextInputProps) {
   const [selectorOpen, setSelectorOpen] = useState(false)
+
+  const handleSelectorOpenChange = useCallback(
+    (open: boolean) => {
+      setSelectorOpen(open)
+      onSelectorOpenChange?.(open)
+    },
+    [onSelectorOpenChange]
+  )
 
   const handleSelect = useCallback(
     (context: ContextItem) => {
@@ -99,7 +110,7 @@ export default function ChatContextInput({
   return (
     <ContextSelector
       open={selectorOpen}
-      onOpenChange={setSelectorOpen}
+      onOpenChange={handleSelectorOpenChange}
       selectedContexts={selectedContexts}
       onSelect={handleSelect}
       onDeselect={handleDeselect}
@@ -110,7 +121,7 @@ export default function ChatContextInput({
     >
       <div>
         <AddContextButton
-          onClick={() => setSelectorOpen(true)}
+          onClick={() => handleSelectorOpenChange(true)}
           selectedCount={selectedContexts.length}
           triggerVariant={triggerVariant}
           iconOnly={iconOnly}

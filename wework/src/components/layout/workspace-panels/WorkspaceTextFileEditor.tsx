@@ -18,6 +18,7 @@ import {
   lineNumbers,
 } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
+import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
 
 interface WorkspaceTextFileEditorProps {
   path: string
@@ -74,6 +75,22 @@ function editorTheme(themeType: 'light' | 'dark') {
   )
 }
 
+function editorSelectionRect(
+  editorView: EditorView,
+  from: number,
+  to: number
+): { left: number; top: number; width: number; height: number } | null {
+  const start = editorView.coordsAtPos(from)
+  const end = editorView.coordsAtPos(to)
+  if (!start || !end) return null
+
+  const left = Math.min(start.left, end.left)
+  const top = Math.min(start.top, end.top)
+  const right = Math.max(start.right, end.right)
+  const bottom = Math.max(start.bottom, end.bottom)
+  return { left, top, width: right - left, height: bottom - top }
+}
+
 export function WorkspaceTextFileEditor({
   path,
   value,
@@ -81,6 +98,7 @@ export function WorkspaceTextFileEditor({
   onChange,
   onSave,
 }: WorkspaceTextFileEditorProps) {
+  const selectionSource = `workspace-editor:${path}`
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const themeCompartmentRef = useRef(new Compartment())
@@ -129,6 +147,27 @@ export function WorkspaceTextFileEditor({
           EditorView.lineWrapping,
           EditorView.updateListener.of(update => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
+            if (update.selectionSet || update.docChanged) {
+              const selection = update.state.selection.main
+              publishSelectedTextSelection(
+                selectionSource,
+                selection.empty ? null : update.state.sliceDoc(selection.from, selection.to),
+                selection.empty
+                  ? null
+                  : editorSelectionRect(update.view, selection.from, selection.to)
+              )
+            }
+          }),
+          EditorView.domEventHandlers({
+            dragstart(event, editorView) {
+              const selection = editorView.state.selection.main
+              if (!event.dataTransfer || selection.empty) return false
+              writeSelectedTextDragData(
+                event.dataTransfer,
+                editorView.state.sliceDoc(selection.from, selection.to)
+              )
+              return false
+            },
           }),
           themeCompartmentRef.current.of(editorTheme(initialThemeRef.current)),
         ],
@@ -137,10 +176,11 @@ export function WorkspaceTextFileEditor({
     viewRef.current = view
     view.focus()
     return () => {
+      publishSelectedTextSelection(selectionSource, null)
       viewRef.current = null
       view.destroy()
     }
-  }, [path])
+  }, [path, selectionSource])
 
   useEffect(() => {
     viewRef.current?.dispatch({

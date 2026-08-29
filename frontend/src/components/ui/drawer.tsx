@@ -33,23 +33,36 @@ DrawerOverlay.displayName = DrawerPrimitive.Overlay.displayName
 
 const DrawerContent = React.forwardRef<
   React.ElementRef<typeof DrawerPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content> & { showHandle?: boolean }
->(({ className, children, showHandle = true, ...props }, ref) => (
-  <DrawerPortal>
-    <DrawerOverlay />
-    <DrawerPrimitive.Content
-      ref={ref}
-      className={cn(
-        'fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border bg-base',
-        className
-      )}
-      {...props}
-    >
-      {showHandle && <div className="mx-auto mt-4 h-2 w-[100px] rounded-full bg-muted" />}
-      {children}
-    </DrawerPrimitive.Content>
-  </DrawerPortal>
-))
+  React.ComponentPropsWithoutRef<typeof DrawerPrimitive.Content> & {
+    showHandle?: boolean
+    handleClassName?: string
+    overlayClassName?: string
+  }
+>(
+  (
+    { className, children, showHandle = true, handleClassName, overlayClassName, ...props },
+    ref
+  ) => (
+    <DrawerPortal>
+      <DrawerOverlay className={overlayClassName} />
+      <DrawerPrimitive.Content
+        ref={ref}
+        className={cn(
+          'fixed inset-x-0 bottom-0 z-50 mt-24 flex h-auto flex-col rounded-t-[10px] border bg-base',
+          className
+        )}
+        {...props}
+      >
+        {showHandle && (
+          <div
+            className={cn('mx-auto mt-4 h-2 w-[100px] rounded-full bg-muted', handleClassName)}
+          />
+        )}
+        {children}
+      </DrawerPrimitive.Content>
+    </DrawerPortal>
+  )
+)
 DrawerContent.displayName = 'DrawerContent'
 
 const DrawerHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (

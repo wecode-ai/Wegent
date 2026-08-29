@@ -41,7 +41,11 @@ import {
   openNativeWorkspacePathPicker,
   type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
-import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
+import {
+  hasWorkspacePathDragData,
+  resolveDataTransferWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   COMPOSER_APPS_REQUEST_SYNC_EVENT,
@@ -1059,6 +1063,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         cloudSpaceDirectReference,
         commitEditorValue,
         onSelectCloudProject,
+        onSelectExternalMention,
         onSetGoal,
         onSetPlanMode,
         selectMentionCandidate,
@@ -1406,14 +1411,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         const files = Array.from(clipboardData.files)
         if (files.length > 0) {
           event.preventDefault()
-          void resolveDataTransferWorkspacePaths(
-            clipboardData,
-            'clipboard',
-            workspaceTarget?.workspaceSource
-          ).then(({ attachmentFiles, referenceEntries }) => {
-            insertPathReferences(referenceEntries)
-            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-          })
+          void resolveDataTransferWorkspacePaths(clipboardData, 'clipboard').then(
+            ({ attachmentFiles, referenceEntries }) => {
+              insertPathReferences(referenceEntries)
+              if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+            }
+          )
           return true
         }
         if (!onPasteFiles) return false
@@ -1423,26 +1426,51 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         onPasteFiles([textAttachment])
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [insertPathReferences, onPasteFiles]
     )
 
     const handleDrop = useCallback(
       (event: DragEvent) => {
         const dataTransfer = event.dataTransfer
-        if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
+        if (!dataTransfer) return false
+        if (disabled) {
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+        if (Array.from(dataTransfer.types).includes(SELECTED_TEXT_DRAG_TYPE)) {
+          const text = dataTransfer.getData('text/plain')
+          if (!text) return false
+          event.preventDefault()
+          event.stopPropagation()
+          const editor = editorRef.current
+          if (!editor) return false
+          const current = editor.getSnapshot()
+          const before = current.value.slice(0, current.selectionStart)
+          const after = current.value.slice(current.selectionEnd)
+          const leadingBreak = before && !before.endsWith('\n') ? '\n' : ''
+          const trailingBreak = after && !after.startsWith('\n') ? '\n' : ''
+          const inserted = `${leadingBreak}${text}${trailingBreak}`
+          commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
+          editor.focus()
+          return true
+        }
+        if (
+          !Array.from(dataTransfer.types).includes('Files') &&
+          !hasWorkspacePathDragData(dataTransfer)
+        )
+          return false
         event.preventDefault()
         event.stopPropagation()
-        void resolveDataTransferWorkspacePaths(
-          dataTransfer,
-          'drop',
-          workspaceTarget?.workspaceSource
-        ).then(({ attachmentFiles, referenceEntries }) => {
-          insertPathReferences(referenceEntries)
-          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-        })
+        void resolveDataTransferWorkspacePaths(dataTransfer, 'drop').then(
+          ({ attachmentFiles, referenceEntries }) => {
+            insertPathReferences(referenceEntries)
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          }
+        )
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [commitEditorValue, disabled, insertPathReferences, onPasteFiles]
     )
 
     return (

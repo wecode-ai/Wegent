@@ -1160,6 +1160,8 @@ describe('RuntimeTaskLifecycleStore', () => {
   test('accepts an executor-confirmed autonomous turn after the previous turn settles', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
     store.executorSettled(address)
 
     store.syncRuntimeWork(
@@ -1175,7 +1177,11 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     const snapshot = store.getTask(address)
     expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.turn.outcome).toBe('succeeded')
     expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getSnapshot().runningTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
   })
 
   test('does not let an optimistic projection settle an executor that remains active', () => {

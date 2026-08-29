@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from 'react'
 import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
+import { setPanelResizeShieldActive } from '@/lib/panel-resize-shield'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 const RIGHT_SPLIT_CHAT_MIN_WIDTH = 360
@@ -98,6 +99,7 @@ export function useResizableRightSplitChat({
       document.removeEventListener('pointerup', handleUp)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      setPanelResizeShieldActive(false)
       setResizing(false)
     }
 
@@ -144,6 +146,7 @@ export function useResizableRightSplitChat({
     setResizing(true)
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    setPanelResizeShieldActive(true)
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
   }
@@ -223,6 +226,7 @@ export function useResizableBottomPanel(codeFontSize = DEFAULT_CODE_FONT_SIZE) {
       }
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
+      setPanelResizeShieldActive(false)
       activeResizeCleanupRef.current = null
     }
 
@@ -242,6 +246,7 @@ export function useResizableBottomPanel(codeFontSize = DEFAULT_CODE_FONT_SIZE) {
     setResizing(true)
     document.body.style.cursor = 'row-resize'
     document.body.style.userSelect = 'none'
+    setPanelResizeShieldActive(true)
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
     document.addEventListener('pointercancel', handleCancel)

@@ -20,6 +20,7 @@ const ERROR_TRANSLATION_KEYS: Record<string, string> = {
   index_lock_timeout: 'indexLockTimeout',
   index_dispatch_failed: 'indexDispatchFailed',
   processing_failed: 'processingFailed',
+  external_import_failed: 'externalImportFailed',
 }
 
 export function getProcessingErrorMessage(

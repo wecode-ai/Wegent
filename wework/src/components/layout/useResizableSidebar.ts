@@ -1,4 +1,5 @@
 import { useState, type PointerEvent } from 'react'
+import { setPanelResizeShieldActive } from '@/lib/panel-resize-shield'
 
 const DEFAULT_SIDEBAR_WIDTH = 240
 const MIN_SIDEBAR_WIDTH = 240
@@ -49,12 +50,14 @@ export function useResizableSidebar({
     onResizeStateChange?.(true)
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
+    setPanelResizeShieldActive(true)
 
     const finishResize = () => {
       setResizing(false)
       onResizeStateChange?.(false)
       document.body.style.cursor = previousCursor
       document.body.style.userSelect = previousUserSelect
+      setPanelResizeShieldActive(false)
       document.removeEventListener('pointermove', handlePointerMove)
       document.removeEventListener('pointerup', handlePointerUp)
     }

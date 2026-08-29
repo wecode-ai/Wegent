@@ -13,7 +13,7 @@
 import { User, Users, Building2, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-export type GroupType = 'personal' | 'group' | 'organization' | 'dingtalk'
+export type GroupType = 'personal' | 'group' | 'organization'
 
 export interface GroupItemProps {
   /** Group ID */

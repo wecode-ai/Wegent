@@ -11,7 +11,6 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
-import { dingtalkDocApi } from '@/apis/dingtalk-doc'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { useUser } from '@/features/common/UserContext'
 import { documentViewOf } from '@/types/knowledge'
@@ -29,10 +28,10 @@ import type { User } from '@/types/api'
 const RECENT_STORAGE_KEY = 'knowledge-recent-access'
 const MAX_RECENT_ITEMS = 5
 
-export type GroupType = 'personal' | 'group' | 'organization' | 'dingtalk'
+export type GroupType = 'personal' | 'group' | 'organization'
 
 /** View mode for the knowledge page */
-export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'dingtalk' | 'source'
+export type ViewMode = 'all' | 'group' | 'kb' | 'groups' | 'source'
 
 export interface KnowledgeGroup {
   id: string
@@ -87,7 +86,6 @@ export interface UseKnowledgeSidebarReturn {
   // View mode
   viewMode: ViewMode
   selectAll: () => void
-  selectDingtalk: () => void
   filterGroupId: string | null
   setFilterGroupId: (groupId: string | null) => void
 
@@ -104,13 +102,6 @@ export interface UseKnowledgeSidebarReturn {
 
   // Current user
   currentUser: User | null
-
-  // DingTalk docs
-  dingtalkDocCount: number
-  wikispaceDocCount: number
-  isDingtalkConfigured: boolean
-  isDingtalkLoading: boolean
-  isWikispaceConfigured: boolean
 
   // Summary counts from backend
   summary?: {
@@ -211,13 +202,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
   const [viewMode, setViewMode] = useState<ViewMode>('all')
   const [filterGroupId, setFilterGroupId] = useState<string | null>(null)
 
-  // DingTalk docs state
-  const [dingtalkDocCount, setDingtalkDocCount] = useState(0)
-  const [wikispaceDocCount, setWikispaceDocCount] = useState(0)
-  const [isDingtalkConfigured, setIsDingtalkConfigured] = useState(false)
-  const [isDingtalkLoading, setIsDingtalkLoading] = useState(true)
-  const [isWikispaceConfigured, setIsWikispaceConfigured] = useState(false)
-
   // Load initial data using the optimized all-grouped API
   const loadInitialData = useCallback(async () => {
     setIsLoading(true)
@@ -236,35 +220,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
       loadInitialData()
     }
   }, [user, loadInitialData])
-
-  const loadDingtalkStatus = useCallback(async () => {
-    setIsDingtalkLoading(true)
-    const [docsResult, wsResult] = await Promise.allSettled([
-      dingtalkDocApi.getSyncStatus(),
-      dingtalkDocApi.getWikispaceSyncStatus(),
-    ])
-    if (docsResult.status === 'fulfilled') {
-      setDingtalkDocCount(docsResult.value.total_nodes)
-      setIsDingtalkConfigured(docsResult.value.is_configured)
-    } else {
-      setIsDingtalkConfigured(false)
-      setDingtalkDocCount(0)
-    }
-    if (wsResult.status === 'fulfilled') {
-      setIsWikispaceConfigured(wsResult.value.is_configured)
-      setWikispaceDocCount(wsResult.value.total_nodes)
-    } else {
-      setIsWikispaceConfigured(false)
-      setWikispaceDocCount(0)
-    }
-    setIsDingtalkLoading(false)
-  }, [])
-
-  useEffect(() => {
-    if (user) {
-      loadDingtalkStatus()
-    }
-  }, [user, loadDingtalkStatus])
 
   // Build all knowledge bases with group info list
   const allKnowledgeBasesWithGroupInfo = useMemo((): KnowledgeBaseWithGroupInfo[] => {
@@ -591,15 +546,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     setFilterGroupId(null)
   }, [])
 
-  const selectDingtalk = useCallback(() => {
-    setSelectedGroupId(null)
-    setSelectedKbId(null)
-    setSelectedSourceViewId(null)
-    setSelectedKb(null)
-    setViewMode('dingtalk')
-    setFilterGroupId(null)
-  }, [])
-
   const selectSourceView = useCallback((sourceViewId: string) => {
     setSelectedGroupId(null)
     setSelectedKbId(null)
@@ -620,8 +566,8 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
   // Refresh all data
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadInitialData(), loadDingtalkStatus()])
-  }, [loadInitialData, loadDingtalkStatus])
+    await loadInitialData()
+  }, [loadInitialData])
 
   // Personal KBs grouped by ownership
   const personalCreatedByMe = useMemo((): KnowledgeBaseWithGroupInfo[] => {
@@ -665,7 +611,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
     // View mode
     viewMode,
     selectAll,
-    selectDingtalk,
     filterGroupId,
     setFilterGroupId,
 
@@ -682,13 +627,6 @@ export function useKnowledgeSidebar(): UseKnowledgeSidebarReturn {
 
     // Current user
     currentUser: user,
-
-    // DingTalk docs
-    dingtalkDocCount,
-    wikispaceDocCount,
-    isDingtalkConfigured,
-    isDingtalkLoading,
-    isWikispaceConfigured,
 
     // Summary from backend
     summary: allGroupedData?.summary,

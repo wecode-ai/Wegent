@@ -74,6 +74,30 @@ const requiredTreeGridProps = {
 }
 
 describe('KnowledgeDocumentTreeGrid', () => {
+  it('identifies imported documents as external rather than just their file extension', () => {
+    const documents = [createDocument({ source_type: 'external', file_extension: '.PDF' })]
+    const { nodes, index } = buildKnowledgeResourceTree([], documents)
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={[]}
+        documents={documents}
+        {...requiredTreeGridProps}
+        showSelectionColumn={false}
+        showActionsColumn={false}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+      />
+    )
+    expect(screen.getByText('document.document.type.external')).toBeInTheDocument()
+    expect(screen.queryByText('.PDF')).not.toBeInTheDocument()
+    expect(screen.getByText('doc.txt').parentElement?.querySelector('svg')).toHaveClass(
+      'lucide-file-text',
+      'text-error'
+    )
+  })
+
   it('renders folders and documents through visible TreeGrid rows', () => {
     const folders = [createFolder()]
     const documents = [createDocument({ id: 11, name: 'inside-folder.txt', folder_id: 1 })]
@@ -319,6 +343,52 @@ describe('KnowledgeDocumentTreeGrid', () => {
     )
 
     openSpy.mockRestore()
+  })
+
+  it('offers the dedicated retry entry for failed external imports', () => {
+    const onReindex = jest.fn()
+    const folders: KnowledgeFolder[] = []
+    const failedExternal = createDocument({
+      id: 21,
+      name: 'external-doc.md',
+      source_type: 'external',
+      index_status: 'failed',
+      is_active: false,
+    })
+    const failedRegular = createDocument({
+      id: 22,
+      name: 'regular-doc.txt',
+      index_status: 'failed',
+      is_active: false,
+    })
+    const { nodes, index } = buildKnowledgeResourceTree(folders, [failedExternal, failedRegular])
+
+    render(
+      <KnowledgeDocumentTreeGrid
+        nodes={nodes}
+        treeIndex={index}
+        folders={folders}
+        documents={[failedExternal, failedRegular]}
+        {...requiredTreeGridProps}
+        showSelectionColumn={true}
+        showActionsColumn={true}
+        selectedFolderIds={new Set()}
+        selectedDocumentIds={new Set()}
+        onReindex={onReindex}
+        canManage={() => true}
+        ragConfigured={false}
+      />
+    )
+
+    // External retry does not depend on RAG configuration, and never reuses
+    // the ordinary reindex control.
+    fireEvent.click(screen.getByTestId('retry-import-document-21'))
+    expect(onReindex).toHaveBeenCalledWith(failedExternal)
+    expect(screen.queryByTestId('reindex-document-21')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('document.document.retryImport')).toBeInTheDocument()
+
+    // Without RAG configuration the regular reindex control stays hidden.
+    expect(screen.queryByTestId('reindex-document-22')).not.toBeInTheDocument()
   })
 
   it('activates document rows from the keyboard', () => {

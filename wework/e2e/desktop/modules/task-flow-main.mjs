@@ -726,6 +726,7 @@ async function verifyLocalModelRouting({
   setPhase,
   workspacePath,
 }) {
+  const initialResponseTimeoutMs = 30_000
   for (const [switchIndex, switchCase] of LOCAL_MODEL_SWITCH_CASES.entries()) {
     setPhase(`local-model-switch-${switchCase.id}`)
     const sourceModel = LOCAL_MODEL_CASES.find(
@@ -756,7 +757,7 @@ async function verifyLocalModelRouting({
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_INITIAL_PROMPT)
     await control.command('waitFor', '[data-testid="message-assistant"]', {
       text: LOCAL_MODEL_SWITCH_INITIAL_COMPLETE,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: initialResponseTimeoutMs,
     })
     await sendPrompt(control, composerSelector, LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT)
     await control.command('waitFor', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
@@ -895,6 +896,7 @@ async function main() {
     mkdir(homePath, { recursive: true }),
     mkdir(codexSqliteHome, { recursive: true }),
   ])
+  await writeFile(join(homePath, '.zshrc'), '# Wework desktop E2E shell\n')
   await Promise.all([
     writeFile(join(workspacePath, GIT_SEED_NAME), GIT_SEED_CONTENT),
     writeFile(
@@ -961,6 +963,8 @@ async function main() {
       resultDir,
       standalone: DESKTOP_SCENARIO_ONLY,
       uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      modelResponseTimeoutMs: Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000),
+      workbenchReadyTimeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       workspacePath,
     }
   )
@@ -1107,6 +1111,7 @@ async function main() {
       CODEX_BIN: resolvedAppCodexBinary,
       CODEX_SQLITE_HOME: codexSqliteHome,
       HOME: homePath,
+      WEGENT_STANDALONE_WORKSPACE_ROOT: join(homePath, 'Documents', 'Codex'),
       WEGENT_CODEX_HOME: codexHome,
       WEGENT_EXECUTOR_HOME: executorHome,
       WEWORK_EXECUTOR_ISOLATION_OVERRIDE: 'false',
@@ -1168,6 +1173,7 @@ async function main() {
       'WEWORK_CORE_DSH_COMMAND',
       'WEWORK_CORE_DSH_URL',
       'WEWORK_CORE_PLUGIN_ROOT',
+      'WEWORK_CORE_PLUGINS_SHA256',
       'WEWORK_HARNESS_RESOURCE_ROOT',
       'WEWORK_HARNESS_RUNTIME_ROOT',
       'WEWORK_NODE_BIN',
@@ -1269,19 +1275,21 @@ async function main() {
       }
     }
     if (RUNS_PLUGIN_E2E) {
-      await writeCodexConfig(
-        codexHome,
-        control.url,
-        `[features]
+      const configureCodex = () =>
+        writeCodexConfig(
+          codexHome,
+          control.url,
+          `[features]
 plugins = true
 
 [marketplaces.${STARTUP_NETWORK_PROBE_MARKETPLACE_NAME}]
 source_type = "git"
 source = "${STARTUP_NETWORK_PROBE_MARKETPLACE_URL}"
 last_updated = "2026-07-30T00:00:00Z"`
-      )
+        )
       await verifyStartupIgnoresBlockedCodexNetwork({
         blockingNetworkProxy,
+        configureCodex,
         control,
         restartDesktopApp,
       })
@@ -1629,12 +1637,13 @@ last_updated = "2026-07-30T00:00:00Z"`
     }
 
     if (DROPPED_WORKSPACE_PATHS_ONLY) {
-      phase = 'dropped-workspace-paths'
-      await control.command('click', '[data-testid="new-chat-button"]')
+      phase = 'dropped-workspace-paths-project'
+      await createSingleRootLocalProject(control, workspacePath, 'workspace')
       await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
         timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
       })
       await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      phase = 'dropped-workspace-paths'
       await verifyDroppedWorkspacePaths({
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
@@ -3142,6 +3151,9 @@ last_updated = "2026-07-30T00:00:00Z"`
       await sendPrompt(control, composerSelector, FILE_PANEL_ANCHOR_PROMPT)
       const filePanelAnchorScopeSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-scroll-anchor]`
       const filePanelAnchorSelector = '[data-e2e-anchor-id="file-panel-anchor"]'
+      const filePanelLinkSelector = `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
+      const filePanelLinkTooltipSelector = '[data-testid="assistant-markdown-link-tooltip"]'
+      const rightWorkspacePanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
       const conversationScrollerSelector = '[data-testid="desktop-workbench-content"]'
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
@@ -3171,16 +3183,13 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
 
-      await control.command(
-        'click',
-        `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
-      )
+      await control.command('click', filePanelLinkSelector)
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The encoded Markdown file link did not resolve to the workspace file path'
       )
       await control.command('finishAnimations', 'body')
@@ -3243,6 +3252,59 @@ last_updated = "2026-07-30T00:00:00Z"`
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
 
+      await control.command('click', filePanelLinkSelector)
+      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('finishAnimations', 'body')
+      await control.command('hover', filePanelLinkSelector)
+      await control.command('waitFor', filePanelLinkTooltipSelector, {
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const filePanelLinkTooltipPosition = await control.command(
+        'getComputedStyleValue',
+        filePanelLinkTooltipSelector,
+        { value: 'position' }
+      )
+      const filePanelLinkTooltipZIndex = Number(
+        await control.command('getComputedStyleValue', filePanelLinkTooltipSelector, {
+          value: 'z-index',
+        })
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', rightWorkspacePanelSelector)),
+        1,
+        'The active workbench did not expose exactly one right workspace panel'
+      )
+      const rightWorkspacePanelZIndex = Number(
+        await control.command('getComputedStyleValue', rightWorkspacePanelSelector, {
+          value: 'z-index',
+        })
+      )
+      assert.equal(
+        filePanelLinkTooltipPosition,
+        'fixed',
+        'The assistant file-link tooltip was not lifted into a viewport layer'
+      )
+      assert.ok(
+        Number.isFinite(filePanelLinkTooltipZIndex) &&
+          Number.isFinite(rightWorkspacePanelZIndex) &&
+          filePanelLinkTooltipZIndex > rightWorkspacePanelZIndex,
+        `The assistant file-link tooltip layer ${filePanelLinkTooltipZIndex} did not clear the right workspace panel layer ${rightWorkspacePanelZIndex}`
+      )
+      await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
+      await control.command('press', filePanelLinkSelector, { key: 'Escape' })
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.includes('right-workspace-file-tab') &&
+          !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
+        'The assistant file-link tooltip did not dismiss above the open file panel',
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+
       phase = 'workspace-resources-across-conversation-switch'
       await writeFile(
         join(workspacePath, GIT_SEED_NAME),
@@ -3291,10 +3353,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         value: 'file-panel-anchor',
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      await control.command(
-        'click',
-        `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
-      )
+      await control.command('click', filePanelLinkSelector)
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="workspace-markdown-preview"]`,
@@ -3308,7 +3367,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The linked absolute file opened from the wrong workspace target'
       )
       await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
@@ -3476,7 +3535,7 @@ last_updated = "2026-07-30T00:00:00Z"`
           'getText',
           `${activeTaskWorkbenchSelector} [data-testid="workspace-file-path"]`
         ),
-        join(workspacePath, FILE_PANEL_LINK_NAME),
+        join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
         'The linked absolute file path was lost after switching conversations'
       )
       await control.command('click', rightBrowserTabSelector)
@@ -3914,7 +3973,12 @@ last_updated = "2026-07-30T00:00:00Z"`
     await stopDesktopAppProcess(app)
     await control.close()
     await desktopScenario?.cleanup?.()
-    await rm(codexSqliteHome, { recursive: true, force: true })
+    await rm(codexSqliteHome, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 20 : 0,
+      retryDelay: 100,
+    })
     if (appBundlePath && process.platform === 'darwin') {
       spawnSync(MACOS_LAUNCH_SERVICES_REGISTER, ['-u', appBundlePath])
     }

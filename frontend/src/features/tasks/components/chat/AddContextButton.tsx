@@ -36,6 +36,7 @@ export default function AddContextButton({
         type="button"
         onClick={onClick}
         className="w-full flex items-center justify-between px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover"
+        data-testid="knowledge-context-button"
       >
         <span className="flex items-center gap-3">
           <BookOpenText className="h-4 w-4 text-text-muted" />

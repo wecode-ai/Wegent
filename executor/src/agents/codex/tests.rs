@@ -7,6 +7,14 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn windows_router_auth_script_succeeds_after_reading_from_nul() {
+    assert_eq!(
+        windows_codex_router_auth_script(),
+        "<nul set /p =wework-local-router & exit /b 0"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
@@ -3223,17 +3231,15 @@ fn turn_input_converts_composer_file_references_to_plain_paths() {
 }
 
 #[test]
-fn codex_launch_config_includes_cdp_browser_mcp_server() {
+fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     let _lock = crate::test_env::lock();
-    let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
-    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-    let old_bridge_runtime_file = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
-    let bridge_runtime_file = home.join("desktop/embedded-browser-bridge.json");
-    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
     env::set_var(
-        WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
-        &bridge_runtime_file,
+        "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL",
+        "http://127.0.0.1:43127",
     );
+    env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", "bridge-token");
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
@@ -3263,93 +3269,126 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
-        config["mcp_servers.wework_browser.command"],
-        env::current_exe().unwrap().display().to_string()
+        config["mcp_servers.wework_browser.url"],
+        "http://127.0.0.1:2/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.args"],
-        json!(["browser-mcp-server"])
+        config["mcp_servers.wework_browser.http_headers.Authorization"],
+        "Bearer test-browser-mcp-instance-token"
     );
-    assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
+    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.args"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
     assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
     assert_eq!(
         config["mcp_servers.wework_browser.default_tools_approval_mode"],
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE"],
-        bridge_runtime_file.display().to_string()
-    );
-    assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
+        config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
         "workspace-browser-task-123"
     );
-    assert!(
-        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL")
-    );
-    assert!(
-        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN")
-    );
 
-    if let Some(old_home) = old_home {
-        env::set_var("WEGENT_EXECUTOR_HOME", old_home);
+    if let Some(value) = old_url {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", value);
     } else {
-        env::remove_var("WEGENT_EXECUTOR_HOME");
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
     }
-    if let Some(old_bridge_runtime_file) = old_bridge_runtime_file {
-        env::set_var(
-            WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
-            old_bridge_runtime_file,
-        );
+    if let Some(value) = old_token {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", value);
     } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
     }
 }
 
 #[test]
-fn codex_browser_mcp_defaults_to_executor_home_runtime_file() {
+fn codex_launch_config_omits_browser_mcp_without_local_bridge() {
     let _lock = crate::test_env::lock();
-    let home = env::temp_dir().join(format!("codex-browser-mcp-default-{}", std::process::id()));
+    let home = env::temp_dir().join(format!("codex-no-browser-bridge-{}", std::process::id()));
     let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-    let old_bridge_runtime_file = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
     env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
 
     let request = ExecutionRequest {
-        task_id: "task:default-runtime".to_owned(),
+        task_id: "task:remote".to_owned(),
         ..ExecutionRequest::default()
     };
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
-    let config = thread_start_params(&request, &launch_config)
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
         .get("config")
         .and_then(Value::as_object)
-        .cloned()
         .expect("thread config should be present");
 
+    assert!(!config.contains_key("mcp_servers.wework_browser.url"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
+
+    for (name, value) in [
+        ("WEGENT_EXECUTOR_HOME", old_home),
+        (
+            "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE",
+            old_runtime_file,
+        ),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", old_url),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", old_token),
+    ] {
+        if let Some(value) = value {
+            env::set_var(name, value);
+        } else {
+            env::remove_var(name);
+        }
+    }
+}
+
+#[test]
+fn codex_launch_config_includes_computer_use_mcp_server() {
+    let _lock = crate::test_env::lock();
+    let home = unique_test_path("codex-computer-use-mcp");
+    let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
+        .expect("runtime directory should be created");
+    fs::write(
+        &runtime_path,
+        br#"{"address":"127.0.0.1:43128","token":"computer-use-test-token"}"#,
+    )
+    .expect("computer use runtime record should be written");
+
+    let request = ExecutionRequest::default();
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
     assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE"],
-        home.join("runtime/embedded-browser-bridge.json")
-            .display()
-            .to_string()
+        config["mcp_servers.wework_computer.command"],
+        env::current_exe().unwrap().display().to_string()
     );
-    assert!(
-        !config.contains_key("mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL")
+    assert_eq!(
+        config["mcp_servers.wework_computer.args"],
+        json!(["computer-use-mcp-server"])
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.default_tools_approval_mode"],
+        "writes"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_URL"],
+        "http://127.0.0.1:43128"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
+        "computer-use-test-token"
     );
 
-    if let Some(old_home) = old_home {
-        env::set_var("WEGENT_EXECUTOR_HOME", old_home);
-    } else {
-        env::remove_var("WEGENT_EXECUTOR_HOME");
-    }
-    if let Some(old_bridge_runtime_file) = old_bridge_runtime_file {
-        env::set_var(
-            WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV,
-            old_bridge_runtime_file,
-        );
-    } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV);
-    }
+    let _ = fs::remove_dir_all(home);
 }
 
 #[test]

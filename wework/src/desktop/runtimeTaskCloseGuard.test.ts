@@ -8,10 +8,14 @@ import {
   shouldPreventRuntimeTaskClose,
 } from './runtimeTaskCloseGuard'
 
-const desktopInvokeMock = vi.hoisted(() => vi.fn())
+const desktopHostMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  subscribe: vi.fn(),
+}))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
-  invokeDesktopHost: desktopInvokeMock,
+  invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: desktopHostMocks.subscribe,
 }))
 
 function runtimeWorkWithTasks(tasks: Array<{ running?: boolean }>): RuntimeWorkListResponse {
@@ -48,7 +52,8 @@ function lifecycleWithTasks(tasks: Array<{ running?: boolean }>) {
 
 describe('runtime task close guard', () => {
   beforeEach(() => {
-    desktopInvokeMock.mockReset()
+    desktopHostMocks.invoke.mockReset()
+    desktopHostMocks.subscribe.mockReset()
   })
 
   test('detects running tasks across runtime work', () => {
@@ -81,25 +86,31 @@ describe('runtime task close guard', () => {
     expect(confirmClose).toHaveBeenCalledTimes(1)
   })
 
-  test('polls the Electron host for close-to-tray requests', async () => {
-    vi.useFakeTimers()
+  test('subscribes to close-to-tray requests from the Electron host', async () => {
     const onCloseToTrayHintRequest = vi.fn()
-    desktopInvokeMock.mockResolvedValueOnce({ requested: true, revision: 3 })
+    const dispose = vi.fn()
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      handler({
+        sequence: 1,
+        type: 'window.close-to-tray-requested',
+        payload: {},
+      })
+      return dispose
+    })
 
-    const dispose = await installRuntimeTaskCloseGuard(onCloseToTrayHintRequest)
-    await vi.runOnlyPendingTimersAsync()
+    const unlisten = await installRuntimeTaskCloseGuard(onCloseToTrayHintRequest)
 
-    expect(desktopInvokeMock).toHaveBeenCalledWith('window.closeRequestState', { after: 0 })
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
     expect(onCloseToTrayHintRequest).toHaveBeenCalledOnce()
-    dispose()
-    vi.useRealTimers()
+    unlisten()
+    expect(dispose).toHaveBeenCalledOnce()
   })
 
   test('closes the main window to tray through the Electron host', async () => {
-    desktopInvokeMock.mockResolvedValue(undefined)
+    desktopHostMocks.invoke.mockResolvedValue(undefined)
 
     await closeMainWindowToTray()
 
-    expect(desktopInvokeMock).toHaveBeenCalledWith('window.closeToTray')
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('window.closeToTray')
   })
 })

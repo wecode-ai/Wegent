@@ -136,11 +136,11 @@ const desktopHostMocks = vi.hoisted(() => {
           Object.assign(preferences, params.patch)
           return { ...preferences }
         }
-        if (capability === 'browser.events') return { events: [], nextCursor: 0 }
         if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
+        if (capability === 'systemDrag.takePending') return []
         return {}
       }
     ),
@@ -149,6 +149,7 @@ const desktopHostMocks = vi.hoisted(() => {
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 const localCodexPluginMocks = vi.hoisted(() => ({
@@ -1008,6 +1009,7 @@ describe('App plugins route', () => {
     }
     localStorage.clear()
     sessionStorage.clear()
+    delete window.weworkElectronCloudCredentials
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     Object.defineProperty(navigator, 'userAgent', {
@@ -1113,12 +1115,23 @@ describe('App plugins route', () => {
         apiBaseUrl: 'http://127.0.0.1:9100/api',
         socketBaseUrl: 'http://127.0.0.1:9100',
         socketPath: '/socket.io',
-        token: 'cloud-secret',
-        tokenExpiresAt: null,
         user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
         connectedAt: '2026-07-15T00:00:00.000Z',
       })
     )
+    window.weworkElectronCloudCredentials = {
+      getDevicePublicKey: vi.fn(),
+      claimAuthorization: vi.fn(),
+      refreshAccessToken: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          accessToken: 'cloud-secret',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+        },
+      }),
+      clear: vi.fn(),
+    }
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/users/me')) {
@@ -2004,9 +2017,18 @@ describe('App plugins route', () => {
     await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
     await userEvent.click(await screen.findByTestId('smart-apps-section-owned'))
     expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+    const ownedSearch = new URLSearchParams(window.location.search)
+    const workspaceTabId = ownedSearch.get('workspaceTab')
+    expect(ownedSearch.get('app_type')).toBe('smart_app')
+    expect(ownedSearch.get('view')).toBe('owned')
+    expect(workspaceTabId).toBeTruthy()
+    expect(ownedSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-    expect(window.location.search).toBe('?app_type=miniapp')
+    const miniAppSearch = new URLSearchParams(window.location.search)
+    expect(miniAppSearch.get('app_type')).toBe('miniapp')
+    expect(miniAppSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(miniAppSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
 
@@ -2015,7 +2037,11 @@ describe('App plugins route', () => {
       'aria-current',
       'page'
     )
-    expect(window.location.search).toBe('?app_type=smart_app')
+    const marketplaceSearch = new URLSearchParams(window.location.search)
+    expect(marketplaceSearch.get('app_type')).toBe('smart_app')
+    expect(marketplaceSearch.has('view')).toBe(false)
+    expect(marketplaceSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(marketplaceSearch.get('workspaceTabTitle')).toBe('应用')
   })
 
   test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {

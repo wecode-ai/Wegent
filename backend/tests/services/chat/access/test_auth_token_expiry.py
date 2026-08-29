@@ -12,7 +12,11 @@ import pytest
 from jose import jwt
 
 from app.core.config import settings
-from app.services.chat.access.auth import get_token_expiry, is_token_expired
+from app.services.chat.access.auth import (
+    get_token_expiry,
+    is_token_expired,
+    verify_jwt_token,
+)
 
 
 def create_test_token(exp_delta_seconds: int) -> str:
@@ -94,3 +98,17 @@ class TestGetTokenExpiry:
         payload = {"sub": "testuser", "user_id": 1}
         token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
         assert get_token_expiry(token) is None
+
+
+def test_chat_auth_rejects_wework_refresh_token() -> None:
+    token = jwt.encode(
+        {
+            "sub": "testuser",
+            "token_use": "wework_refresh",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+
+    assert verify_jwt_token(token) is None

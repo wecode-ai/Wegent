@@ -23,7 +23,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 
-from shared.models import ExecutionRequest, OpenAIRequestConverter, ResponsesAPIEmitter
+from shared.models import (
+    ExecutionRequest,
+    OpenAIRequestConverter,
+    ResponsesAPIEmitter,
+    ThrottleConfig,
+    ThrottledTransport,
+)
 from shared.models.responses_api import ResponsesAPIStreamEvents
 from shared.models.responses_api_emitter import EventTransport
 
@@ -31,6 +37,8 @@ router = APIRouter(prefix="/v1", tags=["responses"])
 logger = logging.getLogger(__name__)
 
 _start_time = time.time()
+TOOL_ARGUMENT_DELTA_FLUSH_INTERVAL_SECONDS = 0.5
+TOOL_ARGUMENT_DELTA_MAX_BUFFER_SIZE = 4096
 
 
 # ============================================================
@@ -80,6 +88,32 @@ class SSETransport(EventTransport):
     def is_done(self) -> bool:
         """Check if transport is done and queue is empty."""
         return self._done and self._queue.empty()
+
+
+def _create_sse_emitter(
+    *,
+    task_id: int,
+    subtask_id: int,
+    model: str,
+    transport: SSETransport,
+) -> ResponsesAPIEmitter:
+    """Create an emitter that coalesces streamed tool argument deltas."""
+    throttled_transport = ThrottledTransport(
+        transport,
+        ThrottleConfig(
+            default_interval=TOOL_ARGUMENT_DELTA_FLUSH_INTERVAL_SECONDS,
+            max_buffer_size=TOOL_ARGUMENT_DELTA_MAX_BUFFER_SIZE,
+            throttled_events={
+                ResponsesAPIStreamEvents.FUNCTION_CALL_ARGUMENTS_DELTA.value
+            },
+        ),
+    )
+    return ResponsesAPIEmitter(
+        task_id=task_id,
+        subtask_id=subtask_id,
+        transport=throttled_transport,
+        model=model,
+    )
 
 
 # ============================================================
@@ -157,6 +191,23 @@ def _create_sse_event(event_type: str, data: dict) -> ServerSentEvent:
         event=event_type,
         data=json.dumps(data, ensure_ascii=False),
     )
+
+
+async def _drain_sse_transport(
+    transport: SSETransport,
+) -> AsyncGenerator[tuple[str, dict], None]:
+    """Yield all events currently queued by the SSE transport."""
+    while True:
+        event = await transport.get_event()
+        if event is None:
+            break
+        yield event
+
+
+async def _cancel_chat_task(chat_task: asyncio.Task[None]) -> None:
+    """Cancel chat processing and wait for its cleanup to finish."""
+    chat_task.cancel()
+    await asyncio.gather(chat_task, return_exceptions=True)
 
 
 def _extract_stream_attributes(
@@ -348,11 +399,11 @@ async def _stream_response(
 
     # Create SSE transport and emitter
     transport = SSETransport()
-    emitter = ResponsesAPIEmitter(
+    emitter = _create_sse_emitter(
         task_id=task_id,
         subtask_id=subtask_id,
-        transport=transport,
         model=request.model,
+        transport=transport,
     )
 
     # Convert OpenAI format to ExecutionRequest
@@ -443,9 +494,10 @@ async def _stream_response(
                 session_manager.is_cancelled(subtask_id)
                 or request_cancel_event.is_set()
             ):
-                chat_task.cancel()
-                event_type, data = await emitter.incomplete("cancelled")
-                yield _create_sse_event(event_type, data)
+                await _cancel_chat_task(chat_task)
+                await emitter.incomplete("cancelled")
+                async for event_type, data in _drain_sse_transport(transport):
+                    yield _create_sse_event(event_type, data)
                 return
 
             # Get next event from queue
@@ -491,11 +543,7 @@ async def _stream_response(
                 transport.mark_done()
 
         # Drain remaining events after loop exits
-        while True:
-            event = await transport.get_event()
-            if event is None:
-                break
-            event_type, data = event
+        async for event_type, data in _drain_sse_transport(transport):
             yield _create_sse_event(event_type, data)
 
         # Wait for chat task to complete if not already done
@@ -503,9 +551,10 @@ async def _stream_response(
             await chat_task
 
     except asyncio.CancelledError:
-        chat_task.cancel()
-        event_type, data = await emitter.incomplete("cancelled")
-        yield _create_sse_event(event_type, data)
+        await _cancel_chat_task(chat_task)
+        await emitter.incomplete("cancelled")
+        async for event_type, data in _drain_sse_transport(transport):
+            yield _create_sse_event(event_type, data)
 
     except Exception as e:
         import traceback

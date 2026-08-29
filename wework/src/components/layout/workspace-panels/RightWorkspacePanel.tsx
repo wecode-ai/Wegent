@@ -219,7 +219,6 @@ interface RightWorkspacePanelProps {
   onSelectPlan: () => void
   onSelectTab: (tab: RightWorkspacePanelTab) => void
   onCloseTab: (tab: RightWorkspacePanelTab) => void
-  onHarnessSessionTitleChange?: (sessionId: string, title: string) => void
   onHarnessSessionExit?: (sessionId: string) => void
   onRefreshReview?: () => void
   onRestoreConversation?: () => void
@@ -393,7 +392,6 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   onSelectChat,
   onSelectTab,
   onCloseTab,
-  onHarnessSessionTitleChange,
   onHarnessSessionExit,
   onRefreshReview,
   onRestoreConversation,
@@ -695,7 +693,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         {chatTabs.map(tab => (
           <div
             key={tab}
-            className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+            className={cn(
+              'min-h-0 min-w-0 flex-1 flex-col',
+              activeView === tab ? 'flex' : 'hidden'
+            )}
           >
             <TemporaryChatPanel
               currentProject={currentProject}
@@ -858,12 +859,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
             >
               <CentralHarnessTerminal
                 sessionId={session.sessionId}
-                harnessId={session.harnessId}
                 title={session.title}
                 cwd={session.cwd}
                 active={visible && activeView === tab && session.active}
                 showHeader={false}
-                onTitleChange={title => onHarnessSessionTitleChange?.(session.sessionId, title)}
                 onExit={() => onHarnessSessionExit?.(session.sessionId)}
               />
             </div>

@@ -1,16 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   clearStoredCloudConnection,
-  getJwtExpiry,
   normalizeCloudBackendUrl,
   readStoredCloudConnection,
   saveStoredCloudConnection,
 } from './cloudConnectionStorage'
-
-function tokenWithExp(exp: number): string {
-  const payload = btoa(JSON.stringify({ exp })).replace(/=/g, '')
-  return `header.${payload}.signature`
-}
 
 describe('cloudConnectionStorage', () => {
   afterEach(() => {
@@ -58,18 +52,36 @@ describe('cloudConnectionStorage', () => {
 
   it('persists and clears the cloud connection independently from auth_token', () => {
     localStorage.setItem('auth_token', 'local-token')
-    const token = tokenWithExp(2_000_000_000)
     saveStoredCloudConnection({
       ...normalizeCloudBackendUrl('http://127.0.0.1:8000'),
-      token,
-      tokenExpiresAt: getJwtExpiry(token),
       user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
       connectedAt: '2026-01-01T00:00:00.000Z',
     })
 
     expect(readStoredCloudConnection()?.user.user_name).toBe('alice')
+    expect(localStorage.getItem('wework.cloudConnection')).not.toContain('token')
     clearStoredCloudConnection()
     expect(readStoredCloudConnection()).toBeNull()
     expect(localStorage.getItem('auth_token')).toBe('local-token')
+  })
+
+  it('restores legacy access-token connections created by older Backends', () => {
+    const token = 'header.payload.signature'
+    localStorage.setItem(
+      'wework.cloudConnection',
+      JSON.stringify({
+        ...normalizeCloudBackendUrl('https://legacy.example.com'),
+        token,
+        tokenExpiresAt: null,
+        user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
+        connectedAt: '2026-08-28T00:00:00.000Z',
+      })
+    )
+
+    expect(readStoredCloudConnection()).toMatchObject({
+      credentialMode: 'legacy_access_token',
+      token,
+      tokenExpiresAt: null,
+    })
   })
 })

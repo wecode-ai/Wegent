@@ -5,6 +5,7 @@ import { AppshotsSettingsPage } from '@/components/settings/AppshotsSettingsPage
 import { ArchivedConversationsSettingsPage } from '@/components/settings/ArchivedConversationsSettingsPage'
 import { BrowserSettingsPage } from '@/components/settings/BrowserSettingsPage'
 import { ConnectionsDeviceSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
+import { ComputerUseSettingsPage } from '@/components/settings/ComputerUseSettingsPage'
 import { ContextSettingsPage } from '@/components/settings/ContextSettingsPage'
 import { ExecutionEnvironmentsSettingsPage } from '@/components/settings/ExecutionEnvironmentsSettingsPage'
 import { GeneralSettingsPage } from '@/components/settings/GeneralSettingsPage'
@@ -53,6 +54,8 @@ export default function CoreSettingsPage({
           autoOpenAddCloudDeviceDialog={Boolean(autoOpenAddCloudDeviceDialog)}
         />
       )
+    case 'computer-use':
+      return <ComputerUseSettingsPage />
     case 'context':
       return <ContextSettingsPage />
     case 'execution-environments':

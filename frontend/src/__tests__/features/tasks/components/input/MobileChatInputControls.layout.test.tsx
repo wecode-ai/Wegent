@@ -70,19 +70,44 @@ jest.mock('@/features/tasks/components/MobileCorrectionModeToggle', () => ({
 
 jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
-  default: () => (
-    <>
-      <button type="button" aria-controls="context-selector-popover">
-        Context
-      </button>
-      {createPortal(
-        <div id="context-selector-popover" role="dialog" data-testid="owned-context-popover">
-          Context selector
-        </div>,
-        document.body
-      )}
-    </>
-  ),
+  default: function MockChatContextInput({
+    onSelectorOpenChange,
+  }: {
+    onSelectorOpenChange?: (open: boolean) => void
+  }) {
+    const [open, setOpen] = React.useState(false)
+    return (
+      <>
+        <button
+          type="button"
+          aria-controls="context-selector-popover"
+          onClick={() => {
+            setOpen(true)
+            onSelectorOpenChange?.(true)
+          }}
+        >
+          Context
+        </button>
+        {open
+          ? createPortal(
+              <div id="context-selector-popover" role="dialog" data-testid="owned-context-popover">
+                Context selector
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    onSelectorOpenChange?.(false)
+                  }}
+                >
+                  Close context
+                </button>
+              </div>,
+              document.body
+            )
+          : null}
+      </>
+    )
+  },
 }))
 
 jest.mock('@/features/tasks/components/AttachmentButton', () => ({
@@ -313,15 +338,22 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
   })
 
-  it('keeps the menu open while interacting with a popover opened by the menu', () => {
+  it('hides the more actions menu while keeping its context selector mounted', () => {
     render(<MobileChatInputControls {...buildProps()} />)
 
     fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
-    const ownedPopover = screen.getByTestId('owned-context-popover')
-    fireEvent.pointerDown(ownedPopover)
-    fireEvent.keyDown(ownedPopover, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Context' }))
 
-    expect(screen.getByTestId('mobile-input-more-actions-menu')).toBeInTheDocument()
+    const menu = screen.getByTestId('mobile-input-more-actions-menu')
+    expect(menu).toHaveClass('invisible')
+    expect(menu).toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('owned-context-popover')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close context' }))
+
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('owned-context-popover')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-input-more-actions-button')).toHaveFocus()
   })
 
   it('closes the menu when interacting with an unrelated dialog', () => {

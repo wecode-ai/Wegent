@@ -21,7 +21,7 @@ RUN sed -i '/\[tool\.uv\.sources\]/,/^$/d' pyproject.toml && \
 # not block while downloading the tokenizer vocabulary.
 ENV TIKTOKEN_CACHE_DIR="/app/.cache/tiktoken"
 RUN mkdir -p "${TIKTOKEN_CACHE_DIR}" && \
-    python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base").encode("warmup")'
+    python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base").encode("warmup"); tiktoken.get_encoding("o200k_base").encode("warmup")'
 
 # Copy application code
 COPY chat_shell/chat_shell /app/chat_shell

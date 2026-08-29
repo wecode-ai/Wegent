@@ -168,7 +168,7 @@ export function useDocumentDetail({
       }
       const errorMessage = err instanceof Error ? err.message : 'Failed to load document detail'
       setError(errorMessage)
-      toast.error(t('document.detail.content.error'))
+      toast.error(t('document.document.detail.contentLoadFailed'))
     } finally {
       setLoading(false)
     }

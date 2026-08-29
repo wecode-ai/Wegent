@@ -1,5 +1,5 @@
 import { act, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { navigateTo } from '@/lib/navigation'
 import { WorkspaceTabsProvider } from './WorkspaceTabsContext'
@@ -20,8 +20,10 @@ const labels = {
 }
 
 function TabsState() {
-  const { activeTab, closeTab, openTab, selectTab, tabs } = useWorkspaceTabs()
+  const { activeTab, closeTab, openTab, selectTab, tabs, updateActiveTab } = useWorkspaceTabs()
   const boardTab = tabs.find(tab => tab.kind === 'board')
+  const backgroundTabIdRef = useRef<string | null>(null)
+  const capturedCloseTabRef = useRef<typeof closeTab | null>(null)
 
   return (
     <>
@@ -50,6 +52,51 @@ function TabsState() {
       >
         打开项目任务
       </button>
+      <button
+        type="button"
+        onClick={() => updateActiveTab({ contentRoute: '/sites?app_type=smart_app' })}
+      >
+        打开智能工作台市场
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const tab = openTab('auxiliary', {
+            title: '后台智能工作台',
+            contentRoute: '/app/harness-background',
+          })
+          backgroundTabIdRef.current = tab.id
+        }}
+      >
+        打开后台智能工作台
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          const applicationsTab = tabs.find(tab => tab.contentRoute.startsWith('/sites?'))
+          if (applicationsTab) selectTab(applicationsTab.id)
+        }}
+      >
+        返回智能工作台列表
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          capturedCloseTabRef.current = closeTab
+        }}
+      >
+        开始异步关闭
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          if (backgroundTabIdRef.current) {
+            capturedCloseTabRef.current?.(backgroundTabIdRef.current)
+          }
+        }}
+      >
+        完成异步关闭
+      </button>
     </>
   )
 }
@@ -59,11 +106,13 @@ function RoutingHarness({
   startupTabId,
   fixedTabs,
   restoreSessionTabs,
+  labels: routingLabels = labels,
 }: {
   startupTabKind?: 'task' | 'board' | 'agent'
   startupTabId?: string
   fixedTabs?: Parameters<typeof WorkspaceTabsProvider>[0]['fixedTabs']
   restoreSessionTabs?: boolean
+  labels?: Parameters<typeof WorkspaceTabsProvider>[0]['labels']
 } = {}) {
   const [location, setLocation] = useState(() => ({
     pathname: window.location.pathname,
@@ -85,7 +134,7 @@ function RoutingHarness({
       pathname={location.pathname}
       search={location.search}
       storageScope="context-test"
-      labels={labels}
+      labels={routingLabels}
       fixedTabs={fixedTabs}
       startupTabId={startupTabId}
       startupTabKind={startupTabKind}
@@ -404,5 +453,79 @@ describe('WorkspaceTabsProvider routing', () => {
     )
     expect(window.location.search).toContain('projectId=project-1')
     expect(window.location.search).toContain('itemId=WEG-1')
+  })
+
+  test('updates the active tab before broadcasting the replaced URL', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
+    )
+    render(<RoutingHarness />)
+    let routeAtPopState = ''
+    const onPopState = () => {
+      routeAtPopState = screen.getByTestId('active-tab-route').textContent ?? ''
+    }
+    window.addEventListener('popstate', onPopState)
+
+    act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
+
+    expect(routeAtPopState).toBe('/sites?app_type=smart_app')
+    expect(screen.getByTestId('active-tab-id')).toHaveTextContent('auxiliary-apps')
+    expect(screen.getByTestId('active-tab-title')).toHaveTextContent('应用')
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('app_type')).toBe('smart_app')
+    expect(params.has('view')).toBe(false)
+    expect(params.get('workspaceTab')).toBe('auxiliary-apps')
+    expect(params.get('workspaceTabTitle')).toBe('应用')
+    window.removeEventListener('popstate', onPopState)
+  })
+
+  test('does not restore a stale route when route labels change after active-tab navigation', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
+    )
+    const { rerender } = render(<RoutingHarness />)
+
+    act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
+    rerender(
+      <RoutingHarness
+        labels={{
+          ...labels,
+          auxiliaryRoutes: { ...labels.auxiliaryRoutes, '/dsh/new-route': '新页面' },
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('app_type')).toBe('smart_app')
+    expect(params.has('view')).toBe(false)
+  })
+
+  test('does not restore a stale route when an asynchronous tab close finishes', () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=smart_app&view=owned&workspaceTab=auxiliary-apps&workspaceTabTitle=应用'
+    )
+    render(<RoutingHarness />)
+
+    act(() => screen.getByRole('button', { name: '打开后台智能工作台' }).click())
+    act(() => screen.getByRole('button', { name: '返回智能工作台列表' }).click())
+    act(() => screen.getByRole('button', { name: '开始异步关闭' }).click())
+    act(() => screen.getByRole('button', { name: '打开智能工作台市场' }).click())
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+
+    act(() => screen.getByRole('button', { name: '完成异步关闭' }).click())
+
+    expect(screen.getByTestId('active-tab-route')).toHaveTextContent('/sites?app_type=smart_app')
+    const params = new URLSearchParams(window.location.search)
+    expect(params.get('app_type')).toBe('smart_app')
+    expect(params.has('view')).toBe(false)
   })
 })

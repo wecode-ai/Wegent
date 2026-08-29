@@ -239,6 +239,18 @@ class TestVerifyJwtTokenWithDb:
 
         assert verify_jwt_token_with_db(test_db, token) is None
 
+    def test_rejects_wework_refresh_token(
+        self, test_db: Session, test_user: User
+    ) -> None:
+        token = create_access_token(
+            {
+                "sub": test_user.user_name,
+                "token_use": "wework_refresh",
+            }
+        )
+
+        assert verify_jwt_token_with_db(test_db, token) is None
+
     def test_verify_invalid_jwt_token(self, test_db: Session):
         """Test verifying an invalid JWT token returns None"""
         user = verify_jwt_token_with_db(test_db, "invalid.token.here")

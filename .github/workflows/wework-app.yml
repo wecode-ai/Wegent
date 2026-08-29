@@ -308,6 +308,7 @@ jobs:
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
           WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}

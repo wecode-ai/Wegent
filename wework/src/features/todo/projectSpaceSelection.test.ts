@@ -124,6 +124,46 @@ describe('projectSpaceSelection', () => {
     expect(cloudApi.findCloudContextForTask).toHaveBeenCalledOnce()
   })
 
+  test('does not let an unavailable store block a resolved task context', async () => {
+    const context = {
+      id: 'context-1',
+      device_id: 'device-1',
+      task_id: 'task-1',
+      cloud_project_id: 'space-local',
+      loop_item_id: 'todo-1',
+      project: project('space-local', 'Local board', 'local'),
+      loop_item: null,
+    }
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockResolvedValue(context),
+    } as unknown as ProjectSpaceApi
+    const unavailableCloudApi = {
+      findCloudContextForTask: vi.fn().mockImplementation(() => new Promise(() => {})),
+    } as unknown as ProjectSpaceApi
+
+    const lookup = findProjectSpaceContextForTask(
+      [localApi, unavailableCloudApi],
+      {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      },
+      5_000
+    )
+    let deadlineId: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_, reject) => {
+      deadlineId = setTimeout(
+        () => reject(new Error('Resolved context was blocked by another store')),
+        500
+      )
+    })
+
+    try {
+      await expect(Promise.race([lookup, deadline])).resolves.toEqual(context)
+    } finally {
+      if (deadlineId !== undefined) clearTimeout(deadlineId)
+    }
+  })
+
   test('only scopes runtime creation to backend project spaces', () => {
     expect(runtimeCloudProjectId(project('space-local', 'Local board', 'local'))).toBeUndefined()
     expect(runtimeCloudProjectId(project('space-cloud', 'Cloud board', 'backend'))).toBe(

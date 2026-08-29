@@ -4195,7 +4195,7 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=1.6.5" },
     { name = "structlog", specifier = ">=23.1.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
-    { name = "tiktoken", specifier = ">=0.5.0" },
+    { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "wegent-shared", editable = "../shared" },
 ]

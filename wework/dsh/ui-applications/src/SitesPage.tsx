@@ -211,7 +211,12 @@ function isApplicationPluginSyncConfirmed(
   )
 }
 
-export function SitesPage() {
+interface SitesPageProps {
+  onNavigate?: (path: string) => void
+  search?: string
+}
+
+export function SitesPage({ onNavigate, search = window.location.search }: SitesPageProps) {
   const { t } = useTranslation('sites')
   const { t: commonT } = useTranslation('common')
   const { logout } = useAuth()
@@ -227,7 +232,7 @@ export function SitesPage() {
   const [creatingType, setCreatingType] = useState<SiteAppType | null>(null)
   const [continuingSiteId, setContinuingSiteId] = useState<string | null>(null)
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
-  const searchParams = new URLSearchParams(window.location.search)
+  const searchParams = new URLSearchParams(search)
   const smartAppsRequested = searchParams.get('app_type') === 'smart_app'
   const smartAppsView = searchParams.get('view')
 
@@ -643,6 +648,7 @@ export function SitesPage() {
         )}
         <SitesWorkspace
           api={sitesApi}
+          search={search}
           onCreate={handleCreate}
           onContinueDevelopment={handleContinueDevelopment}
           creatingType={creatingType}
@@ -652,9 +658,9 @@ export function SitesPage() {
           smartAppsEnabled={experimentalFeatures.enabled}
           smartAppsContent={
             smartAppsView === 'owned' ? (
-              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />
+              <SmartAppsMarketplacePage api={smartAppsApi} mode="owned" onNavigate={onNavigate} />
             ) : (
-              <SmartAppsMarketplacePage api={smartAppsApi} />
+              <SmartAppsMarketplacePage api={smartAppsApi} onNavigate={onNavigate} />
             )
           }
           sidebarCollapsed={sidebarCollapsed && !isMobile}

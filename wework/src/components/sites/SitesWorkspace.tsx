@@ -21,6 +21,7 @@ import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
   api: SitesApi
+  search: string
   onCreate: (appType: SiteAppType, create: ApplicationCreateStrategy) => void | Promise<void>
   onContinueDevelopment?: (site: Site, create: ApplicationCreateStrategy) => void | Promise<void>
   creatingType?: SiteAppType | null
@@ -62,9 +63,8 @@ function isSecurityCheckingError(error: unknown): boolean {
   return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
-function getInitialAppType(smartAppsEnabled: boolean): ApplicationWorkspaceType {
-  if (typeof window === 'undefined') return DEFAULT_APPLICATION_TYPE
-  const requestedType = new URLSearchParams(window.location.search).get('app_type')
+function getAppType(search: string, smartAppsEnabled: boolean): ApplicationWorkspaceType {
+  const requestedType = new URLSearchParams(search).get('app_type')
   if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
@@ -215,6 +215,7 @@ function SitesCreateNotice({ message }: { message: string }) {
 
 export function SitesWorkspace({
   api,
+  search,
   onCreate,
   onContinueDevelopment,
   creatingType = null,
@@ -230,9 +231,7 @@ export function SitesWorkspace({
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(() =>
-    getInitialAppType(smartAppsEnabled)
-  )
+  const activeAppType = getAppType(search, smartAppsEnabled)
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
@@ -247,13 +246,6 @@ export function SitesWorkspace({
     const timeout = window.setTimeout(() => setDebouncedQuery(query.trim()), 180)
     return () => window.clearTimeout(timeout)
   }, [query])
-
-  useEffect(() => {
-    const handlePopState = () => setActiveAppType(getInitialAppType(smartAppsEnabled))
-    handlePopState()
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [smartAppsEnabled])
 
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
   const pageTitle = t('title', '应用')
@@ -276,7 +268,6 @@ export function SitesWorkspace({
   const items = collection.items.filter(activeDefinition.isItem)
 
   const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
-    setActiveAppType(appType)
     setQuery('')
     setDebouncedQuery('')
     const params = new URLSearchParams(window.location.search)
@@ -287,14 +278,10 @@ export function SitesWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeAppType === 'smart_app' && !smartAppsEnabled) {
-      selectAppType(activeDefinition.appType)
-      return
-    }
     if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
       selectAppType(activeDefinition.appType)
     }
-  }, [activeAppType, activeDefinition.appType, selectAppType, smartAppsEnabled])
+  }, [activeAppType, activeDefinition.appType, selectAppType])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [

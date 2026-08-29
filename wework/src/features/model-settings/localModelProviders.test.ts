@@ -107,11 +107,17 @@ describe('localModelProviders', () => {
         displayName: 'MiniMax (China mainland)',
         displayNameKey: 'workbench.local_model_provider_minimax_cn',
         baseUrl: 'https://api.minimaxi.com/anthropic',
+        modelsBaseUrl: 'https://api.minimaxi.com',
         group: 'MiniMax',
         apiFormat: 'anthropic-messages',
         requestPath: '/v1/messages',
         modelsPath: '/v1/models',
-        modelsApiKeyHeader: 'X-Api-Key',
+        modelsApiKeyHeader: 'Authorization',
+        connectionTest: {
+          baseUrl: 'https://api.minimaxi.com',
+          requestPath: '/v1/text/chatcompletion_v2',
+          apiFormat: 'openai-chat-completions',
+        },
         toolProfile: 'function',
         webSearchMode: 'disabled',
         contextWindow: 204_800,
@@ -132,11 +138,17 @@ describe('localModelProviders', () => {
         displayName: 'MiniMax (Global)',
         displayNameKey: 'workbench.local_model_provider_minimax_global',
         baseUrl: 'https://api.minimax.io/anthropic',
+        modelsBaseUrl: 'https://api.minimax.io',
         group: 'MiniMax',
         apiFormat: 'anthropic-messages',
         requestPath: '/v1/messages',
         modelsPath: '/v1/models',
-        modelsApiKeyHeader: 'X-Api-Key',
+        modelsApiKeyHeader: 'Authorization',
+        connectionTest: {
+          baseUrl: 'https://api.minimax.io',
+          requestPath: '/v1/text/chatcompletion_v2',
+          apiFormat: 'openai-chat-completions',
+        },
         toolProfile: 'function',
         webSearchMode: 'disabled',
         contextWindow: 204_800,
@@ -160,10 +172,10 @@ describe('localModelProviders', () => {
   })
 
   it.each([
-    ['minimax', 'https://api.minimaxi.com/anthropic/v1/models'],
-    ['minimax-global', 'https://api.minimax.io/anthropic/v1/models'],
+    ['minimax', 'https://api.minimaxi.com/v1/models'],
+    ['minimax-global', 'https://api.minimax.io/v1/models'],
   ] as const)(
-    'uses the MiniMax API key header when discovering models for %s',
+    'discovers MiniMax models through the CORS-safe OpenAI-compatible endpoint for %s',
     async (profileId, modelsUrl) => {
       const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
         new Response(JSON.stringify({ data: [{ id: 'MiniMax-M2.7' }] }), {
@@ -180,7 +192,7 @@ describe('localModelProviders', () => {
         modelsUrl,
         expect.objectContaining({
           method: 'GET',
-          headers: { 'X-Api-Key': 'secret-key' },
+          headers: { Authorization: 'Bearer secret-key' },
         })
       )
     }

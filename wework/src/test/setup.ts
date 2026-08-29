@@ -1,7 +1,9 @@
-import '@testing-library/jest-dom/vitest'
-import { beforeEach } from 'vitest'
+import * as matchers from '@testing-library/jest-dom/matchers'
+import { beforeEach, expect } from 'vitest'
 import { WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from '@/features/dsh-runtime/dshUiSlots'
 import { clearDshUiModuleCache, importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
+
+expect.extend(matchers)
 
 const electronHostInvokePath = '/wework/electron-host/v1/invoke'
 const nativeFetch = globalThis.fetch.bind(globalThis)
@@ -180,6 +182,14 @@ const testSettings = [
     'integrations',
   ],
   ['plugins', '/settings/plugins', 'package', 'settings_nav_plugins', '插件', 'integrations'],
+  [
+    'computer-use',
+    '/settings/computer-use',
+    'monitor-cog',
+    'settings_nav_computer_use',
+    '电脑操控',
+    'integrations',
+  ],
   ['browser', '/settings/browser', 'app-window', 'settings_nav_browser', '浏览器', 'integrations'],
   [
     'git-hosting',

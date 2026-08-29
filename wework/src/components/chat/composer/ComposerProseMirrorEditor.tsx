@@ -273,8 +273,7 @@ export const ComposerProseMirrorEditor = forwardRef<
           event.clipboardData?.getData('text/plain') || event.clipboardData?.getData('text')
         if (!text) return false
         const pastedDocument = createComposerDocument(text)
-        let transaction = view.state.tr.replaceSelection(new Slice(pastedDocument.content, 1, 1))
-        transaction = transaction.setSelection(TextSelection.atEnd(transaction.doc))
+        const transaction = view.state.tr.replaceSelection(new Slice(pastedDocument.content, 1, 1))
         view.dispatch(
           transaction.setMeta('paste', true).setMeta('uiEvent', 'paste').scrollIntoView()
         )

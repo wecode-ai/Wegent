@@ -123,6 +123,7 @@ import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dsh
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -391,7 +392,7 @@ export function WorkspaceTabSurface({
       ) : null}
       {auxiliaryRoute ? (
         <div data-testid="desktop-auxiliary-surface" className="h-full">
-          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
+          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
       ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
@@ -432,7 +433,6 @@ export function WorkspaceTabSurface({
                 isElectronRuntime() &&
                 getDesktopWindowLabel() === 'main'
               }
-              syncProjectTaskTracking={tab.fixed && tab.kind === 'task'}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -617,7 +617,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           services={services}
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
-          syncProjectTaskTracking={false}
         >
           {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
@@ -667,6 +666,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <DshSlotSurface
         className="pointer-events-none fixed inset-0 z-system-popover"

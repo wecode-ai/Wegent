@@ -15,6 +15,7 @@ import {
   Eye,
   Code,
   Download,
+  ExternalLink,
   Maximize2,
   Minimize2,
   CircleAlert,
@@ -63,7 +64,7 @@ import {
 } from '@/utils/languageDetection'
 import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
-import { isDocumentEditable } from '../utils/documentUtils'
+import { isDocumentEditable, getExternalSourceInfo } from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
@@ -170,6 +171,16 @@ export function DocumentDetailDialog({
     () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
     [document]
   )
+  // Source governance metadata for imported external documents.
+  const externalSourceInfo = useMemo(
+    () => (document ? getExternalSourceInfo(document) : null),
+    [document]
+  )
+  const externalLastImportedAt = useMemo(() => {
+    if (!externalSourceInfo?.last_success_at) return null
+    const date = parseUTCDate(externalSourceInfo.last_success_at)
+    return date && !Number.isNaN(date.getTime()) ? formatDateTime(date.getTime()) : null
+  }, [externalSourceInfo])
   const isSourceView = contentSourceMode === 'source' && canPreviewSource
 
   // Track if content has changed (compare against content at edit start)
@@ -388,6 +399,57 @@ export function DocumentDetailDialog({
                           })}
                         </span>
                       </DialogDescription>
+                    )}
+                    {!isFullscreen && externalSourceInfo && (
+                      <div
+                        className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted"
+                        data-testid="external-source-info"
+                      >
+                        <span className="capitalize">{externalSourceInfo.provider}</span>
+                        <span>•</span>
+                        {externalSourceInfo.url && (
+                          <a
+                            href={externalSourceInfo.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex min-h-[44px] min-w-[44px] items-center gap-1 text-primary hover:underline md:min-h-0 md:min-w-0"
+                            data-testid="external-source-link"
+                          >
+                            <span className="truncate">
+                              {externalSourceInfo.title || externalSourceInfo.url}
+                            </span>
+                            <ExternalLink className="h-3 w-3 flex-shrink-0" />
+                          </a>
+                        )}
+                        {externalLastImportedAt && (
+                          <>
+                            <span>•</span>
+                            <span>
+                              {t('document.document.externalSource.lastImportedAt', {
+                                time: externalLastImportedAt,
+                              })}
+                            </span>
+                          </>
+                        )}
+                        {externalSourceInfo.status === 'inaccessible' ? (
+                          <Badge
+                            variant="default"
+                            size="sm"
+                            className="bg-red-500/10 text-red-600 border-red-500/20"
+                            data-testid="external-source-inaccessible"
+                          >
+                            {t('document.document.sourceInaccessible')}
+                          </Badge>
+                        ) : externalSourceInfo.status === 'accessible' ? (
+                          <Badge
+                            variant="default"
+                            size="sm"
+                            className="bg-green-500/10 text-green-600 border-green-500/20"
+                          >
+                            {t('document.document.externalSource.accessible')}
+                          </Badge>
+                        ) : null}
+                      </div>
                     )}
                   </div>
                 </div>

@@ -14,7 +14,11 @@ jest.mock('@/lib/runtime-config', () => ({
 }))
 
 jest.mock('@/features/tasks/components/chat/AddContextButton', () => {
-  const MockAddContextButton = () => <button data-testid="add-context-button">add</button>
+  const MockAddContextButton = ({ onClick }: { onClick: () => void }) => (
+    <button data-testid="add-context-button" onClick={onClick}>
+      add
+    </button>
+  )
   MockAddContextButton.displayName = 'MockAddContextButton'
   return MockAddContextButton
 })
@@ -43,10 +47,12 @@ jest.mock('@/features/tasks/components/chat/ContextSelector', () => {
     children,
     onSelect,
     onReplaceContexts,
+    onOpenChange,
   }: {
     children: React.ReactNode
     onSelect: (context: ContextItem) => void
     onReplaceContexts?: (idsToRemove: (number | string)[], contextsToAdd: ContextItem[]) => void
+    onOpenChange: (open: boolean) => void
   }) => (
     <div>
       {children}
@@ -58,6 +64,9 @@ jest.mock('@/features/tasks/components/chat/ContextSelector', () => {
         onClick={() => onReplaceContexts?.([], [externalContext])}
       >
         select external
+      </button>
+      <button data-testid="close-selector" onClick={() => onOpenChange(false)}>
+        close selector
       </button>
     </div>
   )
@@ -78,6 +87,23 @@ function ChatContextInputHarness() {
 }
 
 describe('ChatContextInput', () => {
+  it('notifies its parent when the selector opens and closes', () => {
+    const onSelectorOpenChange = jest.fn()
+    render(
+      <ChatContextInput
+        selectedContexts={[]}
+        onContextsChange={jest.fn()}
+        onSelectorOpenChange={onSelectorOpenChange}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('add-context-button'))
+    expect(onSelectorOpenChange).toHaveBeenLastCalledWith(true)
+
+    fireEvent.click(screen.getByTestId('close-selector'))
+    expect(onSelectorOpenChange).toHaveBeenLastCalledWith(false)
+  })
+
   it('preserves internal and external selections made in the same render turn', () => {
     render(<ChatContextInputHarness />)
 

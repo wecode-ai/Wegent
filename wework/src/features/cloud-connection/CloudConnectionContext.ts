@@ -25,6 +25,7 @@ export interface CloudConnectionContextValue extends CloudConnectionSnapshot {
 
 export const DISCONNECTED_STATE: CloudConnectionSnapshot = {
   status: 'disconnected',
+  credentialMode: null,
   token: null,
   tokenExpiresAt: null,
   user: null,

@@ -103,6 +103,72 @@ describe('DeviceFolderPicker', () => {
     expect(await screen.findByText('src')).toBeInTheDocument()
   })
 
+  test('confirms a typed Windows directory instead of the previous home directory', async () => {
+    const onConfirm = vi.fn()
+
+    render(
+      <DeviceFolderPicker
+        device={device}
+        mode="select"
+        onGetDeviceHomeDirectory={vi.fn().mockResolvedValue('C:\\Users\\alice')}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const pathInput = await screen.findByTestId('device-folder-path-input')
+    await waitFor(() => expect(pathInput).toHaveValue('C:\\Users\\alice'))
+    fireEvent.change(pathInput, {
+      target: { value: 'D:\\a\\Wegent\\Wegent\\workspace' },
+    })
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
+    fireEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+
+    expect(onConfirm).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      path: 'D:\\a\\Wegent\\Wegent\\workspace',
+      action: 'select',
+    })
+  })
+
+  test('does not overwrite a typed Windows directory when the home lookup finishes later', async () => {
+    const onConfirm = vi.fn()
+    let resolveHomeDirectory: (path: string) => void = () => undefined
+    const homeDirectory = new Promise<string>(resolve => {
+      resolveHomeDirectory = resolve
+    })
+
+    render(
+      <DeviceFolderPicker
+        device={device}
+        mode="select"
+        onGetDeviceHomeDirectory={vi.fn().mockReturnValue(homeDirectory)}
+        onListDeviceDirectories={vi.fn().mockResolvedValue([])}
+        onCreateDeviceDirectory={vi.fn()}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const pathInput = screen.getByTestId('device-folder-path-input')
+    fireEvent.change(pathInput, {
+      target: { value: 'D:\\a\\Wegent\\Wegent\\workspace' },
+    })
+    fireEvent.keyDown(pathInput, { key: 'Enter' })
+    resolveHomeDirectory('C:\\Users\\alice')
+
+    await waitFor(() => expect(pathInput).toHaveValue('D:\\a\\Wegent\\Wegent\\workspace'))
+    fireEvent.click(screen.getByTestId('confirm-device-folder-picker-button'))
+
+    expect(onConfirm).toHaveBeenCalledWith({
+      deviceId: 'local-device',
+      path: 'D:\\a\\Wegent\\Wegent\\workspace',
+      action: 'select',
+    })
+  })
+
   test('shows directory creation errors without closing', async () => {
     render(
       <DeviceFolderPicker

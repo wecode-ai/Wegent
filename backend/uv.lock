@@ -4539,6 +4539,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-magic-bin"
+version = "0.4.14"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/5d/10b9ac745d9fd2f7151a2ab901e6bb6983dbd70e87c71111f54859d1ca2e/python_magic_bin-0.4.14-py2.py3-none-win32.whl", hash = "sha256:34a788c03adde7608028203e2dbb208f1f62225ad91518787ae26d603ae68892", size = 397784, upload-time = "2017-10-02T16:30:15.806Z" },
+    { url = "https://files.pythonhosted.org/packages/07/c2/094e3d62b906d952537196603a23aec4bcd7c6126bf80eb14e6f9f4be3a2/python_magic_bin-0.4.14-py2.py3-none-win_amd64.whl", hash = "sha256:90be6206ad31071a36065a2fc169c5afb5e0355cbe6030e87641c6c62edc2b69", size = 409299, upload-time = "2017-10-02T16:30:18.545Z" },
+]
+
+[[package]]
 name = "python-multipart"
 version = "0.0.20"
 source = { registry = "https://pypi.org/simple" }
@@ -5957,7 +5966,8 @@ dependencies = [
     { name = "python-docx" },
     { name = "python-dotenv" },
     { name = "python-jose", extra = ["cryptography"] },
-    { name = "python-magic" },
+    { name = "python-magic", marker = "sys_platform != 'win32'" },
+    { name = "python-magic-bin", marker = "sys_platform == 'win32'" },
     { name = "python-multipart" },
     { name = "python-pptx" },
     { name = "python-socketio" },
@@ -6066,7 +6076,8 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-jose", extras = ["cryptography"], specifier = ">=3.3.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "python-magic", marker = "sys_platform != 'win32'", specifier = ">=0.4.27" },
+    { name = "python-magic-bin", marker = "sys_platform == 'win32'", specifier = ">=0.4.14" },
     { name = "python-multipart", specifier = ">=0.0.6" },
     { name = "python-pptx", specifier = ">=0.6.23" },
     { name = "python-socketio", specifier = ">=5.10.0" },
@@ -6208,7 +6219,7 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=1.6.5" },
     { name = "structlog", specifier = ">=23.1.0" },
     { name = "tenacity", specifier = ">=8.2.3" },
-    { name = "tiktoken", specifier = ">=0.5.0" },
+    { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "wegent-shared", editable = "../shared" },
 ]
@@ -6258,7 +6269,8 @@ dependencies = [
     { name = "pytesseract" },
     { name = "python-docx" },
     { name = "python-dotenv" },
-    { name = "python-magic" },
+    { name = "python-magic", marker = "sys_platform != 'win32'" },
+    { name = "python-magic-bin", marker = "sys_platform == 'win32'" },
     { name = "python-pptx" },
     { name = "sqlalchemy" },
     { name = "tenacity" },
@@ -6292,7 +6304,8 @@ requires-dist = [
     { name = "pytesseract", specifier = ">=0.3.10" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-magic", specifier = ">=0.4.27" },
+    { name = "python-magic", marker = "sys_platform != 'win32'", specifier = ">=0.4.27" },
+    { name = "python-magic-bin", marker = "sys_platform == 'win32'", specifier = ">=0.4.14" },
     { name = "python-pptx", specifier = ">=0.6.23" },
     { name = "sqlalchemy", specifier = ">=2.0.25" },
     { name = "tenacity", specifier = ">=8.2.3" },

@@ -5,6 +5,14 @@
 use super::*;
 
 impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
+    fn reconcile_bound_task_statuses<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            RuntimeWorkRpcHandler::reconcile_bound_task_statuses(self).await;
+        })
+    }
+
     fn handle_runtime_rpc<'a>(
         &'a self,
         data: Value,

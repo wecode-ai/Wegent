@@ -245,14 +245,8 @@ class DingTalkWikiSpaceService:
                     result = await session.call_tool(MCP_TOOL_LIST_WIKI_SPACES, args)
 
                     batch, page_token = DingTalkDocService._parse_list_nodes_result(
-                        result
+                        result, allow_workspace_id=True
                     )
-                    batch = [
-                        DingTalkDocService._normalize_mcp_node(
-                            node, allow_workspace_id=True
-                        )
-                        for node in batch
-                    ]
                     kb_nodes.extend(batch)
                     if not page_token:
                         break
@@ -302,9 +296,9 @@ class DingTalkWikiSpaceService:
 
         all_nodes.extend(first_batch)
 
-        # Recurse into sub-folders found in the first batch.
+        # Recurse into folders and documents reporting children.
         for node in first_batch:
-            if node.get("nodeType") == "folder":
+            if node.get("nodeType") == "folder" or node.get("hasChildren") is True:
                 ws_id = node.get("workspaceId") or workspace_id
                 node_id = node.get("nodeId")
                 if not node_id:
@@ -335,7 +329,7 @@ class DingTalkWikiSpaceService:
 
             all_nodes.extend(batch)
             for node in batch:
-                if node.get("nodeType") == "folder":
+                if node.get("nodeType") == "folder" or node.get("hasChildren") is True:
                     ws_id = node.get("workspaceId") or workspace_id
                     node_id = node.get("nodeId")
                     if not node_id:
@@ -543,4 +537,10 @@ class DingTalkWikiSpaceService:
             "last_synced_at": last_synced[0] if last_synced else None,
             "total_nodes": total,
             "is_configured": is_configured,
+            "ai_table_configured": bool(
+                DingTalkDocService.get_user_dingtalk_mcp_url(user, "ai_table")
+            ),
+            "table_configured": bool(
+                DingTalkDocService.get_user_dingtalk_mcp_url(user, "table")
+            ),
         }

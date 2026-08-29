@@ -687,6 +687,47 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModelOptions).toEqual({})
   })
 
+  test('does not replace an unavailable configured task model with the default model', async () => {
+    const deepseekModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-responses(公网)',
+      type: 'public',
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [deepseekModel] }),
+    }
+    const onSelectionChange = vi.fn()
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        selectionConfig: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+        },
+        defaultSelectionConfig: () => ({
+          modelName: deepseekModel.name,
+          modelType: deepseekModel.type,
+        }),
+        fallbackWhenConfiguredModelUnavailable: false,
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([deepseekModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.isSelectionReady).toBe(false)
+    expect(result.current.isConfiguredModelUnavailable).toBe(true)
+
+    act(() => result.current.setSelectedModel(deepseekModel))
+
+    expect(result.current.selectedModel).toEqual(deepseekModel)
+    expect(result.current.isSelectionReady).toBe(true)
+    expect(result.current.isConfiguredModelUnavailable).toBe(false)
+    expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
   test('persists options when using the default model selection', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.4',

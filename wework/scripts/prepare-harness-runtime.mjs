@@ -5,8 +5,9 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
-import { constants as zlibConstants, createGzip } from 'node:zlib'
+import { constants as zlibConstants } from 'node:zlib'
 import { spawn } from 'node:child_process'
+import { create, extract } from 'tar'
 
 import {
   macosSigningFingerprint,
@@ -28,11 +29,13 @@ const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const cacheDirectory =
   process.env.WEWORK_HARNESS_RUNTIME_CACHE_ROOT?.trim() || path.join(root, 'node_modules', '.cache')
-const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
+const assetCacheDirectory =
+  process.env.WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT?.trim() || cacheDirectory
+const assetDirectory = path.join(assetCacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
-const prepareLockPath = path.join(cacheDirectory, 'harness-runtime-prepare.lock')
+const prepareLockPath = path.join(assetCacheDirectory, 'harness-runtime-prepare.lock')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
-const archiveFormatVersion = 'dsh-runtime-tar-gzip-v6'
+const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
 const materializeRequested = process.argv.includes('--materialize')
 const skipRemoteReuse = process.env.WEWORK_HARNESS_RUNTIME_SKIP_REMOTE_REUSE === '1'
 const baseUrl = (
@@ -251,7 +254,11 @@ async function materializeRuntime(runtime, descriptor) {
   await rm(temporary, { recursive: true, force: true })
   await mkdir(temporary, { recursive: true })
   try {
-    await run('tar', ['-xzf', runtime.assetPath, '-C', temporary], root)
+    await extract({
+      cwd: temporary,
+      file: runtime.assetPath,
+      strict: true,
+    })
     await rm(destination, { recursive: true, force: true })
     await rename(temporary, destination)
   } finally {
@@ -285,11 +292,9 @@ async function buildRuntime(runtime) {
     `wework-harness-runtime-${runtime.dshVersion}-${process.pid}`
   )
   const temporaryArchive = `${runtime.assetPath}.${process.pid}.tar.gz`
-  const temporaryTar = temporaryArchive.slice(0, -3)
   try {
     await rm(staging, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true })
-    await rm(temporaryTar, { force: true })
     await mkdir(staging, { recursive: true })
     for (const entry of runtime.entries) {
       const destination = path.join(staging, entry.name)
@@ -329,13 +334,15 @@ async function buildRuntime(runtime) {
     await writeFile(path.join(staging, '.resource-placeholder'), '')
     await signPreparedMacOsBinaries(staging)
 
-    await run('tar', ['-cf', temporaryTar, '-C', staging, '.'], root, {
-      COPYFILE_DISABLE: '1',
-    })
-    await pipeline(
-      createReadStream(temporaryTar),
-      createGzip({ level: zlibConstants.Z_BEST_SPEED }),
-      createWriteStream(temporaryArchive)
+    await create(
+      {
+        cwd: staging,
+        file: temporaryArchive,
+        gzip: { level: zlibConstants.Z_BEST_SPEED },
+        portable: true,
+        strict: true,
+      },
+      ['.']
     )
     const descriptor = {
       dshVersion: runtime.dshVersion,
@@ -357,7 +364,6 @@ async function buildRuntime(runtime) {
   } finally {
     await rm(staging, { recursive: true, force: true })
     await rm(temporaryArchive, { force: true })
-    await rm(temporaryTar, { force: true })
   }
 }
 

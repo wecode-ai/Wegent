@@ -256,7 +256,7 @@ steps; startup, workbench recovery, and the model protocol matrix keep their
 dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
 global default for ordinary steps in a slower diagnostic environment.
 
-The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
+The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
@@ -502,14 +502,22 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Regular draft PRs do not run browser or Linux desktop E2E. Merge queue runs the
-complete browser and Linux desktop suites before a commit enters `main`; `main`
-does not repeat checks that already passed for the merge group. The macOS memory
-gate runs by default only on scheduled and manual runs. Add the `ci:memory`
-label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser or Linux desktop
-E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
-when the PR's changed paths would not normally select Wework E2E. The workflow
-also runs a complete regression every day at 04:00 UTC.
+Linux and Windows Desktop Core E2E consume the same shard matrix produced by
+the classifier; a complete classification runs all 17 Core shards on both
+platforms. The Windows job builds native `WeWork.exe`,
+`wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
+running checkpoints. A cross-platform package or a single Windows smoke test is
+not equivalent coverage.
+
+Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
+complete browser plus Linux and Windows Desktop Core suites before a commit
+enters `main`; `main` does not repeat checks that already passed for the merge
+group. The macOS memory gate runs by default only on scheduled and manual runs.
+Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
+label starts only the memory gate and does not repeat browser, Linux desktop, or
+Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+desktop, and macOS memory E2E even when the PR's changed paths would not
+normally select Wework E2E. The workflow also runs a complete regression every
+day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.

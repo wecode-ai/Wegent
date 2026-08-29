@@ -14,7 +14,7 @@ export type MemberRole = BaseRole
 
 export type DocumentStatus = 'enabled' | 'disabled'
 
-export type DocumentSourceType = 'file' | 'text' | 'table' | 'web'
+export type DocumentSourceType = 'file' | 'text' | 'table' | 'web' | 'external'
 
 export type DocumentIndexStatus =
   | 'not_indexed'
@@ -517,6 +517,10 @@ export interface KnowledgeDocument {
   source_config: Record<string, unknown>
   /** Content ownership is present on current API responses. */
   origin?: KnowledgeContentOrigin
+  /** External provider identity when the document was imported (e.g. 'dingtalk'). */
+  external_provider?: string | null
+  /** Provider-scoped external document ID when the document was imported. */
+  external_resource_id?: string | null
   folder_id: number // 0 = root level
   created_at: string
   updated_at: string

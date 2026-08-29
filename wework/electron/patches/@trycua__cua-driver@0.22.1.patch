@@ -1,0 +1,25 @@
+diff --git a/dist/native/node-runtime.js b/dist/native/node-runtime.js
+index 55ab567901e59e09f73fd0c2a9c7cb6c290c7efe..1abe9d8e1b650ca11190b1846d3beac97da39082 100644
+--- a/dist/native/node-runtime.js
++++ b/dist/native/node-runtime.js
+@@ -1,6 +1,6 @@
+ import { createRequire } from "node:module";
+ import { dirname, join } from "node:path";
+-import { resolveLibPath } from "@ubjs/node/typescript/dist/resolve-lib.js";
++import { resolveLibPath as resolveNativeLibPath } from "@ubjs/node/typescript/dist/resolve-lib.js";
+ const FfiType = {
+     UInt8: { tag: "UInt8" },
+     Int8: { tag: "Int8" },
+@@ -23,6 +23,12 @@ const FfiType = {
+     Reference: (inner) => ({ tag: "Reference", inner }),
+     MutReference: (inner) => ({ tag: "MutReference", inner }),
+ };
++// Electron's fs layer can read files through app.asar, but the native
++// runtime's dlopen call requires the physical app.asar.unpacked path.
++const resolveLibPath = (options) => resolveNativeLibPath(options).replace(
++    /([\\/])app\.asar([\\/])/,
++    "$1app.asar.unpacked$2",
++);
+ const sdkLibrary = resolveLibPath({
+     crateName: "cua_driver_sdk",
+     callerUrl: import.meta.url,

@@ -55,6 +55,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   reload: 'reloadApp',
   'close-to-tray': 'closeMainWindowToTray',
   'request-close': 'requestMainWindowClose',
+  'selection-offset': 'getSelectionOffset',
   'dismiss-popout': 'dismissPopoutWindow',
   drag: 'drag',
   'drop-file': 'dropFile',
@@ -65,17 +66,20 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   metrics: 'getElementMetrics',
   navigate: 'navigate',
   'paste-paths': 'pastePaths',
+  'paste-text': 'pasteText',
   'pointer-move': 'pointerMove',
   press: 'press',
   submit: 'submit',
   'scroll-into-view': 'scrollIntoView',
   'select-text': 'selectText',
+  'set-selection-offset': 'setSelectionOffset',
   'show-popout': 'showPopoutWindow',
   'system-drag-drop': 'completeSystemDragDrop',
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
   text: 'getText',
+  value: 'getValue',
 })
 
 const SELECTOR_OPTIONAL_COMMANDS = new Set([
@@ -121,8 +125,8 @@ Options:
                             Seed and verify isolated first-run Codex migration
   --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
-  --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
-                            seed-local-project, paste-paths, or drop-paths
+  --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
+                            click-at, seed-local-project, paste-paths, or drop-paths
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination for drag and click-then-macrotask
   --file PATH               File to dispatch for drop-file

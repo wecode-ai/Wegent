@@ -56,6 +56,18 @@ function createKnowledgeBase(overrides?: Partial<KnowledgeBase>): KnowledgeBase 
 }
 
 describe('KnowledgeBaseSummaryCard', () => {
+  it.each([
+    ['notebook', 'lucide-book-open', 'text-primary'],
+    ['classic', 'lucide-database', 'text-text-secondary'],
+    ['code_wiki', 'lucide-code-xml', 'text-primary'],
+    [undefined, 'lucide-book-open', 'text-primary'],
+  ] as const)('shows the %s knowledge base icon at the existing size', (kbType, icon, color) => {
+    const { container } = render(
+      <KnowledgeBaseSummaryCard knowledgeBase={createKnowledgeBase({ kb_type: kbType })} />
+    )
+    expect(container.querySelector('svg')).toHaveClass(icon, color, 'w-5', 'h-5')
+  })
+
   it('shows manual summary and edit button when AI summary failed', () => {
     render(<KnowledgeBaseSummaryCard knowledgeBase={createKnowledgeBase()} canEditSummary={true} />)
 

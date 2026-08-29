@@ -24,6 +24,7 @@ class DingtalkDocNodeBase(BaseModel):
     node_type: str  # folder, doc, file
     workspace_id: str = ""
     content_type: str = ""
+    extension: str = ""
     source: DingTalkNodeSource = DingTalkNodeSource.DOCS
     content_updated_at: datetime
 
@@ -59,6 +60,8 @@ class DingtalkSyncStatus(BaseModel):
     last_synced_at: Optional[datetime] = None
     total_nodes: int = 0
     is_configured: bool = False  # Whether MCP URL is configured
+    ai_table_configured: bool = False
+    table_configured: bool = False
 
 
 class DingtalkSyncResult(BaseModel):

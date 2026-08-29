@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from sqlalchemy import and_, case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -20,8 +21,10 @@ from app.models.kind import Kind
 from app.models.knowledge import (
     ContentOrigin,
     DocumentIndexStatus,
+    DocumentSourceType,
     DocumentStatus,
     KnowledgeDocument,
+    KnowledgeDocumentExternalSource,
     KnowledgeFolder,
 )
 from app.models.knowledge_artifact import KnowledgeArtifactRecord
@@ -1623,6 +1626,91 @@ class KnowledgeService:
         return document
 
     @staticmethod
+    def create_external_document(
+        db: Session,
+        knowledge_base_id: int,
+        user_id: int,
+        *,
+        name: str,
+        external_provider: str,
+        external_resource_id: str,
+        folder_id: int,
+        external_meta: dict[str, Any],
+    ) -> KnowledgeDocument:
+        """
+        Create the placeholder row for an imported external document.
+
+        The placeholder carries the external identity, target folder and the
+        QUEUED import status; a background task later fetches the body, creates
+        the attachment and reuses the regular indexing state machine.
+
+        The caller (the external import service) is responsible for KB access
+        and manage-permission validation; this method only locks the KB row so
+        creation serializes with deletion.
+
+        Raises:
+            ValueError: If the external identity is missing or the KB is inactive
+            IntegrityError: On a concurrent duplicate external identity
+        """
+        if not external_provider or not external_resource_id:
+            raise ValueError("External provider and resource ID are required")
+
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == knowledge_base_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .with_for_update()
+            .first()
+        )
+
+        if not kb:
+            raise ValueError("Knowledge base not found or access denied")
+
+        validated_folder_id = folder_id
+        if folder_id:
+            target_folder = assert_document_can_be_placed_in_folder(
+                db,
+                knowledge_base_id,
+                folder_id,
+                content_origin=ContentOrigin.USER,
+            )
+            validated_folder_id = target_folder.id
+
+        document = KnowledgeDocument(
+            kind_id=knowledge_base_id,
+            attachment_id=0,
+            name=name,
+            file_extension="md",
+            file_size=0,
+            user_id=user_id,
+            folder_id=validated_folder_id,
+            status=DocumentStatus.DISABLED,
+            is_active=False,
+            index_status=DocumentIndexStatus.QUEUED,
+            source_type=DocumentSourceType.EXTERNAL.value,
+            source_config={"external": dict(external_meta)},
+            external_source=KnowledgeDocumentExternalSource(
+                kind_id=knowledge_base_id,
+                external_provider=external_provider,
+                external_resource_id=external_resource_id,
+            ),
+            origin=ContentOrigin.USER.value,
+        )
+        try:
+            db.add(document)
+            db.flush()
+            KnowledgeService._update_document_count_cache(db, knowledge_base_id)
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise
+        db.refresh(document)
+        return document
+
+    @staticmethod
     def get_document(
         db: Session,
         document_id: int,
@@ -1865,6 +1953,22 @@ class KnowledgeService:
             doc.name = data.name
 
         if data.status is not None:
+            if (
+                data.status == DocumentStatus.ENABLED
+                and doc.source_type == DocumentSourceType.EXTERNAL.value
+                and (
+                    doc.attachment_id == 0
+                    or (
+                        doc.index_status == DocumentIndexStatus.FAILED
+                        and not doc.is_active
+                    )
+                )
+            ):
+                # External import placeholders and failed imports have no
+                # usable content; they cannot be enabled until a background
+                # import completes successfully. A previously successful
+                # document whose later re-index failed keeps valid content.
+                raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
 
         if data.splitter_config is not None:
@@ -1896,7 +2000,9 @@ class KnowledgeService:
         """
         logger = logging.getLogger(__name__)
 
-        from app.services.context import context_service
+        from app.services.knowledge.attachment_cleanup import (
+            delete_attachment_best_effort,
+        )
         from app.services.knowledge.index_runtime import get_kb_index_info_by_record
 
         rag_gateway = _get_delete_gateway()
@@ -1999,49 +2105,19 @@ class KnowledgeService:
 
         # Delete associated attachment (context) if exists
         if attachment_id:
-            try:
-                deleted = context_service.delete_context(
-                    db=db,
-                    context_id=attachment_id,
-                    user_id=context_owner_user_id,
-                )
-                if deleted:
-                    logger.info(
-                        f"Deleted attachment context {attachment_id} for document {document_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to delete attachment context {attachment_id} for document {document_id}"
-                    )
-            except Exception as e:
-                # Log error but don't fail the document deletion
-                logger.error(
-                    f"Failed to delete attachment context {attachment_id}: {e!s}",
-                    exc_info=True,
-                )
+            delete_attachment_best_effort(
+                db=db,
+                owner_user_id=context_owner_user_id,
+                attachment_id=attachment_id,
+            )
 
         # Delete converted attachment if exists
         if converted_attachment_id:
-            try:
-                deleted = context_service.delete_context(
-                    db=db,
-                    context_id=converted_attachment_id,
-                    user_id=context_owner_user_id,
-                )
-                if deleted:
-                    logger.info(
-                        f"Deleted converted attachment context {converted_attachment_id} for document {document_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Failed to delete converted attachment context {converted_attachment_id} for document {document_id}"
-                    )
-            except Exception as e:
-                # Log error but don't fail the document deletion
-                logger.error(
-                    f"Failed to delete converted attachment context {converted_attachment_id}: {e!s}",
-                    exc_info=True,
-                )
+            delete_attachment_best_effort(
+                db=db,
+                owner_user_id=context_owner_user_id,
+                attachment_id=converted_attachment_id,
+            )
 
         return DocumentDeleteResult(success=True, kb_id=kind_id)
 
@@ -2079,6 +2155,15 @@ class KnowledgeService:
             return None
 
         assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
+
+        # Externally imported bodies are read-only: the provider owns the
+        # content. A fresh copy requires delete followed by import.
+        # Renaming, moving and deleting stay available through their own flows.
+        if doc.source_type == DocumentSourceType.EXTERNAL.value:
+            raise ValueError(
+                "Externally imported document content is read-only; "
+                "delete it and import a fresh copy"
+            )
 
         # Verify document is editable (TEXT type or plain text files)
         editable_extensions = [

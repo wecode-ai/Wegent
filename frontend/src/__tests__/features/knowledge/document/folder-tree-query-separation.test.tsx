@@ -286,6 +286,17 @@ describe('FolderTree query/result separation', () => {
 })
 
 describe('DocumentItem table grid', () => {
+  it.each([false, true])('shows the document format in compact=%s mode', compact => {
+    const { container } = render(
+      <DocumentItem document={createDocument({ file_extension: '.xlsx' })} compact={compact} />
+    )
+    expect(container.querySelector('.lucide-file-spreadsheet')).toHaveClass(
+      'text-green-600',
+      compact ? 'h-3' : 'h-4',
+      compact ? 'w-3' : 'w-4'
+    )
+  })
+
   it('uses the shared grid column template in table mode', () => {
     const template = getDocumentTableGridTemplate({
       showSelectionColumn: true,

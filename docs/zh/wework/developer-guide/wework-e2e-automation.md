@@ -226,7 +226,7 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
 
-主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
+主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
@@ -466,12 +466,18 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 仓库内的基础 workflow 是 `.github/workflows/wework-e2e.yml`，会在 Wework、`packages/chat-core`、pnpm lockfile 或 workflow 自身变化时运行。
-普通 Draft PR 不运行浏览器或 Linux 桌面 E2E。merge queue 会在提交进入 `main`
-之前运行完整浏览器和 Linux 桌面套件；`main` 不再重复运行已经通过的合并队列
-检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证内存
-边界时，添加 `ci:memory` 标签。
-添加该标签只触发内存门禁，不会重复运行浏览器或 Linux 桌面 E2E。workflow 每天
-UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、Linux 桌面和
-macOS 内存 E2E，即使 PR 的改动路径通常不会触发 Wework E2E。
+Linux 与 Windows Desktop Core E2E 共享分类器输出的同一份分片矩阵；完整分类会在
+两个平台分别运行全部 17 个 Core 分片。Windows job 使用 `windows-latest` 构建
+原生 `WeWork.exe`、`wegent-executor.exe` 和 `codex.exe` 后再执行 checkpoint，
+不能用跨平台构建产物或单个 Windows smoke test 替代。
+
+普通 Draft PR 不运行浏览器或桌面 E2E。merge queue 会在提交进入 `main` 之前运行
+完整浏览器以及 Linux、Windows 桌面 Core 套件；`main` 不再重复运行已经通过的
+合并队列检查。macOS 内存门禁默认只在定时任务和手动任务中运行；需要在 PR 中验证
+内存边界时，添加 `ci:memory` 标签。
+添加该标签只触发内存门禁，不会重复运行浏览器或 Linux、Windows 桌面 E2E。
+workflow 每天 UTC 04:00 运行一次完整回归。添加 `ci:all` 标签则会运行浏览器、
+Linux 与 Windows 桌面以及 macOS 内存 E2E，即使 PR 的改动路径通常不会触发
+Wework E2E。
 
 登录后流程应在测试前通过后端 API 创建测试用户和测试数据，再使用真实登录或真实 token 注入。不要在 Playwright 中 mock 后端 HTTP 响应。

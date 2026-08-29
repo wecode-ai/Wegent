@@ -21,9 +21,11 @@ Architecture:
 
 import base64
 import logging
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from app.core.config import settings
 from app.models.kind import Kind
@@ -42,10 +44,17 @@ from app.schemas.knowledge import (
     KnowledgeDocumentResponse,
     ResourceScope,
 )
+from app.services.knowledge.attachment_cleanup import (
+    delete_attachment_best_effort,
+)
 from app.services.knowledge.code_wiki.source import SourceRepository
 from app.services.knowledge.document_read_service import (
     DOCUMENT_READ_ERROR_NOT_FOUND,
     document_read_service,
+)
+from app.services.knowledge.external_document_providers import (
+    ExternalDocumentContent,
+    ExternalImportLostWriteError,
 )
 from app.services.knowledge.knowledge_service import KnowledgeService
 from app.services.knowledge.retrieval_profile import (
@@ -95,7 +104,8 @@ def _normalize_file_extension(file_extension: Optional[str]) -> str:
 def _build_filename(name: str, file_extension: str) -> str:
     """Build a safe filename for attachment upload."""
     ext = _normalize_file_extension(file_extension)
-    return f"{name}.{ext}"
+    suffix = f".{ext}"
+    return f"{name[: 255 - len(suffix)]}{suffix}"
 
 
 def _validate_document_read_paging(offset: int, limit: int) -> None:
@@ -868,6 +878,16 @@ class KnowledgeOrchestrator:
 
         return document
 
+    @staticmethod
+    def _assert_external_document_previewable(document: KnowledgeDocument) -> None:
+        """Reject placeholders; stored content does not depend on index health."""
+        from app.models.knowledge import DocumentSourceType
+
+        if document.source_type != DocumentSourceType.EXTERNAL.value:
+            return
+        if not document.attachment_id:
+            raise ValueError("Document content is not ready for preview")
+
     def read_document_content(
         self,
         db: Session,
@@ -899,6 +919,7 @@ class KnowledgeOrchestrator:
             user=user,
             document_id=document_id,
         )
+        self._assert_external_document_previewable(document)
 
         results = document_read_service.read_documents(
             db=db,
@@ -914,6 +935,11 @@ class KnowledgeOrchestrator:
         if result.get("error"):
             raise ValueError(result["error"])
         _validate_document_read_result_payload(result)
+
+        # An attachment ID alone does not prove that stored text is readable.
+        # Use total length, not page length: a valid EOF page can be empty.
+        if document.source_type == "external" and result["total_length"] == 0:
+            raise ValueError("Document content is not ready for preview")
 
         return DocumentContentReadResponse(
             document_id=result["id"],
@@ -1686,6 +1712,185 @@ class KnowledgeOrchestrator:
             splitter_config=splitter_config_dict,
         )
 
+    def attach_external_document_content(
+        self,
+        db: Session,
+        document: KnowledgeDocument,
+        user: User,
+        content: ExternalDocumentContent,
+        generation: int,
+    ) -> Dict[str, Any]:
+        """
+        Attach fetched external content to an external document and index it.
+
+        Creates the attachment from the provider-fetched body, then lands it on
+        the document through a guarded write (see ``_land_external_content``).
+        The user's own name and folder are never overwritten.
+
+        Args:
+            db: Database session
+            document: External KnowledgeDocument with external identity
+            user: Document owner (used for indexing dispatch metadata)
+            content: Fetched external document content
+            generation: The import attempt's claimed index generation
+
+        Returns:
+            Dispatch result dict from the indexing scheduler
+
+        Raises:
+            ExternalImportLostWriteError: The attempt lost its write right.
+        """
+        from app.services.context import context_service
+
+        # The import entry point checks the caller's KB permission. The source
+        # credential owner need not belong to the KB after a document is moved.
+        kb = (
+            db.query(Kind)
+            .filter(
+                Kind.id == document.kind_id,
+                Kind.kind == "KnowledgeBase",
+                Kind.is_active.is_(True),
+            )
+            .first()
+        )
+        if kb is None:
+            raise ValueError(
+                f"Knowledge base {document.kind_id} not found for external "
+                f"document {document.id}"
+            )
+
+        # Upload commits can expire the document, including after its deletion.
+        document_id = document.id
+        owner_user_id = document.user_id
+        previous_attachment_id = document.attachment_id
+        previous_converted_id = document.converted_attachment_id
+        attachment, _ = context_service.upload_attachment(
+            db=db,
+            user_id=owner_user_id,
+            filename=_build_filename(content.name, content.file_extension),
+            binary_data=content.content,
+            subtask_id=0,
+        )
+
+        attachment_id = attachment.id
+        try:
+            self._land_external_content(db, document, content, attachment, generation)
+        except Exception as exc:
+            # A failed commit can have an uncertain outcome; keep any linked body.
+            db.rollback()
+            linked_attachment_id = (
+                db.query(KnowledgeDocument.attachment_id)
+                .filter(KnowledgeDocument.id == document_id)
+                .scalar()
+            )
+            if linked_attachment_id != attachment_id:
+                delete_attachment_best_effort(db, owner_user_id, attachment_id)
+            if isinstance(exc, ObjectDeletedError):
+                raise ExternalImportLostWriteError(
+                    f"Document {document_id} was deleted while importing"
+                ) from exc
+            raise
+
+        for previous_id in {previous_attachment_id, previous_converted_id}:
+            if previous_id and previous_id != attachment_id:
+                delete_attachment_best_effort(db, owner_user_id, previous_id)
+
+        db.refresh(document)
+
+        result = self._schedule_indexing_celery(
+            db=db,
+            knowledge_base=kb,
+            document=document,
+            user=user,
+            trigger_summary=True,
+            replace_active=True,
+            expected_generation=generation,
+        )
+        if not result["scheduled"]:
+            from app.schemas.knowledge import DocumentProcessingStage
+            from app.services.knowledge.index_state_machine import (
+                mark_document_index_enqueue_failed,
+            )
+            from app.services.knowledge.processing_errors import build_processing_error
+
+            mark_document_index_enqueue_failed(
+                db=db,
+                document_id=document.id,
+                generation=generation,
+                error=build_processing_error(
+                    stage=DocumentProcessingStage.DISPATCH,
+                    code="external_import_index_not_scheduled",
+                    message="External document indexing could not be started. Please retry.",
+                    retryable=True,
+                    generation=generation,
+                ),
+            )
+            db.refresh(document)
+        return result
+
+    def _land_external_content(
+        self,
+        db: Session,
+        document: KnowledgeDocument,
+        content: ExternalDocumentContent,
+        attachment: Any,
+        generation: int,
+    ) -> None:
+        """
+        Land fetched content on the document through a guarded write.
+
+        Only this attempt's generation may land the content, and only while
+        the document still exists with its external identity. Losing that
+        race (user deleted the document, or a newer attempt superseded this
+        one) raises ExternalImportLostWriteError. The caller cleans up the
+        unlinked attachment without accessing the possibly deleted document.
+
+        """
+        document_id = document.id
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # Refresh the provider-owned source metadata; never touch the user's
+        # own document name or folder.
+        merged_external = {
+            **document.external_source_config,
+            **dict(content.metadata or {}),
+            "status": "accessible",
+        }
+        # Reading the source succeeded even if later conversion/indexing fails.
+        merged_external.pop("last_error", None)
+        merged_source_config = dict(document.source_config or {})
+        merged_source_config["external"] = merged_external
+        # A conversion belongs to the previous body, never to its replacement.
+        merged_source_config.pop("converted_attachment_id", None)
+
+        update_fields = {
+            KnowledgeDocument.attachment_id: attachment.id,
+            KnowledgeDocument.file_extension: content.file_extension,
+            KnowledgeDocument.file_size: len(content.content),
+            KnowledgeDocument.source_config: merged_source_config,
+            KnowledgeDocument.updated_at: now,
+        }
+
+        updated = (
+            db.query(KnowledgeDocument)
+            .filter(
+                KnowledgeDocument.id == document_id,
+                KnowledgeDocument.external_source.has(
+                    external_provider=document.external_provider,
+                    external_resource_id=document.external_resource_id,
+                ),
+                KnowledgeDocument.index_generation == generation,
+            )
+            .update(update_fields, synchronize_session=False)
+        )
+        db.commit()
+
+        if not updated:
+            raise ExternalImportLostWriteError(
+                f"Document {document_id} was deleted or superseded while "
+                f"importing at generation {generation}"
+            )
+
     def _create_and_index_document(
         self,
         db: Session,
@@ -1937,6 +2142,7 @@ class KnowledgeOrchestrator:
         splitter_config: Optional[Dict[str, Any]] = None,
         allow_if_success: bool = False,
         replace_active: bool = False,
+        expected_generation: Optional[int] = None,
         multimodal_dispatch_ctx: Optional[Any] = None,
         force_reconvert: bool = False,
     ) -> Dict[str, Any]:
@@ -1955,6 +2161,7 @@ class KnowledgeOrchestrator:
             splitter_config: Optional splitter configuration dict
             allow_if_success: Whether to re-queue a document that already succeeded
             replace_active: Whether to supersede an in-flight indexing generation
+            expected_generation: Reject a stale handoff from an earlier import
             multimodal_dispatch_ctx: Pre-resolved multimodal dispatch context
                 produced by resolve_dispatch_for_document_or_none before dispatch.
                 Required when the document is video/image.
@@ -2028,6 +2235,7 @@ class KnowledgeOrchestrator:
             document_id=document.id,
             allow_if_success=allow_if_success,
             replace_active=replace_active,
+            expected_generation=expected_generation,
         )
         if not enqueue_decision.should_enqueue:
             logger.info(
@@ -2057,9 +2265,10 @@ class KnowledgeOrchestrator:
             normalized_extension = _normalize_file_extension(document.file_extension)
             converted_id = document.converted_attachment_id
             # Actual attachment dispatched to the index/conversion task. Defaults
-            # to the source attachment; the converted branch overrides it so the
-            # enqueue log reflects what really enters the RAG pipeline.
-            dispatched_attachment_id = document.attachment_id
+            # to the source attachment; the converted branch may replace it so
+            # the enqueue log reflects what really enters the RAG pipeline.
+            source_attachment_id = document.attachment_id
+            dispatched_attachment_id = source_attachment_id
             pipeline = conversion_pipeline(normalized_extension, settings)
 
             if converted_id and not (force_reconvert and pipeline == "multimodal"):
@@ -2129,8 +2338,6 @@ class KnowledgeOrchestrator:
 
                 # Override QUEUED -> PENDING_CONVERSION: document is waiting
                 # for a conversion worker, not for direct indexing
-                from datetime import datetime, timezone
-
                 document.index_status = DocumentIndexStatus.PENDING_CONVERSION
                 document.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 db.commit()
@@ -2141,7 +2348,7 @@ class KnowledgeOrchestrator:
                 attachment = (
                     db.query(SubtaskContext)
                     .filter(
-                        SubtaskContext.id == document.attachment_id,
+                        SubtaskContext.id == source_attachment_id,
                         SubtaskContext.context_type == ContextType.ATTACHMENT.value,
                     )
                     .first()
@@ -2154,19 +2361,19 @@ class KnowledgeOrchestrator:
                     "knowledge_doc_converter.convert_document",
                     kwargs={
                         "document_id": document.id,
-                        "attachment_id": document.attachment_id,
+                        "attachment_id": source_attachment_id,
                         "file_extension": normalized_extension,
                         "original_filename": original_filename,
                         "knowledge_base_name": knowledge_base.name,
                         "index_generation": generation,
                         "content_download_path": (
-                            f"/api/internal/attachments/{document.attachment_id}/download"
+                            f"/api/internal/attachments/{source_attachment_id}/download"
                         ),
                         "callback_status_path": "/api/internal/conversion/callback/status",
                         "callback_completed_path": "/api/internal/conversion/callback/completed",
                         "index_dispatch_payload": {
                             "knowledge_base_id": str(knowledge_base.id),
-                            "attachment_id": document.attachment_id,
+                            "attachment_id": source_attachment_id,
                             "retriever_name": retriever_name,
                             "retriever_namespace": retriever_namespace,
                             "embedding_model_name": embedding_model_name,
@@ -2191,7 +2398,7 @@ class KnowledgeOrchestrator:
                 # Direct indexing (no conversion)
                 async_result = index_document_task.delay(
                     knowledge_base_id=str(knowledge_base.id),
-                    attachment_id=document.attachment_id,
+                    attachment_id=source_attachment_id,
                     retriever_name=retriever_name,
                     retriever_namespace=retriever_namespace,
                     embedding_model_name=embedding_model_name,

@@ -41,8 +41,6 @@ function run(command, args, cwd = weworkDir, environment = process.env) {
 
 await run(pnpmCommand, ['run', 'prepare:electron'])
 await Promise.all([
-  run(pnpmCommand, ['run', 'prepare:codex']),
-  run(pnpmCommand, ['run', 'prepare:dws']),
   run(pnpmCommand, ['--dir', 'electron', 'run', 'build'], weworkDir, buildEnvironment),
   run(
     'cargo',

@@ -140,6 +140,47 @@ describe('DingTalkDocsRootRow sync entry', () => {
 })
 
 describe('DingTalkDocumentColumn', () => {
+  it('shows format icons without applying import eligibility to chat selection', () => {
+    const formats = [
+      ['adoc', 'lucide-file-text', 'text-blue-600'],
+      ['able', 'lucide-table-2', 'text-primary'],
+      ['axls', 'lucide-file-spreadsheet', 'text-green-600'],
+      ['pptx', 'lucide-presentation', 'text-orange-600'],
+      ['pdf', 'lucide-file-text', 'text-error'],
+      ['dlink', 'lucide-link-2', 'text-blue-600'],
+      ['mp3', 'lucide-file-headphone', 'text-orange-600'],
+    ]
+    const documents = formats.map(([extension]) => ({
+      ...docNode,
+      dingtalk_node_id: extension,
+      extension,
+    }))
+    const onToggle = jest.fn()
+    render(
+      <DingTalkDocumentColumn
+        title="全部文档"
+        nodes={documents}
+        totalCount={documents.length}
+        loading={false}
+        error={null}
+        configured={true}
+        notConfiguredLabel="未配置"
+        emptyLabel="暂无文档"
+        query=""
+        selectedIds={new Set()}
+        onRetry={jest.fn()}
+        onToggle={onToggle}
+        onToggleAll={jest.fn()}
+      />
+    )
+    for (const [extension, ...iconClasses] of formats) {
+      const row = screen.getByTestId(`knowledge-picker-dingtalk-node-docs-${extension}`)
+      expect(row.querySelector('svg')).toHaveClass(...iconClasses)
+      fireEvent.click(row)
+    }
+    expect(onToggle.mock.calls.map(([node]) => node)).toEqual(documents)
+  })
+
   it('applies whole-container selection to all nodes instead of filtered results', () => {
     const onToggleAll = jest.fn()
 
@@ -166,6 +207,49 @@ describe('DingTalkDocumentColumn', () => {
 
     fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-toggle-all'))
     expect(onToggleAll).toHaveBeenCalledWith(nodes)
+  })
+
+  it('expands document children separately from selection and preserves tree row alignment', () => {
+    const parent = { ...docNode, children: [nodes[1]], extension: 'adoc' }
+    const onToggle = jest.fn()
+    const props = {
+      title: '全部文档',
+      nodes: [parent],
+      totalCount: 2,
+      loading: false,
+      error: null,
+      configured: true,
+      notConfiguredLabel: '未配置',
+      emptyLabel: '暂无文档',
+      query: '',
+      selectedIds: new Set<string>(),
+      onRetry: jest.fn(),
+      onToggle,
+      onToggleAll: jest.fn(),
+    }
+    const { rerender } = render(<DingTalkDocumentColumn {...props} />)
+    const expander = screen.getByTestId('knowledge-picker-dingtalk-node-expander-docs-doc-1')
+    expect(expander).toHaveAttribute('aria-expanded', 'true')
+    const child = screen.getByTestId('knowledge-picker-dingtalk-node-docs-doc-2')
+    const childRow = child.parentElement!
+    expect(childRow).toHaveClass('min-h-11')
+    expect(childRow).toHaveStyle({ paddingLeft: '16px' })
+    expect(childRow.querySelector('span[aria-hidden="true"]')).toHaveClass('bg-border', 'h-px')
+    expect(childRow.querySelector('span[aria-hidden="true"]')).toHaveStyle({ left: '60px' })
+    fireEvent.click(child)
+    expect(onToggle).toHaveBeenLastCalledWith(nodes[1])
+    fireEvent.click(expander)
+    expect(expander).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      screen.queryByTestId('knowledge-picker-dingtalk-node-docs-doc-2')
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('knowledge-picker-dingtalk-node-docs-doc-1'))
+    expect(onToggle).toHaveBeenLastCalledWith(parent)
+    expect(onToggle).toHaveBeenCalledTimes(2)
+    expect(expander).toHaveAttribute('aria-expanded', 'false')
+    rerender(<DingTalkDocumentColumn {...props} query="预算" />)
+    expect(screen.getByTestId('knowledge-picker-dingtalk-node-docs-doc-2')).toBeInTheDocument()
+    expect(expander).toHaveAttribute('aria-expanded', 'true')
   })
 
   it('selects an empty folder only through its selection control', () => {
@@ -197,6 +281,9 @@ describe('DingTalkDocumentColumn', () => {
     )
 
     const folderRow = screen.getByTestId('knowledge-picker-dingtalk-node-docs-folder-empty')
+    expect(
+      screen.queryByTestId('knowledge-picker-dingtalk-node-expander-docs-folder-empty')
+    ).not.toBeInTheDocument()
     expect(folderRow).toBeDisabled()
     fireEvent.click(folderRow)
     expect(onToggle).not.toHaveBeenCalled()
@@ -213,6 +300,7 @@ describe('DingTalkDocumentColumn', () => {
       name: '产品知识库',
       node_type: 'folder',
       source: 'wikispace',
+      workspace_id: 'space-1',
       children: [{ ...nodes[0], source: 'wikispace' }],
     }
 
@@ -232,6 +320,7 @@ describe('DingTalkDocumentColumn', () => {
     )
 
     const row = screen.getByTestId('knowledge-picker-dingtalk-space-space-1')
+    expect(row.querySelector('svg')).toHaveClass('lucide-book-open', 'text-primary')
     expect(row.querySelector('.lucide-chevron-right')).not.toBeInTheDocument()
   })
 })

@@ -10,6 +10,7 @@ import { buildTrayMenuTaskGroups } from '@/desktop/trayMenuState'
 import { syncTrayMenuState } from '@/desktop/trayNavigation'
 import { useRuntimeTaskRouteRestoration } from '@/features/workbench/useRuntimeTaskRouteRestoration'
 import { useRuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
 
 interface WorkbenchPageProps {
   routeActive?: boolean
@@ -17,10 +18,16 @@ interface WorkbenchPageProps {
 }
 
 export function WorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {
-  if (surfaceKind === 'board') {
-    return <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind="board" />
-  }
-  return <TaskWorkbenchPage routeActive={routeActive} surfaceKind={surfaceKind} />
+  return (
+    <>
+      {isElectronRuntime() && routeActive ? <SystemDragBridge /> : null}
+      {surfaceKind === 'board' ? (
+        <DesktopWorkbenchLayout routeActive={routeActive} surfaceKind="board" />
+      ) : (
+        <TaskWorkbenchPage routeActive={routeActive} surfaceKind={surfaceKind} />
+      )}
+    </>
+  )
 }
 
 function TaskWorkbenchPage({ routeActive = true, surfaceKind }: WorkbenchPageProps) {

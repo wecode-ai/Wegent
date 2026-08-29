@@ -1,5 +1,4 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
@@ -89,6 +88,7 @@ import {
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
 import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
+import { SelectionActionsPopover } from './SelectionActionsPopover'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -135,7 +135,6 @@ interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
-  onVirtualLayoutChange?: () => void
   virtualAnchorToEnd?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
@@ -229,11 +228,9 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
-  onVirtualLayoutChange,
   virtualAnchorToEnd = true,
   renderGapAfterMessage,
 }: MessageListProps) {
-  const { t } = useTranslation('common')
   const listRef = useRef<HTMLDivElement>(null)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previousVisibleMessageIdsRef = useRef<string[]>([])
@@ -343,11 +340,6 @@ export const MessageList = memo(function MessageList({
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
     preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
-
-  useLayoutEffect(() => {
-    if (!virtualMessages) return
-    onVirtualLayoutChange?.()
-  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -559,34 +551,13 @@ export const MessageList = memo(function MessageList({
           : undefined
       }
     >
-      {textSelection &&
-        textSelection.conversationKey === conversationKey &&
-        createPortal(
-          <div
-            data-testid="message-selection-actions"
-            className="fixed z-critical flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-lg border border-border bg-base p-1 shadow-lg"
-            style={{ left: textSelection.left, top: textSelection.top }}
-            onPointerDown={event => event.preventDefault()}
-          >
-            <button
-              type="button"
-              data-testid="add-selection-to-conversation-button"
-              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => applySelectionAction(onAddSelectionToConversation!)}
-            >
-              {t('workbench.add_selection_to_conversation')}
-            </button>
-            <button
-              type="button"
-              data-testid="ask-selection-in-sidebar-button"
-              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => applySelectionAction(onAskSelectionInSidebar!)}
-            >
-              {t('workbench.ask_selection_in_sidebar')}
-            </button>
-          </div>,
-          document.body
-        )}
+      {textSelection && textSelection.conversationKey === conversationKey && (
+        <SelectionActionsPopover
+          position={{ left: textSelection.left, top: textSelection.top }}
+          onAddToConversation={() => applySelectionAction(onAddSelectionToConversation!)}
+          onAskInSidebar={() => applySelectionAction(onAskSelectionInSidebar!)}
+        />
+      )}
       {(virtualMessages
         ? messageVirtualizer.getVirtualItems().map(virtualRow => ({
             index: virtualRow.index,
@@ -806,7 +777,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
       ? 'onAskSelectionInSidebar'
       : null,
-    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)

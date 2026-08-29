@@ -114,6 +114,15 @@ window.__ModuleLoader__.load({
         ...integrations,
       },
       {
+        id: 'computer-use',
+        path: '/settings/computer-use',
+        icon: 'monitor-cog',
+        labelKey: 'settings_nav_computer_use',
+        label: '电脑操控',
+        desktopOnly: true,
+        ...integrations,
+      },
+      {
         id: 'plugins',
         path: '/settings/plugins',
         icon: 'package',

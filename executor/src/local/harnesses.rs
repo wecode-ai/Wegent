@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::{process::Command, time::timeout};
 
-use crate::process_environment;
+use crate::{path_compat::strip_windows_verbatim_prefix, process_environment};
 
 const HARNESS_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -257,7 +257,9 @@ fn prepare_kimi_home(home: &Path, cwd: Option<&str>) -> Result<(), String> {
 }
 
 fn prepare_kimi_workspace_trust(home: &Path, cwd: &str) -> Result<(), String> {
-    let root = fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd));
+    let root = strip_windows_verbatim_prefix(
+        &fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd)),
+    );
     let root_text = root.display().to_string();
     let normalized = root_text
         .replace('\\', "/")
@@ -513,7 +515,8 @@ mod tests {
         .unwrap();
 
         let kimi_home = PathBuf::from(prepared.env["KIMI_CODE_HOME"].clone());
-        let canonical_workspace = fs::canonicalize(&workspace).unwrap();
+        let canonical_workspace =
+            strip_windows_verbatim_prefix(&fs::canonicalize(&workspace).unwrap());
         let normalized = canonical_workspace.display().to_string().replace('\\', "/");
         let digest = format!("{:x}", Sha256::digest(normalized.as_bytes()));
         let trust_path = kimi_home

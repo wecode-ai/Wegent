@@ -698,9 +698,15 @@ async function verifyArchiveRestore(context) {
   await writeFile(join(task.workspacePath, markerName), markerText)
   await archiveTask(context.control, task)
 
-  const archivedState = await readJson(runtimeWorkPath('worktrees.json'))
-  const archivedRecord = archivedState.records?.[task.workspacePath]
-  assert.equal(archivedRecord?.state, 'restorable', 'Archiving did not persist restorable state')
+  const archivedRecord = await waitForCondition(
+    async () => {
+      const archivedState = await readJson(runtimeWorkPath('worktrees.json'))
+      const record = archivedState.records?.[task.workspacePath]
+      return record?.state === 'restorable' ? record : null
+    },
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Archiving did not persist restorable state'
+  )
   assert.match(
     archivedRecord?.snapshotRef ?? '',
     /^refs\/wegent\/worktree-snapshots\//,

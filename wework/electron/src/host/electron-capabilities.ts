@@ -23,6 +23,7 @@ import type { SmartAppManager } from './smart-app-manager.js'
 import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
+import type { ComputerUseService } from './computer-use-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
@@ -33,7 +34,7 @@ import {
 import { FeedbackBundleManager, type FeedbackExportRequest } from './feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
-import type { TrayActivation, TrayAction, TrayMenuState, TraySnapshot } from './tray-manager.js'
+import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
 import {
@@ -41,6 +42,7 @@ import {
   openLocalWorkspace,
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
+import type { DesktopHostEventBroker } from './desktop-host-events.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -48,9 +50,11 @@ export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
   coreDshPlugins: () => CoreDshPluginService | null
+  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
 export interface CoreDshPluginService {
@@ -65,10 +69,6 @@ export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
   captureWorkbench: (tabId: string) => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
-  closeRequestState: (after: number) => {
-    requested: boolean
-    revision: number
-  }
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
   completeSystemDragDrop: (payload: {
@@ -92,7 +92,6 @@ export interface ElectronE2EHost {
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => TraySnapshot | null
-  takePendingTrayActions: () => TrayAction[]
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
@@ -104,7 +103,7 @@ export interface ElectronE2EHost {
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
-  showSystemDragPanel: () => Promise<void>
+  showSystemDragPanel: () => void | Promise<void>
   systemDragPanelVisible: () => boolean
   takePendingSystemDrops: () => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
@@ -125,12 +124,12 @@ export function createElectronCapabilityRouter(
   preferences: PreferencesStore,
   rendererStorage: RendererStorageStore,
   browser: EmbeddedBrowserManager,
+  computerUse: ComputerUseService,
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
     captureWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     captureTarget: () => null,
-    closeRequestState: after => ({ requested: false, revision: after }),
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
@@ -150,7 +149,6 @@ export function createElectronCapabilityRouter(
     trayActivate: () => false,
     traySetState: () => undefined,
     traySnapshot: () => null,
-    takePendingTrayActions: () => [],
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
     popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
@@ -169,6 +167,9 @@ export function createElectronCapabilityRouter(
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
+  router.register('desktop.events', params =>
+    desktopServices.events.read(integerParam(params, 'after') ?? 0)
+  )
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
@@ -263,9 +264,6 @@ export function createElectronCapabilityRouter(
     const label = stringParam(params, 'label')
     return isWorkbenchTabLabel(label) ? e2eHost.captureWorkbench(label) : browser.capture(label)
   })
-  router.register('browser.events', params =>
-    browser.readEvents(integerParam(params, 'after') ?? 0)
-  )
   router.register('browser.pauseDownload', params =>
     browser.pauseDownload(stringParam(params, 'id'))
   )
@@ -303,6 +301,17 @@ export function createElectronCapabilityRouter(
     ])
   })
   router.register('clipboard.writeText', params => clipboard.writeText(stringParam(params, 'text')))
+  router.register('computerUse.status', () => computerUse.status())
+  router.register('computerUse.setEnabled', async params => {
+    const enabled = booleanParam(params, 'enabled') ?? false
+    await preferences.update({ computerUseEnabled: enabled })
+    return computerUse.setEnabled(enabled)
+  })
+  router.register('computerUse.requestPermissions', () => computerUse.requestPermissions())
+  router.register('computerUse.openScreenRecordingSettings', () =>
+    computerUse.openScreenRecordingSettings()
+  )
+  router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
       const logDirectory = app.getPath('logs')
@@ -396,13 +405,9 @@ export function createElectronCapabilityRouter(
       dockVisible: e2eHost.dockVisible(),
     }
   })
-  router.register('window.closeRequestState', params =>
-    e2eHost.closeRequestState(integerParam(params, 'after') ?? 0)
-  )
   router.register('window.closeToTray', () => e2eHost.closeToTray())
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
   router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
-  router.register('tray.takePendingActions', () => e2eHost.takePendingTrayActions())
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
   router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
@@ -469,7 +474,10 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    const updated = await preferences.update(patch as Record<string, unknown>)
+    const preferencePatch = patch as Record<string, unknown>
+    const updated = desktopServices.updatePreferences
+      ? await desktopServices.updatePreferences(preferencePatch)
+      : await preferences.update(preferencePatch)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }

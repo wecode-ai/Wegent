@@ -60,6 +60,49 @@ describe('localWorkspaceFiles', () => {
     })
   })
 
+  test('lists Windows workspace entries returned with canonical verbatim paths', async () => {
+    requestLocalExecutorMock.mockResolvedValue({
+      success: true,
+      stdout: {
+        path: String.raw`\\?\C:\work\Wegent`,
+        entries: [
+          {
+            name: 'src',
+            path: String.raw`\\?\C:\work\Wegent\src`,
+            is_directory: true,
+            size: 0,
+            modified_at: null,
+          },
+        ],
+      },
+      stderr: '',
+    })
+
+    await expect(
+      listLocalWorkspaceEntries(String.raw`C:\work\Wegent`, String.raw`C:\work\Wegent`)
+    ).resolves.toEqual({
+      path: String.raw`C:\work\Wegent`,
+      entries: [
+        {
+          name: 'src',
+          path: String.raw`C:\work\Wegent\src`,
+          isDirectory: true,
+          size: 0,
+          modifiedAt: null,
+        },
+      ],
+    })
+    expect(requestLocalExecutorMock).toHaveBeenCalledWith('device.execute_command', {
+      command_key: 'workspace_tree',
+      path: String.raw`C:\work\Wegent`,
+      timeout_seconds: 15,
+      max_output_bytes: 1024 * 512,
+      env: {
+        WEGENT_WORKSPACE_ROOTS: String.raw`C:\work\Wegent`,
+      },
+    })
+  })
+
   test('reads text and binary chunks through the Electron-managed executor', async () => {
     requestLocalExecutorMock
       .mockResolvedValueOnce({

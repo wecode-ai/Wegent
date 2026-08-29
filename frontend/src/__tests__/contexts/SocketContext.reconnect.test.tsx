@@ -14,7 +14,6 @@ const socketIoMockFactory = () => ({
   io: (...args: unknown[]) => mockIo(...args),
 })
 
-jest.doMock('socket.io-client', socketIoMockFactory)
 jest.doMock(
   require.resolve('socket.io-client', {
     paths: [path.join(process.cwd(), '../packages/chat-core')],

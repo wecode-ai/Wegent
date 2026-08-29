@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+} from 'react'
 import JSZip from 'jszip'
 import {
   Box,
@@ -56,6 +64,11 @@ import {
   type SmartAppDevelopmentInput,
 } from '@/features/harness-apps/SmartAppDevelopmentDialog'
 import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
+import {
+  HARNESS_APP_INSTALLATIONS_CHANGED_EVENT,
+  notifyHarnessAppInstallationsChanged,
+  type HarnessAppInstallationsChangedDetail,
+} from '@/features/harness-apps/harnessAppInstallationsChanged'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { useHarnessAppManagement } from '@/features/harness-apps/useHarnessAppManagement'
 import { queuePluginReferenceTrial } from '@/features/plugins/pluginTrial'
@@ -63,11 +76,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { getLocalExecutorDeviceId, revealLocalFile } from '@/lib/local-terminal'
 import { navigateTo } from '@/lib/navigation'
+import { fileUrlToPath } from '@/lib/workspace-path-transfer'
 import { ensureBundledPluginInstalled } from '@/desktop/localExecutor'
 
 interface SmartAppsMarketplacePageProps {
   api: SmartAppsApi | null
   mode?: 'marketplace' | 'owned'
+  onNavigate?: (path: string) => void
 }
 
 interface PendingInstall {
@@ -88,17 +103,6 @@ interface OwnedSmartAppCard {
 // Keep successful local removals authoritative across route remounts. A new install
 // of the same package clears the marker below.
 const locallyRemovedInstallationIds = new Set<string>()
-const HARNESS_APP_INSTALLATIONS_CHANGED_EVENT = 'wework:harness-app-installations-changed'
-
-interface HarnessAppInstallationsChangedDetail {
-  type: 'installed' | 'removed' | 'restored'
-  installationId: string
-  installation?: HarnessAppInstallation
-}
-
-function notifyHarnessAppInstallationsChanged(detail: HarnessAppInstallationsChangedDetail) {
-  window.dispatchEvent(new CustomEvent(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, { detail }))
-}
 
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`
@@ -220,6 +224,7 @@ async function readManifest(
 export function SmartAppsMarketplacePage({
   api,
   mode = 'marketplace',
+  onNavigate = navigateTo,
 }: SmartAppsMarketplacePageProps) {
   const { t, i18n } = useTranslation('common')
   const [items, setItems] = useState<SmartAppMarketplaceItem[]>([])
@@ -253,15 +258,23 @@ export function SmartAppsMarketplacePage({
   const [pendingDelete, setPendingDelete] = useState<HarnessAppInstallation | null>(null)
   const [pluginInstallation, setPluginInstallation] = useState<HarnessAppInstallation | null>(null)
   const refreshRequestRef = useRef(0)
+  const activeModeRef = useRef(mode)
+
+  useLayoutEffect(() => {
+    activeModeRef.current = mode
+  }, [mode])
 
   const refresh = useCallback(async () => {
+    if (activeModeRef.current !== mode) return
     const requestId = ++refreshRequestRef.current
+    const isCurrentRequest = () =>
+      requestId === refreshRequestRef.current && activeModeRef.current === mode
     setLoading(true)
     setError(null)
     try {
       const localPromise = harnessAppsApi.list().catch(() => [])
       const local = await localPromise
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setInstalled(local)
       if (!api) {
         setItems([])
@@ -279,12 +292,12 @@ export function SmartAppsMarketplacePage({
         mode === 'owned' ? api.listMarketplace() : null,
         api.listTags().catch(() => ({ version: 0, items: [] })),
       ])
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setItems(catalog.items)
       setMarketItems(marketplace?.items ?? catalog.items)
       setTags(tagCatalog.items.filter(item => item.enabled).sort((a, b) => a.sort - b.sort))
     } catch (loadError) {
-      if (requestId !== refreshRequestRef.current) return
+      if (!isCurrentRequest()) return
       setError(
         smartAppErrorMessage(
           loadError,
@@ -293,7 +306,7 @@ export function SmartAppsMarketplacePage({
         )
       )
     } finally {
-      if (requestId === refreshRequestRef.current) setLoading(false)
+      if (isCurrentRequest()) setLoading(false)
     }
   }, [api, mode, query, source, t, tag])
 
@@ -382,6 +395,16 @@ export function SmartAppsMarketplacePage({
         setInstalled(current => current.filter(item => item.id !== detail.installationId))
         return
       }
+      if (detail.type === 'stopped') {
+        setInstalled(current =>
+          current.map(item =>
+            item.id === detail.installationId
+              ? { ...item, state: 'installed', webUrl: null, error: null }
+              : item
+          )
+        )
+        return
+      }
 
       locallyRemovedInstallationIds.delete(detail.installationId)
       setRemovedInstallationIds(current => {
@@ -389,12 +412,10 @@ export function SmartAppsMarketplacePage({
         next.delete(detail.installationId)
         return next
       })
-      if (detail.installation) {
-        setInstalled(current => [
-          ...current.filter(item => item.id !== detail.installationId),
-          detail.installation as HarnessAppInstallation,
-        ])
-      }
+      setInstalled(current => [
+        ...current.filter(item => item.id !== detail.installationId),
+        detail.installation,
+      ])
     }
     window.addEventListener(HARNESS_APP_INSTALLATIONS_CHANGED_EVENT, syncLocalInstallationChange)
     return () =>
@@ -660,7 +681,8 @@ export function SmartAppsMarketplacePage({
     event.preventDefault()
     const uri = event.dataTransfer.getData('text/uri-list').split(/\r?\n/)[0]?.trim()
     if (!uri) return
-    await importCreatedPackage(decodeURIComponent(new URL(uri).pathname))
+    const path = fileUrlToPath(uri)
+    if (path) await importCreatedPackage(path)
   }
 
   function availableUpdate(installation: HarnessAppInstallation) {
@@ -765,7 +787,7 @@ export function SmartAppsMarketplacePage({
         label: t('workbench.smart_apps_manage_in_my', '在我的工作台中管理'),
         icon: Boxes,
         testId: `smart-app-manage-local-${installation.id}`,
-        onSelect: () => navigateTo('/sites?app_type=smart_app&view=owned'),
+        onSelect: () => onNavigate('/sites?app_type=smart_app&view=owned'),
       })
     } else if (item?.accessRole === 'owner') {
       actions.push({
@@ -888,7 +910,12 @@ export function SmartAppsMarketplacePage({
       ) : null}
 
       <ApplicationContextToolbar
-        leading={<SmartAppsSectionNav active={mode === 'owned' ? 'owned' : 'marketplace'} />}
+        leading={
+          <SmartAppsSectionNav
+            active={mode === 'owned' ? 'owned' : 'marketplace'}
+            onNavigate={onNavigate}
+          />
+        }
         searchLabel={t('workbench.smart_apps_search', '搜索工作台')}
         searchPlaceholder={t('workbench.smart_apps_search', '搜索工作台')}
         searchTestId={
@@ -1021,7 +1048,7 @@ export function SmartAppsMarketplacePage({
             <Button
               size="sm"
               variant="outline"
-              onClick={() => navigateTo('/sites?app_type=smart_app&view=owned')}
+              onClick={() => onNavigate('/sites?app_type=smart_app&view=owned')}
             >
               <PackageCheck className="h-4 w-4" />
               {t('workbench.smart_apps_view_my', '查看我的工作台')}

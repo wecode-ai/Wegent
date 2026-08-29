@@ -35,7 +35,7 @@ export function KnowledgeSelectionControl({
       aria-label={label}
       disabled={disabled}
       title={title}
-      className="group flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base disabled:cursor-not-allowed disabled:opacity-60 md:h-9 md:w-9"
+      className="group flex h-11 w-11 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-base disabled:cursor-not-allowed disabled:opacity-60 lg:h-9 lg:w-9"
       onClick={event => {
         event.stopPropagation()
         onToggle()

@@ -70,6 +70,26 @@ pnpm --dir wework/electron test
 pnpm --dir wework/electron build:release
 ```
 
+Build the native desktop E2E application through the shared entrypoint:
+
+```powershell
+$env:CI = "true"
+pnpm --filter wework ai:verify:electron:build
+```
+
+This command prepares Electron, Codex, DWS, and the Executor sidecar, then
+produces a native application for the current operating system. On Windows the
+result is `wework/electron/release/WeWork-win32-x64/WeWork.exe`; a Linux or
+macOS package is not an equivalent substitute.
+
+`.github/workflows/wework-e2e.yml` builds this native application on
+`windows-latest` and runs Windows Desktop Core E2E with the same Core shard
+matrix used by Linux. A complete regression runs all 17 Core shards. When path
+classification selects only specific checkpoints, both platforms still run the
+same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
+sidecar behavior must be verified by this Windows job and cannot be inferred
+from another platform passing.
+
 `.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
 update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.
 
