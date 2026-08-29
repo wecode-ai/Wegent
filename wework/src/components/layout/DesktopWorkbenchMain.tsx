@@ -2816,7 +2816,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onSelectProject={handleSelectCloudProject}
         onRemoveProject={removeCloudProjectContext}
         goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
-        refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
+        refreshKey={`${paneSession.status.taskExecution.running}:${paneSession.status.taskExecution.status ?? ''}`}
         onOpen={() => openRightPanelTab('work-item')}
         onOpenBoard={openBoundProjectSpaceTask}
       />

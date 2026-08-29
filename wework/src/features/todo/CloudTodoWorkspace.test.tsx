@@ -15,6 +15,7 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   applyRuntimeConversationAction,
   clearRuntimeConversationCacheForTests,
@@ -4099,6 +4100,116 @@ describe('CloudTodoWorkspace', () => {
 
     expect(screen.getByTestId('my-work-group-action-runtime-associated')).toBeVisible()
     expect(screen.getByTestId('my-work-group-action-runtime-standalone')).toBeVisible()
+  })
+
+  it('refreshes an open My Tasks board when runtime execution status changes', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      project_store: 'local' as const,
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const address = {
+      deviceId: 'local-device',
+      taskId: 'runtime-live-status',
+    }
+    const runtimeWork = {
+      projects: [
+        {
+          project: { id: 91, key: 'project-a', name: 'Project A' },
+          deviceWorkspaces: [
+            {
+              deviceId: address.deviceId,
+              workspacePath: '/tmp/project-a',
+              available: true,
+              tasks: [
+                {
+                  taskId: address.taskId,
+                  workspacePath: '/tmp/project-a',
+                  title: 'Live status task',
+                  runtime: 'codex' as const,
+                  running: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [],
+      totalTasks: 1,
+    }
+    const lifecycleStore = new RuntimeTaskLifecycleStore(1)
+    lifecycleStore.syncRuntimeWork(runtimeWork)
+    let persistedStatus: 'in_review' | 'in_progress' = 'in_review'
+    const trackedIssue = {
+      ...item,
+      cloud_project_id: defaultProject.id,
+      title: 'Live status task',
+    }
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [defaultProject],
+    })
+    workbenchServices.deliveryApi!.getBoardSnapshot = vi.fn(async () => ({
+      items: [{ ...trackedIssue, status: persistedStatus }],
+      task_bindings: [
+        {
+          id: 1,
+          loop_item_id: trackedIssue.id,
+          task_user_id: 1,
+          device_id: address.deviceId,
+          task_id: address.taskId,
+          task_title: trackedIssue.title,
+          backend_task_id: null,
+          linked_at: '2026-08-29T00:00:00Z',
+        },
+      ],
+      members: [],
+      agents: [],
+    }))
+    workbenchServices.projectSpaceApis = {
+      local: workbenchServices.deliveryApi!,
+      defaultLocation: 'local',
+    }
+    const workspace = (lifecycleSnapshot: ReturnType<RuntimeTaskLifecycleStore['getSnapshot']>) => (
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[{ id: 91, name: 'Project A', tasks: [] }]}
+        runtimeWork={runtimeWork}
+        runtimeTaskLifecycle={lifecycleSnapshot}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'local',
+          projectId: defaultProject.id,
+        }}
+      />
+    )
+    const rendered = render(workspace(lifecycleStore.getSnapshot()))
+
+    expect(await screen.findByTestId('cloud-todo-column-in_review')).toHaveTextContent(
+      trackedIssue.title
+    )
+    const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
+      .calls.length
+
+    persistedStatus = 'in_progress'
+    act(() => lifecycleStore.executorStarted(address))
+    rendered.rerender(workspace(lifecycleStore.getSnapshot()))
+
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(
+        initialSnapshotRequests + 1
+      )
+    })
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toHaveTextContent(
+      trackedIssue.title
+    )
+    expect(screen.getByTestId('cloud-todo-column-in_review')).not.toHaveTextContent(
+      trackedIssue.title
+    )
   })
 
   it('shows only current system Issues in My Tasks and batch archives completed tasks', async () => {

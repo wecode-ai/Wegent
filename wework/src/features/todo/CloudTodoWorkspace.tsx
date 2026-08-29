@@ -99,7 +99,10 @@ import {
   claimChangeRequestAutoRepair,
   completeChangeRequestAutoRepair,
 } from '@/features/workbench/changeRequestStatus'
-import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import {
+  isRuntimeTaskExecutionRunning,
+  runtimeTaskTrackingExecutionStatus,
+} from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
@@ -1485,6 +1488,16 @@ export function CloudTodoWorkspace({
     })
   }, [localProjects, runtimeWork])
   const isMyTasksBoard = isDefaultWorkItemProject(selectedProject)
+  const runtimeTaskStatusSignature =
+    isMyTasksBoard && runtimeTaskLifecycle
+      ? [...runtimeTaskLifecycle.tasks.entries()]
+          .flatMap(([key, lifecycle]) => {
+            const status = runtimeTaskTrackingExecutionStatus(lifecycle)
+            return status ? [`${key}:${status}`] : []
+          })
+          .sort()
+          .join('|')
+      : ''
   const activeLocalProjectFilter =
     localProjectFilter === '' || localProjectFilter === 'all'
       ? 'all'
@@ -2638,6 +2651,7 @@ export function CloudTodoWorkspace({
     selectedProjectId,
     selectedProjectKey,
     locateItems,
+    runtimeTaskStatusSignature,
     runtimeTaskKeys,
     services.aitableApi,
     services.dwsApi,
