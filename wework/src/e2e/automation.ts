@@ -1202,8 +1202,9 @@ function inputDesktopControlTerminal(selector: string, value: string): string {
 function setDesktopControlSelectionOffset(selector: string, value: string): string {
   const element = findDesktopControlElements(selector)[0]
   if (!element) throw new Error(`Unable to find selector "${selector}"`)
-  const offset = Number(value)
-  if (!Number.isInteger(offset) || offset < 0) {
+  const trimmedValue = value.trim()
+  const offset = Number(trimmedValue)
+  if (trimmedValue === '' || !Number.isInteger(offset) || offset < 0) {
     throw new Error('setSelectionOffset requires a non-negative integer')
   }
 
