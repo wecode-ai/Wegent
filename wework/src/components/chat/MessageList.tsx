@@ -135,7 +135,6 @@ interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
-  onVirtualLayoutChange?: () => void
   virtualAnchorToEnd?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
@@ -229,7 +228,6 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
-  onVirtualLayoutChange,
   virtualAnchorToEnd = true,
   renderGapAfterMessage,
 }: MessageListProps) {
@@ -342,11 +340,6 @@ export const MessageList = memo(function MessageList({
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
     preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
-
-  useLayoutEffect(() => {
-    if (!virtualMessages) return
-    onVirtualLayoutChange?.()
-  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -784,7 +777,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
       ? 'onAskSelectionInSidebar'
       : null,
-    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
