@@ -58,6 +58,16 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+        visible: false,
+        stableMs: 250,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="cloud-project-header-title"]', {
+        text: PROJECT_NAME,
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
 
       await control.command('waitFor', '[data-testid="cloud-todo-column-inbox"]', {
         timeoutMs: uiTimeoutMs,
