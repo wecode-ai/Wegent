@@ -291,6 +291,7 @@ classify_wework_path() {
     # DSH UI composition verifies that Wework starts empty and gains each
     # application, route, settings page, and navigation item from plugins.
     wework/dsh/app-wework/* | \
+      wework/dsh/examples/ui-extension-demo/* | \
       wework/dsh/ui-*/* | \
       wework/src/features/dsh-runtime/*)
       select_target "plugins:core-dsh-ui-plugin-composition"
