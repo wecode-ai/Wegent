@@ -82,6 +82,31 @@ describe('useBufferedStreamingText', () => {
     expect(result.current).toBe(complete)
   })
 
+  test('keeps the authoritative snapshot after reduced motion is toggled off', () => {
+    vi.useFakeTimers()
+    const complete = `A${'b'.repeat(80)}`
+    const { result, rerender } = renderHook(
+      ({ content, reducedMotion }) => useBufferedStreamingText(content, true, { reducedMotion }),
+      {
+        initialProps: {
+          content: 'A',
+          reducedMotion: false,
+        },
+      }
+    )
+
+    rerender({ content: complete, reducedMotion: false })
+    act(() => vi.advanceTimersByTime(32))
+    expect(result.current).not.toBe(complete)
+
+    rerender({ content: complete, reducedMotion: true })
+    expect(result.current).toBe(complete)
+    act(() => vi.runOnlyPendingTimers())
+
+    rerender({ content: complete, reducedMotion: false })
+    expect(result.current).toBe(complete)
+  })
+
   test('replaces non-append content immediately', () => {
     const { result, rerender } = renderHook(
       ({ content, streaming }) => useBufferedStreamingText(content, streaming),

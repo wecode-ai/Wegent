@@ -60,6 +60,7 @@ export function useBufferedStreamingText(
   const revealDebtRef = useRef(0)
   const frameRef = useRef<SafeAnimationFrameHandle | null>(null)
   const fallbackTimerRef = useRef<number | null>(null)
+  const bufferSyncTimerRef = useRef<number | null>(null)
   const lastFrameAtRef = useRef<number | null>(null)
   const shouldHoldBackRef = useRef(shouldHoldBack)
 
@@ -76,6 +77,10 @@ export function useBufferedStreamingText(
       clearTimeout(fallbackTimerRef.current)
       fallbackTimerRef.current = null
     }
+    if (bufferSyncTimerRef.current !== null) {
+      clearTimeout(bufferSyncTimerRef.current)
+      bufferSyncTimerRef.current = null
+    }
     lastFrameAtRef.current = null
   }, [])
 
@@ -89,6 +94,13 @@ export function useBufferedStreamingText(
     },
     [cancelScheduledWork]
   )
+
+  const scheduleBufferSync = useCallback((nextContent: string) => {
+    bufferSyncTimerRef.current = window.setTimeout(() => {
+      bufferSyncTimerRef.current = null
+      setBufferedContent(nextContent)
+    }, 0)
+  }, [])
 
   const startFrameLoop = useCallback(() => {
     if (frameRef.current !== null) return
@@ -142,16 +154,14 @@ export function useBufferedStreamingText(
   useEffect(() => {
     if (!isStreaming || reducedMotion) {
       resetBuffer(content)
+      scheduleBufferSync(content)
       return
     }
 
     const previousTarget = targetContentRef.current
     if (!content.startsWith(previousTarget)) {
       resetBuffer(content)
-      frameRef.current = requestSafeAnimationFrame(() => {
-        frameRef.current = null
-        setBufferedContent(content)
-      })
+      scheduleBufferSync(content)
       return
     }
     if (content === previousTarget) return
@@ -171,7 +181,7 @@ export function useBufferedStreamingText(
         }
       }, BACKGROUND_FLUSH_MS)
     }
-  }, [content, isStreaming, reducedMotion, resetBuffer, startFrameLoop])
+  }, [content, isStreaming, reducedMotion, resetBuffer, scheduleBufferSync, startFrameLoop])
 
   useEffect(
     () => () => {
