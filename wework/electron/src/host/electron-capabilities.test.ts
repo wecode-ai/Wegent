@@ -8,6 +8,7 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  cpuLoadRatioBetween,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
@@ -19,6 +20,15 @@ import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+
+describe('cpuLoadRatioBetween', () => {
+  test('calculates system utilization from cumulative CPU times', () => {
+    expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 130, total: 300 })).toBeCloseTo(
+      0.7
+    )
+    expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
 
 function createWebContents(input: {
   captureDataUrl?: string
@@ -309,12 +319,15 @@ describe('registerDesktopServiceCapabilities', () => {
       openDevTools: vi.fn(),
       openLogDirectory: vi.fn(async () => undefined),
     }
+    const cleanupStaleTemporaryImages = vi.fn(async () => undefined)
     const expectedCapabilities = [
       'feedback.previewBundle',
       'feedback.confirmBundle',
       'feedback.discardBundle',
       'developer.openLogDirectory',
       'developer.openDevTools',
+      'maintenance.cleanupTemporaryImages',
+      'maintenance.getSystemPressure',
       'plugins.list',
       'plugins.start',
       'plugins.stop',
@@ -324,7 +337,7 @@ describe('registerDesktopServiceCapabilities', () => {
 
     registerDesktopServiceCapabilities(
       router,
-      { coreDshPlugins: () => coreDshPlugins, feedback, plugins },
+      { cleanupStaleTemporaryImages, coreDshPlugins: () => coreDshPlugins, feedback, plugins },
       developer
     )
 
@@ -373,6 +386,7 @@ describe('registerDesktopServiceCapabilities', () => {
     )
     await handlers.get('plugins.stop')?.({ pluginId: 'example' }, { principal: 'test' })
     await handlers.get('plugins.list')?.({}, { principal: 'test' })
+    await handlers.get('maintenance.cleanupTemporaryImages')?.({}, { principal: 'test' })
     await handlers.get('developer.openLogDirectory')?.({}, { principal: 'test' })
     await handlers.get('developer.openDevTools')?.({}, { principal: 'test' })
 
@@ -388,6 +402,7 @@ describe('registerDesktopServiceCapabilities', () => {
     })
     expect(plugins.stop).toHaveBeenCalledWith('example')
     expect(plugins.list).toHaveBeenCalledOnce()
+    expect(cleanupStaleTemporaryImages).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
   })
@@ -409,6 +424,7 @@ describe('registerCoreDshPluginCapabilities', () => {
       uninstallCoreDshPlugin: vi.fn(async () => []),
     }
     const services = {
+      cleanupStaleTemporaryImages: vi.fn(async () => undefined),
       coreDshPlugins: () => coreDshPlugins,
       feedback: {} as FeedbackBundleManager,
       plugins: {} as WorkbenchPluginManager,

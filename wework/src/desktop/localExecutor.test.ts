@@ -10,6 +10,7 @@ import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
   ensureBundledPluginInstalled,
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   getLocalExecutorStatus,
@@ -34,6 +35,7 @@ const marketplace = {
   path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
   pluginCount: 1,
   defaultPluginNames: ['smart-app-builder'],
+  contentHash: 'abc123',
 }
 
 function mockStartup(): void {
@@ -63,6 +65,20 @@ describe('localExecutor', () => {
     requestDshExecutorMock.mockReset()
     subscribeDshExecutorEventsMock.mockReset()
     mockStartup()
+  })
+
+  test('reports executor availability without starting Codex or copying plugins', async () => {
+    await expect(ensureLocalExecutorAvailable()).resolves.toEqual({
+      running: true,
+      ready: true,
+      deviceId: 'electron-device',
+      runtimeInstanceId: 'electron-runtime',
+      version: '1.8.6',
+    })
+
+    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+    expect(requestDshExecutorMock).not.toHaveBeenCalled()
+    expect(getInitializedBundledPluginMarketplace()).toBeNull()
   })
 
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
