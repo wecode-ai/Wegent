@@ -601,7 +601,14 @@ export async function createDesktopScenario({
           `The real Claude Code CLI did not send ${prompt}`
         )
       }
-      await rm(localClaudeAlias, { force: true })
+    },
+
+    async cleanup() {
+      await rm(localClaudeAlias, {
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
     },
   }
 }

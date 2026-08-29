@@ -35,6 +35,10 @@ export function DshRouteSurface({
   const onNavigate = useCallback(
     (path: string) => {
       if (workspaceTabs) {
+        if (workspaceTabs.activeTabId === workspaceTabId) {
+          workspaceTabs.updateActiveTab({ contentRoute: path })
+          return
+        }
         workspaceTabs.selectTab(workspaceTabId, { contentRoute: path })
         return
       }
