@@ -69,6 +69,7 @@ import { createTrayIcon } from './host/tray-icon.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
@@ -164,11 +165,16 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => app.isPackaged,
-  prepareInstall: prepareApplicationShutdown,
+  prepareInstall: async () => {
+    await prepareApplicationShutdown()
+    await appUpdateLogger.flush()
+  },
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
