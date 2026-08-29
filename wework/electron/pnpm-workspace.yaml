@@ -1,5 +1,8 @@
 packages: []
 
+confirmModulesPurge: false
+verifyDepsBeforeRun: warn
+
 allowBuilds:
   electron: true
   electron-winstaller: true

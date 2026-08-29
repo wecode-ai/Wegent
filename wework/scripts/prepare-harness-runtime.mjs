@@ -29,9 +29,11 @@ const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const cacheDirectory =
   process.env.WEWORK_HARNESS_RUNTIME_CACHE_ROOT?.trim() || path.join(root, 'node_modules', '.cache')
-const assetDirectory = path.join(cacheDirectory, 'harness-runtime-assets')
+const assetCacheDirectory =
+  process.env.WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT?.trim() || cacheDirectory
+const assetDirectory = path.join(assetCacheDirectory, 'harness-runtime-assets')
 const materializedRoot = path.join(cacheDirectory, 'harness-runtime-dev')
-const prepareLockPath = path.join(cacheDirectory, 'harness-runtime-prepare.lock')
+const prepareLockPath = path.join(assetCacheDirectory, 'harness-runtime-prepare.lock')
 const sharedFiles = ['.npmrc', 'pnpm-workspace.yaml']
 const archiveFormatVersion = 'dsh-runtime-tar-gzip-v7'
 const materializeRequested = process.argv.includes('--materialize')
