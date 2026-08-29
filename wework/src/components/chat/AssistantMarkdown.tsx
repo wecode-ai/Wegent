@@ -325,20 +325,22 @@ function WindowedMarkdownChunk({
     return () => observer.disconnect()
   }, [eager])
 
+  const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content)
+
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={
-        nearViewport
-          ? undefined
-          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
-      }
+      style={nearViewport ? undefined : { minHeight: reservedHeight }}
     >
       {nearViewport ? (
         children
       ) : (
-        <div data-markdown-window-placeholder className="whitespace-pre-wrap leading-6">
+        <div
+          data-markdown-window-placeholder
+          className="overflow-hidden whitespace-pre-wrap leading-6"
+          style={{ maxHeight: reservedHeight }}
+        >
           {content}
         </div>
       )}

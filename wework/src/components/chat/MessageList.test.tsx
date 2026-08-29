@@ -549,6 +549,15 @@ describe('MessageList', () => {
         .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
     ).toBe(true)
     expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
 
     act(() => {
       intersectionCallbacks.forEach(callback =>
