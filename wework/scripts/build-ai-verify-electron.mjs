@@ -4,12 +4,17 @@ import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { resolveHarnessRuntimeAssetCacheEnvironment } from './lib/harness-runtime-cache.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const buildEnvironment = {
-  ...process.env,
+  ...resolveHarnessRuntimeAssetCacheEnvironment(
+    process.env,
+    { platform: process.platform },
+    weworkDir
+  ),
   VITE_WEWORK_E2E: 'true',
   VITE_WEWORK_RELEASE_CHANNEL: 'stable',
   VITE_WEWORK_RUNTIME_MODE: 'local-first',

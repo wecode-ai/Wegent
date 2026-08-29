@@ -238,6 +238,8 @@ CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 
 可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Electron 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
 
+`ai:verify:electron:build` 会跨 worktree 复用不可变的 Harness Runtime 归档，macOS 默认缓存到 `~/Library/Caches/wegent/harness-runtime`，Linux 默认缓存到 `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime`，Windows 默认缓存到 `%LOCALAPPDATA%\wegent\harness-runtime`。解压后的开发 Runtime 仍保留在当前 worktree 的 `wework/node_modules/.cache/harness-runtime-dev`，避免不同源码树共享可变状态。可通过 `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` 覆盖归档缓存目录；若构建时只设置了旧的 `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`，该值会被转换为仅用于归档的缓存目录，不会改变当前 worktree 的解压目录。
+
 桌面 E2E 启动 Electron 前会移除父进程中的任务、IPC、Node 和 Harness runtime 环境变量，避免从开发中的 Wework 或 Codex 会话继承个人运行时路径。需要为聚焦排查显式指定 Core DSH runtime 时，使用 `WEWORK_E2E_HARNESS_RUNTIME_ROOT`；runner 会校验该目录并将其作为测试应用的 `WEWORK_HARNESS_RUNTIME_ROOT`。不要直接向测试命令传递 `WEWORK_HARNESS_RUNTIME_ROOT`。
 
 在 macOS 上，桌面 E2E 默认注入测试专用的 `WEWORK_E2E_BACKGROUND_WINDOW=1`，让 Electron 保持主窗口隐藏、禁止应用激活并隐藏 Dock 图标；隐藏 WebView 会关闭后台节流，因此 DOM 控制、计时器和截图仍正常工作。需要观察真实窗口交互时，可显式设置 `WEWORK_E2E_BACKGROUND_WINDOW=0` 恢复前台运行。该环境变量只影响桌面 E2E，不改变正常开发或生产启动行为。
