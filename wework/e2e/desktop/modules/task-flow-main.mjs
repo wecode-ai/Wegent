@@ -1189,6 +1189,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {

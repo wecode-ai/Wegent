@@ -55,6 +55,7 @@ export interface TrayAdapter<TMenu = unknown> {
   setContextMenu(menu: TMenu): void
   setToolTip(tooltip: string): void
   setTitle?(title: string): void
+  getGUID?(): string | null
   destroy(): void
 }
 
@@ -80,6 +81,7 @@ export interface TrayMenuSnapshotItem {
 
 export interface TraySnapshot {
   created: boolean
+  guid: string | null
   title: string | null
   titleSupported: boolean
   tooltip: string
@@ -271,6 +273,7 @@ export class ElectronTrayManager<
     const state = this.effectiveState()
     return {
       created: this.tray !== null,
+      guid: this.tray?.getGUID?.() ?? null,
       title: state.usageTitle,
       titleSupported: this.platform === 'darwin',
       tooltip: state.usageTooltip?.trim() || this.defaultTooltip,
