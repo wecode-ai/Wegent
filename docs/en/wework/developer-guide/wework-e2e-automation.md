@@ -502,14 +502,22 @@ pnpm --filter wework e2e:desktop:memory
 ```
 
 The repository includes a basic workflow at `.github/workflows/wework-e2e.yml`. It runs when Wework, `packages/chat-core`, the pnpm lockfile, or the workflow itself changes.
-Regular draft PRs do not run browser or Linux desktop E2E. Merge queue runs the
-complete browser and Linux desktop suites before a commit enters `main`; `main`
-does not repeat checks that already passed for the merge group. The macOS memory
-gate runs by default only on scheduled and manual runs. Add the `ci:memory`
-label when a PR must validate the memory boundary. Applying that
-label starts only the memory gate and does not repeat browser or Linux desktop
-E2E. Applying `ci:all` runs browser, Linux desktop, and macOS memory E2E even
-when the PR's changed paths would not normally select Wework E2E. The workflow
-also runs a complete regression every day at 04:00 UTC.
+Linux and Windows Desktop Core E2E consume the same shard matrix produced by
+the classifier; a complete classification runs all 17 Core shards on both
+platforms. The Windows job builds native `WeWork.exe`,
+`wegent-executor.exe`, and `codex.exe` artifacts on `windows-latest` before
+running checkpoints. A cross-platform package or a single Windows smoke test is
+not equivalent coverage.
+
+Regular draft PRs do not run browser or desktop E2E. Merge queue runs the
+complete browser plus Linux and Windows Desktop Core suites before a commit
+enters `main`; `main` does not repeat checks that already passed for the merge
+group. The macOS memory gate runs by default only on scheduled and manual runs.
+Add the `ci:memory` label when a PR must validate the memory boundary. Applying that
+label starts only the memory gate and does not repeat browser, Linux desktop, or
+Windows desktop E2E. Applying `ci:all` runs browser, Linux desktop, Windows
+desktop, and macOS memory E2E even when the PR's changed paths would not
+normally select Wework E2E. The workflow also runs a complete regression every
+day at 04:00 UTC.
 
 Authenticated flows should create users and data through backend APIs before the test, then use real login or a real token injection. Do not mock backend HTTP responses in Playwright.

@@ -12,6 +12,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
+  TASK_PROMPT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
@@ -947,6 +948,7 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
       target: `${activeBoardContentSelector} [data-testid="cloud-todo-column-dropzone-in_review"]`,
     }
   )
+  await control.command('scrollIntoView', reviewColumnSelector)
   await control.command('waitFor', reviewColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
@@ -980,6 +982,10 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
   await control.command('waitFor', `[data-testid="${taskTabTestId}"][aria-selected="true"]`, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="message-user"]', {
+    text: TASK_PROMPT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="pause-response-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
@@ -1009,6 +1015,7 @@ async function verifyTrackedTaskSettledStatus(control) {
   const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
   const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
+  await control.command('scrollIntoView', reviewColumnSelector)
   await control.command('waitFor', reviewColumnSelector, {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,

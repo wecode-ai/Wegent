@@ -642,6 +642,14 @@ wework_desktop_other_e2e=true
 wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
   "wework/dsh/ui-applications/client.js"
 
+assert_desktop_case "DSH extension Demo files select composition coverage" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_other_e2e=true
+wework_desktop_other_e2e_matrix={"include":[{"id":"plugins-core-dsh-ui-plugin-composition","name":"Plugins / core-dsh-ui-plugin-composition","command":"e2e:desktop:plugins","segment":"core-dsh-ui-plugin-composition"}]}' \
+  "wework/dsh/examples/ui-extension-demo/client.js"
+
 assert_desktop_case "desktop sidebar selects all owned checkpoints" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
@@ -920,7 +928,7 @@ if [[ "$wework_desktop_cloud_job" == *"if: github.event_name != 'pull_request' |
 fi
 
 wework_desktop_core_job="$(
-  sed -n '/^  wework-desktop-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
+  sed -n '/^  wework-desktop-core-e2e:/,/^  build-wework-desktop-windows-core-e2e:/p' \
     "$wework_workflow"
 )"
 if [[ "$wework_desktop_core_job" != *"needs.changes.outputs.wework_desktop_core_e2e == 'true'"* ]] ||
@@ -937,6 +945,52 @@ if [[ "$wework_desktop_core_job" == *"if: github.event_name != 'pull_request' ||
   exit 1
 fi
 
+wework_windows_desktop_core_build_job="$(
+  sed -n \
+    '/^  build-wework-desktop-windows-core-e2e:/,/^  wework-desktop-windows-core-e2e:/p' \
+    "$wework_workflow"
+)"
+if [[ "$wework_windows_desktop_core_build_job" != *"runs-on: windows-latest"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"github.event_name != 'merge_group'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"pnpm --filter wework ai:verify:electron:build"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"WeWork-win32-x64/WeWork.exe"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/bin/wegent-executor.exe"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"include-hidden-files: true"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_VERSION: 8.10.1"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a"* ]] ||
+  [[ "$wework_windows_desktop_core_build_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]]; then
+  printf 'Windows Wework Core desktop E2E must build a native packaged application\n' >&2
+  exit 1
+fi
+
+wework_windows_desktop_core_job="$(
+  sed -n '/^  wework-desktop-windows-core-e2e:/,/^  wework-desktop-cloud-e2e:/p' \
+    "$wework_workflow"
+)"
+if [[ "$wework_windows_desktop_core_job" != *"runs-on: windows-latest"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"github.event_name != 'merge_group'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"github.event.action == 'labeled'"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix)"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"max-parallel: 17"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *'WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"'* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"--parallel-segments"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_APP_BIN:"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_EXECUTOR_BIN:"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_CODEX_BIN:"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"bundled-plugins/wework-personal/.agents/plugins/marketplace.json"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"name: wework-desktop-windows-redis-e2e-tools"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"uses: ./.github/actions/setup-python-uv-cache"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *'python-version: "3.12"'* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"shell: pwsh"* ]] ||
+  [[ "$wework_windows_desktop_core_job" != *"WEWORK_E2E_REDIS_SERVER_BIN=\$redisServerPath"* ]] ||
+  [[ "$wework_windows_desktop_core_job" == *"\$redisRoot | Out-File -FilePath \$env:GITHUB_PATH"* ]]; then
+  printf 'Windows Wework Core desktop E2E must use all selected Core shards\n' >&2
+  exit 1
+fi
+
 wework_summary_job="$(
   sed -n '/^  wework-e2e-summary:/,/^  wework-desktop-memory-e2e:/p' \
     "$wework_workflow"
@@ -947,10 +1001,20 @@ if [[ "$wework_summary_job" == *"RUN_DESKTOP_CORE_E2E: \${{ github.event_name !=
   printf 'Wework E2E summary must honor merge-group change classification\n' >&2
   exit 1
 fi
+if [[ "$wework_summary_job" != *"RUN_WINDOWS_DESKTOP_CORE_E2E:"* ]] ||
+  [[ "$(grep -Fc "\"\$RUN_WINDOWS_DESKTOP_CORE_E2E\" == \"true\"" <<<"$wework_summary_job")" -ne 2 ]]; then
+  printf 'Wework E2E summary must check Windows Core only when explicitly scheduled\n' >&2
+  exit 1
+fi
+
+if grep -q '^  push:' "$wework_workflow"; then
+  printf 'Wework E2E must not run the full suite after every main push\n' >&2
+  exit 1
+fi
 
 if [[ "$wework_desktop_cloud_job" == *"name: Set up Node workspace"* ]] ||
   [[ "$wework_desktop_job" == *"name: Set up Node workspace"* ]] ||
-  [[ "$(grep -Fc 'name: Prune transient Wework desktop E2E caches' "$wework_workflow")" -ne 4 ]]; then
+  [[ "$(grep -Fc 'name: Prune transient Wework desktop E2E caches' "$wework_workflow")" -ne 5 ]]; then
   printf 'Wework desktop shards must avoid workspace dependency restores and prune transient caches\n' >&2
   exit 1
 fi
@@ -962,7 +1026,7 @@ for generated_path_exclusion in \
   '!wework/test-results/desktop-e2e/**/harness-runtime/**' \
   '!wework/test-results/desktop-e2e/**/node-runtime/**' \
   '!wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**'; do
-  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 4 ]]; then
+  if [[ "$(grep -Fc "$generated_path_exclusion" "$wework_workflow")" -ne 5 ]]; then
     printf 'Wework desktop diagnostics must exclude generated Electron runtime files\n' >&2
     exit 1
   fi

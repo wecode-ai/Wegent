@@ -5,6 +5,7 @@ import { join } from 'node:path'
 const PAGE_SELECTOR = '[data-testid="computer-use-settings-page"]'
 const TOGGLE_SELECTOR = '[data-testid="computer-use-enabled-toggle"]'
 const RUNTIME_FILE = 'computer-use-bridge.json'
+const WORKBENCH_READY_TIMEOUT_MS = 180_000
 
 async function waitForAttribute(control, selector, name, expected, timeoutMs) {
   const deadline = Date.now() + timeoutMs
@@ -49,6 +50,9 @@ async function verifyBridge(record) {
 export function createDesktopScenario({ captureScreenshot, executorHome, uiTimeoutMs }) {
   return {
     async verify(control) {
+      await control.command('waitFor', '[data-testid="app-shell"]', {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
       await control.command('navigate', 'body', { value: '/settings/computer-use' })
       await control.command('waitFor', PAGE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('waitFor', TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })

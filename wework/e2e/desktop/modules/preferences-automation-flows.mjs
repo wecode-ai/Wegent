@@ -694,10 +694,7 @@ async function verifySitesPluginAutoInstall(control) {
     'Connecting the cloud account unexpectedly initialized the Sites plugin'
   )
 
-  await control.command('navigate', 'body', { value: '/sites' })
-  await control.command('waitFor', '[data-testid="sites-create-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await navigateToApplications(control)
   await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -905,12 +902,17 @@ async function assertNoSitesCreateError(control) {
 
 async function navigateToApplications(control, tab = 'web') {
   await control.command('navigate', 'body', { value: '/sites' })
+  const tabSelector =
+    tab === 'miniapp'
+      ? '[data-testid="applications-tab-miniapp"]'
+      : '[data-testid="applications-tab-web"]'
+  await control.command('waitFor', tabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', tabSelector)
   await control.command('waitFor', '[data-testid="sites-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  if (tab === 'miniapp') {
-    await control.command('click', '[data-testid="applications-tab-miniapp"]')
-  }
 }
 
 function sitesMarketplacePlugin(installed) {

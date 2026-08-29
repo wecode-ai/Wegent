@@ -51,7 +51,6 @@ import {
   closeLocalTerminal,
   isLocalHarnessAvailable,
   listLocalHarnessSessions,
-  updateLocalHarnessSessionTitle,
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
 } from '@/lib/local-terminal'
 import type {
@@ -422,20 +421,6 @@ export function DesktopWorkbenchLayout({
     },
     []
   )
-  const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
-    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-    if (!normalized) return
-    setLocalHarnessSessions(current =>
-      current.map(session =>
-        session.sessionId === sessionId && session.title !== normalized
-          ? { ...session, title: normalized }
-          : session
-      )
-    )
-    void updateLocalHarnessSessionTitle(sessionId, normalized).catch(error => {
-      console.warn('Failed to persist local Harness session title:', error)
-    })
-  }, [])
   const openLocalHarnessSession = useCallback((sessionId: string) => {
     setActiveLocalHarnessSessionId(sessionId)
     navigateTo('/')
@@ -1138,7 +1123,6 @@ export function DesktopWorkbenchLayout({
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}
-              onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
               onLocalHarnessSessionClose={closeLocalHarnessSession}
               onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />

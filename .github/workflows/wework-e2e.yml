@@ -62,7 +62,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
           HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
-          FORCE_ALL: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
+          FORCE_ALL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         run: |
           if [[ "$FORCE_ALL" == "true" ]]; then
             .github/scripts/classify-ci-changes.sh --all
@@ -251,19 +251,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('docker/wework-e2e/desktop.Dockerfile') }}-
 
-      - name: Prepare bundled sidecars
-        working-directory: ./wework
-        run: |
-          node scripts/prepare-codex-binary.mjs --materialize &
-          codex_pid=$!
-          node scripts/prepare-dws-binary.mjs &
-          dws_pid=$!
-
-          status=0
-          wait "$codex_pid" || status=$?
-          wait "$dws_pid" || status=$?
-          exit "$status"
-
       - name: Build Wework Electron E2E application
         env:
           CI: true
@@ -412,6 +399,264 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wework-desktop-${{ matrix.id }}-e2e-diagnostics
+          path: |
+            wework/test-results/desktop-e2e/
+            !wework/test-results/desktop-e2e/**/executor-home/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/managed-runtimes/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/dsh-core/profiles/**
+            !wework/test-results/desktop-e2e/**/electron-user-data/harness-apps/instances/**/profiles/**
+            !wework/test-results/desktop-e2e/**/harness-runtime/**
+            !wework/test-results/desktop-e2e/**/node-runtime/**
+            !wework/test-results/desktop-e2e/**/WeWork-Electron-E2E-*.app/**
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
+  build-wework-desktop-windows-core-e2e:
+    name: Build Windows Wework Desktop Core E2E Artifact
+    needs:
+      - changes
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      ELECTRON_CACHE: ${{ github.workspace }}/.ci-cache/electron
+      WEGENT_CODEX_CACHE_DIR: ${{ github.workspace }}/.ci-cache/codex
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          filter: blob:none
+
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8f
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore Windows Wework Electron E2E build dependencies
+        id: wework-windows-desktop-cargo-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/executor-target
+            ${{ env.ELECTRON_CACHE }}
+          key: ${{ runner.os }}-wework-electron-e2e-v1-${{ hashFiles('executor/Cargo.lock', 'wework/electron/package.json', 'wework/electron/pnpm-lock.yaml', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-wework-electron-e2e-v1-
+
+      - name: Restore bundled Codex cache
+        id: bundled-windows-codex-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
+          key: ${{ runner.os }}-wework-codex-v1-${{ hashFiles('wework/codex-binaries.lock.json') }}
+
+      - name: Build Windows Wework Electron E2E application
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+          CI: true
+          WEWORK_EXECUTOR_PROFILE: debug
+        run: |
+          pnpm --filter wework ai:verify:electron:build
+          test -f wework/electron/release/WeWork-win32-x64/WeWork.exe
+          test -f wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
+          test -f wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
+          test -f wework/electron/release/WeWork-win32-x64/resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json
+
+      - name: Prepare Windows Redis E2E tools
+        shell: pwsh
+        env:
+          REDIS_WINDOWS_VERSION: 8.10.1
+          REDIS_WINDOWS_SHA256: 4e8f2f956ed92feadf3f64b4e137ed34026438821e692e7ae22c9bba5976607a
+        run: |
+          $archiveName = "Redis-$env:REDIS_WINDOWS_VERSION-Windows-x64-msys2.zip"
+          $archivePath = Join-Path $env:RUNNER_TEMP $archiveName
+          $downloadUrl = "https://github.com/redis-windows/redis-windows/releases/download/$env:REDIS_WINDOWS_VERSION/$archiveName"
+          curl.exe --fail --location --retry 3 --output $archivePath $downloadUrl
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download Windows Redis E2E tools"
+          }
+          $actualSha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+          if ($actualSha256 -ne $env:REDIS_WINDOWS_SHA256) {
+            throw "Unexpected Windows Redis archive SHA256: $actualSha256"
+          }
+
+          $extractRoot = Join-Path $env:RUNNER_TEMP "redis-windows"
+          Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot
+          $sourceRoot = Join-Path $extractRoot "Redis-$env:REDIS_WINDOWS_VERSION-Windows-x64-msys2"
+          $toolsRoot = Join-Path $env:GITHUB_WORKSPACE "wework/test-results/windows-e2e-tools/redis"
+          New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+          Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $toolsRoot -Recurse -Force
+          foreach ($binary in @("redis-server.exe", "redis-cli.exe")) {
+            if (-not (Test-Path (Join-Path $toolsRoot $binary) -PathType Leaf)) {
+              throw "Missing Windows Redis E2E binary: $binary"
+            }
+          }
+
+      - name: Save Windows Wework Electron E2E build dependencies
+        if: github.ref == 'refs/heads/main' && steps.wework-windows-desktop-cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/executor-target
+            ${{ env.ELECTRON_CACHE }}
+          key: ${{ steps.wework-windows-desktop-cargo-cache.outputs.cache-primary-key }}
+
+      - name: Save bundled Codex cache
+        if: github.ref == 'refs/heads/main' && steps.bundled-windows-codex-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ env.WEGENT_CODEX_CACHE_DIR }}
+          key: ${{ steps.bundled-windows-codex-cache.outputs.cache-primary-key }}
+
+      - name: Upload Windows Wework desktop Core E2E build
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-core-e2e-build
+          path: wework/electron/release/WeWork-win32-x64/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          include-hidden-files: true
+
+      - name: Upload Windows Redis E2E tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-redis-e2e-tools
+          path: wework/test-results/windows-e2e-tools/redis/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload Windows Wework desktop Core E2E build diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-core-e2e-build-diagnostics
+          path: wework/test-results/desktop-e2e/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  wework-desktop-windows-core-e2e:
+    name: Wework Desktop Windows E2E (${{ matrix.name }})
+    needs:
+      - changes
+      - build-wework-desktop-windows-core-e2e
+    if: needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all'))
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 17
+      matrix: ${{ fromJSON(needs.changes.outputs.wework_desktop_core_e2e_matrix) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up Node workspace
+        uses: ./.github/actions/setup-node-workspace
+
+      - name: Set up Python and uv
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Restore local harness CLIs
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
+        id: windows-local-harness-clis-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: .github/claude-code-cli/node_modules
+          key: ${{ runner.os }}-node-24-local-harness-clis-v2-${{ hashFiles('.github/claude-code-cli/package.json', '.github/claude-code-cli/package-lock.json') }}
+
+      - name: Install local harness CLIs
+        if: (contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')) && steps.windows-local-harness-clis-cache.outputs.cache-hit != 'true'
+        run: npm ci --prefix .github/claude-code-cli --strict-allow-scripts
+
+      - name: Verify local harness CLIs
+        if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
+        run: .github/scripts/verify-local-harness-clis.sh
+
+      - name: Download Windows Wework desktop Core E2E build
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-windows-core-e2e-build
+          path: wework/electron/release/WeWork-win32-x64
+
+      - name: Download Windows Redis E2E tools
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-windows-redis-e2e-tools
+          path: wework/test-results/windows-e2e-tools/redis
+
+      - name: Configure Windows Redis E2E tools
+        shell: pwsh
+        run: |
+          $redisRoot = (Resolve-Path "wework/test-results/windows-e2e-tools/redis").Path
+          foreach ($binary in @("redis-server.exe", "redis-cli.exe")) {
+            $binaryPath = Join-Path $redisRoot $binary
+            if (-not (Test-Path $binaryPath -PathType Leaf)) {
+              throw "Missing Windows Redis E2E binary: $binary"
+            }
+            & $binaryPath --version
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to run Windows Redis E2E binary: $binary"
+            }
+          }
+          $redisServerPath = Join-Path $redisRoot "redis-server.exe"
+          "WEWORK_E2E_REDIS_SERVER_BIN=$redisServerPath" |
+            Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run Windows Wework desktop Core shard E2E
+        shell: pwsh
+        env:
+          CI: true
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
+          WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
+          WEWORK_E2E_PARALLEL_CHECKPOINTS: "1"
+          WEWORK_E2E_PARALLEL_SCOPE: core
+          WEWORK_E2E_SCREENSHOTS: ${{ contains(matrix.segments, 'harness-apps') && 'harness-milestones' || 'all' }}
+          WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
+        run: |
+          foreach ($path in @(
+            $env:WEWORK_E2E_APP_BIN,
+            $env:WEWORK_E2E_EXECUTOR_BIN,
+            $env:WEWORK_E2E_CODEX_BIN,
+            (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.json")
+          )) {
+            if (-not (Test-Path $path -PathType Leaf)) {
+              throw "Missing Windows Wework desktop E2E resource: $path"
+            }
+          }
+          node wework/e2e/desktop/run-checkpoints.mjs --parallel-segments $env:WEWORK_E2E_SEGMENTS
+
+      - name: Prune transient Wework desktop E2E caches
+        if: always()
+        run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Upload Windows Wework desktop E2E diagnostics
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-${{ matrix.id }}-e2e-diagnostics
           path: |
             wework/test-results/desktop-e2e/
             !wework/test-results/desktop-e2e/**/executor-home/**
@@ -630,8 +875,10 @@ jobs:
       - changes
       - wework-e2e
       - build-wework-desktop-core-e2e
+      - build-wework-desktop-windows-core-e2e
       - wework-desktop-cloud-e2e
       - wework-desktop-core-e2e
+      - wework-desktop-windows-core-e2e
       - wework-desktop-e2e
       - wework-desktop-memory-e2e
     if: always()
@@ -642,14 +889,17 @@ jobs:
         env:
           RUN_E2E: ${{ needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
+          RUN_WINDOWS_DESKTOP_CORE_E2E: ${{ needs.changes.outputs.wework_desktop_core_e2e == 'true' && github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && github.event.action == 'labeled' && github.event.label.name == 'ci:all')) }}
           RUN_DESKTOP_CLOUD_E2E: ${{ needs.changes.outputs.wework_desktop_cloud_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_DESKTOP_OTHER_E2E: ${{ needs.changes.outputs.wework_desktop_other_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           RUN_MACOS_INSPECTOR_E2E: ${{ github.event_name != 'merge_group' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' && (github.event.action != 'labeled' || github.event.label.name == 'ci:all'))) }}
           CHANGES_RESULT: ${{ needs.changes.result }}
           WEB_E2E_RESULT: ${{ needs.wework-e2e.result }}
           DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-core-e2e.result }}
+          WINDOWS_DESKTOP_CORE_BUILD_RESULT: ${{ needs.build-wework-desktop-windows-core-e2e.result }}
           DESKTOP_CLOUD_E2E_RESULT: ${{ needs.wework-desktop-cloud-e2e.result }}
           DESKTOP_CORE_E2E_RESULT: ${{ needs.wework-desktop-core-e2e.result }}
+          WINDOWS_DESKTOP_CORE_E2E_RESULT: ${{ needs.wework-desktop-windows-core-e2e.result }}
           DESKTOP_OTHER_E2E_RESULT: ${{ needs.wework-desktop-e2e.result }}
           MACOS_INSPECTOR_E2E_RESULT: ${{ needs.wework-desktop-memory-e2e.result }}
         run: |
@@ -660,6 +910,7 @@ jobs:
 
           if [[ "$RUN_E2E" != "true" && \
             "$RUN_DESKTOP_CORE_E2E" != "true" && \
+            "$RUN_WINDOWS_DESKTOP_CORE_E2E" != "true" && \
             "$RUN_DESKTOP_CLOUD_E2E" != "true" && \
             "$RUN_DESKTOP_OTHER_E2E" != "true" && \
             "$RUN_MACOS_INSPECTOR_E2E" != "true" ]]; then
@@ -689,6 +940,18 @@ jobs:
           if [[ "$RUN_DESKTOP_CORE_E2E" == "true" && \
             "$DESKTOP_CORE_E2E_RESULT" != "success" ]]; then
             echo "Wework desktop Core E2E completed with: $DESKTOP_CORE_E2E_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_WINDOWS_DESKTOP_CORE_E2E" == "true" && \
+            "$WINDOWS_DESKTOP_CORE_BUILD_RESULT" != "success" ]]; then
+            echo "Windows Wework desktop Core E2E build completed with: $WINDOWS_DESKTOP_CORE_BUILD_RESULT"
+            exit 1
+          fi
+
+          if [[ "$RUN_WINDOWS_DESKTOP_CORE_E2E" == "true" && \
+            "$WINDOWS_DESKTOP_CORE_E2E_RESULT" != "success" ]]; then
+            echo "Windows Wework desktop Core E2E completed with: $WINDOWS_DESKTOP_CORE_E2E_RESULT"
             exit 1
           fi
 

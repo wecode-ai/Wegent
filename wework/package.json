@@ -1,7 +1,7 @@
 {
   "name": "wework",
   "private": true,
-  "version": "0.3.2-beta.1",
+  "version": "0.3.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -40,7 +40,7 @@
     "e2e:desktop:streaming-text": "WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true WEWORK_E2E_DESKTOP_SCENARIO_MODULE=./scenarios/streaming-text.scenario.mjs node e2e/desktop/task-flow.e2e.mjs",
     "ai:verify": "node scripts/ai-verify.mjs",
     "ai:verify:electron:prepare": "node scripts/prepare-ai-verify-electron.mjs",
-    "ai:verify:electron:build": "pnpm run prepare:electron && VITE_WEWORK_E2E=true VITE_WEWORK_RELEASE_CHANNEL=stable VITE_WEWORK_RUNTIME_MODE=local-first pnpm --dir electron build:package",
+    "ai:verify:electron:build": "node scripts/build-ai-verify-electron.mjs",
     "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
@@ -80,6 +80,7 @@
     "@mantine/hooks": "^8.3.18",
     "@pierre/diffs": "^1.2.11",
     "@pierre/trees": "1.0.0-beta.4",
+    "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.4",
     "@sentry/react": "^8.55.0",
     "@tailwindcss/typography": "^0.5.19",

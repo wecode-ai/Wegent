@@ -202,7 +202,12 @@ async function assertReleasePackageResources() {
   await readFile(join(resourcesRoot, components.components.codex.path))
 }
 
-export async function createDesktopScenario({ electronUserDataDirectory, resultDir, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  electronUserDataDirectory,
+  resultDir,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   await assertReleasePackageResources()
   await seedTauriProfile(electronUserDataDirectory)
   const profileManifest = join(
@@ -218,7 +223,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {

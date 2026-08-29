@@ -12,9 +12,34 @@
 //! cmd.exe behavior.
 
 use std::{
+    env,
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
 };
+
+const WINDOWS_EXECUTABLE_EXTENSIONS: [&str; 4] = ["exe", "cmd", "bat", "com"];
+
+/// Resolves a bare program name through PATH using Windows executable
+/// extensions. Returning the concrete batch path lets the caller inspect and
+/// unwrap node-style shims before invoking `CreateProcess`.
+pub fn resolve_program_path(program: &Path, search_path: Option<&OsStr>) -> PathBuf {
+    if program.components().count() > 1 || program.extension().is_some() {
+        return program.to_path_buf();
+    }
+    let Some(search_path) = search_path else {
+        return program.to_path_buf();
+    };
+    env::split_paths(search_path)
+        .flat_map(|directory| {
+            let candidate = directory.join(program);
+            WINDOWS_EXECUTABLE_EXTENSIONS
+                .iter()
+                .map(move |extension| candidate.with_extension(extension))
+        })
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| program.to_path_buf())
+}
 
 /// Returns whether `program` is a Windows batch file.
 pub fn is_batch_file(program: &Path) -> bool {
@@ -193,7 +218,11 @@ fn is_script_path(path: &str) -> bool {
     Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("js"))
+        .map(|extension| {
+            extension.eq_ignore_ascii_case("js")
+                || extension.eq_ignore_ascii_case("cjs")
+                || extension.eq_ignore_ascii_case("mjs")
+        })
         .unwrap_or(false)
 }
 
@@ -275,6 +304,29 @@ mod tests {
         );
 
         let target = resolve_batch_target(&shim).unwrap();
+        assert_eq!(target.program, PathBuf::from("node"));
+        assert_eq!(
+            target.prefix_args,
+            vec![script.to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_bare_program_to_path_batch_shim() {
+        let directory = tempdir().unwrap();
+        let root = directory.path();
+        let script = root.join("gh.mjs");
+        fs::write(&script, b"// script").unwrap();
+        let shim = write_shim(
+            root,
+            "gh.cmd",
+            &format!("@echo off\r\nnode \"{}\" %*\r\n", script.display()),
+        );
+        let search_path = env::join_paths([root]).unwrap();
+
+        let resolved = resolve_program_path(Path::new("gh"), Some(&search_path));
+        assert_eq!(resolved, shim);
+        let target = resolve_batch_target(&resolved).unwrap();
         assert_eq!(target.program, PathBuf::from("node"));
         assert_eq!(
             target.prefix_args,

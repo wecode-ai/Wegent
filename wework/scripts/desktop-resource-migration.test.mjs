@@ -12,6 +12,9 @@ const scripts = [
   'electron/scripts/prepare-package-assets.mjs',
   'scripts/dev-mac-app.sh',
   'scripts/dev-windows-app.ps1',
+  'scripts/build-ai-verify-electron.mjs',
+  'scripts/prepare-dev-component-resources.mjs',
+  'scripts/prepare-dev-dependencies.mjs',
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
@@ -28,6 +31,10 @@ describe('desktop resource migration', () => {
       join(weworkRoot, 'scripts/dev-wework-app-watch.mjs'),
       'utf8'
     )
+    const aiVerifyBuildScript = await readFile(
+      join(weworkRoot, 'scripts/build-ai-verify-electron.mjs'),
+      'utf8'
+    )
     const viteConfig = await readFile(join(weworkRoot, 'vite.config.ts'), 'utf8')
 
     expect(packageJson.scripts['prepare:electron']).toBe('node scripts/prepare-electron.mjs')
@@ -37,13 +44,21 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['ai:verify:electron:prepare']).toBe(
       'node scripts/prepare-ai-verify-electron.mjs'
     )
-    expect(packageJson.scripts['ai:verify:electron:build']).toContain('pnpm run prepare:electron')
+    expect(packageJson.scripts['ai:verify:electron:build']).toBe(
+      'node scripts/build-ai-verify-electron.mjs'
+    )
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:electron']")
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
+    expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
+    expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
+    expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
     expect(devMacScript).toContain('io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID')
-    expect(packageJson.scripts['ai:verify:electron:build']).not.toContain('pnpm run build:dsh-app')
+    expect(aiVerifyBuildScript).not.toContain("['run', 'build:dsh-app']")
     expect(packageJson.scripts['build:dsh-app']).toBe(
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'
     )
@@ -52,6 +67,7 @@ describe('desktop resource migration', () => {
     expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(devMacScript).not.toContain('node electron/node_modules/electron/install.js')
+    expect(devMacScript).not.toContain('pnpm --dir electron prepare:package')
     expect(devWindowsScript).not.toContain('node electron/node_modules/electron/install.js')
   })
 
@@ -68,6 +84,8 @@ describe('desktop resource migration', () => {
     expect(source).toContain("'--config.node-linker=hoisted'")
     expect(source).toContain("'deploy',")
     expect(source).toContain("'--prod',")
+    expect(source).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
+    expect(source).toContain('wrapWindowsScriptCommand(command, args)')
     expect(source).not.toContain("'--legacy'")
     expect(source).not.toContain("'npm',")
     expect(source).not.toContain("'install', '--omit=dev'")
@@ -83,6 +101,13 @@ describe('desktop resource migration', () => {
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
     expect(packageApp).toContain('await releaseToolchainLock()')
+  })
+
+  test('reuses an unchanged prepared DWS sidecar', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/prepare-dws-binary.mjs'), 'utf8')
+
+    expect(source).toContain('preparedBinaryIsCurrent')
+    expect(source).toContain('Reusing prepared DWS sidecar')
   })
 
   test('packages CUA native libraries and license outside ASAR', async () => {
@@ -104,10 +129,10 @@ describe('desktop resource migration', () => {
   })
 
   test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
-    const source = await readFile(
-      join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'),
-      'utf8'
-    )
+    const [source, harnessRuntimeSource] = await Promise.all([
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'scripts/prepare-harness-runtime.mjs'), 'utf8'),
+    ])
 
     expect(source).toContain("process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'")
     expect(source).toContain("configured === 'debug' || configured === 'release'")
@@ -129,6 +154,10 @@ describe('desktop resource migration', () => {
     expect(source).not.toContain('prepare:execution-runtime')
     expect(source).not.toContain('execution-runtime-node-dev')
     expect(source).toContain('wrapWindowsScriptCommand(command, args)')
+    expect(harnessRuntimeSource).toContain("import { create, extract } from 'tar'")
+    expect(harnessRuntimeSource).toContain('await extract({')
+    expect(harnessRuntimeSource).toContain('await create(')
+    expect(harnessRuntimeSource).not.toContain("run('tar'")
   })
 
   test('does not include a separate Node runtime in desktop packages', async () => {

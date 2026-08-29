@@ -26,6 +26,7 @@ import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -304,7 +305,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,7 +323,7 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
 
   return (
     <div
@@ -604,41 +605,42 @@ function AssistantMarkdownLink({
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
     return (
-      <button
-        type="button"
-        className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
-        data-testid="assistant-markdown-link"
-        onClick={() => {
-          if (isHtmlFilePath(filePath)) {
-            if (requestEmbeddedBrowserOpen(filePath)) return
-          }
-          if (openOptions) {
-            onOpenFile?.(filePath, openOptions)
-            return
-          }
-          onOpenFile?.(filePath)
-        }}
-        aria-label={tooltip}
+      <Tooltip
+        label={tooltip}
+        align="start"
+        testId="assistant-markdown-link-tooltip"
+        className="min-w-0 max-w-full !shrink align-baseline"
       >
-        {icon}
-        <span
-          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
-          data-testid="assistant-markdown-link-label"
+        <button
+          type="button"
+          className={ASSISTANT_MARKDOWN_LINK_CLASS}
+          data-testid="assistant-markdown-link"
+          onClick={() => {
+            if (isHtmlFilePath(filePath)) {
+              if (requestEmbeddedBrowserOpen(filePath)) return
+            }
+            if (openOptions) {
+              onOpenFile?.(filePath, openOptions)
+              return
+            }
+            onOpenFile?.(filePath)
+          }}
+          aria-label={tooltip}
         >
-          {children}
-        </span>
-        {lineLabel ? (
-          <span className="shrink-0" data-testid="assistant-markdown-link-line">
-            ({lineLabel})
+          {icon}
+          <span
+            className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+            data-testid="assistant-markdown-link-label"
+          >
+            {children}
           </span>
-        ) : null}
-        <span
-          data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
-        >
-          {tooltip}
-        </span>
-      </button>
+          {lineLabel ? (
+            <span className="shrink-0" data-testid="assistant-markdown-link-line">
+              ({lineLabel})
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
     )
   }
 

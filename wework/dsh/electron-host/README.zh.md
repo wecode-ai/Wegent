@@ -15,6 +15,12 @@ token。旧 generation 卸载后，保留的 service 引用会立即拒绝调用
 Renderer 不能直接读取 Host Cordis service。浏览器侧仍通过同源 HTTP
 route 调用同一套 capability，后续由产品插件封装 client adapter。
 
+Electron 主进程向 Renderer 推送的窗口、托盘和内置浏览器事件统一通过
+`desktop.events` capability 传输。Renderer 为所有订阅者共享一个 500ms 的
+非阻塞轮询；Host 每次立即返回当前事件批次，避免长期占用同源 HTTP 请求通道。
+新增桌面事件必须复用这个事件流，不得为单个功能增加 100ms/250ms 等短周期
+HTTP 轮询。
+
 同一 DSH 页面中的浏览器插件共享 origin 和 JavaScript 信任域。因此 HTTP
 载体可以阻止跨源浏览器访问，但不能声称隔离同一 DSH 组合内安装的不同插件。
 第一方桌面 Profile 不得安装不受信任的插件。

@@ -518,7 +518,6 @@ interface DesktopWorkbenchMainProps {
     session: LocalHarnessWorkbenchSession,
     options?: LocalHarnessSessionRegistrationOptions
   ) => void
-  onLocalHarnessSessionTitleChange?: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit?: (sessionId: string) => void
 }
@@ -572,12 +571,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
-  const {
-    onLocalHarnessSessionStarted,
-    onLocalHarnessSessionTitleChange,
-    onLocalHarnessSessionClose,
-    onLocalHarnessSessionExit,
-  } = props
+  const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
+    props
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -627,22 +622,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
     },
     [onLocalHarnessSessionExit]
-  )
-  const updateHarnessSessionTitle = useCallback(
-    (sessionId: string, title: string) => {
-      if (onLocalHarnessSessionTitleChange) {
-        onLocalHarnessSessionTitleChange(sessionId, title)
-        return
-      }
-      const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-      if (!normalized) return
-      setInternalHarnessSessions(current =>
-        current.map(session =>
-          session.sessionId === sessionId ? { ...session, title: normalized } : session
-        )
-      )
-    },
-    [onLocalHarnessSessionTitleChange]
   )
   const closeHarnessSession = useCallback(
     async (sessionId: string) => {
@@ -766,7 +745,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         activeLocalHarnessSession={
           getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
         }
-        onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
         onLocalHarnessSessionClose={closeHarnessSession}
         onLocalHarnessSessionExit={removeLocalHarnessSession}
       />
@@ -788,7 +766,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       setPaneResourceRetained,
       services?.workspaceSessionApi,
       updateEnvironmentInfoVisibility,
-      updateHarnessSessionTitle,
     ]
   )
   const {
@@ -865,7 +842,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onLocalHarnessSessionStarted,
   localHarnessSessions,
   activeLocalHarnessSession,
-  onLocalHarnessSessionTitleChange,
   onLocalHarnessSessionClose,
   onLocalHarnessSessionExit,
 }: {
@@ -890,7 +866,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) => void
   localHarnessSessions: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSession: LocalHarnessWorkbenchSession | null
-  onLocalHarnessSessionTitleChange: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
@@ -2664,8 +2639,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             retryFailedMessageAfterModelSelect()
           }
         : undefined,
-      onModelSelectorOpenChange: open => {
-        if (!open) pendingModelRetryRef.current = null
+      onModelSelectorOpenChange: (open, closeReason) => {
+        if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
@@ -4340,7 +4315,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               {activeLocalHarnessSession.active ? (
                 <CentralHarnessTerminal
                   sessionId={activeLocalHarnessSession.sessionId}
-                  harnessId={activeLocalHarnessSession.harnessId}
                   title={activeLocalHarnessSession.title}
                   cwd={activeLocalHarnessSession.cwd}
                   active={paneActive && workbenchVisible}
@@ -4351,9 +4325,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       : () => {
                           void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
                         }
-                  }
-                  onTitleChange={title =>
-                    onLocalHarnessSessionTitleChange(activeLocalHarnessSession.sessionId, title)
                   }
                   onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
                 />
@@ -4981,7 +4952,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
-              onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}

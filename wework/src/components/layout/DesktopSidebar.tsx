@@ -1716,7 +1716,10 @@ function RuntimeTaskRow({
                 ? 'page'
                 : undefined
           }
-          onClick={handleOpen}
+          onClick={event => {
+            if (event.detail > 1) return
+            handleOpen()
+          }}
           onContextMenu={event => {
             event.preventDefault()
             event.stopPropagation()
