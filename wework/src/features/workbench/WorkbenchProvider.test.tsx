@@ -1588,6 +1588,7 @@ function RuntimePaneAddressHydrationProbe() {
       <span data-testid="hydrated-runtime-transcript-error">
         {paneSession.transcriptError ?? 'none'}
       </span>
+      <span data-testid="hydrated-runtime-goal">{paneSession.goal?.objective ?? 'none'}</span>
       <button
         type="button"
         onClick={() =>
@@ -12945,6 +12946,55 @@ describe('WorkbenchProvider runtime tasks', () => {
       expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('恢复中的目标')
     )
     expect(screen.getByTestId('runtime-goal-status')).toHaveTextContent('active')
+  })
+
+  test('reloads the runtime goal after the persisted task address is hydrated', async () => {
+    const getRuntimeGoal = vi.fn().mockImplementation(({ address }) =>
+      Promise.resolve(
+        address.workspacePath
+          ? {
+              accepted: true,
+              goal: createRuntimeGoal({
+                objective: '重载后恢复的目标',
+                status: 'active',
+              }),
+            }
+          : {
+              accepted: false,
+              goal: null,
+              error: 'runtime task was not found',
+            }
+      )
+    )
+    const runtimeWorkApi = createRuntimeWorkApiMock({ getRuntimeGoal })
+    const services = createWorkbenchServices({
+      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
+    })
+
+    renderWorkbench(<RuntimePaneAddressHydrationProbe />, services)
+
+    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledTimes(1))
+    expect(getRuntimeGoal).toHaveBeenLastCalledWith({
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+      },
+    })
+    expect(screen.getByTestId('hydrated-runtime-goal')).toHaveTextContent('none')
+
+    await userEvent.click(screen.getByText('hydrate runtime address'))
+
+    await waitFor(() => expect(getRuntimeGoal).toHaveBeenCalledTimes(2))
+    expect(getRuntimeGoal).toHaveBeenLastCalledWith({
+      address: {
+        deviceId: 'device-1',
+        taskId: 'runtime-a',
+        runtime: 'codex',
+        threadId: 'thread-a',
+        workspacePath: '/workspace/project-alpha',
+      },
+    })
+    expect(screen.getByTestId('hydrated-runtime-goal')).toHaveTextContent('重载后恢复的目标')
   })
 
   test('restores a goal task as running when reopened with a streaming transcript', async () => {
