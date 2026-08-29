@@ -1,10 +1,12 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 
 interface MockMessageListProps {
   virtualAnchorToEnd?: boolean
 }
+
+let resizeObserverCallback: ResizeObserverCallback | null = null
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -24,6 +26,10 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     vi.stubGlobal(
       'ResizeObserver',
       class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallback = callback
+        }
+
         observe() {}
         disconnect() {}
       }
@@ -31,6 +37,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
   })
 
   afterEach(() => {
+    resizeObserverCallback = null
     vi.unstubAllGlobals()
   })
 
@@ -101,6 +108,9 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     })
 
     rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+    act(() => {
+      resizeObserverCallback?.([], {} as ResizeObserver)
+    })
 
     expect(scrollHeightGetter).not.toHaveBeenCalled()
     requestAnimationFrameSpy.mockRestore()

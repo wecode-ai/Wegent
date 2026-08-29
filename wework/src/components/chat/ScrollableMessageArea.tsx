@@ -277,6 +277,7 @@ function ScrollableMessagePaneContent({
     key: string
     snapshot: ConversationScrollSnapshot
   } | null>(null)
+  const virtualInitialPositionKeyRef = useRef<string | null>(null)
   const followingBottomKeyRef = useRef<string | null>(null)
   const preserveLatestUserTurnRef = useRef(false)
   const userScrollPausedAutoFollowRef = useRef(false)
@@ -698,6 +699,8 @@ function ScrollableMessagePaneContent({
   const adoptVirtualBottomPosition = useCallback(
     (scrollTopPx: number | null = null) => {
       clearScheduledScrolls()
+      virtualInitialPositionKeyRef.current = currentScrollKey
+      restoredScrollSnapshotRef.current = null
       followingBottomKeyRef.current = currentScrollKey
       markCurrentConversationPinnedToBottom()
       lastScrollTopRef.current = scrollTopPx
@@ -828,6 +831,7 @@ function ScrollableMessagePaneContent({
     if (conversationChanged) {
       userViewportAnchorRef.current = null
       restoredScrollSnapshotRef.current = null
+      virtualInitialPositionKeyRef.current = null
       preserveLatestUserTurnRef.current = false
       releasePendingLayoutScrollPosition()
     } else if (latestUserMessageChanged) {
@@ -993,6 +997,10 @@ function ScrollableMessagePaneContent({
   }, [])
 
   const handleContentLayoutChange = useCallback(() => {
+    if (virtualInitialPositionKeyRef.current === currentScrollKey) {
+      virtualInitialPositionKeyRef.current = null
+      return
+    }
     if (restorePendingLayoutScrollPosition()) {
       return
     }
