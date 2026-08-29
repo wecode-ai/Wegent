@@ -54,6 +54,7 @@ describe('desktop resource migration', () => {
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
+    expect(aiVerifyBuildScript).toContain('resolveSharedHarnessRuntimeAssetCacheRoot(')
     expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
@@ -142,6 +143,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain('resolveHarnessRuntimeCachePaths(')
+    expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(source).not.toContain(
+      "join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets'"
+    )
     expect(source).toContain('resolveDesktopPackageTargets(process.env)')
     expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
