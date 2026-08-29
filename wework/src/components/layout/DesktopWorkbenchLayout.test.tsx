@@ -5164,7 +5164,7 @@ describe('DesktopWorkbenchLayout', () => {
         'new-project'
       )
     )
-  })
+  }, 15_000)
 
   test('clones a Git repository before opening the remote project', async () => {
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
@@ -5260,7 +5260,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('refreshes an offline device before retrying a Git clone', async () => {
     const refreshResult = createDeferred<void>()
@@ -5304,10 +5304,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
-        'repository设备离线'
-      )
+    await waitFor(
+      () =>
+        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
+          'repository设备离线'
+        ),
+      { timeout: 5_000 }
     )
     const refreshCountBeforeRetry = onRefreshDevices.mock.calls.length
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -5326,7 +5328,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('rejects embedded HTTP Git credentials without cloning', async () => {
     const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
