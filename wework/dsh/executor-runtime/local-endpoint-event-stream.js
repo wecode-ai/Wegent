@@ -4,6 +4,7 @@ import { ExecutorRuntimeError } from './executor-runtime-client.js'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const MAX_AUTH_FRAME_BYTES = 64 * 1024
+const DEFAULT_AUTHENTICATION_TIMEOUT_MS = 10_000
 
 export class LocalEndpointEventByteStream {
   constructor(options) {
@@ -13,6 +14,9 @@ export class LocalEndpointEventByteStream {
     this.socket = null
     this.authenticated = false
     this.stopped = false
+    this.authenticationTimeoutMs =
+      options.authenticationTimeoutMs ?? DEFAULT_AUTHENTICATION_TIMEOUT_MS
+    this.authenticationTimer = null
   }
 
   static fromEnvironment(options, environment = process.env) {
@@ -33,9 +37,15 @@ export class LocalEndpointEventByteStream {
       this.socket = socket
       let buffer = Buffer.alloc(0)
       let settled = false
+      const clearAuthenticationTimer = () => {
+        if (this.authenticationTimer === null) return
+        clearTimeout(this.authenticationTimer)
+        this.authenticationTimer = null
+      }
       const rejectStart = error => {
         if (settled) return
         settled = true
+        clearAuthenticationTimer()
         reject(error)
       }
       const cleanupAuthenticationListeners = () => {
@@ -84,6 +94,7 @@ export class LocalEndpointEventByteStream {
         }
         this.authenticated = true
         settled = true
+        clearAuthenticationTimer()
         cleanupAuthenticationListeners()
         socket.pause()
         if (remainder.length > 0) socket.unshift(remainder)
@@ -103,7 +114,18 @@ export class LocalEndpointEventByteStream {
       socket.on('data', authenticate)
       socket.once('error', rejectStart)
       socket.once('close', rejectClosedStart)
+      this.authenticationTimer = setTimeout(() => {
+        const error = new ExecutorRuntimeError(
+          'authentication_timeout',
+          'Executor event stream authentication timed out',
+          true
+        )
+        rejectStart(error)
+        socket.destroy(error)
+      }, this.authenticationTimeoutMs)
+      this.authenticationTimer.unref?.()
       socket.once('close', () => {
+        clearAuthenticationTimer()
         this.authenticated = false
         if (this.socket === socket) this.socket = null
       })
@@ -112,6 +134,10 @@ export class LocalEndpointEventByteStream {
 
   stop() {
     this.stopped = true
+    if (this.authenticationTimer !== null) {
+      clearTimeout(this.authenticationTimer)
+      this.authenticationTimer = null
+    }
     const socket = this.socket
     this.socket = null
     this.authenticated = false

@@ -25,6 +25,7 @@ const EVENT_JOURNAL_MAX_BYTES: usize = 8 * 1024 * 1024;
 const EVENT_ENVELOPE_MAX_BYTES: usize = 256 * 1024;
 const EVENT_COALESCE_INTERVAL: Duration = Duration::from_millis(16);
 const EVENT_COALESCE_MAX_KEYS: usize = 1024;
+const EVENT_METADATA_MAX_CHARS: usize = 256;
 
 #[derive(Clone)]
 pub(crate) struct ExecutorEventHub {
@@ -344,14 +345,21 @@ fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
         .get("event")
         .and_then(Value::as_str)
         .unwrap_or("executor.unknown")
-        .to_owned();
-    let task_id = event_task_id(&raw);
+        .chars()
+        .take(EVENT_METADATA_MAX_CHARS)
+        .collect::<String>();
+    let task_id = event_task_id(&raw).map(|task_id| {
+        task_id
+            .chars()
+            .take(EVENT_METADATA_MAX_CHARS)
+            .collect::<String>()
+    });
     let event = event_envelope(raw, sequence);
     let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
     if bytes <= EVENT_ENVELOPE_MAX_BYTES {
         return event;
     }
-    event_envelope(
+    let replacement = event_envelope(
         json!({
             "type": "event",
             "event": "executor.event_lagged",
@@ -360,6 +368,23 @@ fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
                 "originalEvent": original_event,
                 "originalBytes": bytes,
                 "taskId": task_id,
+                "latestSequence": sequence,
+            },
+        }),
+        sequence,
+    );
+    if serde_json::to_vec(&replacement).map_or(usize::MAX, |encoded| encoded.len())
+        <= EVENT_ENVELOPE_MAX_BYTES
+    {
+        return replacement;
+    }
+    event_envelope(
+        json!({
+            "type": "event",
+            "event": "executor.event_lagged",
+            "payload": {
+                "reason": "event_too_large",
+                "originalBytes": bytes,
                 "latestSequence": sequence,
             },
         }),
@@ -411,6 +436,24 @@ mod tests {
         assert_eq!(event["payload"]["reason"], "event_too_large");
         assert_eq!(event["payload"]["taskId"], "task-1");
         assert_eq!(journal.events.len(), 1);
+    }
+
+    #[test]
+    fn oversized_event_metadata_cannot_overflow_the_replacement() {
+        let mut journal = EventJournal::new();
+        let event = journal.append(json!({
+            "event": "e".repeat(EVENT_ENVELOPE_MAX_BYTES),
+            "payload": {
+                "taskId": "t".repeat(EVENT_ENVELOPE_MAX_BYTES),
+                "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
+            },
+        }));
+
+        assert_eq!(event["event"], "executor.event_lagged");
+        assert!(
+            serde_json::to_vec(&event).unwrap().len() <= EVENT_ENVELOPE_MAX_BYTES,
+            "replacement event must respect the downstream envelope limit"
+        );
     }
 
     #[test]

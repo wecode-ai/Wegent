@@ -876,11 +876,14 @@ impl RecordingTransport {
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {
+                let notified = self.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
-                self.notify.notified().await;
+                notified.await;
             }
         })
         .await
@@ -890,11 +893,14 @@ impl RecordingTransport {
     async fn wait_for_emit_count(&self, event: &str, count: usize) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {
+                let notified = self.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 let emits = self.emits_for_event(event);
                 if emits.len() >= count {
                     return emits;
                 }
-                self.notify.notified().await;
+                notified.await;
             }
         })
         .await

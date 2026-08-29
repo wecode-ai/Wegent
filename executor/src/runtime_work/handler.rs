@@ -49,6 +49,64 @@ const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENC
 const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
 const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 
+enum RestoreStartupState {
+    Waiting {
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
+    Active,
+    TimedOut,
+    Finished,
+}
+
+struct RestoreStartupGate {
+    state: Mutex<RestoreStartupState>,
+}
+
+impl RestoreStartupGate {
+    fn new(permit: tokio::sync::OwnedSemaphorePermit) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(RestoreStartupState::Waiting { _permit: permit }),
+        })
+    }
+
+    fn try_activate(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::Active;
+        true
+    }
+
+    fn try_timeout(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::TimedOut;
+        true
+    }
+
+    fn finish(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if matches!(
+            *state,
+            RestoreStartupState::Waiting { .. } | RestoreStartupState::Active
+        ) {
+            *state = RestoreStartupState::Finished;
+        }
+    }
+}
+
 mod archives;
 mod automation_rpc;
 mod claude_turns;

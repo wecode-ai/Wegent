@@ -101,6 +101,9 @@ pub fn write_executor_log_line(line: &str) {
         eprintln!("{line}");
     } else {
         println!("{line}");
+        if env_flag("WEGENT_EXECUTOR_DISABLE_FILE_LOG") {
+            let _ = std::io::stdout().flush();
+        }
     }
     write_rolling_log_line(line);
 }

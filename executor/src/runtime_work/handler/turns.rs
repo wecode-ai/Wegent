@@ -666,14 +666,42 @@ impl RuntimeWorkRpcHandler {
         self.start_turn_with_restore_permit(turn, None);
     }
 
+    pub(super) fn schedule_restore_startup_timeout(
+        &self,
+        local_task_id: String,
+        execution_id: u64,
+        restore_startup: Arc<RestoreStartupGate>,
+    ) {
+        let handler = self.clone();
+        tokio::spawn(async move {
+            sleep(RESTORE_STARTUP_TIMEOUT).await;
+            if !restore_startup.try_timeout() {
+                return;
+            }
+            if handler.is_current_local_task_execution(&local_task_id, execution_id) {
+                handler.force_settle_local_task_execution(
+                    &local_task_id,
+                    None,
+                    "failed",
+                    "restore_startup_timeout",
+                );
+                log_executor_event(
+                    "runtime restored turn startup timed out",
+                    &[("local_task_id", local_task_id)],
+                );
+            }
+        });
+    }
+
     fn start_turn_with_restore_permit(
         &self,
         mut turn: SpawnTurnRequest,
         restore_permit: Option<tokio::sync::OwnedSemaphorePermit>,
     ) {
         turn.request.extra.remove(RESTORED_TURN_MARKER);
+        let restore_startup = restore_permit.map(RestoreStartupGate::new);
         if is_claude_runtime(&turn.runtime) {
-            self.start_claude_turn(turn.local_task_id, turn.request);
+            self.start_claude_turn(turn.local_task_id, turn.request, restore_startup);
             return;
         }
         self.apply_backend_connection(&mut turn.request);
@@ -715,7 +743,6 @@ impl RuntimeWorkRpcHandler {
         ) = mpsc::channel(1);
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
-        let restore_permit = Arc::new(Mutex::new(restore_permit));
         let execution_id = match self.start_local_task_execution(
             local_task_id.clone(),
             request
@@ -731,36 +758,12 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         };
-        if restore_permit
-            .lock()
-            .expect("restore startup permit lock should not be poisoned")
-            .is_some()
-        {
-            let timeout_handler = self.clone();
-            let timeout_permit = Arc::clone(&restore_permit);
-            let timeout_local_task_id = local_task_id.clone();
-            tokio::spawn(async move {
-                sleep(RESTORE_STARTUP_TIMEOUT).await;
-                if timeout_permit
-                    .lock()
-                    .expect("restore startup permit lock should not be poisoned")
-                    .take()
-                    .is_some()
-                    && timeout_handler
-                        .is_current_local_task_execution(&timeout_local_task_id, execution_id)
-                {
-                    timeout_handler.force_settle_local_task_execution(
-                        &timeout_local_task_id,
-                        None,
-                        "failed",
-                        "restore_startup_timeout",
-                    );
-                    log_executor_event(
-                        "runtime restored turn startup timed out",
-                        &[("local_task_id", timeout_local_task_id)],
-                    );
-                }
-            });
+        if let Some(restore_startup) = restore_startup.as_ref() {
+            self.schedule_restore_startup_timeout(
+                local_task_id.clone(),
+                execution_id,
+                Arc::clone(restore_startup),
+            );
         }
         if let Ok(mut requests) = self.active_request_user_inputs.lock() {
             requests.insert(
@@ -828,25 +831,23 @@ impl RuntimeWorkRpcHandler {
             let active_turn_request = request.clone();
             let callback_hook_turn = Arc::clone(&hook_turn);
             let callback_turn_presentation = Arc::clone(&pending_turn_presentation);
-            let active_turn_restore_permit = Arc::clone(&restore_permit);
+            let active_turn_restore_startup = restore_startup.clone();
             let active_turn_started: CodexActiveTurnCallback =
                 Box::new(move |thread_id, turn_id| {
+                    if let Some(restore_startup) = active_turn_restore_startup.as_ref() {
+                        if !restore_startup.try_activate() {
+                            return;
+                        }
+                        log_executor_event(
+                            "runtime restored turn reached active state",
+                            &[("local_task_id", active_turn_local_task_id.clone())],
+                        );
+                    }
                     if !active_turn_handler.is_current_local_task_execution(
                         &active_turn_local_task_id,
                         active_turn_execution_id,
                     ) {
                         return;
-                    }
-                    if active_turn_restore_permit
-                        .lock()
-                        .expect("restore startup permit lock should not be poisoned")
-                        .take()
-                        .is_some()
-                    {
-                        log_executor_event(
-                            "runtime restored turn reached active state",
-                            &[("local_task_id", active_turn_local_task_id.clone())],
-                        );
                     }
                     active_turn_handler.start_queue_run(&active_turn_local_task_id);
                     *callback_hook_turn
@@ -923,10 +924,9 @@ impl RuntimeWorkRpcHandler {
                     },
                 )
                 .await;
-            restore_permit
-                .lock()
-                .expect("restore startup permit lock should not be poisoned")
-                .take();
+            if let Some(restore_startup) = restore_startup.as_ref() {
+                restore_startup.finish();
+            }
 
             let _ = mapper_handle.await;
             if !handler.is_current_local_task_execution(&turn_local_task_id, execution_id) {
@@ -1416,6 +1416,36 @@ mod tests {
             resume_thread_id: None,
             initial_thread_goal: None,
         }
+    }
+
+    #[tokio::test]
+    async fn restore_startup_timeout_prevents_late_activation() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&semaphore)
+            .acquire_owned()
+            .await
+            .expect("restore startup permit should be available");
+        let startup = RestoreStartupGate::new(permit);
+
+        assert_eq!(semaphore.available_permits(), 0);
+        assert!(startup.try_timeout());
+        assert_eq!(semaphore.available_permits(), 1);
+        assert!(!startup.try_activate());
+    }
+
+    #[tokio::test]
+    async fn restore_startup_activation_prevents_late_timeout() {
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = Arc::clone(&semaphore)
+            .acquire_owned()
+            .await
+            .expect("restore startup permit should be available");
+        let startup = RestoreStartupGate::new(permit);
+
+        assert_eq!(semaphore.available_permits(), 0);
+        assert!(startup.try_activate());
+        assert_eq!(semaphore.available_permits(), 1);
+        assert!(!startup.try_timeout());
     }
 
     #[test]

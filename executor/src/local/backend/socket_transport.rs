@@ -211,13 +211,15 @@ impl LocalBackendTransport for SocketIoTransport {
                 let _ = socket.disconnect().await;
                 return Err(error);
             }
+            let mut client_state = self.client.lock().await;
             if closed.load(Ordering::Acquire)
                 || self.generation.load(Ordering::Acquire) != generation
             {
+                drop(client_state);
                 let _ = socket.disconnect().await;
                 return Err("Socket.IO connection closed during namespace setup".to_owned());
             }
-            *self.client.lock().await = Some(ConnectedSocket {
+            *client_state = Some(ConnectedSocket {
                 generation,
                 client: socket,
             });
