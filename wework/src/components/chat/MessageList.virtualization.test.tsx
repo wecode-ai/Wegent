@@ -23,16 +23,11 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
-  defaultRangeExtractor: (range: {
-    startIndex: number
-    endIndex: number
-    overscan: number
-    count: number
-  }) => {
-    const startIndex = Math.max(0, range.startIndex - range.overscan)
-    const endIndex = Math.min(range.count - 1, range.endIndex + range.overscan)
-    return Array.from({ length: endIndex - startIndex + 1 }, (_, index) => startIndex + index)
-  },
+  defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
+    Array.from(
+      { length: range.endIndex - range.startIndex + 1 },
+      (_, index) => range.startIndex + index
+    ),
   useVirtualizer: (options: {
     count: number
     getItemKey: (index: number) => string | number
@@ -46,7 +41,7 @@ vi.mock('@tanstack/react-virtual', () => ({
     const visibleIndexes = options.rangeExtractor({
       startIndex: Math.max(0, options.count - 2),
       endIndex: options.count - 1,
-      overscan: 6,
+      overscan: 2,
       count: options.count,
     })
     const virtualizer = {
@@ -102,7 +97,7 @@ describe('MessageList desktop virtualization', () => {
         anchorTo: 'end',
         count: 5,
         enabled: true,
-        overscan: 6,
+        overscan: 2,
       })
     )
     const virtualizer = virtualizerInstances.at(-1)
@@ -112,7 +107,7 @@ describe('MessageList desktop virtualization', () => {
     expect(intersectionObserver).not.toHaveBeenCalled()
   })
 
-  test('keeps the end-anchored overscan range mounted for long conversations', () => {
+  test('keeps only the end-anchored overscan range mounted for long conversations', () => {
     render(
       <MessageList
         messages={buildMessages(100, 'long')}
@@ -122,9 +117,8 @@ describe('MessageList desktop virtualization', () => {
 
     expect(screen.getByText('long message 99')).toBeInTheDocument()
     expect(screen.getByText('long message 98')).toBeInTheDocument()
-    expect(screen.getByText('long message 92')).toBeInTheDocument()
     expect(screen.queryByText('long message 0')).not.toBeInTheDocument()
-    expect(screen.getAllByTestId('message-user')).toHaveLength(8)
+    expect(screen.getAllByTestId('message-user')).toHaveLength(2)
   })
 
   test('keeps a forced navigation target in the virtual range', () => {
