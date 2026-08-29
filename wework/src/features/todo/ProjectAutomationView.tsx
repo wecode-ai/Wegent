@@ -8,6 +8,10 @@ import type {
   ProjectWorkflowDefinition,
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
+import type {
+  createProjectIncomingHookApi,
+  ProjectEventSourceCatalogItem,
+} from '@/api/projectIncomingHooks'
 import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type {
@@ -36,6 +40,7 @@ interface ProjectAutomationViewProps {
   project: CloudProject
   projectChatAgentApi?: WorkbenchServices['projectChatAgentApi']
   projectAutomationApi?: WorkbenchServices['projectAutomationApi']
+  projectIncomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
   runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
   executionApi?: ExecutionListApi
   deviceApi?: WorkbenchServices['deviceApi']
@@ -270,6 +275,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
     api,
     project,
     projectAutomationApi,
+    projectIncomingHookApi,
     deviceApi,
     modelApi,
     pluginApi,
@@ -290,6 +296,7 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   const runsRequestRef = useRef<Promise<AutomationUiRun[]> | null>(null)
   const [loading, setLoading] = useState(() => !initialCache)
   const [error, setError] = useState('')
+  const [eventSourceCatalog, setEventSourceCatalog] = useState<ProjectEventSourceCatalogItem[]>([])
 
   useEffect(() => {
     projectRef.current = project
@@ -377,6 +384,25 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
   useEffect(() => {
     void Promise.resolve().then(() => load())
   }, [load])
+
+  useEffect(() => {
+    if (!projectIncomingHookApi) return
+    let active = true
+    void projectIncomingHookApi
+      .catalog()
+      .then(catalog => {
+        if (!active) return
+        setEventSourceCatalog(catalog)
+      })
+      .catch(loadError => {
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : String(loadError))
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [projectId, projectIncomingHookApi])
 
   const refreshRuns = useCallback(async (): Promise<AutomationUiRun[]> => {
     if (!projectAutomationApi) throw new Error('当前项目没有可用的自动化服务')
@@ -662,6 +688,9 @@ export function ProjectAutomationView(props: ProjectAutomationViewProps) {
       error={error}
       canManage={canManageAgents}
       projectTags={project.tags}
+      eventSourceCatalog={eventSourceCatalog}
+      projectIncomingHookApi={projectIncomingHookApi}
+      projectId={projectId}
       onReload={reload}
       onLoadExecutionCatalog={loadExecutionCatalog}
       onLoadExecutionPlugins={loadExecutionPlugins}

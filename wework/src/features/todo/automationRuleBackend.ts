@@ -1,8 +1,13 @@
 import type {
+  ProjectAutomationEventType,
   ProjectAutomationInput,
   ProjectAutomationRule,
   ProjectAutomationRun,
 } from '@/api/projectAutomations'
+import type {
+  ProjectAutomationExecutionTarget,
+  ProjectEventSourceType,
+} from '@/api/projectIncomingHooks'
 import type {
   CloudProject,
   ProjectWorkflowDefinition,
@@ -60,10 +65,17 @@ export interface AutomationUiGraph {
 
 export interface AutomationUiTrigger {
   type: 'event' | 'schedule'
-  source: 'issue'
+  source: ProjectEventSourceType
   startMode: 'immediate' | 'status'
-  event: 'created' | 'status_changed'
+  event:
+    | 'created'
+    | 'status_changed'
+    | Exclude<ProjectAutomationEventType, 'task.created' | 'task.status_changed'>
   tags: string[]
+  subscriptionId?: string | null
+  executionTarget?: ProjectAutomationExecutionTarget
+  targetBranches?: string[]
+  repositories?: string[]
   schedule: {
     frequency: 'daily' | 'weekdays' | 'weekly'
     weekday: string
@@ -416,10 +428,45 @@ function fallbackStep(rule: ProjectAutomationRule): AutomationUiStep {
   }
 }
 
+const TRIGGER_SOURCE_TYPES = new Set<ProjectEventSourceType>([
+  'github',
+  'gitlab',
+  'wework',
+  'generic',
+])
+
+function normalizeTriggerSource(rule: ProjectAutomationRule): ProjectEventSourceType {
+  const stored = rule.eventConfig.source_type ?? rule.eventConfig.sourceType
+  if (typeof stored === 'string' && TRIGGER_SOURCE_TYPES.has(stored as ProjectEventSourceType)) {
+    return stored as ProjectEventSourceType
+  }
+  if (rule.eventType === 'task.created' || rule.eventType === 'task.status_changed') {
+    return 'wework'
+  }
+  const subscriptionId =
+    typeof rule.eventConfig.subscription_id === 'string'
+      ? rule.eventConfig.subscription_id
+      : typeof rule.eventConfig.subscriptionId === 'string'
+        ? rule.eventConfig.subscriptionId
+        : null
+  return subscriptionId ? 'generic' : 'wework'
+}
+
 export function automationRuleFromBackend(rule: ProjectAutomationRule): AutomationUiRule {
   const flow = storedFlow(rule)
   const schedule = parseCron(rule.cronExpression)
   const startMode = rule.eventType === 'task.status_changed' ? 'status' : 'immediate'
+  const subscriptionId =
+    typeof rule.eventConfig.subscription_id === 'string'
+      ? rule.eventConfig.subscription_id
+      : typeof rule.eventConfig.subscriptionId === 'string'
+        ? rule.eventConfig.subscriptionId
+        : null
+  const externalEvent =
+    rule.eventType && rule.eventType !== 'task.created' && rule.eventType !== 'task.status_changed'
+      ? rule.eventType
+      : null
+  const source = normalizeTriggerSource(rule)
   return {
     id: rule.id,
     persisted: true,
@@ -431,12 +478,23 @@ export function automationRuleFromBackend(rule: ProjectAutomationRule): Automati
     updatedAt: formatAutomationTimestamp(rule.updatedAt),
     trigger: {
       type: rule.triggerType === 'schedule' ? 'schedule' : 'event',
-      source: 'issue',
+      source,
       startMode,
-      event: startMode === 'status' ? 'status_changed' : 'created',
+      event: externalEvent ?? (startMode === 'status' ? 'status_changed' : 'created'),
       tags: Array.isArray(rule.eventConfig.tags)
         ? rule.eventConfig.tags.filter((value): value is string => typeof value === 'string')
         : [],
+      subscriptionId,
+      executionTarget:
+        rule.eventConfig.execution_target === 'existing_issue' ||
+        rule.eventConfig.execution_target === 'continue_binding' ||
+        rule.eventConfig.execution_target === 'create_issue'
+          ? rule.eventConfig.execution_target
+          : undefined,
+      targetBranches: stringArray(
+        rule.eventConfig.target_branches ?? rule.eventConfig.targetBranches
+      ),
+      repositories: stringArray(rule.eventConfig.repositories),
       schedule: {
         ...schedule,
         timezone: rule.timezone,
@@ -632,7 +690,7 @@ export function automationRuleFromLegacyWorkflow(
     updatedAt: formatAutomationTimestamp(project.updated_at),
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'status_changed',
       tags: [],
@@ -841,19 +899,32 @@ export function automationInputFromUi(
     throw new Error('当前用户缺少可用的 Runtime 身份，无法保存自动化')
   }
   const eventTrigger = rule.trigger.type === 'event'
+  const externalEventTrigger = eventTrigger && rule.trigger.source !== 'wework'
   const isAiDynamicWorkflow = rule.steps.length === 1 && rule.steps[0]?.kind === 'dynamic'
   return {
     name: rule.name.trim(),
     prompt: flowPrompt(rule),
     triggerType: eventTrigger ? 'event' : 'schedule',
-    eventType: eventTrigger
-      ? rule.trigger.startMode === 'status'
-        ? 'task.status_changed'
-        : 'task.created'
-      : null,
+    eventType: externalEventTrigger
+      ? (rule.trigger.event as ProjectAutomationEventType)
+      : eventTrigger
+        ? rule.trigger.startMode === 'status'
+          ? 'task.status_changed'
+          : 'task.created'
+        : null,
     eventConfig: {
-      tags: rule.trigger.tags,
-      ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
+      ...(externalEventTrigger
+        ? {
+            source_type: rule.trigger.source,
+            subscription_id: rule.trigger.subscriptionId,
+            execution_target: rule.trigger.executionTarget,
+            target_branches: rule.trigger.targetBranches ?? [],
+            repositories: rule.trigger.repositories ?? [],
+          }
+        : {
+            tags: rule.trigger.tags,
+            ...(rule.trigger.startMode === 'status' ? { transition: 'entered_processing' } : {}),
+          }),
       runtime_workflow_definition: legacyWorkflowFromAutomationRule(rule),
       [FLOW_KEY]: {
         version: 2,

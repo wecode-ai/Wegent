@@ -112,6 +112,20 @@ celery_app.conf.update(
             "task": "app.tasks.project_automation_tasks.check_due_project_automations",
             "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
         },
+        "check-pending-project-incoming-events": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_pending_project_incoming_events"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
+        "check-due-project-event-subscriptions": {
+            "task": (
+                "app.tasks.project_automation_tasks."
+                "check_due_project_event_subscriptions"
+            ),
+            "schedule": float(settings.FLOW_SCHEDULER_INTERVAL_SECONDS),
+        },
         "scan-stale-index-tasks": {
             "task": "app.tasks.knowledge_tasks.scan_stale_index_tasks",
             "schedule": 5 * 60,  # every 5 minutes

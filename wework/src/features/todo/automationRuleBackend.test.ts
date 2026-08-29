@@ -22,8 +22,6 @@ function backendRule(overrides: Partial<ProjectAutomationRule> = {}): ProjectAut
       transition: 'entered_processing',
       tags: ['自动开发'],
     },
-    webhookEventId: null,
-    webhookSecret: null,
     cronExpression: null,
     timezone: 'Asia/Shanghai',
     assignmentMode: 'manual',
@@ -60,7 +58,7 @@ function uiRule(): AutomationUiRule {
     updatedAt: '尚未发布',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'status_changed',
       tags: ['自动开发'],
@@ -149,6 +147,41 @@ describe('automationRuleBackend', () => {
 
     expect(mapped.trigger.startMode).toBe('status')
     expect(mapped.trigger.event).toBe('status_changed')
+  })
+
+  test('round trips external subscription event configuration', () => {
+    const mapped = automationRuleFromBackend(
+      backendRule({
+        eventType: 'change_request.checks_failed',
+        eventConfig: {
+          source_type: 'github',
+          subscription_id: 'subscription-1',
+          execution_target: 'continue_binding',
+          target_branches: ['main', 'release'],
+          repositories: ['acme/app'],
+        },
+      })
+    )
+
+    expect(mapped.trigger).toMatchObject({
+      type: 'event',
+      source: 'github',
+      event: 'change_request.checks_failed',
+      subscriptionId: 'subscription-1',
+      executionTarget: 'continue_binding',
+      targetBranches: ['main', 'release'],
+      repositories: ['acme/app'],
+    })
+
+    const input = automationInputFromUi(mapped, 7)
+    expect(input.eventType).toBe('change_request.checks_failed')
+    expect(input.eventConfig).toMatchObject({
+      source_type: 'github',
+      subscription_id: 'subscription-1',
+      execution_target: 'continue_binding',
+      target_branches: ['main', 'release'],
+      repositories: ['acme/app'],
+    })
   })
 
   test('formats automation timestamps in Asia/Shanghai', () => {

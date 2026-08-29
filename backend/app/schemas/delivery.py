@@ -379,6 +379,7 @@ class LoopItemTaskBindingResponse(BaseModel):
     task_title: str | None
     backend_task_id: int | None
     workflow_node_id: str | None = None
+    change_requests: list[dict[str, Any]] = Field(default_factory=list)
     linked_by_user_id: int
     linked_at: datetime
     unlinked_at: datetime | None

@@ -33,6 +33,7 @@ from app.schemas.delivery import (
     LoopItemTaskBind,
 )
 from app.schemas.issue_workflow import workflow_node_execution_mode
+from app.schemas.project_incoming_hook import ChangeRequestBindingInput
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
@@ -42,6 +43,9 @@ from app.services.delivery.storage import (
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
 from app.services.loop_item_unread import advance_content_revision
+from app.services.project_change_request_bindings import (
+    project_change_request_binding_service,
+)
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -304,6 +308,24 @@ class DeliveryService:
             assets,
             values.fulfillments,
         )
+        if source_binding is not None:
+            for fulfillment in fulfillments:
+                if fulfillment.get("kind") != "pull_request":
+                    continue
+                project_change_request_binding_service.upsert(
+                    db,
+                    binding=source_binding,
+                    values=ChangeRequestBindingInput(
+                        provider=fulfillment["provider"],
+                        url=fulfillment["url"],
+                        number=fulfillment["number"],
+                        head_branch=fulfillment.get("head_branch"),
+                        base_branch=fulfillment.get("base_branch"),
+                        head_commit=fulfillment.get("head_commit"),
+                        source="delivery",
+                    ),
+                    commit=False,
+                )
         delivery.metadata_json = {
             **(
                 delivery.metadata_json

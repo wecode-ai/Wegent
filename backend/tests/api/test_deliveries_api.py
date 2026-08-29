@@ -587,6 +587,104 @@ def test_workflow_delivery_rejects_empty_fulfillments(
     assert detail.json()["status"] == "draft"
 
 
+def test_pull_request_delivery_creates_change_request_binding(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+) -> None:
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                    "required_deliverables": [
+                        {
+                            "id": "pull-request",
+                            "name": "Pull request",
+                            "description": "",
+                            "value_type": "pull_request",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Ship pull request"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "implementation-task",
+        "taskTitle": "Implement feature",
+        "workflowNodeId": "implementation",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Complete", "source_task": source_task},
+    )
+    assert draft.status_code == 201
+
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
+        headers=_auth(test_token),
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "pull-request",
+                    "kind": "pull_request",
+                    "provider": "github",
+                    "url": "https://github.com/acme/app/pull/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feature/events",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                }
+            ]
+        },
+    )
+
+    assert finalized.status_code == 200, finalized.text
+    binding = test_db.get(LoopItemTaskBinding, binding_response.json()["id"])
+    assert binding is not None
+    assert binding.change_requests == [
+        {
+            "provider": "github",
+            "instance_url": "https://github.com",
+            "repository": "acme/app",
+            "number": 7,
+            "url": "https://github.com/acme/app/pull/7",
+            "head_branch": "feature/events",
+            "base_branch": "main",
+            "head_commit": "abc1234",
+            "source": "delivery",
+            "bound_at": binding.change_requests[0]["bound_at"],
+            "last_confirmed_at": binding.change_requests[0]["last_confirmed_at"],
+        }
+    ]
+
+
 @pytest.mark.parametrize("initial_status", ["inbox", "pending"])
 def test_binding_task_preserves_unstarted_todo_until_runtime_starts(
     test_client: TestClient,
@@ -881,14 +979,15 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     rule = SimpleNamespace(id="rule-1")
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=[rule]),
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
 
     response = test_client.post(
@@ -900,12 +999,12 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     assert response.status_code == 201
     created = response.json()
     assert created["status"] == "inbox"
-    process.assert_awaited_once()
-    event = process.await_args.args[1]
+    ingest.assert_awaited_once()
+    event = ingest.await_args.args[1]
     assert event.event_type == "task.created"
     assert event.project_id == str(delivery_project.id)
     assert event.subject_id == created["id"]
-    assert process.await_args.kwargs["automation_id"] == "rule-1"
+    assert ingest.await_args.kwargs["automation_id"] == "rule-1"
 
     updated = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -914,8 +1013,8 @@ def test_non_ai_issue_created_in_inbox_emits_task_created_automation(
     )
 
     assert updated.status_code == 200
-    assert process.await_count == 2
-    status_event = process.await_args_list[1].args[1]
+    assert ingest.await_count == 2
+    status_event = ingest.await_args_list[1].args[1]
     assert status_event.event_type == "task.status_changed"
     assert status_event.subject_id == created["id"]
 
@@ -1028,15 +1127,16 @@ def test_status_update_requires_one_automation_before_entering_processing(
         SimpleNamespace(id="rule-2", title="Review", description="Review the request"),
     ]
     matching = MagicMock(return_value=matching_rules)
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     start = AsyncMock(return_value=1)
     monkeypatch.setattr(
         "app.services.project_automations.project_automation_processor.matching_rules",
         matching,
     )
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
@@ -1073,7 +1173,7 @@ def test_status_update_requires_one_automation_before_entering_processing(
     ).json()
     assert unchanged["status"] == "inbox"
     assert unchanged["version"] == created["version"]
-    process.assert_not_awaited()
+    ingest.assert_not_awaited()
 
     selected_response = test_client.patch(
         f"/api/v1/loop-items/{created['id']}",
@@ -1088,8 +1188,8 @@ def test_status_update_requires_one_automation_before_entering_processing(
     assert selected_response.status_code == 200
     assert selected_response.json()["status"] == "pending"
     start.assert_not_awaited()
-    process.assert_awaited_once()
-    assert process.await_args.kwargs["automation_id"] == "rule-2"
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_creation_requires_one_automation_when_multiple_rules_match(
@@ -1149,10 +1249,11 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
         "app.services.project_automations.project_automation_processor.matching_rules",
         MagicMock(return_value=matching_rules),
     )
-    process = AsyncMock(return_value=1)
+    ingest = AsyncMock(return_value=1)
     monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
+        deliveries_endpoint.project_incoming_hook_service,
+        "ingest_internal",
+        ingest,
     )
 
     response = test_client.post(
@@ -1165,8 +1266,8 @@ def test_issue_creation_dispatches_only_the_selected_matching_automation(
     )
 
     assert response.status_code == 201
-    process.assert_awaited_once()
-    assert process.await_args.kwargs["automation_id"] == "rule-2"
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["automation_id"] == "rule-2"
 
 
 def test_issue_created_in_inbox_starts_its_existing_workflow(
@@ -1175,12 +1276,7 @@ def test_issue_created_in_inbox_starts_its_existing_workflow(
     delivery_project: CloudProject,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    process = AsyncMock(return_value=0)
     start = AsyncMock(return_value=1)
-    monkeypatch.setattr(
-        "app.services.project_automations.project_automation_processor.process",
-        process,
-    )
     monkeypatch.setattr(
         deliveries_endpoint.issue_workflow_start_service,
         "start",

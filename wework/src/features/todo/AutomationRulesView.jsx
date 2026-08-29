@@ -31,8 +31,10 @@ import {
   Zap,
 } from 'lucide-react'
 import { PopupMenu } from '@/components/common/MenuSelect'
+import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
+import { EventSubscriptionManager } from './EventSubscriptionManager'
 
 const ACTIVE_RUN_STATUSES = new Set([
   'pending',
@@ -276,7 +278,7 @@ const automationTemplates = [
     icon: 'development',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动开发'],
@@ -338,7 +340,7 @@ const automationTemplates = [
     icon: 'testing',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: ['自动测试'],
@@ -379,7 +381,7 @@ const automationTemplates = [
     icon: 'schedule',
     trigger: {
       type: 'schedule',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: [],
@@ -412,7 +414,7 @@ const automationTemplates = [
     icon: 'defect',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'status',
       event: 'created',
       tags: ['缺陷'],
@@ -471,6 +473,13 @@ function triggerPresentation(trigger) {
     return {
       label: `${frequency} ${schedule.time}`,
       detail: `按计划执行 · ${schedule.timezone}`,
+    }
+  }
+
+  if (trigger.source !== 'wework') {
+    return {
+      label: trigger.event,
+      detail: trigger.subscriptionId ? `事件订阅 ${trigger.subscriptionId}` : '选择事件订阅后运行',
     }
   }
 
@@ -540,7 +549,7 @@ function makeRule() {
     updatedAt: '尚未保存',
     trigger: {
       type: 'event',
-      source: 'issue',
+      source: 'wework',
       startMode: 'immediate',
       event: 'created',
       tags: [],
@@ -594,6 +603,9 @@ export function AutomationRulesView({
   error = '',
   canManage = true,
   projectTags = [],
+  eventSourceCatalog = [],
+  projectIncomingHookApi,
+  projectId,
   executionCatalog: initialExecutionCatalog = EMPTY_EXECUTION_CATALOG,
   onReload,
   onLoadExecutionCatalog,
@@ -980,6 +992,9 @@ export function AutomationRulesView({
           panelTab={panelTab}
           saving={saving}
           projectTags={projectTags}
+          eventSourceCatalog={eventSourceCatalog}
+          projectIncomingHookApi={projectIncomingHookApi}
+          projectId={projectId}
           executionCatalog={executionCatalog}
           onBack={() => setView('home')}
           onEditorSectionChange={changeEditorSection}
@@ -1524,6 +1539,9 @@ function WorkflowEditor({
   panelTab,
   saving,
   projectTags,
+  eventSourceCatalog,
+  projectIncomingHookApi,
+  projectId,
   executionCatalog,
   onBack,
   onSelectNode,
@@ -2043,6 +2061,9 @@ function WorkflowEditor({
                       <TriggerSettings
                         draft={draft}
                         projectTags={projectTags}
+                        eventSourceCatalog={eventSourceCatalog}
+                        projectIncomingHookApi={projectIncomingHookApi}
+                        projectId={projectId}
                         onChange={updateTrigger}
                         onRuleChange={updateRule}
                       />
@@ -2242,12 +2263,39 @@ function RunStatus({ status }) {
   )
 }
 
-function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
+function TriggerSettings({
+  draft,
+  projectTags,
+  eventSourceCatalog,
+  projectIncomingHookApi,
+  projectId,
+  onChange,
+  onRuleChange,
+}) {
+  const { t } = useTranslation('common')
   const trigger = draft.trigger
   const presentation = triggerPresentation(trigger)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
-
+  const triggerKind = trigger.type === 'schedule' ? 'schedule' : trigger.source
+  const selectedSource = eventSourceCatalog.find(source => source.sourceType === trigger.source)
+  const catalogWework = eventSourceCatalog.find(source => source.sourceType === 'wework')
+  const sourceTriggerOptions = [
+    catalogWework ?? { sourceType: 'wework', eventTypes: [], executionTargets: [] },
+    ...eventSourceCatalog.filter(
+      item => item.sourceType !== 'generic' && item.sourceType !== 'wework'
+    ),
+  ]
+  const sourceLabel = sourceType => {
+    const labels = {
+      schedule: t('todo.automation_trigger_schedule_label'),
+      wework: t('todo.automation_trigger_wework_label'),
+      github: t('todo.automation_trigger_github_label'),
+      gitlab: t('todo.automation_trigger_gitlab_label'),
+      generic: t('todo.automation_trigger_generic_label'),
+    }
+    return labels[sourceType] ?? sourceType
+  }
   const toggleTag = tag => {
     onChange(
       'tags',
@@ -2259,6 +2307,12 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
 
   const updateSchedule = (key, value) => {
     onChange('schedule', { ...trigger.schedule, [key]: value })
+  }
+
+  const handleSubscriptionChange = subscriptionId => {
+    onChange('subscriptionId', subscriptionId)
+    onChange('event', selectedSource?.eventTypes[0] ?? 'change_request.checks_failed')
+    onChange('executionTarget', selectedSource?.executionTargets[0] ?? 'continue_binding')
   }
 
   return (
@@ -2286,11 +2340,37 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
         </span>
         <select
           data-testid="automation-trigger-type"
-          value={trigger.type}
-          onChange={event => onChange('type', event.target.value)}
+          value={triggerKind}
+          onChange={event => {
+            const value = event.target.value
+            if (value === 'schedule') {
+              onChange('type', 'schedule')
+              return
+            }
+            const source = eventSourceCatalog.find(item => item.sourceType === value)
+            onChange('type', 'event')
+            onChange('source', value)
+            if (value === 'wework') {
+              onChange('subscriptionId', null)
+              onChange('event', trigger.startMode === 'status' ? 'status_changed' : 'created')
+              return
+            }
+            onChange('subscriptionId', null)
+            onChange('event', source?.eventTypes[0] ?? 'change_request.checks_failed')
+            onChange('executionTarget', source?.executionTargets[0] ?? 'continue_binding')
+          }}
         >
-          <option value="schedule">按计划执行</option>
-          <option value="event">Issue 触发</option>
+          <option value="schedule">{t('todo.automation_trigger_schedule_label')}</option>
+          {sourceTriggerOptions.map(item => (
+            <option key={item.sourceType} value={item.sourceType}>
+              {sourceLabel(item.sourceType)}
+            </option>
+          ))}
+          {trigger.source === 'generic' ? (
+            <option value="generic" disabled>
+              {t('todo.automation_trigger_generic_label')}
+            </option>
+          ) : null}
         </select>
       </label>
       {trigger.type === 'schedule' ? (
@@ -2359,6 +2439,74 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
               <option value="America/Los_Angeles">America/Los_Angeles</option>
               <option value="UTC">UTC</option>
             </select>
+          </label>
+        </section>
+      ) : trigger.source !== 'wework' ? (
+        <section className={automationClass('schedule-settings')}>
+          <EventSubscriptionManager
+            key={trigger.source}
+            api={projectIncomingHookApi}
+            projectId={projectId}
+            sourceType={trigger.source}
+            sourceLabel={sourceLabel}
+            catalog={selectedSource}
+            value={trigger.subscriptionId}
+            onChange={handleSubscriptionChange}
+          />
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>3</i>
+              {t('todo.automation_event_type')}
+            </span>
+            <select
+              data-testid="automation-external-event-type"
+              value={trigger.event}
+              onChange={event => onChange('event', event.target.value)}
+            >
+              {(selectedSource?.eventTypes ?? []).map(eventType => (
+                <option key={eventType} value={eventType}>
+                  {eventType}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={automationClass('panel-field')}>
+            <span>
+              <i className={automationClass('cascade-index')}>4</i>
+              {t('todo.automation_execution_target')}
+            </span>
+            <select
+              data-testid="automation-execution-target"
+              value={trigger.executionTarget ?? selectedSource?.executionTargets[0] ?? ''}
+              onChange={event => onChange('executionTarget', event.target.value)}
+            >
+              {(selectedSource?.executionTargets ?? []).map(target => (
+                <option key={target} value={target}>
+                  {target === 'continue_binding'
+                    ? t('todo.automation_continue_bound_session')
+                    : target === 'create_issue'
+                      ? t('todo.automation_create_issue')
+                      : t('todo.automation_existing_issue')}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={automationClass('panel-field')}>
+            <span>{t('todo.automation_target_branches')}</span>
+            <input
+              data-testid="automation-target-branches"
+              value={(trigger.targetBranches ?? []).join(', ')}
+              onChange={event =>
+                onChange(
+                  'targetBranches',
+                  event.target.value
+                    .split(',')
+                    .map(value => value.trim())
+                    .filter(Boolean)
+                )
+              }
+              placeholder="main, release"
+            />
           </label>
         </section>
       ) : (

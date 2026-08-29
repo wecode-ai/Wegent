@@ -193,6 +193,64 @@ const RULE = {
   updatedAt: '2026-08-11T00:00:00',
 }
 
+const EVENT_SOURCE_CATALOG = [
+  {
+    sourceType: 'github',
+    collectionModes: ['webhook', 'poll', 'hybrid'],
+    resourceTypes: ['repository'],
+    eventTypes: [
+      'change_request.checks_failed',
+      'change_request.merge_conflict',
+      'change_request.review_submitted',
+      'change_request.comment_created',
+    ],
+    executionTargets: ['continue_binding', 'create_issue'],
+    nameKey: 'event_sources.github.name',
+    descriptionKey: 'event_sources.github.description',
+  },
+  {
+    sourceType: 'gitlab',
+    collectionModes: ['webhook', 'poll', 'hybrid'],
+    resourceTypes: ['project'],
+    eventTypes: [
+      'change_request.checks_failed',
+      'change_request.merge_conflict',
+      'change_request.review_submitted',
+      'change_request.comment_created',
+    ],
+    executionTargets: ['continue_binding', 'create_issue'],
+    nameKey: 'event_sources.gitlab.name',
+    descriptionKey: 'event_sources.gitlab.description',
+  },
+]
+
+const EVENT_SUBSCRIPTION = {
+  id: 'subscription-1',
+  projectId: PROJECT_ID,
+  name: 'GitHub repository',
+  status: 'active',
+  sourceType: 'github',
+  collectionMode: 'webhook',
+  resource: {
+    resourceType: 'repository',
+    instanceUrl: 'https://github.com',
+    externalId: 'acme/app',
+    path: 'acme/app',
+    url: 'https://github.com/acme/app',
+    displayName: 'acme/app',
+  },
+  webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/subscription-1',
+  webhookSecret: 'e2e-signing-secret',
+  pollIntervalSeconds: null,
+  credentialRef: null,
+  health: { status: 'pending' },
+  lastEventAt: null,
+  nextPollAt: null,
+  version: 1,
+  createdAt: '2026-08-11T00:00:00',
+  updatedAt: '2026-08-11T00:00:00',
+}
+
 function json(response, status, body) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
   response.end(JSON.stringify(body))
@@ -306,6 +364,7 @@ function assertExecutionTruthContract(execution) {
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   const rules = [RULE]
+  const eventSubscriptions = []
   const runs = [
     {
       id: 'automation-run-failed',
@@ -2554,6 +2613,50 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       }
       if (
         request.method === 'GET' &&
+        url.pathname === '/api/v1/cloud-projects/event-sources/catalog'
+      ) {
+        json(response, 200, EVENT_SOURCE_CATALOG)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/incoming-hooks`
+      ) {
+        json(response, 200, eventSubscriptions)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/members`
+      ) {
+        json(response, 200, PROJECT_MEMBERS)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/loop-items`
+      ) {
+        json(response, 200, { items: [] })
+        return true
+      }
+      if (
+        request.method === 'POST' &&
+        url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/incoming-hooks`
+      ) {
+        const payload = await readJson(request)
+        const created = {
+          ...EVENT_SUBSCRIPTION,
+          ...payload,
+          version: 1,
+          created_at: '2026-08-11T00:00:00',
+          updated_at: '2026-08-11T00:00:00',
+        }
+        eventSubscriptions.push(created)
+        json(response, 201, created)
+        return true
+      }
+      if (
+        request.method === 'GET' &&
         url.pathname === `/api/v1/cloud-projects/${PROJECT_ID}/automations`
       ) {
         json(response, 200, rules)
@@ -3924,6 +4027,81 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(createdGraphNodes?.[1].kind, 'dynamic')
       assert.equal(createdGraphNodes?.[1].subgraph.nodes.length, 1)
+      await control.command('click', '[data-testid="automation-editor-back"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-create-rule"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('click', '[data-testid="automation-create-rule"]', {
+        visible: true,
+      })
+      await control.command('waitFor', '[data-testid="automation-rule-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('select', '[data-testid="automation-trigger-type"]', {
+        value: 'github',
+      })
+      await control.command('waitFor', '[data-testid="automation-event-subscription"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-create-subscription"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', '[data-testid="event-subscription-editor"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      await control.command('fill', '[data-testid="event-subscription-name"]', {
+        value: 'GitHub repository',
+      })
+      await control.command('fill', '[data-testid="event-subscription-resource-url"]', {
+        value: 'https://github.com/acme/app',
+      })
+      await control.command('click', '[data-testid="event-subscription-save"]')
+      await control.command('waitFor', '[data-testid="automation-copy-webhook-url"]', {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-event-subscription"]'),
+        'subscription-1',
+        'The external automation did not select the created event subscription'
+      )
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-external-event-type"]'),
+        'change_request.checks_failed',
+        'The external automation did not default to the catalog event type'
+      )
+      assert.equal(
+        await control.command('getValue', '[data-testid="automation-execution-target"]'),
+        'continue_binding',
+        'The external automation did not default to the catalog execution target'
+      )
+      await control.command('click', '[data-testid="automation-editor-section-menu"]')
+      await control.command('fill', '[aria-label="自动化名称"]', {
+        value: '外部检查失败自动创建 Issue',
+      })
+      await control.command('fill', '[data-testid="automation-rule-description"]', {
+        value: 'GitHub 检查失败时创建 Issue。',
+      })
+      await control.command('clickWhenEnabled', '[data-testid="automation-save"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const externalAutomation = createdPayloads.find(
+        payload => payload.name === '外部检查失败自动创建 Issue'
+      )
+      assert.ok(externalAutomation, 'The external event automation was not saved')
+      assert.equal(externalAutomation.triggerType, 'event')
+      assert.equal(externalAutomation.eventType, 'change_request.checks_failed')
+      assert.equal(externalAutomation.eventConfig.source_type, 'github')
+      assert.equal(externalAutomation.eventConfig.subscription_id, 'subscription-1')
+      assert.equal(externalAutomation.eventConfig.execution_target, 'continue_binding')
+      assert.deepEqual(externalAutomation.eventConfig.target_branches, [])
+      await captureScreenshot(control, 'project-external-event-automation.png')
       await control.command('click', '[data-testid="automation-editor-section-menu"]', {
         visible: true,
       })

@@ -31,6 +31,15 @@ AutomationRuntimeSource = Literal[
     "issue_creator",
     "runtime_user",
 ]
+AutomationEventType = Literal[
+    "task.created",
+    "task.status_changed",
+    "change_request.checks_failed",
+    "change_request.merge_conflict",
+    "change_request.review_submitted",
+    "change_request.comment_created",
+    "document.changed",
+]
 
 
 class ProjectAutomationManagerAssign(ProjectChatSchema):
@@ -92,7 +101,7 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
-    event_type: Literal["task.created", "task.status_changed"] | None = None
+    event_type: AutomationEventType | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
@@ -156,7 +165,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created", "task.status_changed"] | None = None
+    event_type: AutomationEventType | None = None
     event_config: dict[str, Any] | None = None
     assignment_mode: AutomationAssignmentMode | None = None
     manager_type: AutomationManagerType | None = None
@@ -216,12 +225,10 @@ class ProjectAutomationView(ProjectChatSchema):
     name: str
     prompt: str
     trigger_type: Literal["schedule", "event", "workflow"]
-    event_type: Literal["task.created", "task.status_changed"] | None
+    event_type: AutomationEventType | None
     event_config: dict[str, Any]
     assignment_mode: AutomationAssignmentMode
     manager_type: AutomationManagerType | None
-    webhook_event_id: str | None
-    webhook_secret: str | None = None
     cron_expression: str | None
     timezone: str
     agent_id: str | None
@@ -277,5 +284,5 @@ class ProjectAutomationRunView(ProjectChatSchema):
     completed_at: datetime | None = None
     retryable: bool = False
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created", "task.status_changed"] | None = None
+    event_type: AutomationEventType | None = None
     event_config: dict[str, Any] | None = None

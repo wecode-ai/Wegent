@@ -225,6 +225,14 @@ const recipes: Record<string, string> = {
     'flex items-center gap-2 text-sm text-text-secondary [&_input]:size-4 [&_input]:accent-focus',
   'panel-help':
     'flex items-start gap-2 border-t border-border/60 pt-4 text-xs text-text-muted [&_svg]:mt-0.5 [&_svg]:shrink-0 [&_p]:leading-relaxed',
+  'subscription-resource':
+    'grid gap-3 rounded-xl border border-border bg-muted/30 p-3 [&_strong]:text-sm [&_strong]:font-medium [&_strong]:text-text-primary [&_span]:text-xs [&_span]:text-text-muted [&_small]:text-xs [&_small]:text-text-muted [&_code]:block [&_code]:break-all [&_code]:text-xs [&_code]:text-text-secondary',
+  'subscription-resource-title':
+    'flex items-center justify-between gap-3 [&>div]:grid [&>div]:gap-0.5 [&_strong]:text-sm [&_strong]:font-medium [&_span]:text-xs [&_span]:text-text-muted',
+  'subscription-resource-url':
+    'grid gap-1.5 [&>span]:text-xs [&>span]:text-text-muted [&_code]:text-xs [&_code]:text-text-secondary',
+  'subscription-resource-copy':
+    'inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2 text-xs text-text-secondary shadow-sm hover:text-text-primary',
   'delete-step':
     'inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-destructive/30 text-sm text-destructive transition-colors hover:bg-destructive/10',
   'rule-runs-view':

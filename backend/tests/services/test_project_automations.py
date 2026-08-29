@@ -646,7 +646,10 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
 
     rule = test_db.get(ProjectAutomationRule, created["id"])
     assert rule is not None
-    assert rule.metadata_json["event_config"] == {"transition": "entered_processing"}
+    assert rule.metadata_json["event_config"] == {
+        "transition": "entered_processing",
+        "execution_target": "existing_issue",
+    }
 
     project_automation_service.update(
         test_db,
@@ -663,7 +666,10 @@ def test_status_rule_create_and_update_persist_only_canonical_transition(
     )
 
     test_db.refresh(rule)
-    assert rule.metadata_json["event_config"] == {"transition": "entered_processing"}
+    assert rule.metadata_json["event_config"] == {
+        "transition": "entered_processing",
+        "execution_target": "existing_issue",
+    }
 
 
 @pytest.mark.asyncio

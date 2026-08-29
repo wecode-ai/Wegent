@@ -9,6 +9,13 @@ import logging
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.services.project_automations import project_automation_service
+from app.services.project_event_polling_service import (
+    check_due_project_event_subscriptions_sync,
+)
+from app.services.project_incoming_hooks import (
+    check_pending_project_incoming_events_sync,
+    process_project_incoming_event_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +37,27 @@ def check_due_project_automations_sync() -> int:
 )
 def check_due_project_automations() -> int:
     return check_due_project_automations_sync()
+
+
+@celery_app.task(
+    name="app.tasks.project_automation_tasks.process_project_incoming_event"
+)
+def process_project_incoming_event(*, event_id: str) -> int:
+    return process_project_incoming_event_sync(event_id)
+
+
+@celery_app.task(
+    name="app.tasks.project_automation_tasks.check_pending_project_incoming_events"
+)
+def check_pending_project_incoming_events() -> int:
+    return check_pending_project_incoming_events_sync()
+
+
+@celery_app.task(
+    name="app.tasks.project_automation_tasks.check_due_project_event_subscriptions"
+)
+def check_due_project_event_subscriptions() -> int:
+    return check_due_project_event_subscriptions_sync()
 
 
 @celery_app.task(

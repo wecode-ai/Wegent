@@ -49,7 +49,6 @@ import type {
   CloudProject,
   CloudProjectMember,
   DeliveryFulfillment,
-  PullRequestAutoRepairStatus,
 } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
@@ -89,16 +88,8 @@ import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProvid
 import {
   getChangeRequestMonitor,
   runtimeTaskChangeRequestTarget,
-  useTaskChangeRequest,
-  type ChangeRequestMonitor,
 } from '@/features/workbench/changeRequestMonitor'
-import {
-  autoRepairStatus,
-  buildChangeRequestRepairPrompt,
-  changeRequestRepairEventKey,
-  claimChangeRequestAutoRepair,
-  completeChangeRequestAutoRepair,
-} from '@/features/workbench/changeRequestStatus'
+import { buildChangeRequestRepairPrompt } from '@/features/workbench/changeRequestStatus'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import {
   resolveAutomaticModel,
@@ -447,46 +438,6 @@ type BoardReadResult = {
   agents?: ProjectChatAgent[]
 }
 
-function ProjectChangeRequestAutoRepairObserver({
-  itemId,
-  binding,
-  monitor,
-  statuses,
-  onRepair,
-}: {
-  itemId: string
-  binding: CloudTodoBoardTaskBinding
-  monitor: ChangeRequestMonitor
-  statuses: PullRequestAutoRepairStatus[]
-  onRepair: (
-    binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
-  ) => Promise<void>
-}) {
-  const snapshot = useTaskChangeRequest(monitor, binding.changeRequestTarget ?? null)
-
-  useEffect(() => {
-    const changeRequest = snapshot?.changeRequest
-    const status = changeRequest ? autoRepairStatus(changeRequest) : null
-    if (!snapshot || !changeRequest || !status || !statuses.includes(status)) return
-    const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(changeRequest)}`
-    if (!claimChangeRequestAutoRepair(eventKey)) return
-    queueMicrotask(() => {
-      void onRepair(binding, snapshot)
-        .then(() => completeChangeRequestAutoRepair(eventKey, true))
-        .catch(error => {
-          completeChangeRequestAutoRepair(eventKey, false)
-          console.error('[Wework change requests] Automatic repair failed', {
-            itemId,
-            taskId: binding.task_id,
-            error,
-          })
-        })
-    })
-  }, [binding, itemId, onRepair, snapshot, statuses])
-
-  return null
-}
 type SelectedTaskBinding = Pick<
   LoopItemTaskBinding,
   'id' | 'device_id' | 'task_id' | 'task_title'
@@ -3524,23 +3475,6 @@ export function CloudTodoWorkspace({
       data-embedded={embedded}
       data-sidebar-collapsed={embedded || sidebarCollapsed}
     >
-      {selectedProjectKey === itemTaskBindingsProjectKey &&
-      selectedProject?.pull_request_automation?.enabled &&
-      changeRequestMonitor
-        ? Object.entries(boardTaskBindings).map(([itemId, bindings]) => {
-            const binding = bindings.find(candidate => candidate.running) ?? bindings[0]
-            return binding?.changeRequestTarget ? (
-              <ProjectChangeRequestAutoRepairObserver
-                key={`${itemId}:${binding.device_id}:${binding.task_id}`}
-                itemId={itemId}
-                binding={binding}
-                monitor={changeRequestMonitor}
-                statuses={selectedProject.pull_request_automation!.statuses}
-                onRepair={continueChangeRequestRepair}
-              />
-            ) : null
-          })
-        : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {!embedded ? (
           <aside
@@ -4192,6 +4126,7 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   projectChatAgentApi={selectedProjectAgentApi}
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
+                  projectIncomingHookApi={selectedProjectServices?.projectIncomingHookApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
                   deviceApi={services.deviceApi}
@@ -4228,7 +4163,6 @@ export function CloudTodoWorkspace({
                   api={selectedProjectApi}
                   aitableApi={aitableApi}
                   dwsApi={services.dwsApi}
-                  incomingHookApi={selectedProjectServices?.projectIncomingHookApi}
                   project={selectedProject}
                   boardCardDisplay={boardCardDisplay}
                   onProjectUpdated={updated => replaceProject(selectedProject, updated)}

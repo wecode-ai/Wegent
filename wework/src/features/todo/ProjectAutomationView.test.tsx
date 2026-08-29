@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { CloudProject } from '@/api/deliveries'
 import type { ProjectAutomationRule, ProjectAutomationRun } from '@/api/projectAutomations'
+import { createProjectIncomingHookApi } from '@/api/projectIncomingHooks'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { ProjectAutomationView } from './ProjectAutomationView'
 
@@ -116,8 +117,6 @@ const rule: ProjectAutomationRule = {
       ],
     },
   },
-  webhookEventId: 'event-1',
-  webhookSecret: null,
   cronExpression: null,
   timezone: 'Asia/Shanghai',
   assignmentMode: 'manual',
@@ -191,11 +190,13 @@ function renderView({
   listedRules = [rule],
   listedRuns = [run],
   onProjectUpdated,
+  incomingHookApi,
 }: {
   viewProject?: CloudProject
   listedRules?: ProjectAutomationRule[]
   listedRuns?: ProjectAutomationRun[]
   onProjectUpdated?: (project: CloudProject) => void
+  incomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
 } = {}) {
   const projectAutomationApi = {
     list: vi.fn().mockResolvedValue(listedRules),
@@ -260,6 +261,7 @@ function renderView({
       api={{} as NonNullable<WorkbenchServices['deliveryApi']>}
       project={viewProject}
       projectAutomationApi={projectAutomationApi}
+      projectIncomingHookApi={incomingHookApi}
       deviceApi={deviceApi}
       modelApi={modelApi}
       pluginApi={pluginApi}
@@ -1111,5 +1113,179 @@ describe('ProjectAutomationView', () => {
     await waitFor(() => expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1))
     expect(projectAutomationApi.listRuns).toHaveBeenCalledTimes(1)
     expect(projectAutomationApi.listRuns).toHaveBeenCalledWith('21', 'root-rule')
+  })
+
+  test('offers source-specific triggers and shows the subscription resource inline', async () => {
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'gitlab',
+          collectionModes: ['webhook', 'poll', 'hybrid'],
+          resourceTypes: ['project'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding', 'create_issue'],
+          nameKey: 'event_sources.gitlab.name',
+          descriptionKey: 'event_sources.gitlab.description',
+        },
+        {
+          sourceType: 'wework',
+          collectionModes: ['internal'],
+          resourceTypes: ['project_space'],
+          eventTypes: ['task.created', 'task.status_changed'],
+          executionTargets: ['existing_issue'],
+          nameKey: 'event_sources.wework.name',
+          descriptionKey: 'event_sources.wework.description',
+        },
+      ]),
+      list: vi.fn().mockResolvedValue([
+        {
+          id: 'sub-1',
+          projectId: '11',
+          name: 'acme/app',
+          status: 'active',
+          sourceType: 'github',
+          collectionMode: 'webhook',
+          resource: {
+            resourceType: 'repository',
+            url: 'https://github.com/acme/app',
+            displayName: 'acme/app',
+          },
+          webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-1',
+          webhookSecret: null,
+          pollIntervalSeconds: null,
+          credentialRef: null,
+          health: {},
+          lastEventAt: null,
+          nextPollAt: null,
+          version: 1,
+          createdAt: '2026-08-28T00:00:00Z',
+          updatedAt: '2026-08-28T00:00:00Z',
+        },
+      ]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+
+    const triggerType = screen.getByTestId('automation-trigger-type')
+    const optionValues = Array.from(triggerType.querySelectorAll('option')).map(
+      option => option.value
+    )
+    expect(optionValues).toEqual(expect.arrayContaining(['schedule', 'wework', 'github', 'gitlab']))
+
+    fireEvent.change(triggerType, {
+      target: { value: 'github' },
+    })
+
+    await waitFor(() => expect(triggerType).toHaveValue('github'))
+    await waitFor(() =>
+      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-1')
+    )
+    expect(screen.getAllByText('acme/app').length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-1').length
+    ).toBeGreaterThan(0)
+    expect(screen.getByTestId('automation-copy-webhook-url')).toBeInTheDocument()
+  })
+
+  test('creates a subscription inline inside the trigger settings', async () => {
+    let created = false
+    const createdHook = {
+      id: 'sub-new',
+      projectId: '11',
+      name: 'GitHub repository',
+      status: 'active',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: {
+        resourceType: 'repository',
+        url: 'https://github.com/acme/app',
+        displayName: 'acme/app',
+      },
+      webhookUrl: 'https://cloud.example/api/v1/incoming-hooks/sub-new',
+      webhookSecret: 'signing-secret',
+      pollIntervalSeconds: null,
+      credentialRef: null,
+      health: {},
+      lastEventAt: null,
+      nextPollAt: null,
+      version: 1,
+      createdAt: '2026-08-28T00:00:00Z',
+      updatedAt: '2026-08-28T00:00:00Z',
+    }
+    const incomingHookApi = {
+      catalog: vi.fn().mockResolvedValue([
+        {
+          sourceType: 'github',
+          collectionModes: ['webhook'],
+          resourceTypes: ['repository'],
+          eventTypes: ['change_request.checks_failed'],
+          executionTargets: ['continue_binding'],
+          nameKey: 'event_sources.github.name',
+          descriptionKey: 'event_sources.github.description',
+        },
+        {
+          sourceType: 'wework',
+          collectionModes: ['internal'],
+          resourceTypes: ['project_space'],
+          eventTypes: ['task.created', 'task.status_changed'],
+          executionTargets: ['existing_issue'],
+          nameKey: 'event_sources.wework.name',
+          descriptionKey: 'event_sources.wework.description',
+        },
+      ]),
+      list: vi.fn().mockImplementation(() => Promise.resolve(created ? [createdHook] : [])),
+      create: vi.fn().mockImplementation(() => {
+        created = true
+        return Promise.resolve(createdHook)
+      }),
+      update: vi.fn(),
+      rotate: vi.fn(),
+      listEvents: vi.fn().mockResolvedValue([]),
+    } as unknown as ReturnType<typeof createProjectIncomingHookApi>
+
+    renderView({ incomingHookApi })
+    await openRuleEditor()
+
+    fireEvent.change(screen.getByTestId('automation-trigger-type'), {
+      target: { value: 'github' },
+    })
+    await waitFor(() => expect(screen.getByTestId('automation-trigger-type')).toHaveValue('github'))
+
+    fireEvent.click(screen.getByTestId('automation-create-subscription'))
+    fireEvent.change(screen.getByTestId('event-subscription-name'), {
+      target: { value: 'GitHub repository' },
+    })
+    fireEvent.change(screen.getByTestId('event-subscription-resource-url'), {
+      target: { value: 'https://github.com/acme/app' },
+    })
+    fireEvent.click(screen.getByTestId('event-subscription-save'))
+
+    await waitFor(() =>
+      expect(screen.getByTestId('automation-event-subscription')).toHaveValue('sub-new')
+    )
+    expect(incomingHookApi.create).toHaveBeenCalledWith('11', {
+      name: 'GitHub repository',
+      sourceType: 'github',
+      collectionMode: 'webhook',
+      resource: {
+        resourceType: 'repository',
+        url: 'https://github.com/acme/app',
+      },
+      pollIntervalSeconds: null,
+      credentialRef: null,
+    })
+    expect(
+      screen.getAllByText('https://cloud.example/api/v1/incoming-hooks/sub-new').length
+    ).toBeGreaterThan(0)
   })
 })

@@ -411,10 +411,8 @@ async def create_board_item(
         created = loop_item_provider_router.create(
             db, project, user, LoopItemCreate.model_validate(item)
         )
-        from app.services.project_automations import (
-            ProjectAutomationEvent,
-            project_automation_processor,
-        )
+        from app.services.project_automation_domain import ProjectAutomationEvent
+        from app.services.project_incoming_hooks import project_incoming_hook_service
 
         response = LoopItemResponse.model_validate(created.values)
         planning_run = None
@@ -429,7 +427,7 @@ async def create_board_item(
                 user_id=user.id,
             )
         try:
-            await project_automation_processor.process(
+            await project_incoming_hook_service.ingest_internal(
                 db,
                 ProjectAutomationEvent(
                     event_type="task.created",

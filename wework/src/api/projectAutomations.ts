@@ -13,16 +13,23 @@ export type ProjectAutomationRunStatus =
   | 'skipped'
   | 'cancelled'
 
+export type ProjectAutomationEventType =
+  | 'task.created'
+  | 'task.status_changed'
+  | 'change_request.checks_failed'
+  | 'change_request.merge_conflict'
+  | 'change_request.review_submitted'
+  | 'change_request.comment_created'
+  | 'document.changed'
+
 interface ProjectAutomationRuleBase {
   id: string
   projectId: string
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | 'task.status_changed' | null
+  eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
-  webhookEventId: string | null
-  webhookSecret: string | null
   cronExpression: string | null
   timezone: string
   agentName: string
@@ -73,7 +80,7 @@ interface ProjectAutomationInputBase {
   name: string
   prompt: string
   triggerType: 'schedule' | 'event' | 'workflow'
-  eventType: 'task.created' | 'task.status_changed' | null
+  eventType: ProjectAutomationEventType | null
   eventConfig: Record<string, unknown>
   cronExpression: string | null
   timezone: string
@@ -267,12 +274,6 @@ export function createProjectAutomationApi(client: HttpClient) {
     delete(projectId: string, automationId: string) {
       return client.delete<ProjectAutomationDeleteResult>(
         `/v1/cloud-projects/${projectId}/automations/${automationId}`
-      )
-    },
-    rotateWebhookSecret(projectId: string, automationId: string) {
-      return client.post<ProjectAutomationRule>(
-        `/v1/cloud-projects/${projectId}/automations/${automationId}/rotate-webhook-secret`,
-        {}
       )
     },
     runNow(projectId: string, automationId: string) {
