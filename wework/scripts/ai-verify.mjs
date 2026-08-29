@@ -33,7 +33,6 @@ const corsHeaders = {
 export const AI_VERIFY_ACTIONS = Object.freeze({
   capture: 'capture',
   'capture-browser': 'captureEmbeddedBrowser',
-  'browser-evaluate': 'evaluateEmbeddedBrowser',
   'capture-popout': 'capturePopoutWindow',
   'capture-workspace': 'captureWorkspaceWindow',
   snapshot: 'snapshot',
@@ -82,7 +81,6 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
 const SELECTOR_OPTIONAL_COMMANDS = new Set([
   'capture',
   'capture-browser',
-  'browser-evaluate',
   'capture-popout',
   'capture-workspace',
   'snapshot',
@@ -372,6 +370,11 @@ export async function buildSourceRuntimeEnvironment(
     WEWORK_COMPONENT_RESOURCES_ROOT: join(electronDir, 'resources'),
     WEWORK_CORE_PLUGIN_ROOT: join(electronDir, 'resources', 'wework-core-plugins'),
     WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
+    WEWORK_SYSTEM_RECORD_REPLAY_HELPER: join(
+      electronDir,
+      'scripts',
+      'system-record-replay-fixture.mjs'
+    ),
   }
 }
 

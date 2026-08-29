@@ -45,6 +45,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { SystemRecordReplay } from './host/system-record-replay.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import {
   WorkbenchTabController,
@@ -997,6 +998,15 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  const systemRecordReplay = new SystemRecordReplay(
+    app.getPath('userData'),
+    process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim() ||
+      join(
+        app.isPackaged ? process.resourcesPath : developmentResourcesRoot,
+        'bin',
+        'wework-system-record-replay'
+      )
+  )
   const savedPreferences = await preferences.read()
   await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
@@ -1041,6 +1051,7 @@ async function configureDesktopRuntime(): Promise<void> {
           appUpdates,
           feedback,
           plugins: workbenchPlugins,
+          systemRecordReplay,
         },
         {
           captureTarget: windowLabel =>

@@ -17,6 +17,7 @@ export const DESKTOP_CHECKPOINTS = [
   'model-routing',
   'permission-modes',
   'computer-use',
+  'system-record-replay',
   'task-status-sync',
   'core-task-flow',
   'task-attachments',

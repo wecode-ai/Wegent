@@ -24,6 +24,7 @@ import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
+import type { SystemRecordReplay } from './system-record-replay.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
@@ -52,6 +53,7 @@ export interface ElectronDesktopServices {
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
   coreDshPlugins: () => CoreDshPluginService | null
+  systemRecordReplay: SystemRecordReplay
 }
 
 export interface CoreDshPluginService {
@@ -221,19 +223,6 @@ export function createElectronCapabilityRouter(
     browser.navigate(stringParam(params, 'label'), stringParam(params, 'url'))
   )
   router.register('browser.reload', params => browser.reload(stringParam(params, 'label')))
-  router.register('browser.recordReplay.list', () => browser.listRecordings())
-  router.register('browser.recordReplay.status', () => browser.recordingStatus())
-  router.register('browser.recordReplay.start', params =>
-    browser.startRecording(stringParam(params, 'title'), stringParam(params, 'label'))
-  )
-  router.register('browser.recordReplay.stop', () => browser.stopRecording())
-  router.register('browser.recordReplay.delete', params =>
-    browser.deleteRecording(stringParam(params, 'id'))
-  )
-  router.register('browser.recordReplay.replay', params =>
-    browser.replayRecording(stringParam(params, 'id'), stringParam(params, 'label'))
-  )
-  router.register('browser.recordReplay.cancel', () => browser.cancelReplay())
   router.register('browser.goBack', params => browser.goBack(stringParam(params, 'label')))
   router.register('browser.goForward', params => browser.goForward(stringParam(params, 'label')))
   registerBrowserHistoryCapabilities(router, browser)
@@ -329,6 +318,27 @@ export function createElectronCapabilityRouter(
     computerUse.openScreenRecordingSettings()
   )
   router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
+  router.register('systemRecordReplay.list', () => desktopServices.systemRecordReplay.list())
+  router.register('systemRecordReplay.status', () => desktopServices.systemRecordReplay.status())
+  router.register('systemRecordReplay.requestPermissions', () =>
+    desktopServices.systemRecordReplay.requestPermissions()
+  )
+  router.register('systemRecordReplay.openPermissionSettings', params => {
+    const permission = stringParam(params, 'permission')
+    const pane = permission === 'inputMonitoring' ? 'Privacy_ListenEvent' : 'Privacy_Accessibility'
+    return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`)
+  })
+  router.register('systemRecordReplay.start', params =>
+    desktopServices.systemRecordReplay.start(stringParam(params, 'title'))
+  )
+  router.register('systemRecordReplay.stop', () => desktopServices.systemRecordReplay.stop())
+  router.register('systemRecordReplay.delete', params =>
+    desktopServices.systemRecordReplay.remove(stringParam(params, 'id'))
+  )
+  router.register('systemRecordReplay.replay', params =>
+    desktopServices.systemRecordReplay.replay(stringParam(params, 'id'))
+  )
+  router.register('systemRecordReplay.cancel', () => desktopServices.systemRecordReplay.cancel())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
       const logDirectory = app.getPath('logs')

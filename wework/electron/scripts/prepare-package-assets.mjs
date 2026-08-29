@@ -42,6 +42,7 @@ const [executorPath] = await Promise.all([
 
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
+await buildSystemRecordReplayHelper()
 const runtimeCatalog = JSON.parse(
   await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
 )
@@ -176,6 +177,15 @@ function resolveCodexTarget() {
   }[`${process.platform}-${process.arch}`]
   if (!target) throw new Error(`Unsupported Codex target: ${process.platform}-${process.arch}`)
   return target
+}
+
+async function buildSystemRecordReplayHelper() {
+  if (process.platform !== 'darwin') return
+  await run(
+    process.execPath,
+    [join(electronRoot, 'scripts', 'build-system-record-replay-helper.mjs')],
+    electronRoot
+  )
 }
 
 function pluginTarget(directory) {
