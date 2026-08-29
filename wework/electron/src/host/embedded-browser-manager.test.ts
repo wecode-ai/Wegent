@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WebContents } from 'electron'
-import { EmbeddedBrowserManager } from './embedded-browser-manager.js'
+import { EmbeddedBrowserManager, type BrowserHostEvent } from './embedded-browser-manager.js'
 
 const electronMocks = vi.hoisted(() => ({
   browserSession: {
@@ -113,7 +113,8 @@ describe('EmbeddedBrowserManager lifecycle', () => {
 
   test('routes a popup to the current logical label and native browser identity', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
-    const manager = new EmbeddedBrowserManager(directory)
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
     const contents = new FakeWebContents()
     contents.loadURL.mockImplementation(async url => {
       contents.commitUrl(url)
@@ -136,8 +137,7 @@ describe('EmbeddedBrowserManager lifecycle', () => {
       action: 'deny',
     })
 
-    const events = manager.readEvents(0)
-    expect(events.events).toContainEqual(
+    expect(events).toContainEqual(
       expect.objectContaining({
         type: 'popup',
         payload: expect.objectContaining({
@@ -148,6 +148,54 @@ describe('EmbeddedBrowserManager lifecycle', () => {
         }),
       })
     )
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('ignores page state events from a replaced browser with the same label', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const previousContents = new FakeWebContents()
+    previousContents.loadURL.mockImplementation(async url => {
+      previousContents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', previousContents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://previous.example/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    manager.close('workspace-browser')
+    const currentContents = new FakeWebContents()
+    currentContents.loadURL.mockImplementation(async url => {
+      currentContents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', currentContents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://current.example/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    events.length = 0
+
+    previousContents.emit('did-stop-loading')
+    expect(events).toEqual([])
+
+    currentContents.emit('did-stop-loading')
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'page-state',
+        payload: expect.objectContaining({
+          label: 'workspace-browser',
+          url: 'https://current.example/',
+        }),
+      }),
+    ])
     await rm(directory, { recursive: true, force: true })
   })
 

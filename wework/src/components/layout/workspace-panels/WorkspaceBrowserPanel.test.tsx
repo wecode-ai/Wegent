@@ -426,6 +426,102 @@ describe('WorkspaceBrowserPanel', () => {
     expect(input).toHaveValue('file:///Users/mowei/')
   })
 
+  test('keeps annotation mode when a delayed page state is no longer authoritative', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'https://example.com/' } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByTestId('workspace-browser-native-view')
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+    await screen.findByTestId('workspace-browser-annotation-close-button')
+
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockClear()
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Previous page',
+        url: 'https://previous.example/',
+        isLoading: false,
+      })
+    })
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+    expect(input).toHaveValue('https://example.com/')
+  })
+
+  test('keeps annotation mode while the current page still owns the annotation session', async () => {
+    let handlePageStateChange!: (pageState: {
+      label: string
+      nativeLabel: string
+      title: string | null
+      url: string | null
+      isLoading: boolean
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    embeddedBrowserMocks.evalEmbeddedBrowserJson.mockImplementation(expression => {
+      if (String(expression).includes('annotation?.scope?.browserTabId')) {
+        return Promise.resolve(true)
+      }
+      return Promise.resolve(annotationSnapshot([]))
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockResolvedValue({
+      nativeLabel: 'workspace-browser-native-1',
+      title: 'Previous page',
+      url: 'https://previous.example/',
+      isLoading: false,
+    })
+    mockBrowserHostRect()
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'https://example.com/' } })
+    fireEvent.submit(input.closest('form')!)
+    await screen.findByTestId('workspace-browser-native-view')
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+    await screen.findByTestId('workspace-browser-annotation-close-button')
+
+    embeddedBrowserMocks.readEmbeddedBrowserPageState.mockClear()
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Previous page',
+        url: 'https://previous.example/',
+        isLoading: false,
+      })
+    })
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.evalEmbeddedBrowserJson).toHaveBeenCalledWith(
+        expect.stringContaining('annotation?.scope?.browserTabId'),
+        'workspace-browser'
+      )
+    )
+    expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).not.toHaveBeenCalled()
+    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+    expect(input).toHaveValue('https://example.com/')
+  })
+
   test('reports native page loading for the owning browser tab', () => {
     let handlePageStateChange!: (pageState: {
       label: string

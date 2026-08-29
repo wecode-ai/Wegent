@@ -1,4 +1,4 @@
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
 
@@ -148,20 +148,12 @@ interface ElectronBrowserHostEvent {
   payload: Record<string, unknown>
 }
 
-interface ElectronBrowserHostEventBatch {
-  events: ElectronBrowserHostEvent[]
-  latestSequence: number
-  historyLost: boolean
-}
-
 type ElectronBrowserEventHandler = (event: Record<string, unknown>) => void
 const electronBrowserEventHandlers = new Map<
   ElectronBrowserHostEvent['type'],
   Set<ElectronBrowserEventHandler>
 >()
-let electronBrowserEventAfter = 0
-let electronBrowserEventPolling = false
-let electronBrowserEventTimer: number | null = null
+let electronBrowserEventUnlisten: UnlistenFn | null = null
 
 export function listenEmbeddedBrowserInvalidTlsCertificates(
   handler: (event: EmbeddedBrowserInvalidTlsCertificateEvent) => void
@@ -238,40 +230,27 @@ function listenElectronBrowserEvents<EventPayload>(
   const handlers = electronBrowserEventHandlers.get(type) ?? new Set<ElectronBrowserEventHandler>()
   handlers.add(wrappedHandler)
   electronBrowserEventHandlers.set(type, handlers)
-  startElectronBrowserEventPolling()
+  startElectronBrowserEventListening()
 
   return Promise.resolve(() => {
     const currentHandlers = electronBrowserEventHandlers.get(type)
     currentHandlers?.delete(wrappedHandler)
     if (currentHandlers?.size === 0) electronBrowserEventHandlers.delete(type)
-    if (electronBrowserEventHandlers.size > 0 || electronBrowserEventTimer === null) return
-    window.clearInterval(electronBrowserEventTimer)
-    electronBrowserEventTimer = null
+    if (electronBrowserEventHandlers.size > 0 || electronBrowserEventUnlisten === null) return
+    electronBrowserEventUnlisten()
+    electronBrowserEventUnlisten = null
   })
 }
 
-function startElectronBrowserEventPolling(): void {
-  if (electronBrowserEventTimer !== null) return
-  void pollElectronBrowserEvents()
-  electronBrowserEventTimer = window.setInterval(() => void pollElectronBrowserEvents(), 250)
-}
-
-async function pollElectronBrowserEvents(): Promise<void> {
-  if (electronBrowserEventPolling || electronBrowserEventHandlers.size === 0) return
-  electronBrowserEventPolling = true
-  try {
-    const batch = await invokeDesktopHost<ElectronBrowserHostEventBatch>('browser.events', {
-      after: electronBrowserEventAfter,
-    })
-    for (const event of batch.events) {
-      electronBrowserEventHandlers.get(event.type)?.forEach(handler => handler(event.payload))
-    }
-    electronBrowserEventAfter = batch.latestSequence
-  } catch (error) {
-    console.error('[Wework] Failed to poll Electron browser events', error)
-  } finally {
-    electronBrowserEventPolling = false
-  }
+function startElectronBrowserEventListening(): void {
+  if (electronBrowserEventUnlisten !== null) return
+  electronBrowserEventUnlisten = subscribeDesktopHostEvents(event => {
+    if (event.type !== 'browser.event') return
+    const browserEvent = event.payload as unknown as ElectronBrowserHostEvent
+    electronBrowserEventHandlers
+      .get(browserEvent.type)
+      ?.forEach(handler => handler(browserEvent.payload))
+  })
 }
 
 export function listenEmbeddedBrowserCloseRequests(

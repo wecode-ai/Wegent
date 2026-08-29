@@ -59,6 +59,7 @@ import {
   type EmbeddedBrowserNavigationError,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
+  type EmbeddedBrowserPageState,
 } from '@/lib/embedded-browser'
 import {
   readEmbeddedBrowserDownloadSnapshot,
@@ -730,7 +731,42 @@ export function WorkspaceBrowserTabPanel({
   )
 
   useEffect(() => {
-    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+    async function reconcilePageState(expectedNativeLabel: string): Promise<void> {
+      const annotationGeneration = annotationRequestGenerationRef.current
+      let annotationSessionActive = false
+      try {
+        annotationSessionActive = await evalEmbeddedBrowserJson<boolean>(
+          `(() => {
+            const annotation = window.__WEWORK_BROWSER_ANNOTATION__
+            return Boolean(
+              annotation?.scope?.browserTabId === ${JSON.stringify(browserTabId)} &&
+              annotation.scope.url === window.location.href
+            )
+          })()`,
+          label
+        )
+      } catch {
+        // A real navigation can replace the document while this check is running.
+      }
+      if (
+        !mountedRef.current ||
+        !annotationModeRef.current ||
+        annotationRequestGenerationRef.current !== annotationGeneration ||
+        nativeLabelRef.current !== expectedNativeLabel
+      ) {
+        return
+      }
+      if (annotationSessionActive) return
+      try {
+        const pageState = await readEmbeddedBrowserPageState(label)
+        if (!mountedRef.current || pageState.nativeLabel !== expectedNativeLabel) return
+        applyPageState(pageState, true)
+      } catch (error) {
+        console.error('Failed to reconcile embedded browser page state:', error)
+      }
+    }
+
+    function applyPageState(pageState: EmbeddedBrowserPageState, authoritative: boolean): void {
       if (pageState.label && pageState.label !== currentLabelRef.current) return
       if (nativeLabelRef.current && pageState.nativeLabel !== nativeLabelRef.current) return
       applyNativePageStatus(pageState)
@@ -743,6 +779,10 @@ export function WorkspaceBrowserTabPanel({
         activePageUrlRef.current &&
         nextUrl !== activePageUrlRef.current
       ) {
+        if (!authoritative) {
+          void reconcilePageState(pageState.nativeLabel)
+          return
+        }
         annotationSnapshotRef.current = null
         annotationRequestGenerationRef.current += 1
         annotationModeRef.current = false
@@ -760,6 +800,10 @@ export function WorkspaceBrowserTabPanel({
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
         onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
       }
+    }
+
+    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+      applyPageState(pageState, false)
     })
     if (!listener) return undefined
     let disposed = false
@@ -779,7 +823,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [applyNativePageStatus, label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [applyNativePageStatus, browserTabId, label, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
