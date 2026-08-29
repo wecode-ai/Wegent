@@ -161,6 +161,23 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     /\bcomposer-prosemirror-editor\b/,
     'The split workbench did not render the ProseMirror composer'
   )
+  const beforePaste = '0123456789'
+  const pastedText = 'PASTED'
+  const afterPaste = 'abcdefghij'
+  await control.command('fill', COMPOSER, { value: `${beforePaste}${afterPaste}` })
+  await control.command('setSelectionOffset', COMPOSER, { value: String(beforePaste.length) })
+  await control.command('pasteText', COMPOSER, { value: pastedText })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    `${beforePaste}${pastedText}${afterPaste}`,
+    'Pasting text in the middle did not preserve the surrounding composer text'
+  )
+  assert.equal(
+    Number(await control.command('getSelectionOffset', COMPOSER)),
+    beforePaste.length + pastedText.length,
+    'Pasting text in the middle moved the composer caret away from the pasted text'
+  )
+
   await control.command('fill', COMPOSER, { value: '' })
   await control.command('click', COMPOSER)
   const [singleLineCaretMetrics] = JSON.parse(
