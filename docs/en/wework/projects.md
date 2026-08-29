@@ -61,6 +61,18 @@ The default project space belongs to the local project's settings and is stored 
 
 Project-space lists, default-space selection, and current-task links are resolved in the background. The composer, image and file paste, attachment upload, and message sending remain available while a lookup or link is pending. Wework adds the project context or completes the task link after the result arrives instead of blocking the conversation with a linking state.
 
+## Board quick start
+
+The first time an empty project-space board is opened, Wework shows a collapsible three-step guide above the existing board:
+
+1. Create the first issue. Choose the **Build feature**, **Fix problem**, or **Research proposal** template to start with a useful description structure.
+2. Open the card details to review its description, owner, execution progress, and deliverables.
+3. Drag the card from **Inbox** to **Ready** and confirm that the board action updates its status.
+
+Each completed step is marked automatically, and the guide hides after all three steps are complete. Choose **Collapse** to reduce its footprint temporarily, or **Don't show again** to disable it for the current user and project space. Boards that already contain items do not interrupt users with this first-run guide.
+
+Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
+
 ## Issue details and execution tasks
 
 Opening an issue from a project-space board shows its attachments directly in the detail panel, with actions to download, remove, or upload more files. The attachment section uses the same dividers and spacing as the other detail fields, and the complete row containing the file name and size downloads the file. A download shows progress; if it fails, the attachment remains available, an error is shown, and the row can be selected again to retry. The detail view keeps each file name and size visible instead of showing only an attachment count, so the context can be checked before execution starts.
