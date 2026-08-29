@@ -537,6 +537,7 @@ interface CloudTodoWorkspaceProps {
   services: WorkbenchServices
   embedded?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
+  defaultProjectRequested?: boolean
   focusedItemId?: string | null
   onFocusedItemHandled?: () => void
   onActiveProjectChange?: (project: LocatedCloudProject | null) => void
@@ -1083,6 +1084,7 @@ export function CloudTodoWorkspace({
   services,
   embedded = false,
   activeProjectRef,
+  defaultProjectRequested = false,
   focusedItemId,
   onFocusedItemHandled,
   onActiveProjectChange,
@@ -1119,10 +1121,24 @@ export function CloudTodoWorkspace({
   )
   const [localProjectSpaces, setLocalProjectSpaces] = useState<LocatedCloudProject[]>([])
   const [cloudProjectSpaces, setCloudProjectSpaces] = useState<LocatedCloudProject[]>([])
-  const projects = useMemo(
-    () => [...localProjectSpaces, ...cloudProjectSpaces],
-    [cloudProjectSpaces, localProjectSpaces]
-  )
+  const projects = useMemo(() => {
+    const allProjects = [...localProjectSpaces, ...cloudProjectSpaces]
+    const preferredProjects =
+      projectSpaceApis.defaultLocation === 'local' ? localProjectSpaces : cloudProjectSpaces
+    const fallbackProjects =
+      projectSpaceApis.defaultLocation === 'local' ? cloudProjectSpaces : localProjectSpaces
+    const defaultProject =
+      preferredProjects.find(isDefaultWorkItemProject) ??
+      fallbackProjects.find(isDefaultWorkItemProject) ??
+      null
+    let defaultProjectAdded = false
+    return allProjects.flatMap(project => {
+      if (!isDefaultWorkItemProject(project)) return [project]
+      if (!defaultProject || defaultProjectAdded) return []
+      defaultProjectAdded = true
+      return [defaultProject]
+    })
+  }, [cloudProjectSpaces, localProjectSpaces, projectSpaceApis.defaultLocation])
   const replaceProject = useCallback(
     (currentProject: LocatedCloudProject, updated: CloudProject) => {
       const setProjectSpaces =
@@ -1422,7 +1438,6 @@ export function CloudTodoWorkspace({
   // loaded-but-empty project (renders empty columns) from a failed fetch
   // (renders the skeleton plus the error banner instead of an empty board).
   const applyBoardItems = useCallback(
-    // eslint-disable-next-line react-hooks/preserve-manual-memoization -- React state setters are stable.
     (spaceKey: string, fetchedItems: LocatedLoopItem[], error: string | null) => {
       console.info('[Wework project board] snapshot applied', {
         projectSpace: spaceKey,
@@ -1471,7 +1486,11 @@ export function CloudTodoWorkspace({
       project =>
         project.id === selectedProjectRef?.projectId &&
         project.project_store === selectedProjectRef.projectStore
-    ) ?? null
+    ) ?? (defaultProjectRequested ? (projects.find(isDefaultWorkItemProject) ?? null) : null)
+  useEffect(() => {
+    if (!defaultProjectRequested || selectedProjectRef || !selectedProject) return
+    onActiveProjectChange?.(selectedProject)
+  }, [defaultProjectRequested, onActiveProjectChange, selectedProject, selectedProjectRef])
   const localProjectOptions = useMemo(() => {
     const runtimeProjectOrder = new Map(
       (runtimeWork?.projects ?? []).flatMap((entry, index) =>
@@ -1776,8 +1795,6 @@ export function CloudTodoWorkspace({
   // wrapped once per selected project API instead of being recreated on every
   // render, so unrelated workspace re-renders do not restart the queue load
   // (which flashed the loading state).
-  /* eslint-disable react-hooks/preserve-manual-memoization -- the automation view
-   * reloads its queue when this adapter identity changes, so it must remain stable. */
   const automationExecutionApi = useMemo(() => {
     if (selectedProjectLocation === 'local') {
       const local = selectedProjectServices?.loopItemExecutionApi
@@ -1803,7 +1820,6 @@ export function CloudTodoWorkspace({
     services.runtimeWorkApi,
     selectedProjectServices?.loopItemExecutionApi,
   ])
-  /* eslint-enable react-hooks/preserve-manual-memoization */
   const selectedProjectAgents = selectedProjectKey ? (projectAgents[selectedProjectKey] ?? []) : []
   const agentNameById = (() => {
     const names: Record<string, string> = {}

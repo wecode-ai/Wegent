@@ -677,6 +677,55 @@ describe('CloudTodoWorkspace', () => {
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
   })
 
+  it('shows and opens one logical My Tasks project across local and cloud stores', async () => {
+    const defaultProject = {
+      ...project,
+      id: 'default-work-items',
+      public_id: 'default-work-items',
+      project_key: 'WORK',
+      name: '我的任务',
+      metadata: { system_kind: 'default_work_items' },
+    }
+    const localApi = services().deliveryApi!
+    const cloudApi = services().deliveryApi!
+    localApi.listCloudProjects = vi.fn(async () => ({
+      items: [{ ...defaultProject, project_store: 'local' as const }],
+    }))
+    cloudApi.listCloudProjects = vi.fn(async () => ({
+      items: [{ ...defaultProject, project_store: 'backend' as const }],
+    }))
+    localApi.listLoopItems = vi.fn(async () => ({ items: [] }))
+    cloudApi.listLoopItems = vi.fn(async () => ({ items: [] }))
+    const onActiveProjectChange = vi.fn()
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={services({
+          deliveryApi: cloudApi,
+          projectSpaceApis: {
+            local: localApi,
+            cloud: cloudApi,
+            defaultLocation: 'cloud',
+          },
+        })}
+        activeProjectRef={null}
+        defaultProjectRequested
+        onActiveProjectChange={onActiveProjectChange}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+    expect(screen.getAllByTestId('cloud-sidebar-project-default-work-items')).toHaveLength(1)
+    expect(onActiveProjectChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'default-work-items',
+        project_store: 'backend',
+      })
+    )
+  })
+
   it('loads a cloud board through one snapshot request without split reads', async () => {
     const workbenchServices = services()
     const snapshot = vi.fn(async () => ({
