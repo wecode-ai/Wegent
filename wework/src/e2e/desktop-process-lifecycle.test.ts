@@ -10,6 +10,11 @@ interface ProcessLifecycle {
     processGroupId: number
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
+  windowsTaskkillArguments: (processId: number) => string[]
+}
+
+interface LocalHarnessCli {
+  localHarnessCliPath: (binDirectory: string, name: string, platform?: NodeJS.Platform) => string
 }
 
 const ownedProcessGroups = new Set<number>()
@@ -19,6 +24,13 @@ async function loadProcessLifecycle(): Promise<ProcessLifecycle> {
     resolve(import.meta.dirname, '../../e2e/desktop/process-lifecycle.mjs')
   ).href
   return import(/* @vite-ignore */ moduleUrl) as Promise<ProcessLifecycle>
+}
+
+async function loadLocalHarnessCli(): Promise<LocalHarnessCli> {
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/modules/local-harness-cli.mjs')
+  ).href
+  return import(/* @vite-ignore */ moduleUrl) as Promise<LocalHarnessCli>
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -83,6 +95,23 @@ describe('desktop process lifecycle', () => {
     ]
 
     expect(processGroupHasLiveMembersFromLinuxStats(stats, 321)).toBe(false)
+  })
+
+  test('terminates the complete Windows child process tree', async () => {
+    const { windowsTaskkillArguments } = await loadProcessLifecycle()
+
+    expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
+  })
+
+  test('resolves npm harness shims with the native Windows extension', async () => {
+    const { localHarnessCliPath } = await loadLocalHarnessCli()
+
+    expect(localHarnessCliPath('D:\\repo\\node_modules\\.bin', 'claude', 'win32')).toBe(
+      'D:\\repo\\node_modules\\.bin\\claude.cmd'
+    )
+    expect(localHarnessCliPath('/repo/node_modules/.bin', 'claude', 'linux')).toBe(
+      '/repo/node_modules/.bin/claude'
+    )
   })
 
   test('keeps waiting while a Linux process group has a live member', async () => {

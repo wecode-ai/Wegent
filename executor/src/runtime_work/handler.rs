@@ -282,9 +282,7 @@ fn standalone_chat_workspace_path(
         return None;
     }
     let segment = workspace_segment(local_task_id);
-    let path = home_dir()
-        .join("Documents")
-        .join("Codex")
+    let path = standalone_workspace_root()
         .join(Local::now().format("%Y-%m-%d").to_string())
         .join(segment);
     if let Err(error) = fs::create_dir_all(&path) {
@@ -295,6 +293,13 @@ fn standalone_chat_workspace_path(
         return None;
     }
     Some(path.display().to_string())
+}
+
+fn standalone_workspace_root() -> PathBuf {
+    env::var_os("WEGENT_STANDALONE_WORKSPACE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join("Documents").join("Codex"))
 }
 
 fn is_standalone_chat_workspace(request: &ExecutionRequest) -> bool {
@@ -484,10 +489,18 @@ pub struct RuntimeWorkRpcHandler {
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
-#[derive(Default)]
 struct CodexRuntimeProxyConfig {
     initialized: bool,
     proxy_url: Option<String>,
+}
+
+impl Default for CodexRuntimeProxyConfig {
+    fn default() -> Self {
+        Self {
+            initialized: true,
+            proxy_url: None,
+        }
+    }
 }
 
 #[derive(Default)]

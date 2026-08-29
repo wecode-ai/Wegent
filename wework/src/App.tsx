@@ -392,7 +392,7 @@ export function WorkspaceTabSurface({
       ) : null}
       {auxiliaryRoute ? (
         <div data-testid="desktop-auxiliary-surface" className="h-full">
-          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
+          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
       ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}

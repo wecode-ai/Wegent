@@ -74,8 +74,10 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'))
 }
 
-async function createLocalProject(control, workspacePath, timeoutMs) {
-  await control.command('waitFor', '[data-testid="project-work-button"]', { timeoutMs })
+async function createLocalProject(control, workspacePath, timeoutMs, workbenchReadyTimeoutMs) {
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    timeoutMs: workbenchReadyTimeoutMs,
+  })
   await control.command('click', '[data-testid="project-work-button"]')
   await control.command('click', '[data-testid="add-local-project-option"]')
   await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
@@ -122,7 +124,13 @@ async function waitForRuntimePaneIdle(control, timeoutMs) {
   )
 }
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+export function createDesktopScenario({
+  captureScreenshot,
+  modelResponseTimeoutMs,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+  workspacePath,
+}) {
   let active = false
   let compactionRequests = 0
   let followUpSawCompactedContext = false
@@ -203,18 +211,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
 
     async verify(control) {
       active = true
-      await createLocalProject(control, workspacePath, uiTimeoutMs)
+      await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: INITIAL_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       await control.command('waitFor', '[data-testid="context-usage-button"]', {
         timeoutMs: uiTimeoutMs,
       })
-      await waitForRuntimePaneIdle(control, uiTimeoutMs)
+      await waitForRuntimePaneIdle(control, modelResponseTimeoutMs)
       await captureScreenshot(control, 'context-compaction-01-ready.png', 'body')
 
       await control.command('click', '[data-testid="context-usage-button"]')
@@ -243,7 +251,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       releaseCompaction()
       await control.command('waitFor', '[data-testid="context-compaction-indicator"]', {
         text: '上下文已自动压缩',
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.match(
         await control.command('getText', '[data-testid="context-compaction-indicator"]'),
@@ -263,7 +271,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: FOLLOW_UP_COMPLETION,
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: modelResponseTimeoutMs,
       })
       assert.equal(
         followUpSawCompactedContext,
