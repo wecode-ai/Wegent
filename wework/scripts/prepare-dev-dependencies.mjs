@@ -57,10 +57,7 @@ function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(command, args, {
       cwd,
-      env: {
-        ...process.env,
-        CI: process.env.CI || '1',
-      },
+      env: process.env,
       stdio: 'inherit',
     })
     child.once('error', reject)
@@ -80,6 +77,7 @@ async function ensureWorkspaceDependencies() {
       join(repositoryRoot, 'pnpm-workspace.yaml'),
       join(repositoryRoot, 'packages', 'chat-core', 'package.json'),
       join(weworkRoot, 'package.json'),
+      join(scriptDirectory, 'prepare-dev-dependencies.mjs'),
     ],
     required: [
       join(weworkRoot, 'node_modules', '.bin', 'tsc'),
@@ -129,6 +127,7 @@ async function ensureElectronDependencies() {
       join(electronRoot, 'pnpm-lock.yaml'),
       join(electronRoot, 'pnpm-workspace.yaml'),
       join(scriptDirectory, 'prepare-electron.mjs'),
+      join(scriptDirectory, 'prepare-dev-dependencies.mjs'),
     ],
     required: [
       join(electronRoot, 'node_modules', '.bin', 'tsc'),
