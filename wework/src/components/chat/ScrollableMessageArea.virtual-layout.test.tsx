@@ -108,11 +108,52 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     })
 
     rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+    const callback = resizeObserverCallback
+    expect(callback).not.toBeNull()
     act(() => {
-      resizeObserverCallback?.([], {} as ResizeObserver)
+      callback!([], {} as ResizeObserver)
     })
 
     expect(scrollHeightGetter).not.toHaveBeenCalled()
+    requestAnimationFrameSpy.mockRestore()
+  })
+
+  test('releases virtual ownership for a keyless conversation after the first layout', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(() => 1)
+    render(
+      <ScrollableMessageArea
+        conversationKey={null}
+        messages={[
+          {
+            id: 'keyless-message',
+            role: 'assistant',
+            content: 'Keyless conversation',
+            status: 'done',
+            createdAt: '2026-08-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const scrollHeightGetter = vi.fn(() => 10_000)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: scrollHeightGetter,
+      configurable: true,
+    })
+    const callback = resizeObserverCallback
+    expect(callback).not.toBeNull()
+
+    act(() => {
+      callback!([], {} as ResizeObserver)
+    })
+    expect(scrollHeightGetter).not.toHaveBeenCalled()
+
+    act(() => {
+      callback!([], {} as ResizeObserver)
+    })
+    expect(scrollHeightGetter).toHaveBeenCalled()
     requestAnimationFrameSpy.mockRestore()
   })
 })
