@@ -155,13 +155,17 @@ private func record() {
         emit(["error": "Accessibility and Input Monitoring permissions are required"])
         exit(2)
     }
-    let mask = CGEventMask(
-        (1 << CGEventType.leftMouseDown.rawValue) |
-        (1 << CGEventType.rightMouseDown.rawValue) |
-        (1 << CGEventType.otherMouseDown.rawValue) |
-        (1 << CGEventType.keyDown.rawValue) |
-        (1 << CGEventType.scrollWheel.rawValue)
-    )
+    let recordedEventTypes: [CGEventType] = [
+        .leftMouseDown,
+        .rightMouseDown,
+        .otherMouseDown,
+        .keyDown,
+        .scrollWheel,
+    ]
+    var mask: CGEventMask = 0
+    for eventType in recordedEventTypes {
+        mask |= CGEventMask(1) << eventType.rawValue
+    }
     eventTap = CGEvent.tapCreate(
         tap: .cgSessionEventTap,
         place: .headInsertEventTap,
