@@ -39,6 +39,14 @@ version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
+Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
+and NSIS installer. `electron-updater` compares the previous cached package with
+the old and new blockmaps and downloads only changed blocks. It falls back to
+the full installer only for a first update, a cleared cache, or a differential
+download failure. The release workflow must fail when any required blockmap is
+missing. Differential plans, transferred sizes, and fallback reasons are
+written to `app-update.log` in the application log directory.
+
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
 

@@ -10,6 +10,7 @@ describe('dev-mac-app', () => {
     const source = await readFile(scriptPath, 'utf8')
 
     expect(source).toContain('node "$SCRIPT_DIR/resolve-dev-user-data.mjs"')
+    expect(source).toContain('WEWORK_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID')
     expect(source).toContain('WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT')
     expect(source).toContain('$WEWORK_DIR/node_modules/.cache/harness-runtime-dev')
     expect(source).toContain('WEWORK_DEV_EXECUTOR_PATH')

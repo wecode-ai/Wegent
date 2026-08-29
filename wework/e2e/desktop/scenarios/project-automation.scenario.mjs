@@ -841,6 +841,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command('waitFor', '[data-testid="issue-execution-config-default-device"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     assert.equal(
       await control.command('getValue', '[data-testid="issue-execution-config-default-device"]'),
       localDefaultDevice.device_id,
@@ -1559,6 +1563,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'Automation detail panel remained visible after clearing the canvas selection',
       uiTimeoutMs
     )
+    await control.command('waitFor', '[data-testid="automation-trigger-node"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+      stableMs: 250,
+    })
     await control.command('click', '[data-testid="automation-trigger-node"]', {
       visible: true,
     })
