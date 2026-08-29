@@ -989,6 +989,47 @@ function contextMenuDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+async function doubleClickDesktopControlElement(selector: string): Promise<string> {
+  const dispatchClick = (element: HTMLElement, detail: number) => {
+    const pressedOptions = {
+      ...desktopControlEventOptions(element),
+      button: 0,
+      buttons: 1,
+      detail,
+    }
+    const releasedOptions = { ...pressedOptions, buttons: 0 }
+    dispatchDesktopControlPointerEvent(element, 'pointerdown', pressedOptions)
+    element.dispatchEvent(new MouseEvent('mousedown', pressedOptions))
+    dispatchDesktopControlPointerEvent(element, 'pointerup', releasedOptions)
+    element.dispatchEvent(new MouseEvent('mouseup', releasedOptions))
+    element.dispatchEvent(new MouseEvent('click', releasedOptions))
+  }
+
+  const firstElement = findDesktopControlElements(selector)[0]
+  if (!firstElement) throw new Error(`Unable to find selector "${selector}"`)
+  if (!desktopControlElementEnabled(firstElement)) {
+    throw new Error(`Selector "${selector}" is disabled`)
+  }
+  dispatchClick(firstElement, 1)
+  await waitForDesktopControlTick()
+
+  const secondElement = findDesktopControlElements(selector)[0]
+  if (!secondElement) throw new Error(`Unable to find selector "${selector}" after first click`)
+  if (!desktopControlElementEnabled(secondElement)) {
+    throw new Error(`Selector "${selector}" became disabled after first click`)
+  }
+  dispatchClick(secondElement, 2)
+  secondElement.dispatchEvent(
+    new MouseEvent('dblclick', {
+      ...desktopControlEventOptions(secondElement),
+      button: 0,
+      buttons: 0,
+      detail: 2,
+    })
+  )
+  return secondElement.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -1616,6 +1657,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return endDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
+    case 'doubleClick':
+      return doubleClickDesktopControlElement(command.selector)
     case 'dragStart':
       return startDesktopControlDrag(command)
     case 'dragEnd':
