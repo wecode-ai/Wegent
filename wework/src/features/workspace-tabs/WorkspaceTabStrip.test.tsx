@@ -41,7 +41,8 @@ function renderStrip(
   search = '',
   availableKinds?: ComponentProps<typeof WorkspaceTabStrip>['availableKinds'],
   pathname = '/',
-  fixed = false
+  fixed = false,
+  fixedBoardRoute?: string
 ) {
   return render(
     <WorkspaceTabsProvider
@@ -54,6 +55,9 @@ function renderStrip(
           ? (['task', 'board', 'agent'] as const).map(kind =>
               createWorkspaceTab(kind, labels, {
                 id: `fixed-${kind}`,
+                ...(kind === 'board' && fixedBoardRoute
+                  ? { contentRoute: fixedBoardRoute }
+                  : undefined),
                 fixed: true,
               })
             )
@@ -116,13 +120,15 @@ describe('WorkspaceTabStrip', () => {
 
   test('keeps fixed tabs selectable and prevents closing them', async () => {
     const user = userEvent.setup()
-    renderStrip('', undefined, '/', true)
+    renderStrip('', undefined, '/', true, '/todo')
 
     await user.click(screen.getByTestId('workspace-tab-select-fixed-board'))
     expect(screen.getByTestId('workspace-tab-select-fixed-board')).toHaveAttribute(
       'aria-selected',
       'true'
     )
+    expect(window.location.pathname).toBe('/todo')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('default-work-items')
     expect(screen.queryByTestId('workspace-tab-close-fixed-board')).not.toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'w', metaKey: true })
@@ -131,6 +137,26 @@ describe('WorkspaceTabStrip', () => {
       'aria-selected',
       'true'
     )
+  })
+
+  test('keeps the selected project when clicking the active fixed project-space tab', async () => {
+    const user = userEvent.setup()
+    renderStrip(
+      '?projectStore=local&projectId=project-1',
+      undefined,
+      '/todo',
+      true,
+      '/todo?projectStore=local&projectId=project-1'
+    )
+
+    await user.click(screen.getByTestId('workspace-tab-select-fixed-board'))
+
+    expect(screen.getByTestId('workspace-tab-select-fixed-board')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(new URLSearchParams(window.location.search).get('projectStore')).toBe('local')
+    expect(new URLSearchParams(window.location.search).get('projectId')).toBe('project-1')
   })
 
   test('hides the project-space tab and add action when board is not available', async () => {

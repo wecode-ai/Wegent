@@ -69,6 +69,7 @@ import { createTrayIcon } from './host/tray-icon.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
@@ -112,9 +113,10 @@ const updateBaseUrl =
 const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
-const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
-app.setPath('userData', resolve(userDataPath))
+const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
+const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+app.setPath('userData', userDataPath)
+if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
@@ -164,11 +166,20 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => app.isPackaged,
-  prepareInstall: prepareApplicationShutdown,
+  prepareInstall: async () => {
+    await prepareApplicationShutdown()
+    await appUpdateLogger
+      .flush()
+      .catch(error =>
+        console.error('[app-update] failed to flush updater log before installation', error)
+      )
+  },
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
