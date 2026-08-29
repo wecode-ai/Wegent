@@ -14,7 +14,7 @@ const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
-  'The completed response contains one long SQL block.',
+  'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
   ...Array.from(
@@ -23,6 +23,12 @@ const LONG_CODE_COMPLETION = [
       `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
   ),
   '```',
+  '',
+  ...Array.from(
+    { length: 24 },
+    (_, index) =>
+      `### Rapid scroll section ${index + 1}\n\n${`Visible fallback content ${index + 1} keeps the conversation painted during rapid scrolling. `.repeat(18)}`
+  ),
 ].join('\n')
 const LONG_CODE_REASONING = Array.from(
   { length: 180 },
@@ -788,6 +794,19 @@ export function createDesktopScenario({
       'The long completed code block rendered syntax token nodes'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    const rapidScrollSamples = JSON.parse(
+      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+        value: JSON.stringify({
+          contentSelector: '[data-markdown-window-chunk]',
+          ratios: [0.75, 0.5, 0.25],
+        }),
+      })
+    )
+    assert.equal(
+      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      true,
+      `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
