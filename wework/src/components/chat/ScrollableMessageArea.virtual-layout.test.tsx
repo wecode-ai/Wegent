@@ -6,6 +6,10 @@ interface MockMessageListProps {
   virtualAnchorToEnd?: boolean
 }
 
+vi.mock('@/lib/runtime-environment', () => ({
+  isDesktopRuntime: () => true,
+}))
+
 vi.mock('./MessageList', () => ({
   MessageList: ({ virtualAnchorToEnd }: MockMessageListProps) => (
     <div
@@ -68,5 +72,37 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       'data-virtual-anchor-to',
       'start'
     )
+  })
+
+  test('switches bottom-pinned conversations without synchronously measuring layout', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(() => 1)
+    const message = (id: string) => ({
+      id,
+      role: 'assistant' as const,
+      content: `Conversation ${id}`,
+      status: 'done' as const,
+      createdAt: '2026-08-29T00:00:00.000Z',
+    })
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="long-a" messages={[message('a')]} />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const scrollHeightGetter = vi.fn(() => 10_000)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: scrollHeightGetter,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 9_000,
+      writable: true,
+      configurable: true,
+    })
+
+    rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+
+    expect(scrollHeightGetter).not.toHaveBeenCalled()
+    requestAnimationFrameSpy.mockRestore()
   })
 })
