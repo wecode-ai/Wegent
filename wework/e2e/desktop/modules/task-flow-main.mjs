@@ -3261,19 +3261,33 @@ last_updated = "2026-07-30T00:00:00Z"`
         visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
-      const filePanelLinkTooltip = await getSingleElementMetrics(
-        control,
+      const filePanelLinkTooltipPosition = await control.command(
+        'getComputedStyleValue',
         filePanelLinkTooltipSelector,
-        'The assistant file-link tooltip'
+        { value: 'position' }
       )
-      const rightWorkspacePanel = await getSingleElementMetrics(
-        control,
-        '[data-testid="right-workspace-panel-shell"]',
-        'The right workspace panel'
+      const filePanelLinkTooltipZIndex = Number(
+        await control.command('getComputedStyleValue', filePanelLinkTooltipSelector, {
+          value: 'z-index',
+        })
+      )
+      const rightWorkspacePanelZIndex = Number(
+        await control.command(
+          'getComputedStyleValue',
+          '[data-testid="right-workspace-panel-shell"]',
+          { value: 'z-index' }
+        )
+      )
+      assert.equal(
+        filePanelLinkTooltipPosition,
+        'fixed',
+        'The assistant file-link tooltip was not lifted into a viewport layer'
       )
       assert.ok(
-        filePanelLinkTooltip.right > rightWorkspacePanel.left,
-        'The assistant file-link tooltip did not overlap the right workspace panel'
+        Number.isFinite(filePanelLinkTooltipZIndex) &&
+          Number.isFinite(rightWorkspacePanelZIndex) &&
+          filePanelLinkTooltipZIndex > rightWorkspacePanelZIndex,
+        `The assistant file-link tooltip layer ${filePanelLinkTooltipZIndex} did not clear the right workspace panel layer ${rightWorkspacePanelZIndex}`
       )
       await captureVerificationScreenshot(control, 'file-panel-anchor-03-link-tooltip.png')
       await control.command('press', filePanelLinkSelector, { key: 'Escape' })
