@@ -6694,6 +6694,7 @@ describe('DesktopWorkbenchLayout', () => {
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     expect(sideChat).toBeInTheDocument()
+    expect(sideChat).toHaveClass('min-w-0')
     expect(screen.getByTestId('side-chat-composer-layout')).toHaveClass(
       'mx-auto',
       'w-[min(46rem,calc(100%_-_2rem))]',

@@ -89,7 +89,7 @@ function TextAttachmentCard({
   return (
     <div
       data-testid="attachment-badge"
-      className="relative inline-flex h-[72px] max-w-full items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm sm:max-w-[420px]"
+      className="relative inline-flex h-[72px] max-w-[min(420px,100%)] items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm"
     >
       <span
         data-testid="attachment-text-icon"
