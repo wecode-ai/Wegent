@@ -17,7 +17,6 @@ import type {
   RuntimeWorkSearchRequest,
   User,
 } from '@/types/api'
-import { reconcileProjectTaskTrackingStatus } from './projectTaskTracking'
 import type {
   RuntimePaneTranscript,
   RuntimePaneTranscriptLoadOptions,
@@ -255,24 +254,6 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, services.runtimeWorkApi, t]
   )
 
-  const completeArchivedBoardTasks = useCallback(
-    async (addresses: RuntimeTaskAddress[]) => {
-      await Promise.all(
-        addresses.map(async address => {
-          try {
-            await reconcileProjectTaskTrackingStatus(services, address, 'archived')
-          } catch (error) {
-            console.warn('[Wework] Failed to complete archived task on project board', {
-              address: runtimeAddressDebug(address),
-              error,
-            })
-          }
-        })
-      )
-    },
-    [services]
-  )
-
   const archiveRuntimeConversations = useCallback(
     async (
       addresses: RuntimeTaskAddress[],
@@ -303,7 +284,6 @@ export function useWorkbenchRuntimeTasks({
       ]
       let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
-        await completeArchivedBoardTasks(archivedAddresses)
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
@@ -332,7 +312,6 @@ export function useWorkbenchRuntimeTasks({
     },
     [
       clearCurrentRuntimeTaskIfArchived,
-      completeArchivedBoardTasks,
       dispatch,
       executorClient,
       lifecycleStore,

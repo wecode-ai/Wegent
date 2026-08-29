@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   clipboard,
   dialog,
+  globalShortcut,
   ipcMain,
   Menu,
   nativeImage,
@@ -91,6 +92,8 @@ import {
   type BrandRuntimeMetadata,
 } from './runtime/brand-runtime-environment.js'
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
+import { GlobalShortcutController } from './host/global-shortcut-controller.js'
+import { resolveDshAppRoute } from './host/dsh-app-route.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -107,6 +110,7 @@ const updateBaseUrl =
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
 const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
+const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
 const userDataPath =
   process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
@@ -126,9 +130,12 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
+let pendingSystemDragWindow: BrowserWindow | null = null
+let systemDragWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindow: BrowserWindow | null = null
 let popoutWindowCreationPromise: Promise<BrowserWindow> | null = null
 let popoutWindowReadyPromise: Promise<void> | null = null
+let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
@@ -475,13 +482,20 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   }
 })
 
+function disposeSystemDragWindow(): void {
+  systemDragWindow?.destroy()
+  pendingSystemDragWindow?.destroy()
+  systemDragWindow = null
+  pendingSystemDragWindow = null
+  systemDragWindowCreationPromise = null
+}
+
 function disposeCoreDshViews(): void {
   for (const workspaceWindow of workspaceWindows.values()) {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -574,11 +588,23 @@ async function ensureAuxiliaryWindow(
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const existing = kind === 'system-drag-panel' ? systemDragWindow : popoutWindow
   if (existing && !existing.isDestroyed()) return existing
+  if (kind === 'system-drag-panel' && systemDragWindowCreationPromise) {
+    return systemDragWindowCreationPromise
+  }
   if (kind === 'popout-window' && popoutWindowCreationPromise) {
     return popoutWindowCreationPromise
   }
   const creationPromise = createAuxiliaryWindow(kind)
-  if (kind === 'system-drag-panel') return creationPromise
+  if (kind === 'system-drag-panel') {
+    systemDragWindowCreationPromise = creationPromise
+    try {
+      return await creationPromise
+    } finally {
+      if (systemDragWindowCreationPromise === creationPromise) {
+        systemDragWindowCreationPromise = null
+      }
+    }
+  }
   popoutWindowCreationPromise = creationPromise
   try {
     return await creationPromise
@@ -594,10 +620,16 @@ async function createAuxiliaryWindow(
 ): Promise<BrowserWindow> {
   if (!desktopRuntime) throw new Error('Core desktop runtime is unavailable')
   const isSystemDrag = kind === 'system-drag-panel'
-  const target = new URL(isSystemDrag ? 'system-drag' : 'popout', desktopRuntime.coreDshUrl())
+  const target = resolveDshAppRoute(
+    desktopRuntime.coreDshUrl(),
+    isSystemDrag ? 'system-drag' : 'popout'
+  )
   const auxiliaryWindow = new BrowserWindow({
     width: isSystemDrag ? 440 : 470,
     height: isSystemDrag ? 60 : 112,
+    parent: isSystemDrag
+      ? (BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined)
+      : undefined,
     resizable: false,
     frame: false,
     transparent: true,
@@ -605,6 +637,7 @@ async function createAuxiliaryWindow(
     alwaysOnTop: true,
     skipTaskbar: isSystemDrag,
     show: false,
+    type: isSystemDrag && process.platform === 'darwin' ? 'panel' : undefined,
     backgroundColor: '#00000000',
     webPreferences: {
       backgroundThrottling: false,
@@ -614,11 +647,25 @@ async function createAuxiliaryWindow(
       sandbox: true,
     },
   })
+  if (isSystemDrag) pendingSystemDragWindow = auxiliaryWindow
   secureDshContents(auxiliaryWindow.webContents, desktopRuntime.coreDshUrl())
   registerDshWindowLabel(auxiliaryWindow.webContents, kind)
+  auxiliaryWindow.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error('[auxiliary-window] renderer failed to load', {
+      kind,
+      code,
+      description,
+      url,
+    })
+  })
+  auxiliaryWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[auxiliary-window] renderer process exited', { kind, ...details })
+  })
   auxiliaryWindow.on('closed', () => {
-    if (kind === 'system-drag-panel') systemDragWindow = null
-    else {
+    if (kind === 'system-drag-panel') {
+      if (systemDragWindow === auxiliaryWindow) systemDragWindow = null
+      if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
+    } else {
       if (popoutWindow === auxiliaryWindow) popoutWindow = null
       if (popoutWindowReadyPromise === readinessPromise) {
         popoutWindowReadyPromise = null
@@ -631,6 +678,15 @@ async function createAuxiliaryWindow(
       extraHeaders: `X-Wework-Window-Label: ${kind}`,
     })
     if (isSystemDrag) {
+      readinessPromise = waitForRendererSelector(
+        auxiliaryWindow.webContents,
+        '[data-testid="system-drag-panel"]'
+      )
+      await readinessPromise
+      if (pendingSystemDragWindow !== auxiliaryWindow || auxiliaryWindow.isDestroyed()) {
+        throw new Error('System drag panel creation was disposed')
+      }
+      pendingSystemDragWindow = null
       systemDragWindow = auxiliaryWindow
     } else {
       popoutWindow = auxiliaryWindow
@@ -639,10 +695,13 @@ async function createAuxiliaryWindow(
         '[data-testid="popout-workbench-page"]'
       )
       popoutWindowReadyPromise = readinessPromise
-      void readinessPromise.catch(() => {})
+      void readinessPromise.catch(error => {
+        console.error('[popout-window] renderer failed to become ready', error)
+      })
     }
     return auxiliaryWindow
   } catch (error) {
+    if (pendingSystemDragWindow === auxiliaryWindow) pendingSystemDragWindow = null
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
@@ -650,20 +709,61 @@ async function createAuxiliaryWindow(
 
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
+  const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (owner && owner !== target && target.getParentWindow() !== owner) {
+    target.setParentWindow(owner)
+  }
+  target.setAlwaysOnTop(true, 'pop-up-menu')
+  if (process.platform === 'darwin') {
+    target.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    })
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   const x = Math.round(display.workArea.x + (display.workArea.width - 440) / 2)
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
+  target.moveTop()
 }
 
 async function showPopoutWindow(): Promise<void> {
   const target = await ensureAuxiliaryWindow('popout-window')
+  await popoutWindowReadyPromise
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
   target.setPosition(
     Math.round(display.workArea.x + (display.workArea.width - 470) / 2),
     Math.round(display.workArea.y + (display.workArea.height - 112) / 2)
   )
   presentWindow(target)
+}
+
+function resolvePopoutShortcut(preferenceRecord: Record<string, unknown>): string | null {
+  if (!Object.prototype.hasOwnProperty.call(preferenceRecord, 'popoutWindowShortcut')) {
+    return DEFAULT_POPOUT_WINDOW_SHORTCUT
+  }
+  const value = preferenceRecord.popoutWindowShortcut
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+async function updateDesktopPreferences(
+  patch: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const store = requiredPreferences()
+  if (!Object.prototype.hasOwnProperty.call(patch, 'popoutWindowShortcut')) {
+    return store.update(patch)
+  }
+
+  const previousPreferences = await store.read()
+  const previousShortcut = resolvePopoutShortcut(previousPreferences)
+  const nextShortcut = resolvePopoutShortcut(patch)
+  popoutShortcut?.configure(nextShortcut)
+  try {
+    return await store.update(patch)
+  } catch (error) {
+    popoutShortcut?.configure(previousShortcut)
+    throw error
+  }
 }
 
 async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
@@ -932,12 +1032,13 @@ async function shutdown(): Promise<void> {
     if (!workspaceWindow.isDestroyed()) workspaceWindow.destroy()
   }
   workspaceWindows.clear()
-  systemDragWindow?.destroy()
-  systemDragWindow = null
+  disposeSystemDragWindow()
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
   popoutWindowReadyPromise = null
+  popoutShortcut?.dispose()
+  popoutShortcut = null
   embeddedBrowser?.stop()
   const plugins = workbenchPlugins
   workbenchPlugins = null
@@ -1052,6 +1153,7 @@ async function configureDesktopRuntime(): Promise<void> {
           feedback,
           plugins: workbenchPlugins,
           systemRecordReplay,
+          updatePreferences: updateDesktopPreferences,
         },
         {
           captureTarget: windowLabel =>
@@ -1130,7 +1232,10 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel,
+          showSystemDragPanel: () =>
+            showSystemDragPanel().catch(error => {
+              console.error('Failed to show system drag panel:', error)
+            }),
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()
@@ -1235,6 +1340,9 @@ if (hasSingleInstanceLock) {
       console.error('[context-menu] failed to remove stale temporary images', error)
     })
     preferences = new PreferencesStore(app.getPath('userData'))
+    popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
+      console.error('[popout-window] global shortcut failed', error)
+    )
     cloudCredentials = new CloudCredentialService(app.getPath('userData'))
     installDshWindowLabelHeaders()
     installIpc()
@@ -1257,6 +1365,11 @@ if (hasSingleInstanceLock) {
     createdTrayManager.create()
     trayManager = createdTrayManager
     const startupPreferences = await preferences.read()
+    try {
+      popoutShortcut.configure(resolvePopoutShortcut(startupPreferences))
+    } catch (error) {
+      console.warn('[popout-window] failed to register global shortcut', error)
+    }
     await createWindow(
       resolveStartupSplashTheme(startupPreferences.appearanceMode, nativeTheme.shouldUseDarkColors)
     )

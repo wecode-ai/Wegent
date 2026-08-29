@@ -13,7 +13,6 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { resetLocalRuntimeChatStreamsForTests } from '@/api/local/localServices'
-import type { CloudLoopItem, TaskExecutionStatus } from '@/api/deliveries'
 import i18n from '@/i18n'
 import {
   CloudConnectionContext,
@@ -9742,13 +9741,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() => expect(screen.getByTestId('archive-result')).toHaveTextContent('archived'))
     expect(screen.getByTestId('workbench-error')).toHaveTextContent('')
     expect(runtimeWorkApi.archiveConversation).toHaveBeenCalledTimes(1)
-    expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-      expect.objectContaining({
-        deviceId: 'device-1',
-        taskId: 'runtime-worktree',
-      }),
-      'archived'
-    )
+    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
     expect(getRuntimeConversationMessages(archivedAddress)).toEqual([])
     expect(runtimeWorkApi.deleteWorktree).toHaveBeenCalledWith({
       deviceId: 'device-1',
@@ -13458,7 +13451,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
   })
 
-  test('syncs board completion and canonical completed task status', async () => {
+  test('keeps board status writes out of renderer lifecycle reconciliation', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onChatStart) streamHandlers = handlers
@@ -13566,12 +13559,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     )
     await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'succeeded'
-      )
-    )
+    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
 
     act(() => {
       streamHandlers.onChatStart?.({
@@ -13605,12 +13593,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         result: { value: 'done' },
       })
     })
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'succeeded'
-      )
-    )
+    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
     await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
     expect(screen.getByTestId('runtime-local-task-titles')).toHaveTextContent(
       '修复登录回调|Runtime B'
@@ -13619,7 +13602,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(screen.getByTestId('runtime-a-task-status')).toHaveTextContent('done')
   })
 
-  test('reconciles restored runtime state without creating board items', async () => {
+  test('does not write board status while restoring runtime state', async () => {
     const updateTaskTrackingStatus = vi.fn().mockResolvedValue(null)
     const runtimeWorkApi = createRuntimeWorkApiMock({
       listRuntimeWork: vi.fn().mockResolvedValue(
@@ -13666,15 +13649,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'running'
-      )
-    )
+    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
   })
 
-  test('routes task status to the project store recorded in the runtime handle', async () => {
+  test('routes task titles to the project store recorded in the runtime handle', async () => {
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (handlers.onRuntimeTaskTitleUpdated) streamHandlers = handlers
@@ -13741,24 +13719,8 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
 
-    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
-    act(() => {
-      streamHandlers.onChatStart?.({
-        taskId: 'runtime-cloud',
-        subtaskId: '101',
-        shellType: 'Codex',
-        deviceId: 'local-device',
-      })
-    })
-    await waitFor(() =>
-      expect(updateCloudTaskStatus).toHaveBeenCalledWith(
-        expect.objectContaining({
-          deviceId: 'local-device',
-          taskId: 'runtime-cloud',
-        }),
-        'running'
-      )
-    )
+    await waitFor(() => expect(streamHandlers.onRuntimeTaskTitleUpdated).toBeDefined())
+    expect(updateCloudTaskStatus).not.toHaveBeenCalled()
     expect(updateLocalTaskStatus).not.toHaveBeenCalled()
 
     act(() => {
@@ -13847,115 +13809,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
     await waitFor(() => expect(runtimeWorkApi.listRuntimeWork).toHaveBeenCalledTimes(1))
     expect(trackProjectTask).not.toHaveBeenCalled()
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-bound' }),
-        'queued'
-      )
-    )
-  })
-
-  test('waits for canonical executor settlement before projecting completion', async () => {
-    let streamHandlers: ChatStreamHandlers = {}
-    const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
-      if (handlers.onChatStart) streamHandlers = handlers
-      return vi.fn()
-    })
-    const staleRunningUpdate = deferred<null>()
-    const updateTaskTrackingStatus = vi.fn(
-      (_address: RuntimeTaskAddress, status: TaskExecutionStatus) =>
-        status === 'running'
-          ? staleRunningUpdate.promise
-          : Promise.resolve({ id: 'tracked-item' } as CloudLoopItem)
-    )
-    const runningRuntimeWork = createRuntimeWork({
-      projects: [
-        {
-          project: { id: 7, name: 'Wegent' },
-          deviceWorkspaces: [
-            {
-              deviceId: 'device-1',
-              deviceName: 'Project Device',
-              deviceStatus: 'online',
-              workspacePath: '/workspace/project-alpha',
-              mapped: true,
-              available: true,
-              tasks: [
-                {
-                  taskId: 'runtime-a',
-                  workspacePath: '/workspace/project-alpha',
-                  title: 'Runtime A',
-                  runtime: 'codex',
-                  running: true,
-                  status: 'running',
-                },
-              ],
-            },
-          ],
-        },
-      ],
-      totalTasks: 1,
-    })
-    const staleRuntimeWorkRefresh = deferred<RuntimeWorkListResponse>()
-    const listRuntimeWork = vi
-      .fn()
-      .mockResolvedValueOnce(runningRuntimeWork)
-      .mockImplementationOnce(() => staleRuntimeWorkRefresh.promise)
-    const runtimeWorkApi = createRuntimeWorkApiMock({ listRuntimeWork })
-    const services = createWorkbenchServices({
-      runtimeWorkApi: runtimeWorkApi as WorkbenchServices['runtimeWorkApi'],
-      chatStream: {
-        subscribe,
-      } as unknown as WorkbenchServices['chatStream'],
-      projectSpaceApis: {
-        local: {
-          updateTaskTrackingStatus,
-          updateTaskTrackingTitle: vi.fn().mockResolvedValue(null),
-        },
-      } as unknown as WorkbenchServices['projectSpaceApis'],
-    })
-
-    renderWorkbench(<RuntimeTopLevelStreamLifecycleProbe />, services)
-    await waitFor(() => expect(streamHandlers.onChatStart).toBeDefined())
-    act(() => {
-      streamHandlers.onChatStart?.({
-        taskId: 'runtime-a',
-        subtaskId: '101',
-        shellType: 'Codex',
-        deviceId: 'device-1',
-      })
-    })
-    await waitFor(() =>
-      expect(updateTaskTrackingStatus).toHaveBeenCalledWith(
-        expect.objectContaining({ deviceId: 'device-1', taskId: 'runtime-a' }),
-        'running'
-      )
-    )
-
-    act(() => {
-      streamHandlers.onChatDone?.({
-        taskId: 'runtime-a',
-        subtaskId: '101',
-        deviceId: 'device-1',
-        result: { value: 'done' },
-      })
-    })
-
-    await waitFor(() => expect(listRuntimeWork).toHaveBeenCalledTimes(2))
-    await act(async () => {
-      staleRunningUpdate.reject(new Error('stale running update failed'))
-      await staleRunningUpdate.promise.catch(() => undefined)
-    })
-    await act(async () => {
-      staleRuntimeWorkRefresh.resolve(runningRuntimeWork)
-      await staleRuntimeWorkRefresh.promise
-    })
-    expect(updateTaskTrackingStatus).toHaveBeenCalledTimes(2)
-    expect(updateTaskTrackingStatus.mock.calls.map(([, status]) => status)).toEqual([
-      'running',
-      'running',
-    ])
-    expect(updateTaskTrackingStatus.mock.calls.at(-1)?.[1]).toBe('running')
+    expect(updateTaskTrackingStatus).not.toHaveBeenCalled()
   })
 
   test('polls the cloud executor until idle when the cached snapshot predates the active turn', async () => {

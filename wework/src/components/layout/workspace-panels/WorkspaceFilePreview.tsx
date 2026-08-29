@@ -11,6 +11,8 @@ import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
+import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
+import { installCodeViewTextDrag } from './codeViewTextDrag'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
@@ -295,6 +297,7 @@ function WorkspaceFilePreviewContent({
 }: WorkspaceFilePreviewContentProps) {
   const { t } = useTranslation('common')
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
+  const codeViewHostRef = useRef<HTMLDivElement>(null)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
@@ -340,6 +343,22 @@ function WorkspaceFilePreviewContent({
           range: targetLineRange,
         }
       : null
+
+  useEffect(() => {
+    const source = `workspace-preview:${file.path}`
+    const host = codeViewHostRef.current
+    const cleanup =
+      host && activeSelection
+        ? installCodeViewTextDrag(host, activeSelection.selectedText, rect => {
+            publishSelectedTextSelection(source, activeSelection.selectedText, rect)
+          })
+        : undefined
+    if (!activeSelection) publishSelectedTextSelection(source, null)
+    return () => {
+      cleanup?.()
+      publishSelectedTextSelection(source, null)
+    }
+  }, [activeSelection, file.path])
 
   useEffect(() => {
     if (!targetLineRange) return
@@ -397,6 +416,11 @@ function WorkspaceFilePreviewContent({
   return (
     <section
       data-testid="workspace-file-preview"
+      draggable={Boolean(activeSelection)}
+      onDragStart={event => {
+        if (!activeSelection) return
+        writeSelectedTextDragData(event.dataTransfer, activeSelection.selectedText)
+      }}
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
       <div
@@ -406,6 +430,7 @@ function WorkspaceFilePreviewContent({
       >
         <CodeView
           ref={codeViewRef}
+          containerRef={codeViewHostRef}
           items={codeViewItems}
           selectedLines={selectedLines}
           onSelectedLinesChange={captureLineSelection}

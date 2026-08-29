@@ -7,6 +7,10 @@ import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
+import {
+  resolveDesktopPackageTargets,
+  targetExecutableName,
+} from '../../scripts/lib/desktop-package-target.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -31,12 +35,21 @@ const corePluginDirectories = [
   'ui-record-replay',
 ]
 
+const packageTargets = resolveDesktopPackageTargets(process.env)
+const packageEnvironment = {
+  ...process.env,
+  CARGO_BUILD_TARGET: packageTargets.cargoTarget,
+  WEWORK_CODEX_TARGET: packageTargets.codexTarget,
+  WEWORK_DWS_TARGET: packageTargets.dwsTarget,
+}
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
     ? Promise.resolve(resolve(configuredExecutorPath))
-    : buildExecutor(executorProfile),
-  run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot),
+    : buildExecutor(executorProfile, packageTargets.cargoTarget),
+  run(pnpmCommand, ['prepare:codex', '--materialize'], weworkRoot, packageEnvironment),
+  run(pnpmCommand, ['prepare:dws'], weworkRoot, packageEnvironment),
+  run(pnpmCommand, ['prepare:harness-runtime', '--materialize'], weworkRoot, packageEnvironment),
   buildDshApp(),
 ])
 
@@ -75,25 +88,22 @@ for (const directory of corePluginDirectories) {
     filter: source => !source.endsWith('.test.mjs'),
   })
 }
-const codexTarget = resolveCodexTarget()
+const codexTarget = packageTargets.codexTarget
 const codexSource = join(sharedResourcesRoot, 'binaries', 'codex', codexTarget)
 const codexResources = join(resourcesRoot, 'codex')
 await cp(codexSource, codexResources, { recursive: true })
-const executorName = process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+const executorName = targetExecutableName(packageTargets.cargoTarget, 'wegent-executor')
 const packagedExecutor = join(resourcesRoot, 'bin', executorName)
 await cp(executorPath, packagedExecutor)
 if (process.platform !== 'win32') await chmod(packagedExecutor, 0o755)
 const executorSha256 = await sha256(packagedExecutor)
-const dwsName = process.platform === 'win32' ? 'dws.exe' : 'dws'
+const dwsName = targetExecutableName(packageTargets.dwsTarget, 'dws')
 const packagedDws = join(resourcesRoot, 'bin', dwsName)
-await cp(
-  join(
-    sharedResourcesRoot,
-    'binaries',
-    `dws-${codexTarget}${process.platform === 'win32' ? '.exe' : ''}`
-  ),
-  packagedDws
+const dwsSourceName = targetExecutableName(
+  packageTargets.dwsTarget,
+  `dws-${packageTargets.dwsTarget}`
 )
+await cp(join(sharedResourcesRoot, 'binaries', dwsSourceName), packagedDws)
 if (process.platform !== 'win32') await chmod(packagedDws, 0o755)
 const electronPackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const weworkPackage = JSON.parse(await readFile(join(weworkRoot, 'package.json'), 'utf8'))
@@ -164,21 +174,6 @@ function resolveExecutorProfile() {
   throw new Error(`Unsupported Wework executor profile: ${configured}`)
 }
 
-function resolveCodexTarget() {
-  const configured = process.env.WEWORK_CODEX_TARGET?.trim()
-  if (configured) return configured
-  const target = {
-    'darwin-arm64': 'aarch64-apple-darwin',
-    'darwin-x64': 'x86_64-apple-darwin',
-    'linux-arm64': 'aarch64-unknown-linux-gnu',
-    'linux-x64': 'x86_64-unknown-linux-gnu',
-    'win32-arm64': 'aarch64-pc-windows-msvc',
-    'win32-x64': 'x86_64-pc-windows-msvc',
-  }[`${process.platform}-${process.arch}`]
-  if (!target) throw new Error(`Unsupported Codex target: ${process.platform}-${process.arch}`)
-  return target
-}
-
 async function buildSystemRecordReplayHelper() {
   if (process.platform !== 'darwin') return
   await run(
@@ -187,7 +182,6 @@ async function buildSystemRecordReplayHelper() {
     electronRoot
   )
 }
-
 function pluginTarget(directory) {
   return {
     'app-wework': 'wework-app',
@@ -235,8 +229,7 @@ async function hashTree(root, relative = '') {
   return hash.digest('hex')
 }
 
-async function buildExecutor(profile) {
-  const target = process.env.CARGO_BUILD_TARGET?.trim()
+async function buildExecutor(profile, target) {
   const buildArgs = [
     'build',
     '--manifest-path',
@@ -265,14 +258,18 @@ async function buildExecutor(profile) {
     metadata.target_directory,
     ...(target ? [target] : []),
     profile,
-    process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
+    targetExecutableName(target, 'wegent-executor')
   )
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, environment = process.env) {
   return new Promise((resolvePromise, reject) => {
     const resolved = wrapWindowsScriptCommand(command, args)
-    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
+    const child = spawn(resolved.command, resolved.args, {
+      cwd,
+      env: environment,
+      stdio: 'inherit',
+    })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

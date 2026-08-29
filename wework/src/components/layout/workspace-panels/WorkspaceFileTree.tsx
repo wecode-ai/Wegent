@@ -1,9 +1,10 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import type { FileTreeDirectoryHandle, FileTreeItemHandle } from '@pierre/trees'
 import { RefreshCw, Search } from 'lucide-react'
-import type { CSSProperties } from 'react'
+import type { CSSProperties, DragEvent as ReactDragEvent } from 'react'
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 
 const PIERRE_WORKSPACE_FILE_TREE_CSS = `
@@ -219,6 +220,9 @@ function WorkspacePierreFileTree({
 }) {
   const { model } = useFileTree({
     density: 'compact',
+    dragAndDrop: {
+      canDrop: () => false,
+    },
     flattenEmptyDirectories: true,
     icons: { set: 'complete', colored: false },
     initialExpandedPaths: treeModel.expandedTreePaths,
@@ -259,20 +263,43 @@ function WorkspacePierreFileTree({
     })
   }, [model, treeModel.expandedTreePaths])
 
+  const handleDragStart = (event: ReactDragEvent<HTMLDivElement>) => {
+    const row = event.nativeEvent
+      .composedPath()
+      .find(target => target instanceof HTMLElement && target.hasAttribute('data-item-path')) as
+      | HTMLElement
+      | undefined
+    const treePath = row?.dataset.itemPath
+    if (!treePath) return
+
+    const entry = getEntryByTreePath(treeModel.entryByTreePath, treePath)
+    if (!entry) return
+
+    writeWorkspacePathDragData(event.dataTransfer, [
+      {
+        path: entry.path,
+        isDirectory: entry.isDirectory,
+      },
+    ])
+    event.dataTransfer.effectAllowed = 'copy'
+  }
+
   return (
-    <FileTree
-      key={modelKey}
-      data-testid="workspace-file-tree-pierre"
-      model={model}
-      className="block h-full min-h-0 w-full"
-      style={
-        {
-          '--trees-border-color-override': 'rgb(var(--color-border))',
-          '--trees-fg-override': 'rgb(var(--color-text-secondary))',
-          '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
-        } as CSSProperties
-      }
-    />
+    <div className="h-full min-h-0 w-full" onDragStart={handleDragStart}>
+      <FileTree
+        key={modelKey}
+        data-testid="workspace-file-tree-pierre"
+        model={model}
+        className="block h-full min-h-0 w-full"
+        style={
+          {
+            '--trees-border-color-override': 'rgb(var(--color-border))',
+            '--trees-fg-override': 'rgb(var(--color-text-secondary))',
+            '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
+          } as CSSProperties
+        }
+      />
+    </div>
   )
 }
 
