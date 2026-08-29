@@ -58,7 +58,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
 
-      await control.command('waitFor', '[data-testid="cloud-todo-column-inbox"]', {
+      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
@@ -73,6 +73,9 @@ export function createDesktopScenario({ uiTimeoutMs }) {
         timeoutMs: uiTimeoutMs,
       })
       await control.command('press', 'body', { key: 'Escape' })
+      await control.command('waitFor', '[data-testid="cloud-todo-column-empty-add-inbox"]', {
+        timeoutMs: uiTimeoutMs,
+      })
       await control.command('click', '[data-testid="cloud-todo-column-empty-add-inbox"]')
       await control.command('waitFor', '[data-testid="cloud-todo-column-quick-create-inbox"]', {
         timeoutMs: uiTimeoutMs,
