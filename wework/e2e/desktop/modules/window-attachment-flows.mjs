@@ -289,9 +289,7 @@ async function verifyRuntimeTaskNotificationNavigation({
   assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
 
   await control.command('click', '[data-testid="new-chat-button"]')
-  await control.command('waitFor', composerSelector, {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await waitForBlankConversation(control, composerSelector)
   await control.command('activateRuntimeTaskCompletionNotification', 'body', {
     value: JSON.stringify({
       deviceId: activeTask.deviceId,
