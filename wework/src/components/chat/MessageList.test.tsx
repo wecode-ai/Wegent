@@ -2723,37 +2723,50 @@ describe('MessageList', () => {
     )
   })
 
-  test('passes assistant file link line numbers to open-file actions', async () => {
+  test('passes assistant file link line numbers to open-file actions', () => {
+    vi.useFakeTimers()
     const onOpenWorkspaceFile = vi.fn()
-    render(
-      <MessageList
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-        messages={[
-          {
-            id: 'assistant-file-line-link',
-            role: 'assistant',
-            content:
-              '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
-            status: 'done',
-            createdAt: '2026-06-24T08:00:01.000Z',
-          },
-        ]}
-      />
-    )
+    try {
+      render(
+        <MessageList
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          messages={[
+            {
+              id: 'assistant-file-line-link',
+              role: 'assistant',
+              content:
+                '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
+              status: 'done',
+              createdAt: '2026-06-24T08:00:01.000Z',
+            },
+          ]}
+        />
+      )
 
-    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveTextContent(
-      'references/github-pr-flow.md (line 18)'
-    )
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveClass(
-      'max-w-[min(36rem,calc(100vw-3rem))]',
-      'break-all'
-    )
-    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
-      lineStart: 18,
-      lineEnd: undefined,
-    })
+      const link = screen.getByTestId('assistant-markdown-link')
+      const tooltipTrigger = link.parentElement as HTMLElement
+      expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+      expect(screen.queryByTestId('assistant-markdown-link-tooltip')).not.toBeInTheDocument()
+
+      fireEvent.pointerEnter(tooltipTrigger)
+      act(() => {
+        vi.advanceTimersByTime(700)
+      })
+
+      const tooltip = screen.getByTestId('assistant-markdown-link-tooltip')
+      expect(tooltip).toHaveTextContent('references/github-pr-flow.md (line 18)')
+      expect(tooltip).toHaveClass('fixed', 'z-system-popover')
+      expect(document.body).toContainElement(tooltip)
+      expect(link).not.toContainElement(tooltip)
+
+      fireEvent.click(link)
+      expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
+        lineStart: 18,
+        lineEnd: undefined,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('renders assistant file links with extension-specific Codex-style icons', () => {
