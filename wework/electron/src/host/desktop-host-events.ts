@@ -30,7 +30,7 @@ export class DesktopHostEventBroker {
     return {
       events: this.events.filter(event => event.sequence > after),
       latestSequence: this.sequence,
-      historyLost: after > 0 && after < earliest - 1,
+      historyLost: after < earliest - 1,
     }
   }
 }

@@ -31,4 +31,13 @@ describe('DesktopHostEventBroker', () => {
     expect(batch.events).toHaveLength(1024)
     expect(batch.events[0]?.sequence).toBe(3)
   })
+
+  test('reports history loss for an initial cursor', () => {
+    const broker = new DesktopHostEventBroker()
+    for (let index = 0; index < 1025; index += 1) {
+      broker.publish('browser.event', { index })
+    }
+
+    expect(broker.read(0).historyLost).toBe(true)
+  })
 })

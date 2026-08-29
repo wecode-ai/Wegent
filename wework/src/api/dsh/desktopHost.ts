@@ -86,11 +86,21 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
         after: desktopHostEventAfter,
       })
       if (desktopHostEventLoopGeneration !== generation) return
-      desktopHostEventAfter = batch.latestSequence
-      saveDesktopHostEventCursor(desktopHostEventAfter)
-      for (const event of batch.events) {
-        desktopHostEventHandlers.forEach(handler => handler(event))
+      if (batch.historyLost) {
+        recoverFromDesktopHostEventHistoryLoss(batch.latestSequence)
+        return
       }
+      desktopHostEventAfter = batch.latestSequence
+      for (const event of batch.events) {
+        desktopHostEventHandlers.forEach(handler => {
+          try {
+            handler(event)
+          } catch (error) {
+            console.error('[Wework] Desktop host event handler failed', error)
+          }
+        })
+      }
+      saveDesktopHostEventCursor(desktopHostEventAfter)
       await waitForNextDesktopHostEventPoll()
     } catch (error) {
       if (desktopHostEventLoopGeneration !== generation) return
@@ -98,6 +108,13 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
       await waitForNextDesktopHostEventPoll()
     }
   }
+}
+
+function recoverFromDesktopHostEventHistoryLoss(latestSequence: number): void {
+  console.error('[Wework] Desktop host event history was lost; reloading to resynchronize')
+  desktopHostEventAfter = latestSequence
+  saveDesktopHostEventCursor(desktopHostEventAfter)
+  window.location.reload()
 }
 
 function waitForNextDesktopHostEventPoll(): Promise<void> {

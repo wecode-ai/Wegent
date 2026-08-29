@@ -337,7 +337,16 @@ export function probeProjectWorktreeAvailability(
     return Promise.resolve(structural)
   }
 
-  const key = JSON.stringify([structural.deviceId, structural.sourcePath, input.ref?.trim() ?? ''])
+  const key = JSON.stringify([
+    structural.deviceId,
+    structural.sourcePath,
+    input.ref?.trim() ?? '',
+    input.workspace?.repoRootFingerprint ?? '',
+    input.device?.device_id ?? '',
+    input.device?.device_type ?? '',
+    input.device?.status ?? '',
+    input.device?.runtime_routes ?? [],
+  ])
   const probes = worktreeProbeInflight.get(input.api) ?? new Map()
   worktreeProbeInflight.set(input.api, probes)
   const existing = probes.get(key)
