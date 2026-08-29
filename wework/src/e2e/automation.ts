@@ -157,6 +157,23 @@ function embeddedBrowserStorageInput(command: DesktopControlCommand) {
   }
 }
 
+function reloadMainWindowLocalStorageInput(
+  command: DesktopControlCommand
+): { key: string; value: string } | null {
+  if (!command.value || command.value === 'capture') return null
+  const input = JSON.parse(command.value) as {
+    localStorage?: { key?: string; value?: string }
+  }
+  if (!input.localStorage) return null
+  if (!input.localStorage.key) {
+    throw new Error('reloadMainWindow localStorage requires a key')
+  }
+  return {
+    key: input.localStorage.key,
+    value: input.localStorage.value ?? '',
+  }
+}
+
 async function setEmbeddedBrowserLocalStorageItem(command: DesktopControlCommand) {
   const input = embeddedBrowserStorageInput(command)
   return evalEmbeddedBrowserJson<string>(
@@ -862,6 +879,7 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
 async function endDesktopControlDrag(command: DesktopControlCommand): Promise<string> {
   const activeDrag = activeDesktopControlDrag
   if (!activeDrag) throw new Error('No desktop control drag is active')
+  const startedAt = performance.now()
   const targetSelector = command.target ?? activeDrag.targetSelector
   const target = findDesktopControlElements(targetSelector)[0]
   if (!target) throw new Error(`Unable to find target selector "${targetSelector}"`)
@@ -879,6 +897,17 @@ async function endDesktopControlDrag(command: DesktopControlCommand): Promise<st
       ...endOptions,
       buttons: 0,
     })
+    if (command.waitForSelector) {
+      await waitForDesktopControlElement({
+        ...command,
+        selector: command.waitForSelector,
+        visible: true,
+      })
+      return JSON.stringify({
+        durationMs: Math.round(performance.now() - startedAt),
+        sourceText: activeDrag.sourceText,
+      })
+    }
     return activeDrag.sourceText
   } finally {
     activeDesktopControlDrag = null
@@ -1313,8 +1342,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return ''
     case 'requestMainWindowClose':
       return ''
-    case 'reloadMainWindow':
-      return command.value === 'capture' ? captureDesktopControlScreenshot(command.selector) : ''
+    case 'reloadMainWindow': {
+      if (command.value === 'capture') return captureDesktopControlScreenshot(command.selector)
+      const storageInput = reloadMainWindowLocalStorageInput(command)
+      if (storageInput) {
+        window.localStorage.setItem(storageInput.key, storageInput.value)
+      }
+      await flushDesktopLocalStoragePersistence()
+      return ''
+    }
     case 'getTestIdOrder':
       return desktopControlTestIdOrder(command.selector)
     case 'reorderRuntimeProjectTasks':

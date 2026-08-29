@@ -16,6 +16,7 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   consumeRuntimeTaskLifecycleBlock,
+  runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -1539,6 +1540,9 @@ export function useWorkbenchPaneSession({
       )
 
       try {
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         let sendError: string | null = null
         const sent = await sendRuntimeMessage(queuedMessage, {
           appendLocalMessage: false,
@@ -1562,15 +1566,26 @@ export function useWorkbenchPaneSession({
           return
         }
         if (isRuntimeTaskBusyError(sendError)) {
-          const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycle)
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          const lifecycleAlreadyChanged = runtimeTaskLifecycleTransitionChanged(
+            lifecycleBeforeSend,
+            lifecycleAfterSend
+          )
+          if (lifecycleAlreadyChanged) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           console.info('[Wework] Queued runtime message remains queued while executor is busy', {
             id: queuedMessage.id,
             deviceId: currentRuntimeTask?.deviceId ?? null,
             taskId: currentRuntimeTask?.taskId ?? null,
-            executionPhase: lifecycle?.execution.phase ?? null,
-            turnPhase: lifecycle?.turn.phase ?? null,
-            executorSnapshotRunning: lifecycle?.task?.running ?? null,
+            executionPhase: lifecycleBeforeSend?.execution.phase ?? null,
+            turnPhase: lifecycleBeforeSend?.turn.phase ?? null,
+            executorSnapshotRunning: lifecycleBeforeSend?.task?.running ?? null,
+            lifecycleAlreadyChanged,
           })
         } else {
           queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
@@ -2187,6 +2202,9 @@ export function useWorkbenchPaneSession({
           }
 
           let sendError: string | null = null
+          const lifecycleBeforeSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
           const sent = await sendRuntimeMessage(queuedMessage, {
             onError: nextError => {
               sendError = nextError
@@ -2197,10 +2215,14 @@ export function useWorkbenchPaneSession({
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
-            queuedMessageBusyBlockSnapshotsRef.current.set(
-              queuedMessage.id,
-              currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-            )
+            const lifecycleAfterSend = currentRuntimeTask
+              ? lifecycleStore.getTask(currentRuntimeTask)
+              : null
+            if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+              queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+            } else {
+              queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+            }
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
             resetAttachments()
@@ -2241,6 +2263,9 @@ export function useWorkbenchPaneSession({
         }
 
         let sendError: string | null = null
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         const sent = await sendRuntimeMessage(queuedMessage, {
           onError: nextError => {
             sendError = nextError
@@ -2250,10 +2275,14 @@ export function useWorkbenchPaneSession({
           setInput('')
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
-          queuedMessageBusyBlockSnapshotsRef.current.set(
-            queuedMessage.id,
-            currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          )
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
         } else {

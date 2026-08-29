@@ -949,6 +949,53 @@ describe('createLocalAppServices', () => {
     ])
   })
 
+  test('reuses the initialized local device for subsequent device commands', async () => {
+    const ensure = vi.fn().mockResolvedValue({
+      running: true,
+      ready: true,
+      deviceId: 'device-uuid',
+    })
+    const request = vi.fn().mockImplementation(async (method: string) =>
+      method === 'runtime.tasks.list'
+        ? { workspaces: [] }
+        : {
+            success: true,
+            stdout: '/Users/me',
+            stderr: '',
+            exit_code: 0,
+          }
+    )
+    const services = createLocalAppServices({
+      ensure,
+      request,
+      subscribe: vi.fn(),
+    })
+
+    await services.deviceApi.listDevices()
+    await services.deviceApi.getHomeDirectory('local-device')
+    await services.deviceApi.getHomeDirectory('local-device')
+
+    expect(ensure).toHaveBeenCalledTimes(1)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenNthCalledWith(1, 'device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(request).toHaveBeenNthCalledWith(2, 'device.execute_command', {
+      deviceId: 'device-uuid',
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+
+    await services.runtimeWorkApi?.listRuntimeWork()
+
+    expect(ensure).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenLastCalledWith('runtime.tasks.list', {})
+  })
+
   test('routes runtime task creation and device commands through app ipc', async () => {
     const request = vi.fn().mockImplementation(async (method: string) => {
       if (method === 'runtime.tasks.create') {

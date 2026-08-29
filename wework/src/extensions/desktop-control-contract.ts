@@ -4,6 +4,7 @@ export interface DesktopControlCommand {
   selector: string
   value?: string
   target?: string
+  waitForSelector?: string
   text?: string
   timeoutMs?: number
   enabled?: boolean

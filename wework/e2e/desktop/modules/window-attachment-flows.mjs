@@ -59,6 +59,8 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -516,7 +518,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     await control.command(
       'waitFor',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-      { text: completionText, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      { text: completionText, timeoutMs: MODEL_RESPONSE_TIMEOUT_MS }
     )
     await control.command('waitFor', composerSelector, {
       stableMs: COMPOSER_READY_STABILITY_MS,

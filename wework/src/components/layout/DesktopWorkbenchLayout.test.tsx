@@ -42,7 +42,6 @@ import {
   openLocalWorkspace,
   startLocalHarness,
   startLocalTerminal,
-  updateLocalHarnessSessionTitle,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
@@ -371,7 +370,6 @@ vi.mock('@/lib/local-terminal', () => ({
   resolveLocalHarnessPluginRoots: vi.fn().mockResolvedValue([]),
   startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
-  updateLocalHarnessSessionTitle: vi.fn(),
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT: 'wework:local-harness-sessions-changed',
 }))
 
@@ -532,7 +530,6 @@ const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalHarnessMock = vi.mocked(startLocalHarness)
-const updateLocalHarnessSessionTitleMock = vi.mocked(updateLocalHarnessSessionTitle)
 const resolveLocalHarnessLaunchMock = vi.fn()
 const unregisterHarnessProxyMock = vi.fn()
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
@@ -713,7 +710,6 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalHarnessMock.mockReset().mockResolvedValue('local-harness-1')
-    updateLocalHarnessSessionTitleMock.mockResolvedValue(undefined)
     resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
       modelId:
         harnessId === 'claude_code'

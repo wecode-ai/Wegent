@@ -2017,9 +2017,18 @@ describe('App plugins route', () => {
     await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
     await userEvent.click(await screen.findByTestId('smart-apps-section-owned'))
     expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+    const ownedSearch = new URLSearchParams(window.location.search)
+    const workspaceTabId = ownedSearch.get('workspaceTab')
+    expect(ownedSearch.get('app_type')).toBe('smart_app')
+    expect(ownedSearch.get('view')).toBe('owned')
+    expect(workspaceTabId).toBeTruthy()
+    expect(ownedSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-    expect(window.location.search).toBe('?app_type=miniapp')
+    const miniAppSearch = new URLSearchParams(window.location.search)
+    expect(miniAppSearch.get('app_type')).toBe('miniapp')
+    expect(miniAppSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(miniAppSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
 
@@ -2028,7 +2037,11 @@ describe('App plugins route', () => {
       'aria-current',
       'page'
     )
-    expect(window.location.search).toBe('?app_type=smart_app')
+    const marketplaceSearch = new URLSearchParams(window.location.search)
+    expect(marketplaceSearch.get('app_type')).toBe('smart_app')
+    expect(marketplaceSearch.has('view')).toBe(false)
+    expect(marketplaceSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(marketplaceSearch.get('workspaceTabTitle')).toBe('应用')
   })
 
   test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {

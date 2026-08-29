@@ -1035,6 +1035,45 @@ impl RuntimeWorkRpcHandler {
         None
     }
 
+    pub(super) async fn wait_for_running_side_source_turn(&self, thread_id: &str) {
+        let Some(source) = self.local_task_by_thread_id(thread_id) else {
+            return;
+        };
+        if !self.is_active_local_task(&source.local_task_id)
+            || self.active_codex_turn(&source.local_task_id).is_some()
+        {
+            return;
+        }
+
+        log_executor_event(
+            "runtime side source turn awaiting",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("thread_id", thread_id.to_owned()),
+            ],
+        );
+        while self.is_active_local_task(&source.local_task_id) {
+            if self.active_codex_turn(&source.local_task_id).is_some() {
+                log_executor_event(
+                    "runtime side source turn ready",
+                    &[
+                        ("local_task_id", source.local_task_id),
+                        ("thread_id", thread_id.to_owned()),
+                    ],
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(ACTIVE_CODEX_TURN_WAIT_MS)).await;
+        }
+        log_executor_event(
+            "runtime side source turn settled before start",
+            &[
+                ("local_task_id", source.local_task_id),
+                ("thread_id", thread_id.to_owned()),
+            ],
+        );
+    }
+
     pub(super) fn clear_active_codex_turn(&self, local_task_id: &str, execution_id: u64) {
         let mut active = self
             .active_local_executions

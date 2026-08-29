@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
 import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
+import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
 const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -16,6 +17,7 @@ const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const identity = resolveBuildIdentity()
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -28,7 +30,7 @@ await Promise.all([
   rm(staging, { recursive: true, force: true }),
 ])
 await run(
-  'pnpm',
+  pnpmCommand,
   [
     '--config.inject-workspace-packages=true',
     '--config.node-linker=hoisted',
@@ -116,7 +118,8 @@ console.log(JSON.stringify({ applications }, null, 2))
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

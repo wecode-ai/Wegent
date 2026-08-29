@@ -506,8 +506,11 @@ describe('MessageList', () => {
 
   test('windows oversized streaming Markdown before mounting every chunk', () => {
     runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
-      constructor() {}
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
       observe = vi.fn()
       disconnect = vi.fn()
       unobserve = vi.fn()
@@ -541,6 +544,18 @@ describe('MessageList', () => {
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
     expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+
+    act(() => {
+      intersectionCallbacks.forEach(callback =>
+        callback(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    })
+
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
   })
 
   test('keeps message row containment during a plain text click', () => {

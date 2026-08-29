@@ -77,13 +77,14 @@ async function startRedisServer(
   logPath,
   { reserveRedisPort = reservePort, spawnRedis = spawn } = {}
 ) {
+  const redisServerBinary = process.env.WEWORK_E2E_REDIS_SERVER_BIN?.trim() || 'redis-server'
   for (let attempt = 1; attempt <= REDIS_START_ATTEMPTS; attempt += 1) {
     const port = await reserveRedisPort()
     const existingLog = await readFile(logPath, 'utf8').catch(() => '')
     const fromOffset = existingLog.length
     await appendFile(logPath, `Redis start attempt ${attempt} on port ${port}\n`)
     const redis = spawnRedis(
-      'redis-server',
+      redisServerBinary,
       ['--port', String(port), '--save', '', '--appendonly', 'no'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
@@ -232,6 +233,7 @@ class RealCloudEnvironment {
   }
 
   async startBackend() {
+    const backendDirectory = join(repoDir, 'backend')
     this.databasePath = join(resultDir, 'cloud-backend.sqlite3')
     this.backendLogPath = join(resultDir, 'cloud-backend.log')
     this.redisLogPath = join(resultDir, 'cloud-redis.log')
@@ -264,11 +266,14 @@ class RealCloudEnvironment {
       CHAT_SHELL_URL: this.modelServerUrl,
       CHAT_SHELL_MODE: 'package',
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
-      WEGENT_BACKEND_PUBLIC_URL: this.backendUrl,
       WEGENT_SOCKET_URL: this.socketUrl,
       ...remoteDeviceE2EExtension.backendEnv,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
       DB_AUTO_MIGRATE: 'false',
       INIT_DATA_ENABLED: 'true',
+      INIT_DATA_DIR: join(backendDirectory, 'init_data'),
+      BUILTIN_PLUGINS_DIR: join(backendDirectory, 'init_data', 'plugins'),
       ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
       ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
       ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
@@ -277,14 +282,25 @@ class RealCloudEnvironment {
     }
     this.backendEnv = backendEnv
     await runChecked('uv', ['run', 'alembic', 'upgrade', 'head'], {
-      cwd: join(repoDir, 'backend'),
+      cwd: backendDirectory,
       env: backendEnv,
     })
     this.backend = spawn(
       'uv',
-      ['run', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(this.backendPort)],
+      [
+        'run',
+        'python',
+        '-u',
+        '-m',
+        'uvicorn',
+        'app.main:app',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(this.backendPort),
+      ],
       {
-        cwd: join(repoDir, 'backend'),
+        cwd: backendDirectory,
         env: backendEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       }
@@ -463,7 +479,7 @@ class RealCloudEnvironment {
     logFile,
     authToken = this.authToken,
   }) {
-    return {
+    const environment = {
       ...process.env,
       ...(this.claudeBinary ? { CLAUDE_BINARY_PATH: this.claudeBinary } : {}),
       CODEX_BIN: this.codexBinary,
@@ -488,6 +504,16 @@ class RealCloudEnvironment {
       DEVICE_SESSION_GATEWAY_HOST: '127.0.0.1',
       DEVICE_SESSION_GATEWAY_PORT: '0',
     }
+    for (const key of [
+      'WEGENT_APP_IPC_DEVICE_ID',
+      'WEGENT_APP_IPC_ENDPOINT',
+      'WEGENT_APP_IPC_OWNER_TOKEN',
+      'WEGENT_APP_IPC_TOKEN',
+      'WEGENT_APP_LIFECYCLE_FD',
+    ]) {
+      delete environment[key]
+    }
+    return environment
   }
 
   async startRemoteExecutor(executorBinary) {
@@ -514,8 +540,6 @@ class RealCloudEnvironment {
       codexHome: this.remoteDockerCodexHome,
       logFile: 'remote-docker-executor-runtime.log',
     })
-    delete this.remoteExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
-    delete this.remoteDockerExecutorEnv.WEGENT_APP_IPC_DEVICE_ID
     this.remoteExecutor = await this.spawnExecutor(
       this.remoteExecutorEnv,
       this.remoteExecutorLogPath

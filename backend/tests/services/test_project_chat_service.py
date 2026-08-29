@@ -2183,9 +2183,7 @@ def test_device_runtime_event_projects_directly_bound_issue_status(
     )
     monkeypatch.setattr(
         "app.api.ws.device_namespace.publish_loop_item_changed",
-        lambda db, *, item, reason, actor_user_id: published.append(
-            (item.id, reason)
-        ),
+        lambda db, *, item, reason, actor_user_id: published.append((item.id, reason)),
     )
 
     _project_chat_runtime_event_sync(

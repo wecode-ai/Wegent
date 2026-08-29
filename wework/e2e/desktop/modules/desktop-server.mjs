@@ -230,6 +230,7 @@ import {
   assert,
   createServer,
   join,
+  pathToFileURL,
   randomUUID,
   withTimeout,
 } from './shared.mjs'
@@ -1877,6 +1878,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -3134,21 +3150,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'connector_auth_unmatched_resume') {
-      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
-        'The unmatched connector auth resume scenario did not receive its trigger prompt'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     if (this.scenario === 'skill_mention_display') {
       this.recordScenarioRequest('skill_mention_display', modelRequest)
       const requestText = JSON.stringify(body)
@@ -3251,7 +3252,7 @@ class DesktopE2EServer {
         assistantMessage(
           FILE_PANEL_ANCHOR_RESPONSE.replace(
             `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
-            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+            `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
         responseCompleted(responseId),
@@ -3444,9 +3445,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'pasted_workspace_paths') {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
@@ -3471,9 +3472,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'dropped_workspace_paths') {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'

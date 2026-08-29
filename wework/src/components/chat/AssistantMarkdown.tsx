@@ -304,7 +304,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,7 +322,7 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
 
   return (
     <div
