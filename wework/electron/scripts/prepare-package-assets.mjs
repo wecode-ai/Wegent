@@ -15,6 +15,7 @@ import {
   CORE_PLUGIN_DIRECTORIES,
   corePluginTarget,
 } from '../../scripts/lib/core-plugin-resources.mjs'
+import { resolveHarnessRuntimeCachePaths } from '../../scripts/lib/harness-runtime-cache.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -32,6 +33,10 @@ const packageEnvironment = {
   WEWORK_CODEX_TARGET: packageTargets.codexTarget,
   WEWORK_DWS_TARGET: packageTargets.dwsTarget,
 }
+const { assetDirectory: harnessRuntimeAssetDirectory } = resolveHarnessRuntimeCachePaths(
+  weworkRoot,
+  packageEnvironment
+)
 const configuredExecutorPath = process.env.WEWORK_EXECUTOR_PATH?.trim()
 const [executorPath] = await Promise.all([
   configuredExecutorPath
@@ -55,7 +60,7 @@ const harnessResources = join(resourcesRoot, 'harness-runtime')
 await mkdir(harnessResources, { recursive: true, mode: 0o700 })
 for (const runtime of packagedRuntimes) {
   await cp(
-    join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets', runtime.assetName),
+    join(harnessRuntimeAssetDirectory, runtime.assetName),
     join(harnessResources, runtime.assetName)
   )
 }
