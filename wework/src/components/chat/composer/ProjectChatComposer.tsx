@@ -47,6 +47,7 @@ import type {
   ComposerConversationMentionCandidate,
 } from './composerMentionCandidates'
 import type { ComposerExternalMentionCandidate } from './composerTextareaTypes'
+import type { ModelSelectorCloseReason } from './model-selector-types'
 import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import styles from './ProjectChatComposer.module.css'
 
@@ -70,7 +71,7 @@ interface ProjectChatComposerProps {
   activeModel?: UnifiedModel | null
   selectedModelOptions: ModelOptions
   modelSelectorOpenSignal?: number
-  onModelSelectorOpenChange?: (open: boolean) => void
+  onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   isModelSelectionReady: boolean
   attachments: Attachment[]
   codeComments?: CodeCommentContext[]

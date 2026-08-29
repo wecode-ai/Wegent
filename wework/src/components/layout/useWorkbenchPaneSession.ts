@@ -449,6 +449,13 @@ export function useWorkbenchPaneSession({
       }),
     [currentRuntimeTask, messages, taskLifecycle]
   )
+  const readCurrentPaneBusy = useCallback(
+    () =>
+      currentRuntimeTask
+        ? (lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy)
+        : paneStatus.isBusy,
+    [currentRuntimeTask, lifecycleStore, paneStatus.isBusy]
+  )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
@@ -1687,7 +1694,7 @@ export function useWorkbenchPaneSession({
   }, [runtimeTaskLoadTarget])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    async (queuedMessage: RuntimePaneQueuedMessage) => {
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
       const id = queuedMessage.id
       queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       if (!currentRuntimeTask) {
@@ -1705,7 +1712,7 @@ export function useWorkbenchPaneSession({
       if (queuedMessage.status === 'sending') return
 
       setError(null)
-      if (!paneStatus.isBusy) {
+      if (!readCurrentPaneBusy() && !forceActiveTurn) {
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
@@ -1830,7 +1837,7 @@ export function useWorkbenchPaneSession({
     },
     [
       currentRuntimeTask,
-      paneStatus.isBusy,
+      readCurrentPaneBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
       setError,
@@ -1844,6 +1851,7 @@ export function useWorkbenchPaneSession({
         const submittedInput = (inputOverride ?? input).trim()
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
+        const paneIsBusy = readCurrentPaneBusy()
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
           submittedValue: textMetrics(inputOverride),
@@ -1856,7 +1864,7 @@ export function useWorkbenchPaneSession({
           guideWhenBusy: options.guideWhenBusy === true,
           interruptWhenBusy: options.interruptWhenBusy === true,
           hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
-          paneBusy: paneStatus.isBusy,
+          paneBusy: paneIsBusy,
         })
 
         if (goalDraftActive) {
@@ -1886,7 +1894,7 @@ export function useWorkbenchPaneSession({
             }
 
             resetAttachments()
-            if (paneStatus.isBusy && options.guideWhenBusy) {
+            if (paneIsBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1902,7 +1910,7 @@ export function useWorkbenchPaneSession({
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
-              await sendQueuedMessageAsGuidance(baseMessage)
+              await sendQueuedMessageAsGuidance(baseMessage, true)
               return true
             }
 
@@ -1910,7 +1918,7 @@ export function useWorkbenchPaneSession({
               ...baseMessage,
               initialGoal,
             }
-            if (paneStatus.isBusy) {
+            if (paneIsBusy) {
               setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
@@ -2023,7 +2031,7 @@ export function useWorkbenchPaneSession({
             setError('当前对话还没有可压缩的 Codex 线程')
             return false
           }
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             setError('当前回复进行中，完成后再压缩上下文')
             return false
           }
@@ -2183,7 +2191,7 @@ export function useWorkbenchPaneSession({
             ...getRuntimeModelFields(),
           }
 
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             resetAttachments()
             setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
@@ -2244,7 +2252,7 @@ export function useWorkbenchPaneSession({
         }
 
         resetAttachments()
-        if (paneStatus.isBusy) {
+        if (paneIsBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
@@ -2257,7 +2265,7 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
           if (options.guideWhenBusy) {
-            await sendQueuedMessageAsGuidance(queuedMessage)
+            await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
           return true
         }
@@ -2308,8 +2316,8 @@ export function useWorkbenchPaneSession({
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
-        paneStatus.isBusy,
         queuedMessages.length,
+        readCurrentPaneBusy,
         resetAttachments,
         restoreInputAfterFailure,
         sendCurrentInput,

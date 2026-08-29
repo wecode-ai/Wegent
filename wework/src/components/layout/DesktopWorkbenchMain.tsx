@@ -2639,8 +2639,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             retryFailedMessageAfterModelSelect()
           }
         : undefined,
-      onModelSelectorOpenChange: open => {
-        if (!open) pendingModelRetryRef.current = null
+      onModelSelectorOpenChange: (open, closeReason) => {
+        if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
