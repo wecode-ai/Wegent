@@ -106,6 +106,11 @@ WebView 或 executor 重建后启动的新 turn 不会让历史 assistant 回复
 空值；在 seed 仍属于当前任务时，空结果不能清除 lifecycle 中的 Goal 状态。这样即使
 stream 结算先于 Goal 持久化完成，active Goal 也能继续约束任务生命周期。
 
+从 URL 恢复 runtime task 时，pane 最初可能只有 device ID 和 task ID，随后才从任务
+列表补全 workspace、thread 和 runtime 信息。Goal 和 transcript 加载请求都必须在
+地址补全后重新发起，但补全前后仍属于同一个稳定任务身份；重新水合不能创建新会话，
+也不能重放已经处理过的 turn 生命周期事件。
+
 ### Claude Code 普通会话执行器
 
 Wework 中的 Claude Code 与 Codex 一样使用普通 runtime task 会话界面，不使用终端
