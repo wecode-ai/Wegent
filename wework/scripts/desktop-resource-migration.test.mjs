@@ -119,9 +119,11 @@ describe('desktop resource migration', () => {
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
     expect(packageApp).toContain('await releaseToolchainLock()')
-    expect(packageApp.indexOf('process.noAsar = true')).toBeLessThan(
-      packageApp.indexOf('rm(output')
-    )
+    const noAsar = packageApp.indexOf('process.noAsar = true')
+    const outputCleanup = packageApp.indexOf('rm(output')
+    expect(noAsar).toBeGreaterThan(-1)
+    expect(outputCleanup).toBeGreaterThan(-1)
+    expect(noAsar).toBeLessThan(outputCleanup)
   })
 
   test('reuses an unchanged prepared DWS sidecar', async () => {

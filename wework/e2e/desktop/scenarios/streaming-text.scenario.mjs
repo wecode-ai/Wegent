@@ -797,7 +797,7 @@ export function createDesktopScenario({
     const rapidScrollSamples = JSON.parse(
       await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
         value: JSON.stringify({
-          contentSelector: '[data-markdown-window-chunk]',
+          contentSelector: '[data-markdown-window-chunk] > *',
           ratios: [0.75, 0.5, 0.25],
         }),
       })
