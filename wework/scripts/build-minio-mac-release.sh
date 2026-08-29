@@ -249,8 +249,7 @@ upload_artifacts() {
   RELEASE_CHANNEL="$CHANNEL" \
   RELEASE_KIND="$RELEASE_KIND" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
-    uv run --project "$PROJECT_DIR/backend" \
-      python "$SCRIPT_DIR/upload-mac-release-to-s3.py"
+    uv run --script "$SCRIPT_DIR/upload-mac-release-to-s3.py"
 }
 
 verify_uploaded_artifacts() {
