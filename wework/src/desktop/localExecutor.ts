@@ -1,4 +1,5 @@
 import {
+  DshExecutorTransportError,
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
@@ -327,9 +328,11 @@ export function requestLocalExecutor<T = unknown>(
   params: Record<string, unknown> = {}
 ): Promise<T> {
   return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
-    initializedLocalExecutorStatus = null
-    initializedBundledPluginMarketplace = null
-    reconciledBundledPluginMarketplaceKey = ''
+    if (isExecutorTransportFailure(cause)) {
+      initializedLocalExecutorStatus = null
+      initializedBundledPluginMarketplace = null
+      reconciledBundledPluginMarketplaceKey = ''
+    }
     console.error('[local-ipc] request failed', {
       method,
       paramsKeys: Object.keys(params ?? {}),
@@ -339,6 +342,11 @@ export function requestLocalExecutor<T = unknown>(
     })
     throw cause
   })
+}
+
+function isExecutorTransportFailure(cause: unknown): boolean {
+  if (!(cause instanceof DshExecutorTransportError)) return true
+  return cause.retryable || cause.code === 'protocol_mismatch' || /^http_\d+$/.test(cause.code)
 }
 
 export function subscribeLocalExecutorEvents(

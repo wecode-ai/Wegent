@@ -91,7 +91,7 @@ async function runDesktopHostEventLoop(generation: number): Promise<void> {
         return
       }
       desktopHostEventAfter = batch.latestSequence
-      for (const event of batch.events) {
+      for (const event of coalesceDesktopHostEvents(batch.events)) {
         desktopHostEventHandlers.forEach(handler => {
           try {
             handler(event)
@@ -119,6 +119,33 @@ function recoverFromDesktopHostEventHistoryLoss(latestSequence: number): void {
 
 function waitForNextDesktopHostEventPoll(): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, DESKTOP_HOST_EVENT_POLL_INTERVAL_MS))
+}
+
+function coalesceDesktopHostEvents(events: DesktopHostEvent[]): DesktopHostEvent[] {
+  const coalescingKeys = new Set<string>()
+  const coalescedEvents: DesktopHostEvent[] = []
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index]
+    const key = desktopHostEventCoalescingKey(event)
+    if (key && coalescingKeys.has(key)) continue
+    if (key) coalescingKeys.add(key)
+    coalescedEvents.push(event)
+  }
+  return coalescedEvents.reverse()
+}
+
+function desktopHostEventCoalescingKey(event: DesktopHostEvent): string | null {
+  if (event.type !== 'browser.event') return null
+  const browserEvent = event.payload as {
+    type?: unknown
+    payload?: { label?: unknown; nativeLabel?: unknown }
+  }
+  if (browserEvent.type !== 'page-state') return null
+  const label =
+    typeof browserEvent.payload?.label === 'string'
+      ? browserEvent.payload.label
+      : browserEvent.payload?.nativeLabel
+  return typeof label === 'string' ? `browser.page-state:${label}` : null
 }
 
 function loadDesktopHostEventCursor(): number {
