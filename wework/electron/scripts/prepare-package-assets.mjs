@@ -11,6 +11,10 @@ import {
   resolveDesktopPackageTargets,
   targetExecutableName,
 } from '../../scripts/lib/desktop-package-target.mjs'
+import {
+  CORE_PLUGIN_DIRECTORIES,
+  corePluginTarget,
+} from '../../scripts/lib/core-plugin-resources.mjs'
 import { normalizeFileViewerAssetManifest } from '../../scripts/lib/harness-runtime-metadata.mjs'
 
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -21,19 +25,6 @@ const resourcesRoot = join(electronRoot, 'resources')
 const sharedResourcesRoot = join(weworkRoot, 'resources')
 const executorProfile = resolveExecutorProfile()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-const corePluginDirectories = [
-  'app-wework',
-  'electron-host',
-  'executor-runtime',
-  'terminal-runtime',
-  'ui-core-apps',
-  'ui-core-settings',
-  'ui-plugin-center',
-  'ui-applications',
-  'ui-automations',
-  'ui-cloud-work',
-]
-
 const packageTargets = resolveDesktopPackageTargets(process.env)
 const packageEnvironment = {
   ...process.env,
@@ -80,8 +71,8 @@ await cp(
 )
 const corePluginsRoot = join(resourcesRoot, 'wework-core-plugins')
 await mkdir(corePluginsRoot, { recursive: true, mode: 0o700 })
-for (const directory of corePluginDirectories) {
-  await cp(join(weworkRoot, 'dsh', directory), join(corePluginsRoot, pluginTarget(directory)), {
+for (const directory of CORE_PLUGIN_DIRECTORIES) {
+  await cp(join(weworkRoot, 'dsh', directory), join(corePluginsRoot, corePluginTarget(directory)), {
     recursive: true,
     filter: source => !source.endsWith('.test.mjs'),
   })
@@ -170,21 +161,6 @@ function resolveExecutorProfile() {
   const configured = process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'
   if (configured === 'debug' || configured === 'release') return configured
   throw new Error(`Unsupported Wework executor profile: ${configured}`)
-}
-
-function pluginTarget(directory) {
-  return {
-    'app-wework': 'wework-app',
-    'electron-host': 'wework-electron-host',
-    'executor-runtime': 'wework-executor-runtime',
-    'terminal-runtime': 'wework-terminal-runtime',
-    'ui-core-apps': 'wework-ui-core-apps',
-    'ui-core-settings': 'wework-ui-core-settings',
-    'ui-plugin-center': 'wework-ui-plugin-center',
-    'ui-applications': 'wework-ui-applications',
-    'ui-automations': 'wework-ui-automations',
-    'ui-cloud-work': 'wework-ui-cloud-work',
-  }[directory]
 }
 
 async function buildDshApp() {

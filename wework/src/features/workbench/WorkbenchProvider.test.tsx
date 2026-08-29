@@ -2059,6 +2059,13 @@ function FollowUpProbe() {
   const imageAttachment = createImageAttachment()
   const localImageAttachment = createLocalImageAttachment()
   const firstQueuedMessage = paneSession.queuedMessages[0]
+  const busyResumeQueuedMessagesWithInputRef = useRef(paneSession.resumeQueuedMessagesWithInput)
+  const idleSendRef = useRef(paneSession.send)
+  useEffect(() => {
+    if (paneSession.status.isBusy) {
+      busyResumeQueuedMessagesWithInputRef.current = paneSession.resumeQueuedMessagesWithInput
+    }
+  }, [paneSession.resumeQueuedMessagesWithInput, paneSession.status.isBusy])
   const gptModel =
     workbench.projectChat.models.find(model => model.name === 'gpt-5-2025-08-07') ?? null
 
@@ -2253,14 +2260,23 @@ function FollowUpProbe() {
         send follow-up
       </button>
       <button
+        data-testid="capture-idle-follow-up-send"
         type="button"
-        onClick={() => void paneSession.resumeQueuedMessagesWithInput('手动消息')}
+        onClick={() => {
+          idleSendRef.current = paneSession.send
+        }}
+      >
+        capture idle follow-up send
+      </button>
+      <button
+        type="button"
+        onClick={() => void busyResumeQueuedMessagesWithInputRef.current('手动消息')}
       >
         resume queue with manual input
       </button>
       <button
         type="button"
-        onClick={() => void paneSession.send(undefined, { guideWhenBusy: true })}
+        onClick={() => void idleSendRef.current(undefined, { guideWhenBusy: true })}
       >
         send follow-up as guidance
       </button>
@@ -15701,6 +15717,10 @@ describe('WorkbenchProvider runtime tasks', () => {
     await waitFor(() =>
       expect(screen.getByTestId('runtime-open-messages')).toHaveTextContent('first message')
     )
+    await userEvent.click(screen.getByText('set follow-up goal'))
+    await userEvent.click(screen.getByText('set follow-up'))
+    await userEvent.click(screen.getByText('add local image attachment'))
+    await userEvent.click(screen.getByTestId('capture-idle-follow-up-send'))
     await act(async () => {
       streamHandlers.onChatStart?.({
         taskId: 'runtime-a',
@@ -15709,9 +15729,6 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
       })
     })
-    await userEvent.click(screen.getByText('set follow-up goal'))
-    await userEvent.click(screen.getByText('set follow-up'))
-    await userEvent.click(screen.getByText('add local image attachment'))
     await userEvent.click(screen.getByText('send follow-up as guidance'))
     const queuedMessageId = screen.getByTestId('queued-message-ids').textContent
 

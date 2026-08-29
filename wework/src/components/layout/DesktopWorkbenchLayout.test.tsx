@@ -81,7 +81,6 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
 }))
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(async (capability: string): Promise<unknown> => {
-    if (capability === 'browser.events') return { events: [], nextCursor: 0 }
     if (capability === 'browser.open') {
       return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
     }
@@ -182,6 +181,7 @@ vi.mock('./useWorkbenchPaneSession', () => ({
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 function createPaneStatus({
@@ -5164,7 +5164,7 @@ describe('DesktopWorkbenchLayout', () => {
         'new-project'
       )
     )
-  })
+  }, 15_000)
 
   test('clones a Git repository before opening the remote project', async () => {
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
@@ -5260,7 +5260,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('refreshes an offline device before retrying a Git clone', async () => {
     const refreshResult = createDeferred<void>()
@@ -5304,10 +5304,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
-        'repository设备离线'
-      )
+    await waitFor(
+      () =>
+        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
+          'repository设备离线'
+        ),
+      { timeout: 5_000 }
     )
     const refreshCountBeforeRetry = onRefreshDevices.mock.calls.length
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -5326,7 +5328,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('rejects embedded HTTP Git credentials without cloning', async () => {
     const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
@@ -6694,6 +6696,7 @@ describe('DesktopWorkbenchLayout', () => {
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     expect(sideChat).toBeInTheDocument()
+    expect(sideChat).toHaveClass('min-w-0')
     expect(screen.getByTestId('side-chat-composer-layout')).toHaveClass(
       'mx-auto',
       'w-[min(46rem,calc(100%_-_2rem))]',

@@ -989,6 +989,47 @@ function contextMenuDesktopControlElement(selector: string): string {
   return element.textContent?.trim() ?? ''
 }
 
+async function doubleClickDesktopControlElement(selector: string): Promise<string> {
+  const dispatchClick = (element: HTMLElement, detail: number) => {
+    const pressedOptions = {
+      ...desktopControlEventOptions(element),
+      button: 0,
+      buttons: 1,
+      detail,
+    }
+    const releasedOptions = { ...pressedOptions, buttons: 0 }
+    dispatchDesktopControlPointerEvent(element, 'pointerdown', pressedOptions)
+    element.dispatchEvent(new MouseEvent('mousedown', pressedOptions))
+    dispatchDesktopControlPointerEvent(element, 'pointerup', releasedOptions)
+    element.dispatchEvent(new MouseEvent('mouseup', releasedOptions))
+    element.dispatchEvent(new MouseEvent('click', releasedOptions))
+  }
+
+  const firstElement = findDesktopControlElements(selector)[0]
+  if (!firstElement) throw new Error(`Unable to find selector "${selector}"`)
+  if (!desktopControlElementEnabled(firstElement)) {
+    throw new Error(`Selector "${selector}" is disabled`)
+  }
+  dispatchClick(firstElement, 1)
+  await waitForDesktopControlTick()
+
+  const secondElement = findDesktopControlElements(selector)[0]
+  if (!secondElement) throw new Error(`Unable to find selector "${selector}" after first click`)
+  if (!desktopControlElementEnabled(secondElement)) {
+    throw new Error(`Selector "${selector}" became disabled after first click`)
+  }
+  dispatchClick(secondElement, 2)
+  secondElement.dispatchEvent(
+    new MouseEvent('dblclick', {
+      ...desktopControlEventOptions(secondElement),
+      button: 0,
+      buttons: 0,
+      detail: 2,
+    })
+  )
+  return secondElement.textContent?.trim() ?? ''
+}
+
 async function waitForDesktopControlElement(command: DesktopControlCommand): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -1199,6 +1240,47 @@ function inputDesktopControlTerminal(selector: string, value: string): string {
   return value
 }
 
+function setDesktopControlSelectionOffset(selector: string, value: string): string {
+  const element = findDesktopControlElements(selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${selector}"`)
+  const trimmedValue = value.trim()
+  const offset = Number(trimmedValue)
+  if (trimmedValue === '' || !Number.isInteger(offset) || offset < 0) {
+    throw new Error('setSelectionOffset requires a non-negative integer')
+  }
+
+  element.focus()
+  const range = document.createRange()
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  let remaining = offset
+  let node = walker.nextNode()
+  while (node) {
+    const length = node.textContent?.length ?? 0
+    if (remaining <= length) {
+      range.setStart(node, remaining)
+      range.collapse(true)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+      return String(offset)
+    }
+    remaining -= length
+    node = walker.nextNode()
+  }
+
+  if (offset === 0) {
+    range.selectNodeContents(element)
+    range.collapse(true)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+    return '0'
+  }
+  throw new Error(`Selection offset ${offset} exceeds the text length`)
+}
+
 function dropDesktopControlFile(command: DesktopControlCommand): string {
   const element = findDesktopControlElements(command.selector)[0]
   if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
@@ -1237,6 +1319,23 @@ function pasteDesktopControlFile(command: DesktopControlCommand): string {
   Object.defineProperty(event, 'clipboardData', { value: transfer })
   element.dispatchEvent(event)
   return filename
+}
+
+function pasteDesktopControlText(command: DesktopControlCommand): string {
+  const element = findDesktopControlElements(command.selector)[0]
+  if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
+  const text = command.value ?? ''
+  const transfer = new DataTransfer()
+  transfer.setData('text/plain', text)
+  const event = new ClipboardEvent('paste', {
+    bubbles: true,
+    cancelable: true,
+    composed: true,
+  })
+  Object.defineProperty(event, 'clipboardData', { value: transfer })
+  element.focus()
+  element.dispatchEvent(event)
+  return text
 }
 
 function dispatchDesktopControlPaths(
@@ -1558,6 +1657,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return endDesktopControlDataTransfer(command)
     case 'contextMenu':
       return contextMenuDesktopControlElement(command.selector)
+    case 'doubleClick':
+      return doubleClickDesktopControlElement(command.selector)
     case 'dragStart':
       return startDesktopControlDrag(command)
     case 'dragEnd':
@@ -1570,6 +1671,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return pasteDesktopControlFile(command)
     case 'pastePaths':
       return dispatchDesktopControlPaths(command, 'paste')
+    case 'pasteText':
+      return pasteDesktopControlText(command)
     case 'waitFor':
       return waitForDesktopControlElement(command)
     case 'getText':
@@ -2095,6 +2198,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return selectDesktopControlTerminalText(command.selector, command.value ?? '')
     case 'terminalInput':
       return inputDesktopControlTerminal(command.selector, command.value ?? '')
+    case 'setSelectionOffset':
+      return setDesktopControlSelectionOffset(command.selector, command.value ?? '')
   }
 
   const extensionResult = await desktopControlExtension.execute(command)

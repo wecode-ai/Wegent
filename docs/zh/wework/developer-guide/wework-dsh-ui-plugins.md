@@ -9,25 +9,49 @@ Wework 的桌面 UI 以 Core DSH 为唯一插件运行时。`@wegent/dsh-app-wew
 client 插件通过 slot 注入。不要再创建 Wework 私有 manifest、动态模块加载器或
 第二个 Cordis `Context`。
 
+## 扩展层次
+
+Wework 的 DSH 扩展分为四层，插件应只依赖实际需要的层：
+
+1. 本文描述的 UI slot：向桌面工作台注入导航、页面、应用和工作区 surface。
+2. 标准 DSH service：例如 `sessions`、`tools` 和模型相关 service，由 DSH
+   本身管理，不需要 Wework 私有事件总线。
+3. [Executor Session 投影](./wework-dsh-executor-sessions.md)：把运行中的 Wework
+   任务投影为标准 DSH Session，并提供 Backend 通用插件存储。
+4. Electron 宿主边界：由第一方 `@wegent/dsh-electron-host` 管理，只暴露窄
+   capability，不暴露 Electron 对象、文件描述符或鉴权 token。第三方插件不应直接
+   依赖这个 host 包，只能使用 Wework 明确公开的 client adapter；同一 Core DSH
+   页面中的插件共享 JavaScript 信任域，因此只应安装可信插件。
+
 ## 扩展点
 
-| Slot                           | 用途                     | 必要元数据                        |
-| ------------------------------ | ------------------------ | --------------------------------- |
-| `wework.app`                   | 产品切换器与应用 surface | `id`、`label`、`mode`             |
-| `wework.route`                 | 顶层辅助页面             | `id`、`path`、`telemetryFeature`  |
-| `wework.sidebar.navigation`    | 左侧边栏导航入口         | `id`、`path`、`label`             |
-| `wework.settings.page`         | 设置导航与设置内容       | `id`、`path`、`label`、`category` |
-| `wework.workspace.tab`         | 顶部可关闭工作区 Tab     | `id`、`label`                     |
-| `wework.workspace.sidebar.tab` | 右侧工作区面板 Tab       | `id`、`label`                     |
-| `wework.shell.before`          | 工作台根节点之前         | `id`                              |
-| `wework.shell.after`           | 工作台根节点之后         | `id`                              |
-| `wework.shell.overlay`         | 全局浮层                 | `id`                              |
+| Slot                           | 用途                         | 必要元数据                        | 组件 props                |
+| ------------------------------ | ---------------------------- | --------------------------------- | ------------------------- |
+| `wework.action`                | 可由宿主入口调用的导航动作   | `id`、`path`                      | 无组件                    |
+| `wework.app`                   | 产品切换器与应用 surface     | `id`、`label`、`mode`             | `visible`、`tab`          |
+| `wework.route`                 | 顶层辅助页面                 | `id`、`path`、`telemetryFeature`  | `search`、`onNavigate`    |
+| `wework.sidebar.navigation`    | 左侧边栏导航入口             | `id`、`path`、`label`             | 元数据入口通常无组件      |
+| `wework.settings.page`         | 设置导航与设置内容           | `id`、`path`、`label`、`category` | 设置上下文与 `onBack`     |
+| `wework.workspace.tab`         | 顶部可关闭工作区 Tab         | `id`、`label`                     | `visible`、`tab`          |
+| `wework.workspace.sidebar.tab` | 右侧工作区面板 Tab 类型      | `id`、`label`                     | `visible`、`scope`、`tab` |
+| `wework.shell.before`          | 工作台根节点之前             | `id`                              | 空对象                    |
+| `wework.shell.after`           | 工作台根节点之后             | `id`                              | 空对象                    |
+| `wework.shell.overlay`         | 全局浮层，容器不接收指针事件 | `id`                              | 空对象                    |
 
 `wework.app` 的 `mode` 可以是：
 
 - `native`：导航到 `path`，由 Wework 原生工作区处理。
 - `iframe`：在 Wework 应用 WebView 中打开 `url`。
 - `surface`：在 `/app/<id>` 中直接渲染插件注册的 React 组件。
+
+`wework.action` 当前是稳定的路径动作描述，不是任意回调通道。插件注册
+`{ id, path }` 后，宿主内已有入口可以通过 action id 查找并执行导航；不要把函数、
+token 或不可序列化状态写入 descriptor。
+
+第三方 `wework.settings.page` 和 `wework.route` 不应设置 Wework 内部使用的
+`module` 或 `component` 字段。直接把 React 组件作为
+`ctx.wework.ui.register` 的第四个参数传入即可。`telemetryFeature` 应使用 Wework
+现有的低基数字段；通用第三方页面使用 `apps`。
 
 ## 注册规则
 
@@ -83,6 +107,34 @@ DSH 管理，没有第二套 Wework 注册表。
 Wework 描述直接塞进 DSH options。DSH 会在宿主 slot 挂载、卸载或重建时重新执行
 `slots.inject` 回调，并自动收敛插件生命周期。
 
+## 可运行插件 Demo
+
+仓库中的
+[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
+是一个不依赖 Wework 私有 React 模块的完整第三方插件。它包含标准
+`package.json`、`cordis.patch.yml`、host 入口、client 入口和 Node 回归测试，并
+覆盖上表全部 slot。
+
+开发环境中可以在“插件 → 管理 → Wework 插件”安装 Demo 目录的绝对路径，或者
+使用：
+
+```text
+file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+```
+
+安装、更新、启停或卸载会修改受管的 `wework-core` profile；配置变更后需要重启
+Core DSH。安装流程会先快照 profile，再运行包管理命令、校验
+`dsh.bundle.patch`、执行 `dsh --profile wework-core --dump-config` 预检；失败时
+恢复快照。插件不能依赖“安装后立即热生效”。
+
+复制 Demo 开发自己的插件时：
+
+1. 更换 npm 包名、Loader entry id 和所有 contribution id。
+2. 只保留需要的 slot；每个交互元素提供稳定的 `data-testid`。
+3. 不 import Wework 源码中的页面或 Context；通过组件 props、标准 DSH service
+   和公开 capability 通信。
+4. 先运行 Demo 的 Node 测试，再用绝对本地目录安装到隔离 Wework 环境验证。
+
 ## Wework 内置插件
 
 Wework 当前随 Core DSH 打包以下 UI 插件：
@@ -129,3 +181,6 @@ DSH 进程每次启动都会重新加载插件 JS；stamp 只决定是否需要�
 2. 将目录加入 `wework/scripts/prepare-harness-runtime.mjs` 的 `dshPlugins`。
 3. 为 slot 元数据与注册行为增加 Node 单测。
 4. 运行 Wework typecheck、聚焦 Vitest、DSH client 单测和桌面真实插件验证。
+
+普通第三方插件不应加入 `prepare-harness-runtime.mjs`；该步骤只适用于随 Wework
+发布和更新的第一方受管组件。

@@ -32,6 +32,7 @@ import {
   createElectronCapabilityRouter,
 } from './host/electron-capabilities.js'
 import { HostPipeServer } from './host/host-pipe.js'
+import { DesktopHostEventBroker } from './host/desktop-host-events.js'
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.js'
 import { RendererHealthService } from './host/renderer-health.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
@@ -147,7 +148,6 @@ let runtimeStartPromise: Promise<void> | null = null
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
-let mainWindowCloseRequestRevision = 0
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
@@ -157,7 +157,7 @@ let startupSplash: StartupSplash | null = null
 let componentUpdates: DesktopComponentUpdateController | null = null
 let trayManager: ElectronTrayManager<Electron.Menu | null, Tray> | null = null
 let trayNativeStatus: TrayNativeStatusController | null = null
-let pendingTrayActions: TrayAction[] = []
+const desktopHostEvents = new DesktopHostEventBroker()
 const pendingEmbeddedBrowserAttachments = new Map<
   number,
   Array<{ label: string; partition: string }>
@@ -437,6 +437,7 @@ class ElectronWorkbenchView implements WorkbenchTabView {
 
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
+  if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
@@ -846,7 +847,7 @@ async function applyWindowCloseDecision(decision: WindowCloseDecision): Promise<
       requestApplicationShutdown(() => app.quit())
       return
     case 'show-close-to-tray-confirmation':
-      mainWindowCloseRequestRevision += 1
+      desktopHostEvents.publish('window.close-to-tray-requested', {})
       return
     case 'hide-to-background':
       await hideMainWindowToBackground()
@@ -865,7 +866,7 @@ async function handleMainWindowCloseRequest(): Promise<void> {
 async function hideMainWindowToBackground(): Promise<void> {
   const target = mainWindow
   if (!target || target.isDestroyed()) return
-  console.log(`windowWillClose: electron close-to-tray revision=${mainWindowCloseRequestRevision}`)
+  console.log('windowWillClose: electron close-to-tray')
   target.hide()
   if (process.platform === 'darwin') {
     if (keepE2EWindowInBackground) {
@@ -911,7 +912,7 @@ function dispatchTrayAction(action: TrayAction): void {
     console.error('[window] failed to handle tray action', error)
   })
   if (action.type === 'open-settings' || action.type === 'open-task') {
-    pendingTrayActions.push(action)
+    desktopHostEvents.publish('tray.action', action)
   }
 }
 
@@ -1089,7 +1090,9 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory: app.getPath('downloads'),
     logDirectories: [app.getPath('logs')],
   })
-  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'))
+  embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
+    desktopHostEvents.publish('browser.event', { ...event })
+  })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
@@ -1140,6 +1143,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          events: desktopHostEvents,
           feedback,
           plugins: workbenchPlugins,
           updatePreferences: updateDesktopPreferences,
@@ -1153,10 +1157,6 @@ async function configureDesktopRuntime(): Promise<void> {
                 : windowLabel === 'system-drag-panel'
                   ? (systemDragWindow?.webContents ?? null)
                   : (workspaceWindows.get(windowLabel)?.webContents ?? null),
-          closeRequestState: after => ({
-            requested: mainWindowCloseRequestRevision > after,
-            revision: mainWindowCloseRequestRevision,
-          }),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusWindow: windowLabel => {
@@ -1173,11 +1173,6 @@ async function configureDesktopRuntime(): Promise<void> {
             void trayNativeStatus?.refresh()
           },
           traySnapshot: () => trayManager?.snapshot() ?? null,
-          takePendingTrayActions: () => {
-            const actions = pendingTrayActions
-            pendingTrayActions = []
-            return actions
-          },
           openWorkspace: openWorkspaceWindow,
           popoutWindowSnapshot: () => ({
             exists: Boolean(popoutWindow && !popoutWindow.isDestroyed()),

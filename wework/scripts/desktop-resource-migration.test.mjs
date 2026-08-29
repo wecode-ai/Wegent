@@ -13,6 +13,8 @@ const scripts = [
   'scripts/dev-mac-app.sh',
   'scripts/dev-windows-app.ps1',
   'scripts/build-ai-verify-electron.mjs',
+  'scripts/prepare-dev-component-resources.mjs',
+  'scripts/prepare-dev-dependencies.mjs',
   'scripts/prepare-ai-verify-electron.mjs',
   'scripts/prepare-codex-binary.mjs',
   'scripts/prepare-dws-binary.mjs',
@@ -65,6 +67,7 @@ describe('desktop resource migration', () => {
     expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(devMacScript).not.toContain('node electron/node_modules/electron/install.js')
+    expect(devMacScript).not.toContain('pnpm --dir electron prepare:package')
     expect(devWindowsScript).not.toContain('node electron/node_modules/electron/install.js')
   })
 
@@ -98,6 +101,13 @@ describe('desktop resource migration', () => {
     expect(packageApp).toContain('acquireProcessLock(electronToolchainLockPath)')
     expect(prepareElectron).toContain("['--dir', 'electron', 'install', '--frozen-lockfile']")
     expect(packageApp).toContain('await releaseToolchainLock()')
+  })
+
+  test('reuses an unchanged prepared DWS sidecar', async () => {
+    const source = await readFile(join(weworkRoot, 'scripts/prepare-dws-binary.mjs'), 'utf8')
+
+    expect(source).toContain('preparedBinaryIsCurrent')
+    expect(source).toContain('Reusing prepared DWS sidecar')
   })
 
   test('packages CUA native libraries and license outside ASAR', async () => {
