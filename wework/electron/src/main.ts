@@ -1099,14 +1099,16 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  const systemRecordReplayHelper = process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim()
   const systemRecordReplay = new SystemRecordReplay(
     app.getPath('userData'),
-    process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim() ||
+    systemRecordReplayHelper ||
       join(
         app.isPackaged ? process.resourcesPath : developmentResourcesRoot,
         'bin',
         'wework-system-record-replay'
-      )
+      ),
+    systemRecordReplayHelper ? 'darwin' : process.platform
   )
   const savedPreferences = await preferences.read()
   await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
