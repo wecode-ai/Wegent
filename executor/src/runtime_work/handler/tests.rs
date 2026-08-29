@@ -24,6 +24,14 @@ fn defaults_to_ten_parallel_runtime_tasks() {
 }
 
 #[test]
+fn restore_startup_concurrency_defaults_to_two_without_reducing_runtime_capacity() {
+    assert_eq!(normalized_restore_startup_concurrency(None, 10), 2);
+    assert_eq!(normalized_restore_startup_concurrency(Some(8), 10), 8);
+    assert_eq!(normalized_restore_startup_concurrency(Some(20), 10), 10);
+    assert_eq!(normalized_restore_startup_concurrency(Some(0), 10), 1);
+}
+
+#[test]
 fn running_task_count_uses_process_local_execution_state() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (first_cancel, _first_cancel_rx) = oneshot::channel();

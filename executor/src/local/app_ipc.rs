@@ -462,14 +462,15 @@ impl AppIpcServer {
         self
     }
 
-    pub fn with_shared_runtime_work_handler(
+    pub(crate) fn with_shared_runtime_work_handler(
         mut self,
         handler: Arc<dyn RuntimeWorkHandler>,
         event_tx: broadcast::Sender<Value>,
+        event_hub: ExecutorEventHub,
     ) -> Self {
         self.runtime_work_handler = Some(handler);
-        self.event_tx = event_tx.clone();
-        self.event_hub = ExecutorEventHub::new(event_tx);
+        self.event_tx = event_tx;
+        self.event_hub = event_hub;
         self
     }
 

@@ -211,6 +211,7 @@ export function prepareManagedExecutorEnvironment(
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     WEGENT_EXECUTOR_HOME: executorHome,
+    WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
   }
 }
 
