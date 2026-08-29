@@ -3648,9 +3648,11 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('attachment-badge')).toHaveClass(
       'h-[72px]',
+      'max-w-[min(420px,100%)]',
       'rounded-[20px]',
       'bg-muted'
     )
+    expect(screen.getByTestId('attachment-badge')).not.toHaveClass('sm:max-w-[420px]')
     expect(screen.getByTestId('attachment-text-preview')).toHaveTextContent(
       '{ "event_type": "http_exchange", "id": "e9972aac" }'
     )

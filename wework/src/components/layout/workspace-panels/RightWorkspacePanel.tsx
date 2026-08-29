@@ -693,7 +693,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
         {chatTabs.map(tab => (
           <div
             key={tab}
-            className={cn('min-h-0 flex-1 flex-col', activeView === tab ? 'flex' : 'hidden')}
+            className={cn(
+              'min-h-0 min-w-0 flex-1 flex-col',
+              activeView === tab ? 'flex' : 'hidden'
+            )}
           >
             <TemporaryChatPanel
               currentProject={currentProject}
