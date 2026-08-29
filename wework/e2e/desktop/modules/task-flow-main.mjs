@@ -3153,6 +3153,7 @@ last_updated = "2026-07-30T00:00:00Z"`
       const filePanelAnchorSelector = '[data-e2e-anchor-id="file-panel-anchor"]'
       const filePanelLinkSelector = `${filePanelAnchorSelector} [data-testid="assistant-markdown-link"]`
       const filePanelLinkTooltipSelector = '[data-testid="assistant-markdown-link-tooltip"]'
+      const rightWorkspacePanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`
       const conversationScrollerSelector = '[data-testid="desktop-workbench-content"]'
       await control.command('waitFor', filePanelAnchorScopeSelector, {
         text: FILE_PANEL_ANCHOR_MARKER,
@@ -3271,12 +3272,15 @@ last_updated = "2026-07-30T00:00:00Z"`
           value: 'z-index',
         })
       )
+      assert.equal(
+        Number(await control.command('getElementCount', rightWorkspacePanelSelector)),
+        1,
+        'The active workbench did not expose exactly one right workspace panel'
+      )
       const rightWorkspacePanelZIndex = Number(
-        await control.command(
-          'getComputedStyleValue',
-          '[data-testid="right-workspace-panel-shell"]',
-          { value: 'z-index' }
-        )
+        await control.command('getComputedStyleValue', rightWorkspacePanelSelector, {
+          value: 'z-index',
+        })
       )
       assert.equal(
         filePanelLinkTooltipPosition,
