@@ -16,6 +16,7 @@ import {
   verifyViewImageProcessingBlock,
   verifyWorktreeCreationStatus,
   waitForElementInsideScroller,
+  waitForElementTop,
   waitForElementWidth,
   waitForOverflowMetrics,
   waitForSnapshot,
@@ -3222,15 +3223,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      const filePanelScrollerAfterOpen = await getSingleElementMetrics(
+      const filePanelScrollerAfterOpen = await waitForElementWidth(
         control,
         conversationScrollerSelector,
-        'The conversation after opening a linked file'
+        width => width < filePanelScrollerBeforeOpen.width - 100,
+        'The conversation after opening a linked file',
+        DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await getSingleElementMetrics(
+      const filePanelAnchorAfterOpen = await waitForElementTop(
         control,
         filePanelAnchorSelector,
-        'The linked file paragraph after opening the file panel'
+        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+        'The linked file paragraph after opening the file panel',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
@@ -3261,15 +3266,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      const filePanelScrollerAfterClose = await getSingleElementMetrics(
+      const filePanelScrollerAfterClose = await waitForElementWidth(
         control,
         conversationScrollerSelector,
-        'The conversation after closing a linked file'
+        width => Math.abs(width - filePanelScrollerBeforeOpen.width) <= 1,
+        'The conversation after closing a linked file',
+        DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterClose = await getSingleElementMetrics(
+      const filePanelAnchorAfterClose = await waitForElementTop(
         control,
         filePanelAnchorSelector,
-        'The linked file paragraph after closing the file panel'
+        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+        'The linked file paragraph after closing the file panel',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.ok(
         Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
@@ -3279,7 +3288,6 @@ last_updated = "2026-07-30T00:00:00Z"`
         Math.abs(filePanelAnchorAfterClose.top - filePanelAnchorBeforeOpen.top) <= 8,
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
-
       await control.command('click', filePanelLinkSelector)
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
