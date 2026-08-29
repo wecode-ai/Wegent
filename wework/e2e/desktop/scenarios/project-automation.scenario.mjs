@@ -841,6 +841,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
+    await control.command('waitFor', '[data-testid="issue-execution-config-default-device"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     assert.equal(
       await control.command('getValue', '[data-testid="issue-execution-config-default-device"]'),
       localDefaultDevice.device_id,
