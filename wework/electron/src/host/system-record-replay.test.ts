@@ -24,7 +24,9 @@ describe('system record replay', () => {
       inputMonitoringGranted: true,
     })
     await recorder.start('Desktop flow')
-    await new Promise(resolve => setTimeout(resolve, 800))
+    await vi.waitFor(async () =>
+      expect((await recorder.status()).stepCount).toBeGreaterThanOrEqual(2)
+    )
     const recording = await recorder.stop()
 
     expect(recording.steps.length).toBeGreaterThanOrEqual(2)
@@ -51,7 +53,7 @@ describe('system record replay', () => {
     const root = await temporaryDirectory('system-record-replay-')
     const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
     await recorder.start('Replay flow')
-    await new Promise(resolve => setTimeout(resolve, 450))
+    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
     const recording = await recorder.stop()
 
     await recorder.replay(recording.id)

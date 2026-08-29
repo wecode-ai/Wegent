@@ -83,6 +83,7 @@ interface HelperStatus {
 
 const MAX_RECORDINGS = 100
 const MAX_REPLAY_DELAY_MS = 1_500
+const HELPER_READY_TIMEOUT_MS = 5_000
 
 export class SystemRecordReplay {
   private readonly storagePath: string
@@ -157,12 +158,7 @@ export class SystemRecordReplay {
       currentApplication: null,
       message: 'Recording mouse, keyboard, scrolling, and application context',
     }
-    this.consumeRecordingOutput(active)
-    child.stderr.on('data', chunk => {
-      const message = String(chunk).trim()
-      if (message) this.fail(message)
-    })
-    child.once('error', error => this.fail(error.message))
+    await this.consumeRecordingOutput(active)
     return { ...this.statusValue }
   }
 
@@ -232,24 +228,60 @@ export class SystemRecordReplay {
     }
   }
 
-  private consumeRecordingOutput(active: ActiveRecording): void {
-    const lines = createInterface({ input: active.child.stdout })
-    lines.on('line', line => {
-      if (this.activeRecording !== active) return
-      const value = parseJson(line)
-      if (value.error) {
-        this.fail(String(value.error))
-        return
+  private consumeRecordingOutput(active: ActiveRecording): Promise<void> {
+    return new Promise((resolveReady, rejectReady) => {
+      let ready = false
+      const timeout = setTimeout(() => {
+        reportFailure('System recording helper did not become ready')
+      }, HELPER_READY_TIMEOUT_MS)
+      const settleReady = () => {
+        if (ready) return
+        ready = true
+        clearTimeout(timeout)
+        resolveReady()
       }
-      const step = normalizeStep(value)
-      if (!step) return
-      active.steps.push(step)
-      this.statusValue = {
-        ...this.statusValue,
-        stepCount: active.steps.length,
-        currentApplication: step.appName || null,
-        message: null,
+      const reportFailure = (message: string) => {
+        this.fail(message)
+        if (ready) return
+        ready = true
+        clearTimeout(timeout)
+        rejectReady(new Error(message))
       }
+
+      const lines = createInterface({ input: active.child.stdout })
+      lines.on('line', line => {
+        if (this.activeRecording !== active) return
+        const value = parseJson(line)
+        if (value.error) {
+          reportFailure(String(value.error))
+          return
+        }
+        if (value.ready === true) {
+          settleReady()
+          return
+        }
+        const step = normalizeStep(value)
+        if (!step) return
+        active.steps.push(step)
+        this.statusValue = {
+          ...this.statusValue,
+          stepCount: active.steps.length,
+          currentApplication: step.appName || null,
+          message: null,
+        }
+      })
+      active.child.stderr.on('data', chunk => {
+        const message = String(chunk).trim()
+        if (message) reportFailure(message)
+      })
+      active.child.once('error', error => reportFailure(error.message))
+      active.child.once('exit', code => {
+        if (!ready && this.activeRecording === active) {
+          reportFailure(
+            `System recording helper exited before ready with code ${code ?? 'unknown'}`
+          )
+        }
+      })
     })
   }
 
