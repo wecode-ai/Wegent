@@ -688,7 +688,7 @@ export class EmbeddedBrowserManager {
   }
 
   private emitPageState(entry: BrowserEntry): void {
-    if (!this.entries.has(entry.label)) return
+    if (this.entries.get(entry.label) !== entry) return
     this.emit('page-state', this.state(entry.label) as unknown as Record<string, unknown>)
   }
 
