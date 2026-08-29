@@ -128,6 +128,14 @@ export interface EmbeddedBrowserPopupRequest {
   warning: string | null
 }
 
+export interface EmbeddedBrowserAnnotationRequest {
+  label: string
+  nativeLabel: string
+  mode: 'quick' | 'batch'
+  x: number
+  y: number
+}
+
 export interface EmbeddedBrowserInvalidTlsCertificateEvent {
   nativeLabel: string
   url: string
@@ -139,6 +147,7 @@ interface ElectronBrowserHostEvent {
   sequence: number
   type:
     | 'agent-state'
+    | 'annotation-request'
     | 'close-request'
     | 'download'
     | 'local-file-preview'
@@ -168,6 +177,13 @@ export function listenEmbeddedBrowserPopupRequests(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('popup', handler)
+}
+
+export function listenEmbeddedBrowserAnnotationRequests(
+  handler: (request: EmbeddedBrowserAnnotationRequest) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listenElectronBrowserEvents('annotation-request', handler)
 }
 
 export async function pauseEmbeddedBrowserDownload(id: string): Promise<void> {

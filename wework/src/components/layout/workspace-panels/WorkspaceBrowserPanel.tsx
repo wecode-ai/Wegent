@@ -29,6 +29,7 @@ import {
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
   listenEmbeddedBrowserAgentState,
+  listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
@@ -52,6 +53,7 @@ import {
   setEmbeddedBrowserDeviceMetrics,
   setEmbeddedBrowserZoom,
   type EmbeddedBrowserAgentStateEvent,
+  type EmbeddedBrowserAnnotationRequest,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
@@ -131,6 +133,11 @@ interface BrowserOcclusionState {
   documentOverlayOccluded: boolean
   generation: number
   overlayIds: Set<string>
+}
+
+interface AnnotationEntry {
+  mode?: EmbeddedBrowserAnnotationRequest['mode']
+  point?: { x: number; y: number }
 }
 
 type BrowserOcclusionAction =
@@ -360,6 +367,12 @@ export function WorkspaceBrowserTabPanel({
   const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
+  const annotationFlowRef = useRef<EmbeddedBrowserAnnotationRequest['mode']>('batch')
+  const quickAnnotationBaselineRef = useRef<{
+    pageSessionId: string
+    revision: number
+    annotationCount: number
+  } | null>(null)
   const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
   const annotationInjectionOwnerRef = useRef<number | null>(null)
   const annotationRequestGenerationRef = useRef(0)
@@ -982,51 +995,57 @@ export function WorkspaceBrowserTabPanel({
     })
     annotationRequestGenerationRef.current += 1
     annotationModeRef.current = false
+    annotationFlowRef.current = 'batch'
+    quickAnnotationBaselineRef.current = null
     setAnnotationMode(false)
     setOriginalViewHeld(false)
     void suspendAnnotationLayer(label)
   }, [currentUrl, label, pendingCommentContextCount, suspendAnnotationLayer])
 
-  const enterAnnotationMode = useCallback(async () => {
-    logBrowserAnnotation('enter annotation mode requested', {
-      label,
-      active,
-      currentUrl,
-      embeddedBrowserAvailable,
-      nativeBrowserOpen: nativeBrowserOpenRef.current,
-    })
-    if (
-      internalDesktopPage ||
-      !embeddedBrowserAvailable ||
-      !nativeBrowserOpenRef.current ||
-      !currentUrl
-    ) {
-      logBrowserAnnotation('enter annotation mode skipped', {
+  const enterAnnotationMode = useCallback(
+    async (request: AnnotationEntry = {}) => {
+      const mode = request.mode ?? 'batch'
+      logBrowserAnnotation('enter annotation mode requested', {
         label,
         active,
         currentUrl,
+        mode,
         embeddedBrowserAvailable,
         nativeBrowserOpen: nativeBrowserOpenRef.current,
       })
-      return
-    }
-    const requestGeneration = annotationRequestGenerationRef.current + 1
-    annotationRequestGenerationRef.current = requestGeneration
-    try {
-      const pendingCleanup = annotationCleanupPromiseRef.current
-      if (pendingCleanup) {
-        await pendingCleanup
-      }
       if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
+        internalDesktopPage ||
+        !embeddedBrowserAvailable ||
+        !nativeBrowserOpenRef.current ||
+        !currentUrl
       ) {
+        logBrowserAnnotation('enter annotation mode skipped', {
+          label,
+          active,
+          currentUrl,
+          embeddedBrowserAvailable,
+          nativeBrowserOpen: nativeBrowserOpenRef.current,
+        })
         return
       }
-      annotationInjectionOwnerRef.current = requestGeneration
-      await evalEmbeddedBrowser(
-        createBrowserAnnotationInjectionScript({
+      annotationFlowRef.current = mode
+      quickAnnotationBaselineRef.current = null
+      const requestGeneration = annotationRequestGenerationRef.current + 1
+      annotationRequestGenerationRef.current = requestGeneration
+      try {
+        const pendingCleanup = annotationCleanupPromiseRef.current
+        if (pendingCleanup) {
+          await pendingCleanup
+        }
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          return
+        }
+        annotationInjectionOwnerRef.current = requestGeneration
+        const injectionScript = createBrowserAnnotationInjectionScript({
           browserTabId,
           uiFontSize: appearance.uiFontSize,
           isDark: resolveAppearanceMode(appearance.mode) === 'dark',
@@ -1064,60 +1083,132 @@ export function WorkspaceBrowserTabPanel({
               'border-width': t('workbench.browser_annotation_adjustment_border-width'),
             },
           },
-        }),
-        label
-      )
+        })
+        const quickBaseline =
+          mode === 'quick'
+            ? await evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
+                `(() => {
+                  ${injectionScript}
+                  return window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.() ?? null
+                })()`,
+                label
+              )
+            : null
+        if (mode !== 'quick') {
+          await evalEmbeddedBrowser(injectionScript, label)
+        }
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+          return
+        }
+        if (
+          activePageUrlRef.current &&
+          cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
+        ) {
+          exitAnnotationMode()
+          return
+        }
+        if (mode === 'quick') {
+          if (quickBaseline?.scope.browserTabId !== browserTabId) {
+            logBrowserAnnotation('quick annotation baseline unavailable', {
+              label,
+              browserTabId,
+              baselineBrowserTabId: quickBaseline?.scope.browserTabId ?? null,
+            })
+            throw new Error('Quick annotation baseline is unavailable')
+          }
+          quickAnnotationBaselineRef.current = {
+            pageSessionId: quickBaseline.scope.pageSessionId,
+            revision: quickBaseline.revision,
+            annotationCount: quickBaseline.annotations.length,
+          }
+          annotationSnapshotRef.current = {
+            pageSessionId: quickBaseline.scope.pageSessionId,
+            revision: quickBaseline.revision,
+          }
+        }
+        if (request.point && Number.isFinite(request.point.x) && Number.isFinite(request.point.y)) {
+          await evalEmbeddedBrowser(
+            `window.__WEWORK_BROWSER_ANNOTATION__?.openAt?.(${request.point.x}, ${request.point.y}) ?? false`,
+            label
+          )
+        }
+        annotationEmptyPollLogCountRef.current = 0
+        annotationModeRef.current = true
+        setAnnotationMode(true)
+        logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
+      } catch (error) {
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+          return
+        }
+        annotationInjectionOwnerRef.current = null
+        console.error('Failed to enter embedded browser annotation mode:', error)
+        logBrowserAnnotation('enter annotation mode failed', {
+          label,
+          currentUrl,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        setStatus('error')
+        setError(t('workbench.browser_annotation_failed'))
+      }
+    },
+    [
+      active,
+      appearance.mode,
+      appearance.uiFontSize,
+      currentUrl,
+      cleanupInvalidatedAnnotationRequest,
+      embeddedBrowserAvailable,
+      exitAnnotationMode,
+      internalDesktopPage,
+      label,
+      browserTabId,
+      t,
+    ]
+  )
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserAnnotationRequests(request => {
       if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
+        !activeRef.current ||
+        request.label !== currentLabelRef.current ||
+        request.nativeLabel !== nativeLabelRef.current
       ) {
-        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
         return
       }
-      if (
-        activePageUrlRef.current &&
-        cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
-      ) {
-        exitAnnotationMode()
-        return
-      }
-      annotationEmptyPollLogCountRef.current = 0
-      annotationModeRef.current = true
-      setAnnotationMode(true)
-      logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
-    } catch (error) {
-      if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
-      ) {
-        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
-        return
-      }
-      annotationInjectionOwnerRef.current = null
-      console.error('Failed to enter embedded browser annotation mode:', error)
-      logBrowserAnnotation('enter annotation mode failed', {
-        label,
-        currentUrl,
-        error: error instanceof Error ? error.message : String(error),
+      void enterAnnotationMode({
+        mode: request.mode,
+        point: { x: request.x, y: request.y },
       })
-      setStatus('error')
-      setError(t('workbench.browser_annotation_failed'))
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser annotation requests:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
     }
-  }, [
-    active,
-    appearance.mode,
-    appearance.uiFontSize,
-    currentUrl,
-    cleanupInvalidatedAnnotationRequest,
-    embeddedBrowserAvailable,
-    exitAnnotationMode,
-    internalDesktopPage,
-    label,
-    browserTabId,
-    t,
-  ])
+  }, [enterAnnotationMode])
 
   useEffect(() => {
     if (
@@ -1650,6 +1741,16 @@ export function WorkspaceBrowserTabPanel({
         } else {
           contexts.forEach(context => onAddCodeComment?.(context))
         }
+        const quickBaseline = quickAnnotationBaselineRef.current
+        if (
+          annotationFlowRef.current === 'quick' &&
+          quickBaseline &&
+          snapshot.scope.pageSessionId === quickBaseline.pageSessionId &&
+          snapshot.revision > quickBaseline.revision &&
+          snapshot.annotations.length > quickBaseline.annotationCount
+        ) {
+          exitAnnotationMode()
+        }
       } catch (error) {
         if (cancelled) return
         console.error('Failed to consume embedded browser annotations:', error)
@@ -1676,6 +1777,7 @@ export function WorkspaceBrowserTabPanel({
     annotationMode,
     browserTabId,
     embeddedBrowserAvailable,
+    exitAnnotationMode,
     internalDesktopPage,
     label,
     onAddCodeComment,

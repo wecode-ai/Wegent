@@ -437,6 +437,7 @@ class ElectronWorkbenchView implements WorkbenchTabView {
 
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   if (!mainWindow || !desktopRuntime) return
+  if (!desktopRuntime.state().ready) return
   if (primaryDshLoaded) return
   rendererHealth.loading()
   const dshUrl = desktopRuntime.coreDshUrl()
