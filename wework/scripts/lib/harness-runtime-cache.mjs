@@ -1,6 +1,9 @@
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+/**
+ * Resolve archive and materialized Harness Runtime paths for one Wework tree.
+ */
 export function resolveHarnessRuntimeCachePaths(weworkRoot, environment = process.env) {
   const cacheRoot = environment.WEWORK_HARNESS_RUNTIME_CACHE_ROOT?.trim()
     ? resolve(weworkRoot, environment.WEWORK_HARNESS_RUNTIME_CACHE_ROOT.trim())
@@ -17,6 +20,9 @@ export function resolveHarnessRuntimeCachePaths(weworkRoot, environment = proces
   }
 }
 
+/**
+ * Resolve the machine-level archive cache used by Electron verification builds.
+ */
 export function resolveSharedHarnessRuntimeAssetCacheRoot(
   environment = process.env,
   runtime = { platform: process.platform },
@@ -43,4 +49,24 @@ export function resolveSharedHarnessRuntimeAssetCacheRoot(
     'wegent',
     'harness-runtime'
   )
+}
+
+/**
+ * Preserve process settings while isolating mutable runtimes to the current worktree.
+ */
+export function resolveHarnessRuntimeAssetCacheEnvironment(
+  environment = process.env,
+  runtime = { platform: process.platform },
+  baseDirectory = process.cwd()
+) {
+  const { WEWORK_HARNESS_RUNTIME_CACHE_ROOT: _cacheRoot, ...isolatedEnvironment } = environment
+
+  return {
+    ...isolatedEnvironment,
+    WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT: resolveSharedHarnessRuntimeAssetCacheRoot(
+      environment,
+      runtime,
+      baseDirectory
+    ),
+  }
 }

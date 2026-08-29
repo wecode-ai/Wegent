@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 
 import {
+  resolveHarnessRuntimeAssetCacheEnvironment,
   resolveHarnessRuntimeCachePaths,
   resolveSharedHarnessRuntimeAssetCacheRoot,
 } from './harness-runtime-cache.mjs'
@@ -40,6 +41,28 @@ describe('resolveHarnessRuntimeCachePaths', () => {
         WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT: '../shared/harness',
       }).assetDirectory
     ).toBe(join('/workspace/shared/harness', 'harness-runtime-assets'))
+  })
+})
+
+describe('resolveHarnessRuntimeAssetCacheEnvironment', () => {
+  test('translates the general cache override into an archive-only override', () => {
+    const environment = resolveHarnessRuntimeAssetCacheEnvironment(
+      {
+        CUSTOM_SETTING: 'preserved',
+        WEWORK_HARNESS_RUNTIME_CACHE_ROOT: '../shared/harness',
+      },
+      { platform: 'linux' },
+      '/workspace/wework'
+    )
+
+    expect(environment).toEqual({
+      CUSTOM_SETTING: 'preserved',
+      WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT: '/workspace/shared/harness',
+    })
+    expect(resolveHarnessRuntimeCachePaths('/workspace/wework', environment)).toMatchObject({
+      assetDirectory: join('/workspace/shared/harness', 'harness-runtime-assets'),
+      materializedRoot: join('/workspace/wework', 'node_modules', '.cache', 'harness-runtime-dev'),
+    })
   })
 })
 
