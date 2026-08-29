@@ -123,6 +123,7 @@ export class IdleTaskScheduler {
     })
     if (
       !this.started ||
+      this.running ||
       activitySnapshot !== this.lastUserActivityAt ||
       !pressure ||
       pressure.cpuLoadRatio > MAX_CPU_LOAD_RATIO ||

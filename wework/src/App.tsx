@@ -802,7 +802,10 @@ function AppShell() {
       : fixedWorkspaceTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
-  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const [workbenchStartupRevealAppKey, setWorkbenchStartupRevealAppKey] = useState<string | null>(
+    null
+  )
+  const workbenchStartupRevealTimedOut = workbenchStartupRevealAppKey === activeAppKey
   const updateImNotificationPresence = useMemo(() => {
     if (!cloudApiBaseUrl || !cloudToken) return undefined
     return createRuntimeWorkApi(
@@ -967,7 +970,7 @@ function AppShell() {
       console.warn(
         `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
       )
-      setWorkbenchStartupRevealTimedOut(true)
+      setWorkbenchStartupRevealAppKey(activeAppKey)
     }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
 
     return () => window.clearTimeout(timer)

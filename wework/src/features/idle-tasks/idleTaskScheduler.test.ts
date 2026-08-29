@@ -18,6 +18,8 @@ class FakeIdleHost implements IdleTaskSchedulerHost {
   }
   idleCallbacks: IdleCallback[] = []
   timers: Array<() => void> = []
+  deferredPressureResolvers: Array<(pressure: IdleSystemPressure) => void> = []
+  deferPressureProbe = false
 
   now(): number {
     return this.nowMs
@@ -41,8 +43,11 @@ class FakeIdleHost implements IdleTaskSchedulerHost {
     this.timers.shift()
   }
 
-  async probeSystemPressure(): Promise<IdleSystemPressure> {
-    return this.pressure
+  probeSystemPressure(): Promise<IdleSystemPressure> {
+    if (!this.deferPressureProbe) return Promise.resolve(this.pressure)
+    return new Promise(resolve => {
+      this.deferredPressureResolvers.push(resolve)
+    })
   }
 
   runIdle(timeRemaining = 20): void {
@@ -52,6 +57,12 @@ class FakeIdleHost implements IdleTaskSchedulerHost {
 
   runTimer(): void {
     this.timers.shift()?.()
+  }
+
+  resolveNextPressureProbe(): void {
+    const resolve = this.deferredPressureResolvers.shift()
+    if (!resolve) throw new Error('No deferred pressure probe is pending')
+    resolve(this.pressure)
   }
 }
 
@@ -111,6 +122,40 @@ describe('IdleTaskScheduler', () => {
     expect(second).not.toHaveBeenCalled()
 
     host.runIdle()
+    await vi.waitFor(() => expect(second).toHaveBeenCalledOnce())
+  })
+
+  test('does not start another task while an earlier pressure probe begins running work', async () => {
+    const host = new FakeIdleHost()
+    const scheduler = new IdleTaskScheduler(host)
+    host.nowMs = 2_000
+    host.deferPressureProbe = true
+    let finishFirstTask: (() => void) | undefined
+    const first = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finishFirstTask = resolve
+        })
+    )
+    const second = vi.fn()
+
+    scheduler.schedule('first', first)
+    scheduler.start()
+    host.runIdle()
+    scheduler.schedule('second', second)
+    host.runIdle()
+    expect(host.deferredPressureResolvers).toHaveLength(2)
+
+    host.resolveNextPressureProbe()
+    await vi.waitFor(() => expect(first).toHaveBeenCalledOnce())
+    host.resolveNextPressureProbe()
+    await Promise.resolve()
+    expect(second).not.toHaveBeenCalled()
+
+    finishFirstTask?.()
+    await vi.waitFor(() => expect(host.idleCallbacks).toHaveLength(1))
+    host.runIdle()
+    host.resolveNextPressureProbe()
     await vi.waitFor(() => expect(second).toHaveBeenCalledOnce())
   })
 })

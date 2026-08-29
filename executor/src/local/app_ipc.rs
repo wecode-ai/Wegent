@@ -15,7 +15,7 @@ use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::net::UnixListener;
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    sync::{broadcast, mpsc, Mutex},
+    sync::{broadcast, mpsc, watch, Mutex},
     time::{Duration, Instant},
 };
 
@@ -403,6 +403,90 @@ enum PostProcessor {
     Json,
 }
 
+type BlockingInitializationResult<T> = Result<T, String>;
+
+struct BlockingSingleFlightState<T> {
+    next_generation: u64,
+    current: Option<(
+        u64,
+        watch::Receiver<Option<BlockingInitializationResult<T>>>,
+    )>,
+}
+
+impl<T> Default for BlockingSingleFlightState<T> {
+    fn default() -> Self {
+        Self {
+            next_generation: 0,
+            current: None,
+        }
+    }
+}
+
+struct BlockingSingleFlight<T> {
+    state: Mutex<BlockingSingleFlightState<T>>,
+}
+
+impl<T> Default for BlockingSingleFlight<T> {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(BlockingSingleFlightState::default()),
+        }
+    }
+}
+
+impl<T> BlockingSingleFlight<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    async fn run<F>(&self, initialize: F) -> BlockingInitializationResult<T>
+    where
+        F: FnOnce() -> BlockingInitializationResult<T> + Send + 'static,
+    {
+        let (generation, mut result_rx) = {
+            let mut state = self.state.lock().await;
+            if let Some((generation, result_rx)) = state.current.as_ref() {
+                (*generation, result_rx.clone())
+            } else {
+                state.next_generation += 1;
+                let generation = state.next_generation;
+                let (result_tx, result_rx) = watch::channel(None);
+                state.current = Some((generation, result_rx.clone()));
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(initialize)
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result);
+                    let _ = result_tx.send(Some(result));
+                });
+                (generation, result_rx)
+            }
+        };
+
+        loop {
+            let completed_result = {
+                let result = result_rx.borrow();
+                result.clone()
+            };
+            if let Some(result) = completed_result {
+                if result.is_err() {
+                    let mut state = self.state.lock().await;
+                    if state
+                        .current
+                        .as_ref()
+                        .is_some_and(|(current_generation, _)| *current_generation == generation)
+                    {
+                        state.current = None;
+                    }
+                }
+                return result;
+            }
+            result_rx.changed().await.map_err(|_| {
+                "Blocking initialization stopped before producing a result".to_owned()
+            })?;
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppIpcServer {
     device_id: String,
@@ -412,7 +496,7 @@ pub struct AppIpcServer {
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
-    bundled_plugin_marketplace: Arc<Mutex<Option<BundledPluginMarketplace>>>,
+    bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
 }
 
 impl Default for AppIpcServer {
@@ -427,7 +511,7 @@ impl Default for AppIpcServer {
             command_handler: Arc::new(CommandHandler),
             event_tx,
             event_hub,
-            bundled_plugin_marketplace: Arc::new(Mutex::new(None)),
+            bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
         }
     }
 }
@@ -578,18 +662,11 @@ impl AppIpcServer {
         }
 
         if method == "executor.plugins.initialize_bundled_marketplace" {
-            let mut initialized = self.bundled_plugin_marketplace.lock().await;
-            if let Some(marketplace) = initialized.as_ref() {
-                return serde_json::to_value(marketplace)
-                    .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
-            }
-            let marketplace = tokio::task::spawn_blocking(initialize_bundled_plugin_marketplace)
+            let marketplace = self
+                .bundled_plugin_marketplace
+                .run(initialize_bundled_plugin_marketplace)
                 .await
-                .map_err(|error| {
-                    AppIpcError::new("bundled_plugins_initialize_failed", error.to_string())
-                })?
                 .map_err(|error| AppIpcError::new("bundled_plugins_initialize_failed", error))?;
-            *initialized = Some(marketplace.clone());
             return serde_json::to_value(marketplace)
                 .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
@@ -3337,13 +3414,78 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc as std_mpsc, Arc,
+    };
+
     use serde_json::{json, Value};
     use tokio::io::{duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader};
     #[cfg(unix)]
     use tokio::net::UnixStream;
     use tokio::time::Duration;
 
-    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer};
+    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer, BlockingSingleFlight};
+
+    #[tokio::test]
+    async fn blocking_single_flight_survives_a_timed_out_waiter() {
+        let single_flight = Arc::new(BlockingSingleFlight::<String>::default());
+        let starts = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let first_single_flight = single_flight.clone();
+        let first_starts = starts.clone();
+        let first_waiter = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                first_single_flight.run(move || {
+                    first_starts.fetch_add(1, Ordering::SeqCst);
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv()
+                        .map_err(|error| format!("release signal failed: {error}"))?;
+                    Ok("initialized".to_owned())
+                }),
+            )
+            .await
+        });
+
+        started_rx
+            .await
+            .expect("blocking initialization should start");
+        assert!(
+            first_waiter
+                .await
+                .expect("timed-out waiter should join")
+                .is_err(),
+            "the first waiter should time out"
+        );
+
+        let retry_single_flight = single_flight.clone();
+        let retry_starts = starts.clone();
+        let retry = tokio::spawn(async move {
+            retry_single_flight
+                .run(move || {
+                    retry_starts.fetch_add(1, Ordering::SeqCst);
+                    Ok("duplicate".to_owned())
+                })
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        release_tx
+            .send(())
+            .expect("blocking initialization should still be running");
+        assert_eq!(
+            retry
+                .await
+                .expect("retry waiter should join")
+                .expect("retry should receive the original result"),
+            "initialized"
+        );
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn prioritizes_chat_events_over_diagnostic_blocks() {
