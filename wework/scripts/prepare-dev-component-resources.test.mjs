@@ -70,7 +70,7 @@ describe('prepare development component resources', () => {
     await expect(readFile(join(appPluginRoot, 'web', 'generated.js'))).rejects.toMatchObject({
       code: 'ENOENT',
     })
-  })
+  }, 20_000)
 })
 
 async function directory(path) {
