@@ -270,12 +270,16 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
   exit 1
 fi
 node "$SCRIPT_DIR/prepare-dev-component-resources.mjs"
-export WEWORK_CORE_PLUGINS_SHA256="$(
+if ! WEWORK_CORE_PLUGINS_SHA256="$(
   node -e "
     const manifest = JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))
     process.stdout.write(manifest.components.weworkCorePlugins.sha256)
   " "$WEWORK_COMPONENT_RESOURCES_ROOT/components.json"
-)"
+)"; then
+  echo "Error: Failed to read core plugin checksum from component resources" >&2
+  exit 1
+fi
+export WEWORK_CORE_PLUGINS_SHA256
 WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
 rm -f "$WEWORK_APP_WATCH_READY_FILE"
 export WEWORK_APP_WATCH_READY_FILE
