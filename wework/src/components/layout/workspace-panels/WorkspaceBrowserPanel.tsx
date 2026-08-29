@@ -732,6 +732,31 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     async function reconcilePageState(expectedNativeLabel: string): Promise<void> {
+      const annotationGeneration = annotationRequestGenerationRef.current
+      let annotationSessionActive = false
+      try {
+        annotationSessionActive = await evalEmbeddedBrowserJson<boolean>(
+          `(() => {
+            const annotation = window.__WEWORK_BROWSER_ANNOTATION__
+            return Boolean(
+              annotation?.scope?.browserTabId === ${JSON.stringify(browserTabId)} &&
+              annotation.scope.url === window.location.href
+            )
+          })()`,
+          label
+        )
+      } catch {
+        // A real navigation can replace the document while this check is running.
+      }
+      if (
+        !mountedRef.current ||
+        !annotationModeRef.current ||
+        annotationRequestGenerationRef.current !== annotationGeneration ||
+        nativeLabelRef.current !== expectedNativeLabel
+      ) {
+        return
+      }
+      if (annotationSessionActive) return
       try {
         const pageState = await readEmbeddedBrowserPageState(label)
         if (!mountedRef.current || pageState.nativeLabel !== expectedNativeLabel) return
@@ -798,7 +823,7 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [applyNativePageStatus, label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [applyNativePageStatus, browserTabId, label, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
