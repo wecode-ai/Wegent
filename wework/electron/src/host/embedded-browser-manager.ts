@@ -81,7 +81,6 @@ interface BrowserDownload {
   path: string | null
 }
 
-const MAX_EVENTS = 1024
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -101,12 +100,14 @@ export class EmbeddedBrowserManager {
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
-  private readonly events: BrowserHostEvent[] = []
   private readonly history: BrowserHistoryStore
   private eventSequence = 0
   private historyGeneration = 0
 
-  constructor(dataDirectory: string) {
+  constructor(
+    dataDirectory: string,
+    private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
+  ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     session
       .fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -591,19 +592,6 @@ export class EmbeddedBrowserManager {
     return BrowserWindow.getAllWindows().length + detachedInspectors
   }
 
-  readEvents(after: number): {
-    events: BrowserHostEvent[]
-    latestSequence: number
-    historyLost: boolean
-  } {
-    const earliest = this.events[0]?.sequence ?? this.eventSequence + 1
-    return {
-      events: this.events.filter(event => event.sequence > after),
-      latestSequence: this.eventSequence,
-      historyLost: after > 0 && after < earliest - 1,
-    }
-  }
-
   pauseDownload(id: string): void {
     const download = this.requiredDownload(id)
     if (download.item.getState() === 'progressing') {
@@ -760,12 +748,11 @@ export class EmbeddedBrowserManager {
   }
 
   private emit(type: BrowserHostEvent['type'], payload: Record<string, unknown>): void {
-    this.events.push({
+    this.onEvent({
       sequence: ++this.eventSequence,
       type,
       payload,
     })
-    if (this.events.length > MAX_EVENTS) this.events.shift()
   }
 
   private waitForAttachedContents(label: string): Promise<WebContents> {

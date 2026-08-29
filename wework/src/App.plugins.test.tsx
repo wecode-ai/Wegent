@@ -136,7 +136,6 @@ const desktopHostMocks = vi.hoisted(() => {
           Object.assign(preferences, params.patch)
           return { ...preferences }
         }
-        if (capability === 'browser.events') return { events: [], nextCursor: 0 }
         if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
@@ -150,6 +149,7 @@ const desktopHostMocks = vi.hoisted(() => {
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 const localCodexPluginMocks = vi.hoisted(() => ({

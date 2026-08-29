@@ -82,7 +82,6 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
 }))
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(async (capability: string): Promise<unknown> => {
-    if (capability === 'browser.events') return { events: [], nextCursor: 0 }
     if (capability === 'browser.open') {
       return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
     }
@@ -183,6 +182,7 @@ vi.mock('./useWorkbenchPaneSession', () => ({
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 function createPaneStatus({

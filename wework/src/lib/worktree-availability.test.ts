@@ -537,6 +537,36 @@ describe('resolveProjectWorktreeAvailability', () => {
 })
 
 describe('probeProjectWorktreeAvailability', () => {
+  test('shares identical in-flight capability and preflight probes', async () => {
+    let resolveCapabilities: ((value: ReturnType<typeof createCapabilities>) => void) | null = null
+    const getWorktreeCapabilities = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof createCapabilities>>(resolve => {
+          resolveCapabilities = resolve
+        })
+    )
+    const preflightWorktree = vi.fn(async () => createPreflight())
+    const api = { getWorktreeCapabilities, preflightWorktree }
+    const input = {
+      api,
+      project: createProject(),
+      workspace: createWorkspace(),
+      device: createDevice({ runtime_features: null }),
+      ref: 'feature/cloud-worktree',
+    }
+
+    const first = probeProjectWorktreeAvailability(input)
+    const second = probeProjectWorktreeAvailability(input)
+    resolveCapabilities?.(createCapabilities())
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ available: true }),
+      expect.objectContaining({ available: true }),
+    ])
+    expect(getWorktreeCapabilities).toHaveBeenCalledOnce()
+    expect(preflightWorktree).toHaveBeenCalledOnce()
+  })
+
   test('uses capability and preflight RPC as the send-time authority', async () => {
     const getWorktreeCapabilities = vi.fn(async () => createCapabilities())
     const preflightWorktree = vi.fn(async () => createPreflight())

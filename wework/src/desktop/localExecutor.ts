@@ -227,6 +227,9 @@ export function getInitializedBundledPluginMarketplace(): BundledPluginMarketpla
 }
 
 export function ensureLocalExecutorStarted(): Promise<LocalExecutorStatus> {
+  if (initializedLocalExecutorStatus && isExecutorHealthy(initializedLocalExecutorStatus)) {
+    return Promise.resolve(initializedLocalExecutorStatus)
+  }
   if (!ensureLocalExecutorStartedPromise) {
     ensureLocalExecutorStartedPromise = (async () => {
       const description = await describeDshExecutor()
@@ -324,6 +327,9 @@ export function requestLocalExecutor<T = unknown>(
   params: Record<string, unknown> = {}
 ): Promise<T> {
   return requestDshExecutor<T>(method, params).catch((cause: unknown) => {
+    initializedLocalExecutorStatus = null
+    initializedBundledPluginMarketplace = null
+    reconciledBundledPluginMarketplaceKey = ''
     console.error('[local-ipc] request failed', {
       method,
       paramsKeys: Object.keys(params ?? {}),

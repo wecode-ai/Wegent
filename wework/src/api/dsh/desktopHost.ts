@@ -16,6 +16,26 @@ export class DesktopHostError extends Error {
   }
 }
 
+export interface DesktopHostEvent {
+  sequence: number
+  type: string
+  payload: Record<string, unknown>
+}
+
+interface DesktopHostEventBatch {
+  events: DesktopHostEvent[]
+  latestSequence: number
+  historyLost: boolean
+}
+
+type DesktopHostEventHandler = (event: DesktopHostEvent) => void
+
+const desktopHostEventHandlers = new Set<DesktopHostEventHandler>()
+const DESKTOP_HOST_EVENT_CURSOR_KEY = 'wework.desktopHostEventCursor'
+let desktopHostEventAfter = loadDesktopHostEventCursor()
+let desktopHostEventLoop: Promise<void> | null = null
+let desktopHostEventLoopGeneration = 0
+
 export async function invokeDesktopHost<Result>(
   capability: string,
   params: Record<string, unknown> = {}
@@ -38,4 +58,53 @@ export async function invokeDesktopHost<Result>(
     )
   }
   return body.result as Result
+}
+
+export function subscribeDesktopHostEvents(handler: DesktopHostEventHandler): () => void {
+  desktopHostEventHandlers.add(handler)
+  startDesktopHostEventLoop()
+  return () => {
+    desktopHostEventHandlers.delete(handler)
+    if (desktopHostEventHandlers.size === 0) desktopHostEventLoopGeneration += 1
+  }
+}
+
+function startDesktopHostEventLoop(): void {
+  if (desktopHostEventLoop || desktopHostEventHandlers.size === 0) return
+  const generation = ++desktopHostEventLoopGeneration
+  desktopHostEventLoop = runDesktopHostEventLoop(generation).finally(() => {
+    desktopHostEventLoop = null
+    if (desktopHostEventHandlers.size > 0) startDesktopHostEventLoop()
+  })
+}
+
+async function runDesktopHostEventLoop(generation: number): Promise<void> {
+  while (desktopHostEventHandlers.size > 0 && desktopHostEventLoopGeneration === generation) {
+    try {
+      const batch = await invokeDesktopHost<DesktopHostEventBatch>('desktop.events', {
+        after: desktopHostEventAfter,
+        timeoutMs: 30_000,
+      })
+      desktopHostEventAfter = batch.latestSequence
+      saveDesktopHostEventCursor(desktopHostEventAfter)
+      for (const event of batch.events) {
+        desktopHostEventHandlers.forEach(handler => handler(event))
+      }
+    } catch (error) {
+      if (desktopHostEventLoopGeneration !== generation) return
+      console.error('[Wework] Failed to receive Electron host events', error)
+      await new Promise(resolve => window.setTimeout(resolve, 1_000))
+    }
+  }
+}
+
+function loadDesktopHostEventCursor(): number {
+  if (typeof window === 'undefined') return 0
+  const parsed = Number(window.sessionStorage.getItem(DESKTOP_HOST_EVENT_CURSOR_KEY))
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function saveDesktopHostEventCursor(cursor: number): void {
+  if (typeof window === 'undefined') return
+  window.sessionStorage.setItem(DESKTOP_HOST_EVENT_CURSOR_KEY, String(cursor))
 }
