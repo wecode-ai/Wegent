@@ -131,6 +131,25 @@ when a session resumes. Codex-only side-conversation flows are not exposed in ha
 local custom models, and cloud models remain available according to their own configuration. If
 no source provides a model, the picker displays **No models available**.
 
+## Editing a Codex model Catalog
+
+Under **Settings → Models → Codex models**, expand a provider and select **Edit Catalog** for a
+GPT/Codex model in the current list. The structured editor covers the context window, description,
+reasoning levels, default reasoning level, parallel tool calls, input modalities, base
+instructions, and advanced model capabilities. The model identifier and provider are read-only,
+and this editor does not add, remove, or reorder models.
+
+Changes stay in the current device's Executor Home. The executor stores only fields that differ
+from the current base Catalog and builds the effective Catalog in this order: upstream Catalog,
+Wework built-in configuration, user overrides, then vision-proxy derivation. Fields the user did
+not override therefore continue to follow later Codex or Wework updates.
+
+After saving, the model is marked **Customized**. Wework silently restarts the Codex app-server
+when no task is active. If tasks are running, Wework asks whether to restart immediately; choosing
+to restart later marks the model as **Waiting for executor restart** until the restart completes.
+Selecting **Restore defaults** removes the complete user override for that model and returns to the
+base Catalog supplied by the current version.
+
 ## Friendly titles
 
 Under **Settings → General → Task runtime**, enable **Use friendly titles** and select an available model. Wework
