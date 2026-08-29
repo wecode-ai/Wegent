@@ -1,3 +1,8 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = ["minio==7.2.20"]
+# ///
+
 from __future__ import annotations
 
 import json

@@ -689,6 +689,24 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
 
 
 @pytest.mark.parametrize(
+    ("build_script", "upload_script"),
+    [
+        ("build-minio-mac-release.sh", "upload-mac-release-to-s3.py"),
+        ("build-minio-windows-release.sh", "upload-windows-release-to-s3.py"),
+    ],
+)
+def test_minio_uploaders_use_an_isolated_uv_script(
+    build_script: str, upload_script: str
+) -> None:
+    build = (SCRIPT_DIR / build_script).read_text(encoding="utf-8")
+    uploader = (SCRIPT_DIR / upload_script).read_text(encoding="utf-8")
+
+    assert f'uv run --script "$SCRIPT_DIR/{upload_script}"' in build
+    assert 'uv run --project "$PROJECT_DIR/backend"' not in build
+    assert '# dependencies = ["minio==7.2.20"]' in uploader
+
+
+@pytest.mark.parametrize(
     ("script_name", "target", "expected"),
     [
         ("prepare-harness-runtime.mjs", "x86_64-apple-darwin", "macos-x64"),
