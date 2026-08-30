@@ -161,6 +161,7 @@ describe('desktop resource migration', () => {
     expect(codexPreparation).toContain("join(repoRoot, 'LICENSES', 'Apache-2.0.txt')")
     expect(codexPreparation).toContain("'RATATUI-LICENSE.txt'")
     expect(codexPreparation).toContain('await rm(legalDir, { recursive: true, force: true })')
+    expect(codexPreparation).toContain('resolveCodexLegalSources(')
     expect(packagePreparation).toContain("join(sharedResourcesRoot, 'binaries', 'codex', 'legal')")
     expect(packagePreparation).toContain("join(codexResources, 'legal')")
     expect(ratatuiLicense).toContain('Copyright (c) 2023-2025 The Ratatui Developers')

@@ -221,6 +221,26 @@ async function findLegacyTarball(paths) {
   return existingPaths.find(Boolean)
 }
 
+export async function resolveCodexLegalSources(
+  codexRepo,
+  bundledLicense,
+  bundledNotice,
+  pathExistsImpl = pathExists
+) {
+  const sourceLicensePath = codexRepo ? join(codexRepo, 'LICENSE') : null
+  const sourceNoticePath = codexRepo ? join(codexRepo, 'NOTICE') : null
+  return {
+    license:
+      sourceLicensePath && (await pathExistsImpl(sourceLicensePath))
+        ? sourceLicensePath
+        : bundledLicense,
+    notice:
+      sourceNoticePath && (await pathExistsImpl(sourceNoticePath))
+        ? sourceNoticePath
+        : bundledNotice,
+  }
+}
+
 async function ensureTarballIntegrity(tarballPath, entry, target) {
   const actualIntegrity = await integrityFile(tarballPath)
   if (actualIntegrity === entry.integrity) return
@@ -302,17 +322,9 @@ async function copyLegalFiles() {
   await rm(join(outputRoot, '.resource-placeholder'), { force: true })
   await rm(legalDir, { recursive: true, force: true })
   await mkdir(legalDir, { recursive: true })
-  if (codexRepo && (await pathExists(join(codexRepo, 'LICENSE')))) {
-    await cp(join(codexRepo, 'LICENSE'), join(legalDir, 'LICENSE'))
-    if (await pathExists(join(codexRepo, 'NOTICE'))) {
-      await cp(join(codexRepo, 'NOTICE'), join(legalDir, 'NOTICE'))
-    } else {
-      await cp(bundledNotice, join(legalDir, 'NOTICE'))
-    }
-  } else {
-    await cp(bundledLicense, join(legalDir, 'LICENSE'))
-    await cp(bundledNotice, join(legalDir, 'NOTICE'))
-  }
+  const sources = await resolveCodexLegalSources(codexRepo, bundledLicense, bundledNotice)
+  await cp(sources.license, join(legalDir, 'LICENSE'))
+  await cp(sources.notice, join(legalDir, 'NOTICE'))
   await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
