@@ -151,6 +151,18 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
+桌面发行物还必须携带项目及 bundled sidecar 的许可证和归属信息：
+
+- 应用资源根目录的 `LICENSE` 是 Wegent 的 Apache-2.0 许可证；
+- `licenses/` 保存 CUA Driver 等 Electron 依赖的第三方许可证；
+- `codex/legal/` 保存 Codex 的 Apache-2.0 许可证、`NOTICE` 和 Ratatui MIT
+  许可证。
+
+`prepare-codex-binary.mjs` 生成 Codex legal 目录，
+`prepare-package-assets.mjs` 必须将其与目标架构二进制一起复制到桌面资源。修改
+打包链路时，应解包或检查真实应用产物，确认这些文件存在且与仓库中的源文件一致；
+仅检查中间资源目录不能证明最终发行物合规。
+
 ## 本地验证
 
 发布相关改动至少运行：
@@ -166,7 +178,7 @@ pnpm --dir wework/electron build:release
 Electron 会话验证：
 
 ```bash
-pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify start --packaged true
 ```
 
 多个 worktree 并行验证时，为每个实例使用独立 `WEWORK_PORT`。隔离会话会使用独立

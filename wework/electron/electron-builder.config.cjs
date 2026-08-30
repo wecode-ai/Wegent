@@ -38,6 +38,7 @@ module.exports = {
     { from: 'resources/bundled-plugins', to: 'bundled-plugins' },
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
+    { from: '../../LICENSE', to: 'LICENSE' },
   ],
   publish: {
     provider: 'generic',

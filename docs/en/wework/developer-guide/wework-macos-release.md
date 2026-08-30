@@ -185,6 +185,23 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
+Desktop distributions must also include the project and bundled-sidecar
+licenses and attribution notices:
+
+- `LICENSE` at the application resource root contains Wegent's Apache-2.0
+  license;
+- `licenses/` contains third-party licenses for Electron dependencies such as
+  CUA Driver;
+- `codex/legal/` contains the Codex Apache-2.0 license, `NOTICE`, and the
+  Ratatui MIT license.
+
+`prepare-codex-binary.mjs` generates the Codex legal directory, and
+`prepare-package-assets.mjs` must copy it together with the target architecture
+binary. Packaging changes must inspect the real packaged application and
+confirm that these files exist and match their repository sources. Inspecting
+only an intermediate resource directory does not prove that the distribution
+is complete.
+
 ## Local verification
 
 Release changes must run at least:
@@ -200,7 +217,7 @@ Changes to windows, tray behavior, IPC, the built-in browser, sidecars, or
 packaged resources must also be verified in an isolated real Electron session:
 
 ```bash
-pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify start --packaged true
 ```
 
 Give each concurrent worktree a distinct `WEWORK_PORT`. Isolated sessions use
