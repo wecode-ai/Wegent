@@ -570,11 +570,7 @@ fn attach_user_message_presentations_for_page(
                     ) =>
             {
                 let content = string_field(&presentation, "content").unwrap_or_default();
-                let attachments = presentation
-                    .get("attachments")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let attachments = normalized_attachments(presentation.get("attachments"));
                 if content.trim().is_empty() && attachments.is_empty() {
                     continue;
                 }
@@ -637,11 +633,7 @@ fn attach_user_message_presentations_for_page(
         let message = &mut messages[message_index];
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
-        let attachments = presentation
-            .get("attachments")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let attachments = normalized_attachments(presentation.get("attachments"));
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
@@ -892,16 +884,20 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
                 "local_path",
                 &["local_path", "localPath"],
             );
-            copy_attachment_field_alias(
-                object,
-                &mut normalized,
-                "local_preview_url",
-                &["local_preview_url", "localPreviewUrl"],
-            );
-            if !normalized.contains_key("local_preview_url") {
-                if let Some(local_path) = normalized.get("local_path").cloned() {
-                    normalized.insert("local_preview_url".to_owned(), local_path);
-                }
+            if let Some(local_path) = normalized
+                .get("local_path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+                .map(|path| Value::String(path.to_owned()))
+            {
+                normalized.insert("local_preview_url".to_owned(), local_path);
+            } else {
+                copy_attachment_field_alias(
+                    object,
+                    &mut normalized,
+                    "local_preview_url",
+                    &["local_preview_url", "localPreviewUrl"],
+                );
             }
             normalized.insert("status".to_owned(), Value::String("ready".to_owned()));
             normalized.insert("created_at".to_owned(), Value::Number(now_ms().into()));

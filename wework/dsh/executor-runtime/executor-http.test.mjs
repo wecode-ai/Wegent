@@ -7,19 +7,54 @@ import { handleExecutorEvents } from './index.js'
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')
   const response = responseFixture()
-  let receivedAfter = null
+  let receivedOptions = null
 
   await handleExecutorEvents(request, response, options => {
-    receivedAfter = options.afterSequence
+    receivedOptions = options
     return eventStreamFixture(options, {
       events: [executorEvent(8), executorEvent(9, 'response.completed')],
     })
   })
 
-  assert.equal(receivedAfter, 7)
+  assert.deepEqual(receivedOptions, {
+    afterSequence: 7,
+    replayExisting: true,
+  })
   assert.doesNotMatch(response.body, /id:/)
   assert.match(response.body, /"sequence":8/)
   assert.match(response.body, /"sequence":9/)
+})
+
+test('starts a fresh browser event stream without replaying executor backlog', async () => {
+  const request = executorEventRequest('?after=0&replay=0')
+  const response = responseFixture()
+  let receivedOptions = null
+
+  await handleExecutorEvents(request, response, options => {
+    receivedOptions = options
+    return eventStreamFixture(options)
+  })
+
+  assert.deepEqual(receivedOptions, {
+    afterSequence: 0,
+    replayExisting: false,
+  })
+})
+
+test('replays executor backlog when a zero-cursor browser reconnect requests it', async () => {
+  const request = executorEventRequest('?after=0&replay=1')
+  const response = responseFixture()
+  let receivedOptions = null
+
+  await handleExecutorEvents(request, response, options => {
+    receivedOptions = options
+    return eventStreamFixture(options)
+  })
+
+  assert.deepEqual(receivedOptions, {
+    afterSequence: 0,
+    replayExisting: true,
+  })
 })
 
 test('returns an error before opening SSE when the executor stream cannot connect', async () => {

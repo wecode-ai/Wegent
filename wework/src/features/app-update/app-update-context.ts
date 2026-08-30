@@ -18,6 +18,7 @@ export type AppUpdateStatus =
   | 'idle'
   | 'checking'
   | 'available'
+  | 'downloading'
   | 'upToDate'
   | 'installing'
   | 'error'

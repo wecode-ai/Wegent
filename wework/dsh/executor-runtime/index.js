@@ -85,6 +85,7 @@ export async function handleExecutorEvents(
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'GET') return methodNotAllowed(res, 'GET')
   const after = eventCursor(req)
+  const replayExisting = shouldReplayExistingEvents(req)
   let active = true
   let eventStream = null
   let source = null
@@ -98,7 +99,10 @@ export async function handleExecutorEvents(
   res.once('close', disconnect)
   res.once('error', disconnect)
   try {
-    eventStream = createEventStream({ afterSequence: after })
+    eventStream = createEventStream({
+      afterSequence: after,
+      replayExisting,
+    })
     source = await eventStream.start()
     if (!active || res.writableEnded || res.destroyed) return
     res.writeHead(200, {
@@ -129,6 +133,10 @@ function eventCursor(req) {
   const value = query ?? header ?? '0'
   const parsed = Number(value)
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+}
+
+function shouldReplayExistingEvents(req) {
+  return new URL(req.url ?? '/', 'http://localhost').searchParams.get('replay') !== '0'
 }
 
 class NdjsonSseTransform extends Transform {

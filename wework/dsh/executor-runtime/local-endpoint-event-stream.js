@@ -11,6 +11,7 @@ export class LocalEndpointEventByteStream {
     this.endpoint = options.endpoint
     this.token = options.token
     this.afterSequence = options.afterSequence
+    this.replayExisting = options.replayExisting ?? true
     this.socket = null
     this.authenticated = false
     this.stopped = false
@@ -108,6 +109,7 @@ export class LocalEndpointEventByteStream {
             token: this.token,
             event_stream: true,
             after_sequence: this.afterSequence,
+            replay_existing: this.replayExisting,
           })}\n`
         )
       })

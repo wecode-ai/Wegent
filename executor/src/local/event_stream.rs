@@ -108,7 +108,7 @@ impl ExecutorEventHub {
                                     .iter_mut()
                                     .find(|(pending_key, _)| pending_key == &key)
                                 {
-                                    *pending_event = event;
+                                    merge_coalesced_event(pending_event, event);
                                 } else {
                                     pending.push_back((key, event));
                                 }
@@ -141,6 +141,19 @@ impl ExecutorEventHub {
 
     pub fn subscribe_live(&self) -> broadcast::Receiver<Value> {
         self.event_tx.subscribe()
+    }
+
+    pub fn subscribe_from_now(&self) -> ExecutorEventSubscription {
+        let state = self
+            .state
+            .lock()
+            .expect("executor event journal should not be poisoned");
+        let receiver = self.event_tx.subscribe();
+        ExecutorEventSubscription {
+            replay: Vec::new(),
+            receiver,
+            resume_after: state.latest_sequence(),
+        }
     }
 
     pub fn subscribe_after(&self, after: u64) -> ExecutorEventSubscription {
@@ -310,6 +323,55 @@ fn coalescing_key(event: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     Some(format!("{event_name}\0{task_id}\0{subtask_id}\0{block_id}"))
+}
+
+fn merge_coalesced_event(pending: &mut Value, next: Value) {
+    if merge_block_content_delta(pending, &next) {
+        return;
+    }
+    *pending = next;
+}
+
+fn merge_block_content_delta(pending: &mut Value, next: &Value) -> bool {
+    if pending.get("event").and_then(Value::as_str) != Some("response.block.updated")
+        || next.get("event").and_then(Value::as_str) != Some("response.block.updated")
+    {
+        return false;
+    }
+    let Some(current_updates) = pending
+        .pointer_mut("/payload/data/updates")
+        .and_then(Value::as_object_mut)
+    else {
+        return false;
+    };
+    let Some(next_updates) = next
+        .pointer("/payload/data/updates")
+        .and_then(Value::as_object)
+    else {
+        return false;
+    };
+    let Some(current_delta) = current_updates
+        .get("content_delta")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return false;
+    };
+    if next_updates.contains_key("content") {
+        return false;
+    }
+    if let Some(next_delta) = next_updates.get("content_delta").and_then(Value::as_str) {
+        current_updates.insert(
+            "content_delta".to_owned(),
+            Value::String(format!("{current_delta}{next_delta}")),
+        );
+    }
+    for (key, value) in next_updates {
+        if key != "content_delta" {
+            current_updates.insert(key.clone(), value.clone());
+        }
+    }
+    true
 }
 
 fn event_task_id(event: &Value) -> Option<String> {
@@ -512,5 +574,97 @@ mod tests {
         assert_eq!(update["payload"]["data"]["updates"]["content"], "second");
         assert_eq!(terminal["event"], "response.completed");
         assert!(event_sequence(&terminal).unwrap() > event_sequence(&update).unwrap());
+    }
+
+    #[tokio::test]
+    async fn block_content_deltas_are_concatenated_before_flush() {
+        let (raw_tx, _) = broadcast::channel(8);
+        let hub = ExecutorEventHub::new(raw_tx.clone());
+        hub.ensure_started();
+        let mut events = hub.subscribe_live();
+        for content_delta in ["first", "second"] {
+            raw_tx
+                .send(json!({
+                    "event": "response.block.updated",
+                    "payload": {
+                        "taskId": "task-1",
+                        "subtaskId": "turn-1",
+                        "data": {
+                            "block_id": "block-1",
+                            "updates": {
+                                "content_delta": content_delta,
+                                "status": "streaming"
+                            }
+                        }
+                    }
+                }))
+                .unwrap();
+        }
+        raw_tx
+            .send(json!({
+                "event": "response.completed",
+                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
+            }))
+            .unwrap();
+
+        let update = events.recv().await.unwrap();
+        let terminal = events.recv().await.unwrap();
+
+        assert_eq!(
+            update["payload"]["data"]["updates"]["content_delta"],
+            "firstsecond"
+        );
+        assert_eq!(terminal["event"], "response.completed");
+    }
+
+    #[tokio::test]
+    async fn terminal_block_status_preserves_pending_content_delta() {
+        let (raw_tx, _) = broadcast::channel(8);
+        let hub = ExecutorEventHub::new(raw_tx.clone());
+        hub.ensure_started();
+        let mut events = hub.subscribe_live();
+        raw_tx
+            .send(json!({
+                "event": "response.block.updated",
+                "payload": {
+                    "taskId": "task-1",
+                    "subtaskId": "turn-1",
+                    "data": {
+                        "block_id": "block-1",
+                        "updates": {
+                            "content_delta": "last chunk",
+                            "status": "streaming"
+                        }
+                    }
+                }
+            }))
+            .unwrap();
+        raw_tx
+            .send(json!({
+                "event": "response.block.updated",
+                "payload": {
+                    "taskId": "task-1",
+                    "subtaskId": "turn-1",
+                    "data": {
+                        "block_id": "block-1",
+                        "updates": {"status": "done"}
+                    }
+                }
+            }))
+            .unwrap();
+        raw_tx
+            .send(json!({
+                "event": "response.completed",
+                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
+            }))
+            .unwrap();
+
+        let update = events.recv().await.unwrap();
+
+        assert_eq!(
+            update["payload"]["data"]["updates"]["content_delta"],
+            "last chunk"
+        );
+        assert_eq!(update["payload"]["data"]["updates"]["status"], "done");
     }
 }
