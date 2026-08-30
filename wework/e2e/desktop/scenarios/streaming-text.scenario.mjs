@@ -391,6 +391,29 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
   throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
 }
 
+async function waitForRuntimeAssistantText(control, address, expectedText, timeoutMs) {
+  const startedAt = Date.now()
+  let latestText = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    const runtimeMessages = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(address),
+      })
+    )
+    latestText =
+      runtimeMessages
+        .filter(message => message.role === 'assistant')
+        .flatMap(message => message.blocks ?? [])
+        .filter(block => block.type === 'text')
+        .at(-1)?.content ?? ''
+    if (latestText === expectedText) return latestText
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `The runtime conversation cache did not converge to the streamed text; received ${latestText.length} of ${expectedText.length} characters`
+  )
+}
+
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
@@ -1481,19 +1504,15 @@ export function createDesktopScenario({
       await partialWritten
       const runtimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         .workbench.currentRuntimeTask
-      const runtimeMessages = JSON.parse(
-        await control.command('getRuntimeConversationMessages', 'body', {
-          value: JSON.stringify({
-            deviceId: runtimeTask.deviceId,
-            taskId: runtimeTask.taskId,
-          }),
-        })
+      const runtimePartial = await waitForRuntimeAssistantText(
+        control,
+        {
+          deviceId: runtimeTask.deviceId,
+          taskId: runtimeTask.taskId,
+        },
+        PARTIAL_TEXT,
+        uiTimeoutMs
       )
-      const runtimePartial = runtimeMessages
-        .filter(message => message.role === 'assistant')
-        .flatMap(message => message.blocks ?? [])
-        .filter(block => block.type === 'text')
-        .at(-1)?.content
       assert.equal(
         runtimePartial,
         PARTIAL_TEXT,
