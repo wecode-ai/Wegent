@@ -149,14 +149,18 @@ only components that actually changed and do not redownload Electron and
 Chromium for a component-only change.
 
 The client accepts only a component manifest that exactly matches the running
-Electron application version, channel, platform, and architecture. It verifies
-the archive size and SHA-256 before extraction, then verifies the extracted
-component content SHA-256. Downloads enter a content-addressed store under the
-user data directory as `pending` and the complete component set switches
-through one atomic state file on the next startup. Wework confirms the new set
-only after the workbench and Core DSH start successfully. A failed startup, or
-a process exit before confirmation, rolls back to the previous set on the next
-launch. Packaged resources remain the final fallback.
+Electron application version, channel, platform, and architecture. A
+manifest's `downloadUrl` may point to a version Release, a shared dependency
+Release, or independent object storage; it does not need to share the rolling
+manifest's origin or path. Content integrity defines the download trust
+boundary: the client verifies the archive size and SHA-256 before extraction,
+then verifies the extracted component content SHA-256. Downloads enter a
+content-addressed store under the user data directory as `pending` and the
+complete component set switches through one atomic state file on the next
+startup. Wework confirms the new set only after the workbench and Core DSH
+start successfully. A failed startup, or a process exit before confirmation,
+rolls back to the previous set on the next launch. Packaged resources remain
+the final fallback.
 
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it

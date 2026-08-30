@@ -54,6 +54,19 @@ describe('ComponentUpdateManager', () => {
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
   })
 
+  test('downloads a changed component outside the manifest origin and path', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+    update.manifest.components.executor.downloadUrl = `http://components.example/independent-release/${update.assetName}`
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
+  })
+
   test('rolls back an unconfirmed component set after a failed startup', async () => {
     const fixture = await createFixture()
     const first = await createExecutorUpdate(fixture.root, 'executor-v2')
