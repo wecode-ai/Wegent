@@ -116,6 +116,10 @@ test('packages only product locales and skips individual static plugin signing',
   expect(builderConfig.linux.electronLanguages).toEqual(['en-US', 'zh-CN'])
 })
 
+test('uses the canonical Windows release artifact name', () => {
+  expect(builderConfig.win.artifactName).toBe('WeWork_${version}_windows-${arch}-setup.${ext}')
+})
+
 test('uses the configured Electron mirror with a normalized trailing slash', () => {
   const config = JSON.parse(
     execFileSync(

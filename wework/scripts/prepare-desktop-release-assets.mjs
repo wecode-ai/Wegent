@@ -62,7 +62,7 @@ if (platform === 'macos') {
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
-    new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
+    new RegExp(`^WeWork_${escape(version)}_windows-${arch}-setup\\.exe$`)
   )
   const target = join(output, basename(installer))
   const blockmap = `${installer}.blockmap`

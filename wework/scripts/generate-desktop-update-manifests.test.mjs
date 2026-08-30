@@ -24,10 +24,10 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   for (const name of [
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
-    `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows-x64-setup.exe`,
     `WeWork_${version}_macos_arm64.zip.blockmap`,
     `WeWork_${version}_macos_x64.zip.blockmap`,
-    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
+    `WeWork_${version}_windows-x64-setup.exe.blockmap`,
     `WeWork_${version}_macos_arm64.app.tar.gz`,
     `WeWork_${version}_macos_x64.app.tar.gz`,
   ]) {
@@ -70,7 +70,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   for (const name of [
     `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
     `WeWork_${version}_macos_x64.app.tar.gz.sig`,
-    `WeWork_${version}_windows_x64-setup.exe.sig`,
+    `WeWork_${version}_windows-x64-setup.exe.sig`,
   ]) {
     await writeFile(resolve(assets, name), `signature-${name}`)
   }
@@ -92,7 +92,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(electron).toContain(`WeWork_${version}_macos_arm64.zip`)
   expect(electron).toContain(`WeWork_${version}_macos_x64.zip`)
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
-    `WeWork_${version}_windows_x64-setup.exe`
+    `WeWork_${version}_windows-x64-setup.exe`
   )
   const legacy = JSON.parse(await readFile(resolve(output, 'stable-darwin-aarch64.json'), 'utf8'))
   expect(legacy.platforms['stable-darwin']).toEqual({
@@ -126,9 +126,9 @@ test('rejects a release without every differential update blockmap', async () =>
   for (const name of [
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
-    `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_windows-x64-setup.exe`,
     `WeWork_${version}_macos_arm64.zip.blockmap`,
-    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
+    `WeWork_${version}_windows-x64-setup.exe.blockmap`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }

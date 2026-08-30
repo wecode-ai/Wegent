@@ -76,7 +76,7 @@ if (requestedTargets.has('macos-x64')) {
   macAssets.push(await asset(`WeWork_${version}_macos_x64.zip`))
 }
 const windows = requestedTargets.has('windows-x64')
-  ? await asset(`WeWork_${version}_windows_x64-setup.exe`)
+  ? await asset(`WeWork_${version}_windows-x64-setup.exe`)
   : null
 await Promise.all(
   [...macAssets, ...(windows ? [windows] : [])].map(file => requireAsset(`${file.name}.blockmap`))
@@ -108,7 +108,7 @@ if (requestedTargets.has('macos-x64')) {
   tauriPlatforms['darwin-x86_64'] = await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`)
 }
 if (requestedTargets.has('windows-x64')) {
-  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`)
+  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows-x64-setup.exe`)
 }
 const tauriSource = {
   version,

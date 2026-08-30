@@ -289,7 +289,7 @@ import { resolve } from 'node:path'
 const version = process.env.RELEASE_VERSION
 const channel = process.env.RELEASE_CHANNEL
 const output = resolve('wework/electron/release-minio')
-const installerName = `WeWork_${version}_windows_x64-setup.exe`
+const installerName = `WeWork_${version}_windows-x64-setup.exe`
 const installer = resolve(output, installerName)
 const signaturePath = `${installer}.sig`
 const channelManifest = resolve(output, `${channel}-windows-x86_64.json`)

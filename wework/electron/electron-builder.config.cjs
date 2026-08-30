@@ -83,7 +83,7 @@ module.exports = {
     sign: false,
   },
   win: {
-    artifactName: 'WeWork_${version}_windows_${arch}-setup.${ext}',
+    artifactName: 'WeWork_${version}_windows-${arch}-setup.${ext}',
     electronLanguages: ['en-US', 'zh-CN'],
     icon: path.resolve(__dirname, '../resources/icons/icon.ico'),
     target: ['nsis'],
