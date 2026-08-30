@@ -143,6 +143,19 @@ impl ExecutorEventHub {
         self.event_tx.subscribe()
     }
 
+    pub fn subscribe_from_now(&self) -> ExecutorEventSubscription {
+        let state = self
+            .state
+            .lock()
+            .expect("executor event journal should not be poisoned");
+        let receiver = self.event_tx.subscribe();
+        ExecutorEventSubscription {
+            replay: Vec::new(),
+            receiver,
+            resume_after: state.latest_sequence(),
+        }
+    }
+
     pub fn subscribe_after(&self, after: u64) -> ExecutorEventSubscription {
         let mut state = self
             .state

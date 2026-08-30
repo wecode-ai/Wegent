@@ -1102,8 +1102,12 @@ impl AppIpcServer {
         let role = authentication.role;
         let (reader, writer) = split(stream);
         let result = if authentication.event_stream {
-            self.serve_event_stream(writer, authentication.after_sequence)
-                .await
+            self.serve_event_stream(
+                writer,
+                authentication.after_sequence,
+                authentication.replay_existing,
+            )
+            .await
         } else {
             self.serve_io_inner(
                 reader,
@@ -1364,13 +1368,38 @@ impl AppIpcServer {
         }
     }
 
-    async fn serve_event_stream<W>(&self, mut writer: W, after: u64) -> Result<(), String>
+    async fn serve_event_stream<W>(
+        &self,
+        mut writer: W,
+        after: u64,
+        replay_existing: bool,
+    ) -> Result<(), String>
     where
         W: AsyncWrite + Unpin + Send + 'static,
     {
         self.event_hub.ensure_started();
-        let mut subscription = self.event_hub.subscribe_after(after);
-        let mut delivered_sequence = after;
+        let mut subscription = if replay_existing {
+            self.event_hub.subscribe_after(after)
+        } else {
+            self.event_hub.subscribe_from_now()
+        };
+        let mut delivered_sequence = after.max(subscription.resume_after);
+        if !replay_existing {
+            write_message(
+                &mut writer,
+                &json!({
+                    "type": "event",
+                    "protocolVersion": 1,
+                    "sequence": delivered_sequence,
+                    "emittedAt": chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "event": "executor.stream.cursor",
+                    "payload": {},
+                }),
+            )
+            .await
+            .map_err(|error| format!("failed to write executor event stream cursor: {error}"))?;
+        }
         loop {
             for event in subscription.replay.drain(..) {
                 write_message(&mut writer, &event)
@@ -1508,6 +1537,7 @@ struct LocalEndpointAuthentication {
     role: LocalEndpointRole,
     event_stream: bool,
     after_sequence: u64,
+    replay_existing: bool,
     receive_events: bool,
 }
 
@@ -1558,6 +1588,9 @@ where
         role,
         event_stream: request.as_ref().is_some_and(|request| request.event_stream),
         after_sequence: request.as_ref().map_or(0, |request| request.after_sequence),
+        replay_existing: request
+            .as_ref()
+            .map_or(true, |request| request.replay_existing),
         receive_events: request
             .as_ref()
             .map_or(true, |request| request.receive_events),
@@ -1590,6 +1623,7 @@ struct LocalEndpointAuthRequest {
     token: String,
     event_stream: bool,
     after_sequence: u64,
+    replay_existing: bool,
     receive_events: bool,
 }
 
@@ -1614,6 +1648,10 @@ fn parse_auth_request(frame: &[u8]) -> Option<LocalEndpointAuthRequest> {
             .get("after_sequence")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        replay_existing: value
+            .get("replay_existing")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         receive_events: value
             .get("receive_events")
             .and_then(Value::as_bool)
@@ -3930,7 +3968,9 @@ mod tests {
         let (_, first_writer) = split(first_executor);
         let first_server = server.clone();
         let first_stream =
-            tokio::spawn(async move { first_server.serve_event_stream(first_writer, 0).await });
+            tokio::spawn(
+                async move { first_server.serve_event_stream(first_writer, 0, true).await },
+            );
         for _ in 0..100 {
             if event_tx.receiver_count() > 0 {
                 break;
@@ -3976,7 +4016,7 @@ mod tests {
         let second_server = server.clone();
         let second_stream = tokio::spawn(async move {
             second_server
-                .serve_event_stream(second_writer, first_sequence)
+                .serve_event_stream(second_writer, first_sequence, true)
                 .await
         });
         let mut second_reader = BufReader::new(second_reader);
@@ -3994,5 +4034,74 @@ mod tests {
         assert_eq!(second_event["payload"]["data"]["delta"], "second");
         assert!(second_event["sequence"].as_u64().unwrap() > first_sequence);
         second_stream.abort();
+    }
+
+    #[tokio::test]
+    async fn fresh_executor_event_stream_skips_journal_backlog() {
+        let server = AppIpcServer::new();
+        let event_tx = server.event_tx.clone();
+        server.event_hub.ensure_started();
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "stale"}},
+            }))
+            .expect("executor event journal should accept backlog");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if server
+                    .event_hub
+                    .subscribe_after(0)
+                    .replay
+                    .iter()
+                    .any(|event| event["payload"]["data"]["delta"] == "stale")
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stale executor event should reach the journal");
+
+        let (client, executor) = duplex(16 * 1024);
+        let (reader, _) = split(client);
+        let (_, writer) = split(executor);
+        let fresh_server = server.clone();
+        let fresh_stream =
+            tokio::spawn(async move { fresh_server.serve_event_stream(writer, 0, false).await });
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("fresh event stream cursor should arrive")
+            .expect("fresh event stream cursor should be readable");
+        let cursor: Value =
+            serde_json::from_str(&line).expect("fresh event stream cursor should be JSON");
+        assert_eq!(cursor["event"], "executor.stream.cursor");
+        assert!(cursor["sequence"].as_u64().unwrap() > 0);
+        line.clear();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), reader.read_line(&mut line))
+                .await
+                .is_err(),
+            "fresh event streams must not replay journal backlog"
+        );
+
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "live"}},
+            }))
+            .expect("fresh event stream should receive live events");
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("live executor event should arrive")
+            .expect("live executor event should be readable");
+        let event: Value = serde_json::from_str(&line).expect("live executor event should be JSON");
+        assert_eq!(event["payload"]["data"]["delta"], "live");
+        fresh_stream.abort();
     }
 }

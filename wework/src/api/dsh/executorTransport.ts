@@ -105,6 +105,7 @@ export function subscribeDshExecutorEvents(
   let closed = false
   let reconnectTimer: number | null = null
   let reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+  let connected = false
 
   const scheduleReconnect = () => {
     if (closed || reconnectTimer !== null) return
@@ -119,9 +120,14 @@ export function subscribeDshExecutorEvents(
   const connect = () => {
     if (closed) return
     const nextSource = new EventSource(
-      `${EXECUTOR_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}`
+      `${EXECUTOR_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}&replay=${
+        connected ? '1' : '0'
+      }`
     )
     source = nextSource
+    nextSource.onopen = () => {
+      if (source === nextSource) connected = true
+    }
     nextSource.onmessage = message => {
       if (source !== nextSource) return
       let event: DshExecutorEventEnvelope
@@ -151,6 +157,7 @@ export function subscribeDshExecutorEvents(
       if (event.sequence <= cursor) return
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
+      if (event.event === 'executor.stream.cursor') return
       try {
         listener(event)
       } catch (error) {
