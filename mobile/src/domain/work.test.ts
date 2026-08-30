@@ -1,0 +1,112 @@
+import { describe, expect, it } from 'vitest'
+
+import type { RuntimeWorkListResponse } from '@/types/runtime'
+import { runtimeTaskKey } from './runtimeTaskLifecycle'
+import { chatWorkspaceForDevice, flattenConversations } from './work'
+
+describe('flattenConversations', () => {
+  it('combines project and standalone chats in update order', () => {
+    const work: RuntimeWorkListResponse = {
+      totalTasks: 2,
+      projects: [
+        {
+          project: { key: 'p1', name: 'Wegent' },
+          deviceWorkspaces: [
+            {
+              deviceId: 'cloud-1',
+              deviceName: 'Cloud Mac',
+              deviceStatus: 'online',
+              available: true,
+              workspacePath: '/work/wegent',
+              tasks: [
+                {
+                  taskId: 'old',
+                  title: '旧会话',
+                  runtime: 'codex',
+                  workspacePath: '/work/wegent',
+                  updatedAt: '2026-08-29T10:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      chats: [
+        {
+          deviceId: 'cloud-1',
+          deviceName: 'Cloud Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: 'chat://cloud-1',
+          workspaceKind: 'chat',
+          tasks: [
+            {
+              taskId: 'new',
+              title: '新会话',
+              runtime: 'codex',
+              workspacePath: 'chat://cloud-1',
+              updatedAt: '2026-08-30T10:00:00Z',
+            },
+          ],
+        },
+      ],
+    }
+
+    const result = flattenConversations(work)
+
+    expect(result.map(item => item.address.taskId)).toEqual(['new', 'old'])
+    expect(result[1]?.projectName).toBe('Wegent')
+  })
+
+  it('uses the lifecycle projection instead of a stale work running flag', () => {
+    const work: RuntimeWorkListResponse = {
+      totalTasks: 1,
+      projects: [],
+      chats: [
+        {
+          deviceId: 'cloud-1',
+          deviceName: 'Cloud Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: 'chat://cloud-1',
+          tasks: [
+            {
+              taskId: 'task-1',
+              title: '已完成会话',
+              runtime: 'codex',
+              workspacePath: 'chat://cloud-1',
+              running: true,
+            },
+          ],
+        },
+      ],
+    }
+    const address = { deviceId: 'cloud-1', taskId: 'task-1' }
+
+    const result = flattenConversations(work, new Map([[runtimeTaskKey(address), false]]))
+
+    expect(result[0]?.running).toBe(false)
+  })
+})
+
+describe('chatWorkspaceForDevice', () => {
+  it('reuses the available standalone chat workspace returned by the runtime', () => {
+    const chatWorkspace = {
+      deviceId: 'cloud-1',
+      deviceName: 'Cloud Mac',
+      deviceStatus: 'online' as const,
+      available: true,
+      workspacePath: '/Users/me/.wework/workspace/chats',
+      workspaceKind: 'chat',
+      tasks: [],
+    }
+    const work: RuntimeWorkListResponse = {
+      totalTasks: 0,
+      projects: [],
+      chats: [{ ...chatWorkspace, deviceId: 'cloud-2', available: false }, chatWorkspace],
+    }
+
+    expect(chatWorkspaceForDevice(work, 'cloud-1')).toBe(chatWorkspace)
+    expect(chatWorkspaceForDevice(work, 'cloud-2')).toBeNull()
+  })
+})
