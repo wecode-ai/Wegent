@@ -13,6 +13,7 @@ import {
   VideoDirectorGenerationCard,
 } from '@/features/cards/VideoDirectorGenerationCard'
 import type { CardRendererProps } from '@/features/cards/types'
+import { useShareToken } from '@/contexts/ShareTokenContext'
 import { openTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { AigcVideoPanelPayload } from './AigcVideoPanel'
@@ -25,6 +26,7 @@ export default function AigcVideoCard({
   onChatButtonClick,
 }: CardRendererProps) {
   const { t } = useTranslation('video')
+  const { shareToken } = useShareToken()
   const [submitting, setSubmitting] = useState<string | null>(null)
   const previousStatusRef = useRef(card.card_status)
   const data = useMemo(() => parseAigcVideoCardData(card.card_data || {}), [card.card_data])
@@ -99,10 +101,11 @@ export default function AigcVideoCard({
           buttons,
           onChatButtonClick,
           autoOpenOpenCut,
+          shareToken,
         } satisfies AigcVideoPanelPayload,
       })
     },
-    [buttons, canOpenPanel, detailUrl, onChatButtonClick, previewText, taskId, title]
+    [buttons, canOpenPanel, detailUrl, onChatButtonClick, previewText, shareToken, taskId, title]
   )
 
   const openPanelFromClick = useCallback(() => {

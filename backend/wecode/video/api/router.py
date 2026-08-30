@@ -29,6 +29,7 @@ from app.core import security
 from app.models.user import User
 from app.services.media.weibo_image_upload import weibo_image_upload_service
 from app.services.media.weibo_media_service import resolve_weibo_media_uid
+from app.services.shared_task import shared_task_service
 from wecode.video.api.client import (
     fetch_health,
     validate_image_url,
@@ -59,29 +60,54 @@ HOP_BY_HOP_HEADERS = {
 logger = logging.getLogger(__name__)
 
 
-def _get_media_user(
-    request: Request,
-    token: str | None = Depends(security.oauth2_scheme_optional),
-    db: Session = Depends(get_db),
-) -> User:
-    """Authenticate native media requests through a header or same-origin cookie."""
-    effective_token = token or request.cookies.get("auth_token")
-    user = (
-        security.get_current_user_from_token(effective_token, db)
-        if effective_token
-        else None
-    )
-    if user is None or not user.is_active:
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return user
-
-
 def _user_uid(current_user: User) -> str:
     return str(current_user.user_name or current_user.id)
+
+
+def _shared_read_identity(
+    *,
+    current_user: User | None,
+    share_token: str | None,
+    db: Session,
+) -> tuple[str, int | None]:
+    if share_token:
+        share_info = shared_task_service.decode_share_token(share_token, db)
+        if share_info:
+            return str(share_info.user_name), int(share_info.task_id)
+        raise HTTPException(status_code=403, detail="Invalid task share token")
+    if current_user is not None:
+        return _user_uid(current_user), None
+    raise HTTPException(
+        status_code=401,
+        detail="Not authenticated",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _media_read_identity(
+    *,
+    request: Request,
+    current_user: User | None,
+    share_token: str | None,
+    db: Session,
+) -> tuple[str, int | None]:
+    if share_token or current_user is not None:
+        return _shared_read_identity(
+            current_user=current_user,
+            share_token=share_token,
+            db=db,
+        )
+    cookie_token = request.cookies.get("auth_token")
+    cookie_user = (
+        security.get_current_user_from_token(cookie_token, db) if cookie_token else None
+    )
+    if cookie_user is not None and not cookie_user.is_active:
+        cookie_user = None
+    return _shared_read_identity(
+        current_user=cookie_user,
+        share_token=None,
+        db=db,
+    )
 
 
 def _upstream_url(path: str, query_params: list[tuple[str, str]] | None = None) -> str:
@@ -121,6 +147,43 @@ async def _forward_json(
                 _upstream_url(path),
                 headers={"UID": _user_uid(current_user)},
                 json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=504, detail="AIGC video request timed out"
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=503, detail="AIGC video service unavailable"
+        ) from exc
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=_response_headers(upstream),
+    )
+
+
+async def _forward_shared_read(
+    *,
+    request: Request,
+    path: str,
+    uid: str,
+    task_id: int | None,
+) -> Response:
+    query_params = [
+        (name, value)
+        for name, value in request.query_params.multi_items()
+        if name != "share_token"
+    ]
+    if task_id is not None:
+        query_params.extend([("skip_check", "1"), ("wegent_task_id", str(task_id))])
+    try:
+        async with httpx.AsyncClient(
+            timeout=UPSTREAM_TIMEOUT_SECONDS, trust_env=False
+        ) as client:
+            upstream = await client.get(
+                _upstream_url(path, query_params),
+                headers={"UID": uid},
             )
     except httpx.TimeoutException as exc:
         raise HTTPException(
@@ -232,12 +295,20 @@ def aigc_video_health(
 
 @router.get("/media/playback")
 async def aigc_video_playback(
+    request: Request,
     video_url: str = Query(..., min_length=1),
     range_header: str | None = Header(None, alias="Range"),
-    current_user: User = Depends(_get_media_user),
+    share_token: str | None = Query(None),
+    current_user: User | None = Depends(security.get_current_user_optional),
+    db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """Refresh the anti-hotlink signature before browser-native playback."""
-    del current_user
+    _media_read_identity(
+        request=request,
+        current_user=current_user,
+        share_token=share_token,
+        db=db,
+    )
     try:
         validated_url = validate_playback_url(video_url)
         uid = video_media_settings.get_upload_uid()
@@ -261,11 +332,19 @@ async def aigc_video_playback(
 
 @router.get("/media/image")
 async def aigc_video_image(
+    request: Request,
     image_url: str = Query(..., min_length=1),
-    current_user: User = Depends(_get_media_user),
+    share_token: str | None = Query(None),
+    current_user: User | None = Depends(security.get_current_user_optional),
+    db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """Proxy allowlisted storyboard images with a browser-safe content type."""
-    del current_user
+    _media_read_identity(
+        request=request,
+        current_user=current_user,
+        share_token=share_token,
+        db=db,
+    )
     try:
         return await _stream_image(validate_image_url(image_url))
     except (httpx.HTTPError, ValueError) as exc:
@@ -297,6 +376,74 @@ async def _replace_image(
         method="PUT",
         path=resource_path,
         payload={"image_pid": image_pid},
+    )
+
+
+@router.get("/api/v2/scripts/{script_id}")
+@router.get("/v2/scripts/{script_id}")
+async def get_shared_script(
+    request: Request,
+    script_id: int,
+    share_token: str | None = Query(None),
+    current_user: User | None = Depends(security.get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Read a script through an authenticated user or a task share token."""
+    uid, task_id = _shared_read_identity(
+        current_user=current_user,
+        share_token=share_token,
+        db=db,
+    )
+    return await _forward_shared_read(
+        request=request,
+        path=f"v2/scripts/{script_id}",
+        uid=uid,
+        task_id=task_id,
+    )
+
+
+@router.get("/api/v2/entities")
+@router.get("/v2/entities")
+async def get_shared_entities(
+    request: Request,
+    share_token: str | None = Query(None),
+    current_user: User | None = Depends(security.get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Read entities through an authenticated user or a task share token."""
+    uid, task_id = _shared_read_identity(
+        current_user=current_user,
+        share_token=share_token,
+        db=db,
+    )
+    return await _forward_shared_read(
+        request=request,
+        path="v2/entities",
+        uid=uid,
+        task_id=task_id,
+    )
+
+
+@router.get("/api/v2/storyboards/{script_id}")
+@router.get("/v2/storyboards/{script_id}")
+async def get_shared_storyboards(
+    request: Request,
+    script_id: int,
+    share_token: str | None = Query(None),
+    current_user: User | None = Depends(security.get_current_user_optional),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Read storyboards through an authenticated user or a task share token."""
+    uid, task_id = _shared_read_identity(
+        current_user=current_user,
+        share_token=share_token,
+        db=db,
+    )
+    return await _forward_shared_read(
+        request=request,
+        path=f"v2/storyboards/{script_id}",
+        uid=uid,
+        task_id=task_id,
     )
 
 

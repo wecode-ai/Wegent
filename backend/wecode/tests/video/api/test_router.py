@@ -15,37 +15,56 @@ _response_headers = aigc_video_router._response_headers
 _upstream_url = aigc_video_router._upstream_url
 
 
-def test_media_auth_uses_same_origin_cookie(monkeypatch):
-    user = SimpleNamespace(is_active=True)
-    db = object()
-    request = SimpleNamespace(cookies={"auth_token": "cookie-token"})
-    resolve_user = lambda token, session: user
+def test_media_read_identity_uses_same_origin_cookie(monkeypatch):
+    user = SimpleNamespace(user_name="feifei16", id=1, is_active=True)
     monkeypatch.setattr(
         aigc_video_router.security,
         "get_current_user_from_token",
-        resolve_user,
+        lambda token, db: user,
     )
 
-    result = aigc_video_router._get_media_user(
-        request=request,
-        token=None,
-        db=db,
+    result = aigc_video_router._media_read_identity(
+        request=SimpleNamespace(cookies={"auth_token": "cookie-token"}),
+        current_user=None,
+        share_token=None,
+        db=object(),
     )
 
-    assert result is user
+    assert result == ("feifei16", None)
 
 
-def test_media_auth_rejects_missing_credentials():
-    request = SimpleNamespace(cookies={})
+def test_shared_read_identity_uses_task_share_owner(monkeypatch):
+    share_info = SimpleNamespace(user_name="feifei16", task_id=35)
+    monkeypatch.setattr(
+        aigc_video_router.shared_task_service,
+        "decode_share_token",
+        lambda token, db: share_info,
+    )
+
+    result = aigc_video_router._shared_read_identity(
+        current_user=SimpleNamespace(user_name="viewer", id=9),
+        share_token="shared-token",
+        db=object(),
+    )
+
+    assert result == ("feifei16", 35)
+
+
+def test_shared_read_identity_rejects_invalid_token(monkeypatch):
+    monkeypatch.setattr(
+        aigc_video_router.shared_task_service,
+        "decode_share_token",
+        lambda token, db: None,
+    )
 
     with pytest.raises(HTTPException) as exc_info:
-        aigc_video_router._get_media_user(
-            request=request,
-            token=None,
+        aigc_video_router._shared_read_identity(
+            current_user=None,
+            share_token="invalid-token",
             db=object(),
         )
 
-    assert exc_info.value.status_code == 401
+    assert exc_info.value.status_code == 403
 
 
 def test_upstream_url_maps_editor_api_to_aigc_namespace(monkeypatch):
@@ -108,9 +127,12 @@ async def test_playback_streams_the_refreshed_signed_url(monkeypatch):
     monkeypatch.setattr(aigc_video_router, "_stream_signed_video", stream_video)
 
     result = await aigc_video_router.aigc_video_playback(
+        request=SimpleNamespace(cookies={}),
         video_url=video_url,
         range_header="bytes=0-99",
-        current_user=object(),
+        share_token=None,
+        current_user=SimpleNamespace(user_name="feifei16", id=1),
+        db=object(),
     )
 
     assert result is expected

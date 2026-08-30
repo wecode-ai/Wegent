@@ -15,6 +15,8 @@ import type { EntityItem, EntityListResponse } from './types'
 interface EntityPanelProps {
   taskId: number
   onContinue?: (buttonName?: string) => void
+  readOnly?: boolean
+  shareToken?: string
 }
 
 interface DisplayEntity extends EntityItem {
@@ -27,7 +29,12 @@ const EMPTY_ENTITIES: EntityListResponse = {
   props: [],
 }
 
-export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
+export function EntityPanel({
+  taskId,
+  onContinue,
+  readOnly = false,
+  shareToken,
+}: EntityPanelProps) {
   const { t } = useTranslation('video')
   const [entities, setEntities] = useState<EntityListResponse>(EMPTY_ENTITIES)
   const [loading, setLoading] = useState(true)
@@ -59,7 +66,7 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
         setLoading(true)
       }
       try {
-        const response = await entityApis.listEntities(taskId)
+        const response = await entityApis.listEntities(taskId, { shareToken })
         setEntities(response)
         setLoadFailed(false)
       } catch (error) {
@@ -70,14 +77,15 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
         setRefreshing(false)
       }
     },
-    [taskId]
+    [shareToken, taskId]
   )
 
   useEffect(() => {
     void fetchEntities()
   }, [fetchEntities])
 
-  const hasGeneratingEntity = displayEntities.some(entity => entity.generation_status === 1)
+  const hasGeneratingEntity =
+    !readOnly && displayEntities.some(entity => entity.generation_status === 1)
   useEffect(() => {
     if (!hasGeneratingEntity) return
     const timer = window.setInterval(() => void fetchEntities(true), 2000)
@@ -132,7 +140,7 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
   }
 
   const currentEntity = displayEntities[currentIndex]
-  const imageUrl = getAigcVideoImageUrl(currentEntity.image_url)
+  const imageUrl = getAigcVideoImageUrl(currentEntity.image_url, shareToken)
   const description =
     currentEntity.ext?.visual_description ||
     [currentEntity.description, currentEntity.dynamic_features].filter(Boolean).join('\n')
@@ -146,16 +154,18 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
             {t('entity.count', { count: displayEntities.length })}
           </p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => void fetchEntities(true)}
-          disabled={refreshing}
-          data-testid="entity-refresh"
-        >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          {t('entity.refresh')}
-        </Button>
+        {!readOnly ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void fetchEntities(true)}
+            disabled={refreshing}
+            data-testid="entity-refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {t('entity.refresh')}
+          </Button>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -217,7 +227,7 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
 
         <div className="mt-4 flex gap-2 overflow-x-auto pb-2" data-testid="entity-thumbnails">
           {displayEntities.map((entity, index) => {
-            const thumbnailUrl = getAigcVideoImageUrl(entity.image_url)
+            const thumbnailUrl = getAigcVideoImageUrl(entity.image_url, shareToken)
             return (
               <button
                 key={entity.id}
@@ -233,7 +243,12 @@ export function EntityPanel({ taskId, onContinue }: EntityPanelProps) {
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
                 ) : entity.generation_status === 1 ? (
-                  <Loader2 className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 animate-spin text-primary" />
+                  <span
+                    className="absolute inset-0 flex items-center justify-center"
+                    data-testid={`entity-thumbnail-loading-${entity.id}`}
+                  >
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  </span>
                 ) : (
                   <ImageOff className="absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 text-text-muted" />
                 )}

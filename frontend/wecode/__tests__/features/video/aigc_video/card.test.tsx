@@ -12,6 +12,7 @@ import {
 } from '@/features/tasks/components/right-panel'
 import AigcVideoCard from '@/../wecode/features/video/aigc_video/AigcVideoCard'
 import type { AigcVideoPanelPayload } from '@/../wecode/features/video/aigc_video/AigcVideoPanel'
+import { ShareTokenProvider } from '@/contexts/ShareTokenContext'
 import '@/../wecode/features/video/cardRegistry'
 
 jest.mock('@/hooks/useTranslation', () => ({
@@ -142,6 +143,31 @@ describe('AigcVideoCard', () => {
       TaskRightPanelRequest<AigcVideoPanelPayload>
     >
     expect(event.detail.panelProps.autoOpenOpenCut).toBe(true)
+    window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+  })
+
+  it('passes the public task share token to the video panel', () => {
+    const handleOpen = jest.fn()
+    window.addEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
+    render(
+      <ShareTokenProvider shareToken="shared-token">
+        <AigcVideoCard
+          block={buildCard({
+            card_data: {
+              title: '共享剧本',
+              link: 'http://localhost:3030/chat?taskId=35&openPanel=script&scriptId=24',
+            },
+          })}
+        />
+      </ShareTokenProvider>
+    )
+
+    fireEvent.click(screen.getByTestId('card-video-director-detail'))
+
+    const event = handleOpen.mock.calls[0][0] as CustomEvent<
+      TaskRightPanelRequest<AigcVideoPanelPayload>
+    >
+    expect(event.detail.panelProps.shareToken).toBe('shared-token')
     window.removeEventListener(OPEN_TASK_RIGHT_PANEL_EVENT, handleOpen)
   })
 
