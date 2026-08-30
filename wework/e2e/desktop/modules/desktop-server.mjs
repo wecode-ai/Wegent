@@ -730,6 +730,7 @@ class DesktopE2EServer {
         'pasted_zip_attachment',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
+        'workspace_selection_streaming',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -2844,6 +2845,47 @@ class DesktopE2EServer {
         responseCompleted(responseId),
       ]
       this.writeSse(response, responseEvents)
+      return
+    }
+
+    if (this.scenario === 'workspace_selection_streaming') {
+      this.recordScenarioRequest('workspace_selection_streaming', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes('WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'),
+        'The real Codex request did not contain the workspace-selection streaming prompt'
+      )
+      const stream = streamingTextEvents(
+        responseId,
+        Array.from(
+          { length: 40 },
+          (_, index) => `Workspace selection background update ${index + 1}.\n`
+        ).join('')
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      let offset = 0
+      for (const delta of stream.chunks) {
+        response.write(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta,
+              offset,
+            },
+          ])
+        )
+        offset += [...delta].length
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      }
+      response.end(createSse(stream.finish))
       return
     }
 

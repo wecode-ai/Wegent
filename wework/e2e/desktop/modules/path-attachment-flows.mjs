@@ -229,7 +229,6 @@ async function verifyPastedWorkspacePaths({ composerSelector, control, workspace
 }
 
 async function verifyDroppedWorkspacePaths({ composerSelector, control, workspacePath }) {
-  control.setScenario('dropped_workspace_paths')
   const folderPath = join(workspacePath, DROPPED_PATH_FOLDER_NAME)
   const filePath = join(workspacePath, DROPPED_PATH_FILE_NAME)
   await mkdir(folderPath, { recursive: true })
@@ -237,8 +236,17 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await writeFile(filePath, '# Dropped path context\n')
   await writeFile(join(workspacePath, SELECTED_TEXT_FILE_NAME), SELECTED_TEXT_FILE_CONTENT)
 
+  control.setScenario('workspace_selection_streaming')
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('fill', composerSelector, {
+    value: 'WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="send-message-button"]', {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.awaitScenarioRequestCount('workspace_selection_streaming', 1)
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
   await control.command('click', '[data-testid="right-workspace-file-option"]')
   await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
@@ -286,6 +294,13 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-preview-selection-actions.png')
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 5_000))
+  await captureVerificationScreenshot(control, 'workspace-preview-selection-after-wait.png')
+  assert.notEqual(
+    await control.command('getSelectionOffset', '[data-line="1"]'),
+    '-1',
+    'The workspace preview text selection disappeared after an unrelated workbench refresh'
+  )
   assert.equal(
     await control.command('getSystemDragPanelVisibility', 'body'),
     'false',
@@ -440,6 +455,7 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
   await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
 
+  control.setScenario('dropped_workspace_paths')
   await control.command('dropPaths', composerSelector, {
     value: JSON.stringify([
       {
