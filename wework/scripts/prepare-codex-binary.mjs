@@ -296,19 +296,24 @@ async function copyLegalFiles() {
   const codexRepo = process.env.CODEX_SOURCE_DIR
   const legalDir = join(outputRoot, 'legal')
   const repoRoot = resolve(weworkDir, '..')
+  const bundledLicense = join(repoRoot, 'LICENSES', 'Apache-2.0.txt')
   const bundledNotice = join(weworkDir, 'third_party', 'codex', 'NOTICE')
+  const bundledRatatuiLicense = join(weworkDir, 'third_party', 'codex', 'RATATUI-LICENSE.txt')
   await rm(join(outputRoot, '.resource-placeholder'), { force: true })
+  await rm(legalDir, { recursive: true, force: true })
   await mkdir(legalDir, { recursive: true })
   if (codexRepo && (await pathExists(join(codexRepo, 'LICENSE')))) {
     await cp(join(codexRepo, 'LICENSE'), join(legalDir, 'LICENSE'))
     if (await pathExists(join(codexRepo, 'NOTICE'))) {
       await cp(join(codexRepo, 'NOTICE'), join(legalDir, 'NOTICE'))
+    } else {
+      await cp(bundledNotice, join(legalDir, 'NOTICE'))
     }
-    return
+  } else {
+    await cp(bundledLicense, join(legalDir, 'LICENSE'))
+    await cp(bundledNotice, join(legalDir, 'NOTICE'))
   }
-
-  await cp(join(repoRoot, 'LICENSE'), join(legalDir, 'LICENSE'))
-  await cp(bundledNotice, join(legalDir, 'NOTICE'))
+  await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
 async function main() {
