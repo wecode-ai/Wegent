@@ -77,6 +77,12 @@ vi.mock('@/api/plugins', () => ({
 vi.mock('@/features/plugins/pluginTrial', () => ({
   notifyLocalPluginSkillsChanged: mocks.notifyLocalPluginSkillsChanged,
 }))
+vi.mock('@/features/idle-tasks/idleTaskScheduler', () => ({
+  scheduleIdleTask: vi.fn((_id: string, task: () => Promise<void>) => {
+    void task()
+    return vi.fn()
+  }),
+}))
 vi.mock('@/telemetry/client', () => ({ track: mocks.track }))
 
 function emit(event: string, payload?: unknown) {

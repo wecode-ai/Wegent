@@ -5,7 +5,7 @@ import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -329,20 +329,24 @@ function WorkspaceFilePreviewContent({
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
-  const selectedLines = activeSelection
-    ? {
-        id: file.path,
-        range: {
-          start: activeSelection.startLine,
-          end: activeSelection.endLine,
-        },
-      }
-    : targetLineRange
-      ? {
-          id: file.path,
-          range: targetLineRange,
-        }
-      : null
+  const selectedLines = useMemo<WorkspaceCodeViewLineSelection | null>(
+    () =>
+      activeSelection
+        ? {
+            id: file.path,
+            range: {
+              start: activeSelection.startLine,
+              end: activeSelection.endLine,
+            },
+          }
+        : targetLineRange
+          ? {
+              id: file.path,
+              range: targetLineRange,
+            }
+          : null,
+    [activeSelection, file.path, targetLineRange]
+  )
 
   useEffect(() => {
     const source = `workspace-preview:${file.path}`
@@ -371,31 +375,48 @@ function WorkspaceFilePreviewContent({
     })
   }, [file.path, targetLineRange])
 
-  const captureLineSelection = (selectionRange: WorkspaceCodeViewLineSelection | null) => {
-    if (!selectionRange || selectionRange.id !== file.path) {
-      setSelection(null)
-      return
-    }
-    const { range } = selectionRange
-    const startLine = Math.min(range.start, range.end)
-    const endLine = Math.max(range.start, range.end)
-    const selectedText = lines
-      .slice(startLine - 1, endLine)
-      .join('\n')
-      .trim()
-    if (!selectedText) {
-      setSelection(null)
-      return
-    }
-    setSelection({
-      filePath: file.path,
-      targetKey: targetLineKey,
-      selectedText,
-      startLine,
-      endLine,
-    })
-    setCommentState({ filePath: file.path, value: '' })
-  }
+  const captureLineSelection = useCallback(
+    (selectionRange: WorkspaceCodeViewLineSelection | null) => {
+      if (!selectionRange || selectionRange.id !== file.path) {
+        setSelection(null)
+        return
+      }
+      const { range } = selectionRange
+      const startLine = Math.min(range.start, range.end)
+      const endLine = Math.max(range.start, range.end)
+      const selectedText = lines
+        .slice(startLine - 1, endLine)
+        .join('\n')
+        .trim()
+      if (!selectedText) {
+        setSelection(null)
+        return
+      }
+      setSelection({
+        filePath: file.path,
+        targetKey: targetLineKey,
+        selectedText,
+        startLine,
+        endLine,
+      })
+      setCommentState({ filePath: file.path, value: '' })
+    },
+    [file.path, lines, targetLineKey]
+  )
+  const codeViewOptions = useMemo(
+    () => ({
+      disableFileHeader: true,
+      enableLineSelection: true,
+      lineHoverHighlight: 'both' as const,
+      overflow: 'scroll' as const,
+      stickyHeaders: false,
+      layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+      theme: { dark: 'pierre-dark', light: 'pierre-light' },
+      themeType,
+      unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
+    }),
+    [themeType]
+  )
 
   const addComment = () => {
     if (!file || !activeSelection || !comment.trim()) return
@@ -434,17 +455,7 @@ function WorkspaceFilePreviewContent({
           items={codeViewItems}
           selectedLines={selectedLines}
           onSelectedLinesChange={captureLineSelection}
-          options={{
-            disableFileHeader: true,
-            enableLineSelection: true,
-            lineHoverHighlight: 'both',
-            overflow: 'scroll',
-            stickyHeaders: false,
-            layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-            theme: { dark: 'pierre-dark', light: 'pierre-light' },
-            themeType,
-            unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
-          }}
+          options={codeViewOptions}
           className="h-full min-h-0 w-full scrollbar-soft"
           style={{ height: '100%', overflow: 'auto' }}
         />

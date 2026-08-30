@@ -858,6 +858,73 @@ describe('workbench project chat hooks', () => {
     expect(result.current.attachments).toEqual([])
   })
 
+  test('shows an immediate image preview while persistence finishes', async () => {
+    const attachment: Attachment = {
+      id: -42,
+      filename: 'clipboard.png',
+      file_size: 5,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-08-29T00:00:00.000Z',
+      local_path: '/tmp/clipboard.png',
+    }
+    let finishUpload: ((attachment: Attachment) => void) | undefined
+    const upload = vi.fn(
+      () =>
+        new Promise<Attachment>(resolve => {
+          finishUpload = resolve
+        })
+    )
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:clipboard')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+      })
+    )
+    const file = new File(['image'], attachment.filename, { type: attachment.mime_type })
+
+    let uploadPromise: Promise<void> | undefined
+    act(() => {
+      uploadPromise = result.current.handleFileSelect(file)
+    })
+
+    await waitFor(() => {
+      expect(result.current.uploadingFiles.values().next().value).toEqual({
+        file,
+        progress: 0,
+        previewUrl: 'blob:clipboard',
+      })
+    })
+    expect(result.current.attachments).toEqual([])
+    expect(result.current.isAttachmentReadyToSend).toBe(false)
+
+    await act(async () => {
+      finishUpload?.(attachment)
+      await uploadPromise
+    })
+
+    expect(result.current.attachments).toEqual([
+      {
+        ...attachment,
+        local_preview_url: 'blob:clipboard',
+      },
+    ])
+    expect(result.current.uploadingFiles.size).toBe(0)
+    expect(createObjectUrl).toHaveBeenCalledWith(file)
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.resetAttachments()
+    })
+
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:clipboard')
+    createObjectUrl.mockRestore()
+    revokeObjectUrl.mockRestore()
+  })
+
   test('keeps attachments isolated between composer scopes', async () => {
     const attachment: Attachment = {
       id: 46,
@@ -884,7 +951,9 @@ describe('workbench project chat hooks', () => {
       )
     })
 
-    expect(result.current.stateByScope['left-pane']?.attachments).toEqual([attachment])
+    expect(result.current.stateByScope['left-pane']?.attachments).toEqual([
+      expect.objectContaining(attachment),
+    ])
     expect(result.current.attachments).toEqual([])
   })
 

@@ -1452,6 +1452,39 @@ describe('ChatInput', () => {
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
+  test('shows pasted images immediately without a numeric upload badge', () => {
+    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          uploadingFiles: new Map([
+            [
+              'clipboard.png:5:0:0',
+              {
+                file: image,
+                progress: 0,
+                previewUrl: 'blob:clipboard-preview',
+              },
+            ],
+          ]),
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('pending-image-attachment-preview')).toHaveAttribute(
+      'src',
+      'blob:clipboard-preview'
+    )
+    expect(screen.queryByTestId('uploading-attachment-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
+
   test('uploads pasted documents for a remote desktop workspace', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'requirements.pdf', {

@@ -1,6 +1,7 @@
 import { LocalEndpointEventStream } from './local-endpoint-event-stream.js'
 
 const RECONNECT_DELAY_MS = 250
+const MAX_RECONNECT_DELAY_MS = 5000
 
 export class ExecutorSessionProjectionStream {
   constructor(projector, options = {}) {
@@ -13,6 +14,7 @@ export class ExecutorSessionProjectionStream {
     this.active = false
     this.stream = null
     this.reconnectTimer = null
+    this.reconnectDelayMs = RECONNECT_DELAY_MS
   }
 
   start() {
@@ -34,6 +36,7 @@ export class ExecutorSessionProjectionStream {
     const stream = this.createEventStream({
       afterSequence: this.afterSequence,
       onEvent: event => {
+        this.reconnectDelayMs = RECONNECT_DELAY_MS
         if (Number.isSafeInteger(event.sequence) && event.sequence > this.afterSequence) {
           this.afterSequence = event.sequence
         }
@@ -43,22 +46,31 @@ export class ExecutorSessionProjectionStream {
           this.onError(error)
         }
       },
-      onClose: () => this.reconnect(),
+      onClose: error => {
+        if (error) this.onError(error)
+        this.reconnect()
+      },
     })
     this.stream = stream
-    Promise.resolve(stream.start()).catch(error => {
-      this.onError(error)
-      this.reconnect()
-    })
+    Promise.resolve(stream.start())
+      .then(() => {
+        this.reconnectDelayMs = RECONNECT_DELAY_MS
+      })
+      .catch(error => {
+        this.onError(error)
+        this.reconnect()
+      })
   }
 
   reconnect() {
     if (!this.active || this.reconnectTimer) return
     this.stream?.stop()
     this.stream = null
+    const delay = this.reconnectDelayMs
+    this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, MAX_RECONNECT_DELAY_MS)
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.connect()
-    }, RECONNECT_DELAY_MS)
+    }, delay)
   }
 }

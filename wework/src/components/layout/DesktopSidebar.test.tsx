@@ -830,7 +830,7 @@ describe('DesktopSidebar', () => {
   test('shows download progress in the account-row update icon', () => {
     renderSidebar({}, undefined, {
       availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: { downloadedBytes: 40, totalBytes: 100 },
     })
 

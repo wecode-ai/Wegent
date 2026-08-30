@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { codexTarballName, downloadWithRetry } from './prepare-codex-binary.mjs'
+import {
+  codexTarballName,
+  downloadWithRetry,
+  resolveCodexLegalSources,
+} from './prepare-codex-binary.mjs'
 
 const temporaryDirectories = []
 
@@ -75,5 +79,21 @@ describe('codexTarballName', () => {
         'aarch64-apple-darwin'
       )
     )
+  })
+})
+
+describe('resolveCodexLegalSources', () => {
+  test('selects source license and notice independently', async () => {
+    const sources = await resolveCodexLegalSources(
+      '/tmp/codex-source',
+      '/tmp/bundled/LICENSE',
+      '/tmp/bundled/NOTICE',
+      async path => path.endsWith('/NOTICE')
+    )
+
+    expect(sources).toEqual({
+      license: '/tmp/bundled/LICENSE',
+      notice: '/tmp/codex-source/NOTICE',
+    })
   })
 })

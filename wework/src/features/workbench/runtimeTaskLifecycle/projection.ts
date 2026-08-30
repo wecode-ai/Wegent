@@ -118,7 +118,9 @@ export function shouldReplaceRuntimeTaskProjection(
 
   if (currentCompleted !== candidateCompleted) {
     if (candidateCompleted) return true
-    return isRuntimeTaskConfirmedActive(candidate)
+    if (!isRuntimeTaskConfirmedActive(candidate)) return false
+    const candidateTime = runtimeTaskProjectionTime(candidate)
+    return candidateTime === 0 || candidateTime > runtimeTaskTimestamp(current.completedAt)
   }
 
   if (current.optimistic === true && candidate.optimistic !== true) {

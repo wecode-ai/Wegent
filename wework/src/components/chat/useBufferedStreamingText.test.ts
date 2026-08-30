@@ -6,6 +6,7 @@ describe('useBufferedStreamingText', () => {
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    vi.restoreAllMocks()
   })
 
   test('coalesces streaming updates into the next animation frame', () => {
@@ -83,5 +84,18 @@ describe('useBufferedStreamingText', () => {
 
     rerender({ content: 'replacement', streaming: false })
     expect(result.current).toBe('replacement')
+  })
+
+  test('does not expose partial Unicode updates before the frame flush', () => {
+    vi.useFakeTimers()
+    const { result, rerender } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: '' } }
+    )
+
+    rerender({ content: '😀你好' })
+    act(() => vi.advanceTimersByTime(32))
+
+    expect(result.current).toBe('😀你好')
   })
 })

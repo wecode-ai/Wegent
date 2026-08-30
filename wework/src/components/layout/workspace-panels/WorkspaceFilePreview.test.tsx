@@ -308,6 +308,51 @@ test('keeps the code view mounted while switching between text files', () => {
   )
 })
 
+test('keeps CodeView configuration stable across unrelated parent rerenders', () => {
+  const file = {
+    path: '/workspace/project/index.ts',
+    name: 'index.ts',
+    content: 'export const stable = true',
+    editable: true,
+    revision: 'revision-stable',
+    truncated: false,
+    size: 26,
+  }
+  const { rerender } = render(
+    <WorkspaceFilePreview
+      file={file}
+      loading={false}
+      targetLineStart={1}
+      targetLineEnd={1}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  const firstProps = codeViewMocks.render.mock.lastCall?.[0] as {
+    items: unknown
+    onSelectedLinesChange: unknown
+    options: unknown
+    selectedLines: unknown
+  }
+
+  rerender(
+    <WorkspaceFilePreview
+      file={file}
+      loading
+      targetLineStart={1}
+      targetLineEnd={1}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  const nextProps = codeViewMocks.render.mock.lastCall?.[0] as typeof firstProps
+
+  expect(nextProps.items).toBe(firstProps.items)
+  expect(nextProps.onSelectedLinesChange).toBe(firstProps.onSelectedLinesChange)
+  expect(nextProps.options).toBe(firstProps.options)
+  expect(nextProps.selectedLines).toBe(firstProps.selectedLines)
+})
+
 test('keeps the current text preview visible while the next file is loading', () => {
   render(
     <WorkspaceFilePreview

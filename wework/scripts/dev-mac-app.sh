@@ -33,6 +33,7 @@ Options:
 Environment:
   VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
   WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
+  WEWORK_APP_IDENTIFIER            Application identity. Defaults to one isolated by worktree.
   WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
   WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to ~/Library/Caches/wegent.
   WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
@@ -165,6 +166,7 @@ export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
 export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
 WEWORK_DEV_INSTANCE_ID="$(build_dev_instance_id)"
+export WEWORK_APP_IDENTIFIER="${WEWORK_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID}"
 export WEWORK_USER_DATA_DIR="${WEWORK_USER_DATA_DIR:-$HOME/Library/Application Support/io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID}"
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_backend_base_url)}"
 export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
@@ -216,6 +218,7 @@ print_configuration() {
   echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
   echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
   echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_APP_IDENTIFIER=$WEWORK_APP_IDENTIFIER"
   echo "  WEWORK_USER_DATA_DIR=$WEWORK_USER_DATA_DIR"
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
   echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"

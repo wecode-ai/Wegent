@@ -4,6 +4,7 @@ import {
   clipboard,
   dialog,
   Notification,
+  powerMonitor,
   shell,
   type WebContents,
   type FileFilter,
@@ -12,6 +13,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat } from 'node:fs/promises'
+import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
 import {
   HOST_CAPABILITIES,
@@ -53,6 +55,7 @@ export interface ElectronDesktopServices {
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
+  cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
@@ -705,6 +708,10 @@ export function registerDesktopServiceCapabilities(
 ): void {
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
   router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('maintenance.cleanupTemporaryImages', () =>
+    services.cleanupStaleTemporaryImages()
+  )
+  router.register('maintenance.getSystemPressure', () => systemPressureSnapshot())
   router.register('feedback.previewBundle', params =>
     services.feedback.preview(feedbackRequestParam(params))
   )
@@ -733,6 +740,50 @@ export function registerDesktopServiceCapabilities(
       params.params ?? {}
     )
   )
+}
+
+interface CpuTimeSample {
+  idle: number
+  total: number
+}
+
+function cpuTimeSample(): CpuTimeSample {
+  return cpus().reduce<CpuTimeSample>(
+    (sample, cpu) => ({
+      idle: sample.idle + cpu.times.idle,
+      total:
+        sample.total +
+        cpu.times.user +
+        cpu.times.nice +
+        cpu.times.sys +
+        cpu.times.idle +
+        cpu.times.irq,
+    }),
+    { idle: 0, total: 0 }
+  )
+}
+
+export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample): number {
+  const totalDelta = after.total - before.total
+  if (totalDelta <= 0) return 0
+  const idleDelta = Math.max(0, after.idle - before.idle)
+  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+}
+
+export async function systemPressureSnapshot(): Promise<{
+  cpuLoadRatio: number
+  freeMemoryRatio: number
+  userIdleSeconds: number
+}> {
+  const cpuBefore = cpuTimeSample()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const cpuAfter = cpuTimeSample()
+  const totalMemory = totalmem()
+  return {
+    cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
+    freeMemoryRatio: totalMemory > 0 ? freemem() / totalMemory : 0,
+    userIdleSeconds: powerMonitor.getSystemIdleTime(),
+  }
 }
 
 export function registerCoreDshPluginCapabilities(

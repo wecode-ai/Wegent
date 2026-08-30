@@ -1,5 +1,5 @@
 import { Loader2, Square } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import {
   getComputerUseStatus,
   stopComputerUseCurrentAction,
@@ -42,7 +42,7 @@ export function ComputerUseActivityIndicator() {
     }
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!status?.currentTool) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return

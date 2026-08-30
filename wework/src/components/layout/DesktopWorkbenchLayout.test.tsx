@@ -11208,6 +11208,46 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
   })
 
+  test('restores the opened plan when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const planMessage: WorkbenchMessage = {
+      id: 'assistant-plan-block',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '2026-08-29T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'plan-1',
+          subtaskId: '1',
+          type: 'plan',
+          content: '# Task A 计划\n\n- 切换任务后恢复。',
+          status: 'done',
+          createdAt: Date.parse('2026-08-29T00:00:01.000Z'),
+        },
+      ],
+    }
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...propsForTask(taskA)} messages={[planMessage]} />
+    )
+
+    await userEvent.click(activePane().getByTestId('assistant-plan-expand-button'))
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('Task A 计划')
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} messages={[]} />)
+    expect(activePane().queryByTestId('workspace-plan-panel')).not.toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} messages={[planMessage]} />)
+
+    expect(activePane().getByTestId('right-workspace-plan-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('Task A 计划')
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('切换任务后恢复。')
+  })
+
   test('restores an ephemeral temporary chat when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const temporaryAddress: RuntimeTaskAddress = {

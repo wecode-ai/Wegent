@@ -176,19 +176,39 @@ describe('runtimeTaskProjection', () => {
   })
 
   test('allows an executor-confirmed active turn after prior completion', () => {
+    const completedAt = 1_786_676_400_000
     const completed = task({
       running: false,
       status: 'done',
-      completedAt: 1_786_676_400_000,
+      completedAt,
     })
     const active = task({
       running: true,
       status: 'running',
       threadStatus: 'active',
       turnStatus: 'inProgress',
+      updatedAt: completedAt + 1,
     })
 
     expect(shouldReplaceRuntimeTaskProjection(completed, active)).toBe(true)
+  })
+
+  test('rejects a stale active projection older than prior completion', () => {
+    const completedAt = 1_786_676_400_000
+    const completed = task({
+      running: false,
+      status: 'done',
+      completedAt,
+    })
+    const staleActive = task({
+      running: true,
+      status: 'running',
+      threadStatus: 'active',
+      turnStatus: 'inProgress',
+      updatedAt: completedAt - 1,
+    })
+
+    expect(shouldReplaceRuntimeTaskProjection(completed, staleActive)).toBe(false)
   })
 
   test('rejects a stale active projection that still carries completion', () => {

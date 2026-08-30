@@ -47,9 +47,15 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
+  const blockmap = `${zip}.blockmap`
+  await requireFile(blockmap)
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
-  await Promise.all([cp(dmg, join(output, basename(dmg))), cp(zip, join(output, basename(zip)))])
+  await Promise.all([
+    cp(dmg, join(output, basename(dmg))),
+    cp(zip, join(output, basename(zip))),
+    cp(blockmap, join(output, basename(blockmap))),
+  ])
   await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
@@ -57,9 +63,10 @@ if (platform === 'macos') {
     new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
   )
   const target = join(output, basename(installer))
-  await cp(installer, target)
   const blockmap = `${installer}.blockmap`
-  if (await isFile(blockmap)) await cp(blockmap, `${target}.blockmap`)
+  await requireFile(blockmap)
+  await cp(installer, target)
+  await cp(blockmap, `${target}.blockmap`)
   await signBridge(target)
 } else if (platform === 'linux') {
   const appImage = await findFile(
@@ -156,8 +163,10 @@ async function requireDirectory(path) {
   }
 }
 
-async function isFile(path) {
-  return (await stat(path).catch(() => null))?.isFile() === true
+async function requireFile(path) {
+  if (!(await stat(path).catch(() => null))?.isFile()) {
+    throw new Error(`Required release file is missing: ${path}`)
+  }
 }
 
 function escape(value) {

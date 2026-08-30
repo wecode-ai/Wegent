@@ -47,6 +47,22 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['ai:verify:electron:build']).toBe(
       'node scripts/build-ai-verify-electron.mjs'
     )
+    expect(
+      Object.entries(packageJson.scripts)
+        .filter(([name]) => name.startsWith('e2e:desktop'))
+        .map(([, command]) => command)
+    ).toEqual([
+      'node e2e/desktop/run-checkpoints.mjs',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-only',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-features-only',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-vision-only',
+      'node e2e/desktop/run-checkpoints.mjs --plugins-only',
+      'node e2e/desktop/run-checkpoints.mjs --memory-only',
+      'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
+      'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
+      'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
+      'node e2e/desktop/run-checkpoints.mjs --segment rendering-extensions',
+    ])
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
@@ -54,6 +70,8 @@ describe('desktop resource migration', () => {
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:codex', '--materialize']")
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
+    expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
+    expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
     expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')
@@ -110,22 +128,43 @@ describe('desktop resource migration', () => {
     expect(source).toContain('Reusing prepared DWS sidecar')
   })
 
-  test('packages CUA native libraries and license outside ASAR', async () => {
-    const [packageApp, builderConfig, electronWorkspace, asarPatch, license] = await Promise.all([
+  test('packages application and third-party licenses outside ASAR', async () => {
+    const [
+      packageApp,
+      builderConfig,
+      electronWorkspace,
+      asarPatch,
+      cuaLicense,
+      codexPreparation,
+      packagePreparation,
+      ratatuiLicense,
+    ] = await Promise.all([
       readFile(join(weworkRoot, 'electron/scripts/package-app.mjs'), 'utf8'),
       readFile(join(weworkRoot, 'electron/electron-builder.config.cjs'), 'utf8'),
       readFile(join(weworkRoot, 'electron/pnpm-workspace.yaml'), 'utf8'),
       readFile(join(weworkRoot, 'electron/patches/@trycua__cua-driver@0.22.1.patch'), 'utf8'),
       readFile(join(weworkRoot, 'resources/licenses/cua-driver-LICENSE.md'), 'utf8'),
+      readFile(join(weworkRoot, 'scripts/prepare-codex-binary.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'electron/scripts/prepare-package-assets.mjs'), 'utf8'),
+      readFile(join(weworkRoot, 'third_party/codex/RATATUI-LICENSE.txt'), 'utf8'),
     ])
 
     expect(packageApp).toContain("unpack: '**/*.{node,dylib,so,dll}'")
     expect(packageApp).toContain("join(sharedResourcesRoot, 'licenses')")
+    expect(packageApp).toContain("join(repositoryRoot, 'LICENSE')")
     expect(builderConfig).toContain("asarUnpack: ['**/*.{node,dylib,so,dll}']")
     expect(builderConfig).toContain("{ from: '../resources/licenses', to: 'licenses' }")
+    expect(builderConfig).toContain("{ from: '../../LICENSE', to: 'LICENSE' }")
     expect(electronWorkspace).toContain("'@trycua/cua-driver@0.22.1':")
     expect(asarPatch).toContain('app.asar.unpacked')
-    expect(license).toContain('Copyright (c) 2025 Cua AI, Inc.')
+    expect(cuaLicense).toContain('Copyright (c) 2025 Cua AI, Inc.')
+    expect(codexPreparation).toContain("join(repoRoot, 'LICENSES', 'Apache-2.0.txt')")
+    expect(codexPreparation).toContain("'RATATUI-LICENSE.txt'")
+    expect(codexPreparation).toContain('await rm(legalDir, { recursive: true, force: true })')
+    expect(codexPreparation).toContain('resolveCodexLegalSources(')
+    expect(packagePreparation).toContain("join(sharedResourcesRoot, 'binaries', 'codex', 'legal')")
+    expect(packagePreparation).toContain("join(codexResources, 'legal')")
+    expect(ratatuiLicense).toContain('Copyright (c) 2023-2025 The Ratatui Developers')
   })
 
   test('defaults packaged executors to release with an explicit debug E2E profile', async () => {
@@ -142,6 +181,11 @@ describe('desktop resource migration', () => {
     expect(source).toContain("run(pnpmCommand, ['prepare:codex', '--materialize']")
     expect(source).toContain("run(pnpmCommand, ['prepare:dws']")
     expect(source).toContain("['prepare:harness-runtime', '--materialize']")
+    expect(source).toContain('resolveHarnessRuntimeCachePaths(')
+    expect(source).toContain('join(harnessRuntimeAssetDirectory, runtime.assetName)')
+    expect(source).not.toContain(
+      "join(weworkRoot, 'node_modules', '.cache', 'harness-runtime-assets'"
+    )
     expect(source).toContain('resolveDesktopPackageTargets(process.env)')
     expect(source).toContain('WEWORK_CODEX_TARGET: packageTargets.codexTarget')
     expect(source).toContain('WEWORK_DWS_TARGET: packageTargets.dwsTarget')
@@ -202,6 +246,18 @@ describe('desktop resource migration', () => {
     expect(source).toContain("join(packagedComponentResourcesRoot, 'components.json')")
     expect(source).toContain('join(packagedComponentResourcesRoot, component.path)')
     expect(source).not.toContain('async function findDirectory')
+  })
+
+  test('requires differential update blockmaps in formal release assets', async () => {
+    const source = await readFile(
+      join(weworkRoot, 'scripts/prepare-desktop-release-assets.mjs'),
+      'utf8'
+    )
+
+    expect(source).toContain('const blockmap = `${zip}.blockmap`')
+    expect(source).toContain('const blockmap = `${installer}.blockmap`')
+    expect(source).toContain('await requireFile(blockmap)')
+    expect(source).not.toContain('if (await isFile(blockmap))')
   })
 
   test('signs legacy updater assets through the Windows command interpreter', async () => {

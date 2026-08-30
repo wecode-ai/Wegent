@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   checkForWeworkUpdate,
   downloadPendingWeworkUpdate,
-  installPendingWeworkUpdate,
+  installDownloadedWeworkUpdate,
   type WeworkUpdateChannel,
   type WeworkUpdateDownloadProgress,
   type WeworkUpdateInfo,
 } from '@/lib/app-updater'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAppVersion } from '@/hooks/useAppVersion'
+import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
 import {
   clearPendingWeworkReleaseNotes,
@@ -16,6 +18,7 @@ import {
   writePendingWeworkReleaseNotes,
   type WeworkInstalledReleaseNotes,
 } from './app-release-notes'
+import { formatAppUpdateVersion } from './app-update-format'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
   APP_UPDATE_AUTO_DOWNLOAD_KEY,
@@ -31,7 +34,7 @@ import {
 
 const SIMULATED_UPDATE_VERSION = 'debug-simulation'
 const SIMULATED_DOWNLOAD_TOTAL_BYTES = 10_000_000
-const SIMULATED_DOWNLOAD_STEP_BYTES = 1_000_000
+const SIMULATED_DOWNLOAD_STEP_BYTES = 500_000
 const SIMULATED_DOWNLOAD_INTERVAL_MS = 250
 const SIMULATED_RELEASE_NOTES = `## Changes
 
@@ -78,6 +81,7 @@ function messageFor(error: unknown): string {
 }
 
 export function AppUpdateProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation('common')
   const appVersion = useAppVersion()
   const [updateChannel, setUpdateChannelState] = useState<WeworkUpdateChannel>(readUpdateChannel)
   const [autoUpdateEnabled, setAutoUpdateEnabledState] = useState(readAutoUpdateEnabled)
@@ -90,11 +94,18 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
   )
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [restartConfirmationOpen, setRestartConfirmationOpen] = useState(false)
+  const [downloadedUpdateVersion, setDownloadedUpdateVersion] = useState<string | null>(null)
   const updateChannelRef = useRef(updateChannel)
   const autoUpdateEnabledRef = useRef(autoUpdateEnabled)
+  const simulatedUpdatePendingRef = useRef(false)
   const activeCheckRef = useRef<{
     channel: WeworkUpdateChannel
     promise: Promise<UpdateCheckResult>
+  } | null>(null)
+  const activeDownloadRef = useRef<{
+    version: string
+    promise: Promise<void>
   } | null>(null)
   const simulationTimerRef = useRef<number | null>(null)
   const installedReleaseNotes =
@@ -108,8 +119,48 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     simulationTimerRef.current = null
   }, [])
 
-  const startBackgroundDownload = useCallback(() => {
-    void downloadPendingWeworkUpdate().catch(() => undefined)
+  const downloadUpdate = useCallback(
+    (
+      update: WeworkUpdateInfo,
+      onProgress?: (progress: WeworkUpdateDownloadProgress) => void
+    ): Promise<void> => {
+      if (activeDownloadRef.current?.version === update.version) {
+        return activeDownloadRef.current.promise
+      }
+
+      const promise = onProgress
+        ? downloadPendingWeworkUpdate(onProgress)
+        : downloadPendingWeworkUpdate()
+      activeDownloadRef.current = { version: update.version, promise }
+      const clearActiveDownload = () => {
+        if (activeDownloadRef.current?.promise === promise) {
+          activeDownloadRef.current = null
+        }
+      }
+      void promise.then(clearActiveDownload, clearActiveDownload)
+      return promise
+    },
+    []
+  )
+
+  const startBackgroundDownload = useCallback(
+    (update: WeworkUpdateInfo, channel: WeworkUpdateChannel) => {
+      void downloadUpdate(update)
+        .then(() => {
+          if (updateChannelRef.current === channel) {
+            setDownloadedUpdateVersion(update.version)
+          }
+        })
+        .catch(() => undefined)
+    },
+    [downloadUpdate]
+  )
+
+  const isUpdateBusy = status === 'downloading' || status === 'installing'
+
+  const resetDownloadedUpdate = useCallback(() => {
+    setDownloadedUpdateVersion(null)
+    setRestartConfirmationOpen(false)
   }, [])
 
   const runCheck = useCallback(
@@ -120,7 +171,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       silent: boolean
       channel?: WeworkUpdateChannel
     }): Promise<WeworkUpdateInfo | null> => {
-      if (status === 'installing') {
+      if (isUpdateBusy) {
         return availableUpdate
       }
 
@@ -169,13 +220,14 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
           }
 
           setAvailableUpdate(update)
+          setDownloadedUpdateVersion(null)
 
           if (update) {
             setStatus('available')
             setMessage(null)
             setError(null)
             if (autoUpdateEnabledRef.current) {
-              startBackgroundDownload()
+              startBackgroundDownload(update, channel)
             }
           } else if (!silent) {
             setStatus('upToDate')
@@ -204,92 +256,13 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [availableUpdate, startBackgroundDownload, status, updateChannel]
+    [availableUpdate, isUpdateBusy, startBackgroundDownload, updateChannel]
   )
 
   const checkNow = useCallback(() => runCheck({ silent: false }), [runCheck])
 
-  const installUpdate = useCallback(async () => {
-    if (!availableUpdate || status === 'installing') return
-
-    const releaseNotesBody = availableUpdate.body?.trim()
-    if (releaseNotesBody) {
-      writePendingWeworkReleaseNotes({
-        version: availableUpdate.version,
-        body: releaseNotesBody,
-      })
-    } else {
-      clearPendingWeworkReleaseNotes()
-    }
-
-    setStatus('installing')
-    setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
-    setMessage(null)
-    setError(null)
-    track('app_update_install_started', {})
-
-    try {
-      await installPendingWeworkUpdate(setDownloadProgress)
-    } catch (caughtError) {
-      const installError = messageFor(caughtError)
-      clearPendingWeworkReleaseNotes(availableUpdate.version)
-      setDownloadProgress(null)
-      setError(installError)
-
-      try {
-        const refreshedUpdate = await checkForWeworkUpdate(updateChannel)
-        setAvailableUpdate(refreshedUpdate)
-        setStatus(refreshedUpdate ? 'available' : 'error')
-      } catch {
-        setStatus('error')
-      }
-    }
-  }, [availableUpdate, status, updateChannel])
-
-  const dismissInstalledReleaseNotes = useCallback(() => {
-    if (installedReleaseNotes) {
-      clearPendingWeworkReleaseNotes(installedReleaseNotes.version)
-    }
-    setPendingReleaseNotes(null)
-  }, [installedReleaseNotes])
-
-  const setAutoUpdateEnabled = useCallback(
-    (enabled: boolean) => {
-      window.localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, String(enabled))
-      autoUpdateEnabledRef.current = enabled
-      setAutoUpdateEnabledState(enabled)
-
-      if (enabled && availableUpdate && status !== 'installing') {
-        startBackgroundDownload()
-      }
-    },
-    [availableUpdate, startBackgroundDownload, status]
-  )
-
-  const setUpdateChannel = useCallback(
-    async (channel: WeworkUpdateChannel) => {
-      if (channel === updateChannel || status === 'installing') return
-
-      window.localStorage.setItem(APP_UPDATE_CHANNEL_KEY, channel)
-      updateChannelRef.current = channel
-      setUpdateChannelState(channel)
-      setAvailableUpdate(null)
-      setDownloadProgress(null)
-      setMessage(null)
-      setError(null)
-      await runCheck({ silent: false, channel })
-    },
-    [runCheck, status, updateChannel]
-  )
-
-  const simulateUpdate = useCallback(() => {
-    clearSimulationTimer()
-    const simulatedInstalledVersion = appVersion ?? __WEWORK_APP_VERSION__
-    setAvailableUpdate({
-      currentVersion: simulatedInstalledVersion,
-      version: SIMULATED_UPDATE_VERSION,
-    })
-    setStatus('installing')
+  const startSimulatedDownload = useCallback(() => {
+    setStatus('downloading')
     setDownloadProgress({ downloadedBytes: 0, totalBytes: SIMULATED_DOWNLOAD_TOTAL_BYTES })
     setMessage(null)
     setError(null)
@@ -304,18 +277,154 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
 
       if (downloadedBytes === SIMULATED_DOWNLOAD_TOTAL_BYTES) {
         clearSimulationTimer()
-        setAvailableUpdate(null)
-        const releaseNotes = {
-          version: simulatedInstalledVersion,
-          body: SIMULATED_RELEASE_NOTES,
-        }
-        writePendingWeworkReleaseNotes(releaseNotes)
-        setPendingReleaseNotes(releaseNotes)
-        setStatus('upToDate')
-        setMessage('upToDate')
+        setDownloadedUpdateVersion(SIMULATED_UPDATE_VERSION)
+        setDownloadProgress(null)
+        setStatus('available')
+        setRestartConfirmationOpen(true)
       }
     }, SIMULATED_DOWNLOAD_INTERVAL_MS)
-  }, [appVersion, clearSimulationTimer])
+  }, [clearSimulationTimer])
+
+  const confirmInstallUpdate = useCallback(async () => {
+    if (!availableUpdate || status === 'installing') return
+    setRestartConfirmationOpen(false)
+    track('app_update_install_started', {})
+
+    if (simulatedUpdatePendingRef.current && availableUpdate.version === SIMULATED_UPDATE_VERSION) {
+      const releaseNotes = {
+        version: appVersion ?? __WEWORK_APP_VERSION__,
+        body: SIMULATED_RELEASE_NOTES,
+      }
+      simulatedUpdatePendingRef.current = false
+      setDownloadedUpdateVersion(null)
+      setAvailableUpdate(null)
+      writePendingWeworkReleaseNotes(releaseNotes)
+      setPendingReleaseNotes(releaseNotes)
+      setStatus('upToDate')
+      setMessage('upToDate')
+      return
+    }
+
+    const releaseNotesBody = availableUpdate.body?.trim()
+    if (releaseNotesBody) {
+      writePendingWeworkReleaseNotes({
+        version: availableUpdate.version,
+        body: releaseNotesBody,
+      })
+    } else {
+      clearPendingWeworkReleaseNotes()
+    }
+
+    setStatus('installing')
+    setDownloadProgress(null)
+    setMessage(null)
+    setError(null)
+
+    try {
+      await installDownloadedWeworkUpdate()
+    } catch (caughtError) {
+      const installError = messageFor(caughtError)
+      clearPendingWeworkReleaseNotes(availableUpdate.version)
+      setDownloadedUpdateVersion(null)
+      setDownloadProgress(null)
+      setError(installError)
+
+      try {
+        const refreshedUpdate = await checkForWeworkUpdate(updateChannel)
+        setAvailableUpdate(refreshedUpdate)
+        setStatus(refreshedUpdate ? 'available' : 'error')
+      } catch {
+        setStatus('error')
+      }
+    }
+  }, [appVersion, availableUpdate, status, updateChannel])
+
+  const installUpdate = useCallback(async () => {
+    if (!availableUpdate || isUpdateBusy) return
+    if (downloadedUpdateVersion === availableUpdate.version) {
+      setRestartConfirmationOpen(true)
+      return
+    }
+    if (simulatedUpdatePendingRef.current && availableUpdate.version === SIMULATED_UPDATE_VERSION) {
+      startSimulatedDownload()
+      return
+    }
+
+    setStatus('downloading')
+    setDownloadProgress({ downloadedBytes: 0, totalBytes: null })
+    setMessage(null)
+    setError(null)
+
+    try {
+      await downloadUpdate(availableUpdate, setDownloadProgress)
+      setDownloadedUpdateVersion(availableUpdate.version)
+      setDownloadProgress(null)
+      setStatus('available')
+      setRestartConfirmationOpen(true)
+    } catch (caughtError) {
+      setDownloadProgress(null)
+      setStatus('error')
+      setError(messageFor(caughtError))
+    }
+  }, [
+    availableUpdate,
+    downloadedUpdateVersion,
+    downloadUpdate,
+    isUpdateBusy,
+    startSimulatedDownload,
+  ])
+
+  const dismissInstalledReleaseNotes = useCallback(() => {
+    if (installedReleaseNotes) {
+      clearPendingWeworkReleaseNotes(installedReleaseNotes.version)
+    }
+    setPendingReleaseNotes(null)
+  }, [installedReleaseNotes])
+
+  const setAutoUpdateEnabled = useCallback(
+    (enabled: boolean) => {
+      window.localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, String(enabled))
+      autoUpdateEnabledRef.current = enabled
+      setAutoUpdateEnabledState(enabled)
+
+      if (enabled && availableUpdate && !isUpdateBusy) {
+        startBackgroundDownload(availableUpdate, updateChannel)
+      }
+    },
+    [availableUpdate, isUpdateBusy, startBackgroundDownload, updateChannel]
+  )
+
+  const setUpdateChannel = useCallback(
+    async (channel: WeworkUpdateChannel) => {
+      if (channel === updateChannel || isUpdateBusy) return
+
+      window.localStorage.setItem(APP_UPDATE_CHANNEL_KEY, channel)
+      updateChannelRef.current = channel
+      setUpdateChannelState(channel)
+      setAvailableUpdate(null)
+      resetDownloadedUpdate()
+      setDownloadProgress(null)
+      setMessage(null)
+      setError(null)
+      await runCheck({ silent: false, channel })
+    },
+    [isUpdateBusy, resetDownloadedUpdate, runCheck, updateChannel]
+  )
+
+  const simulateUpdate = useCallback(() => {
+    clearSimulationTimer()
+    simulatedUpdatePendingRef.current = true
+    resetDownloadedUpdate()
+    setAvailableUpdate({
+      currentVersion: appVersion ?? __WEWORK_APP_VERSION__,
+      version: SIMULATED_UPDATE_VERSION,
+      body: SIMULATED_RELEASE_NOTES,
+    })
+    setStatus('available')
+    setDownloadProgress(null)
+    setMessage(null)
+    setError(null)
+  }, [appVersion, clearSimulationTimer, resetDownloadedUpdate])
 
   useEffect(() => {
     window.addEventListener(APP_UPDATE_SIMULATE_EVENT, simulateUpdate)
@@ -336,7 +445,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     if (!isElectronRuntime()) return
 
     const maybeAutoCheck = () => {
-      if (availableUpdate || status === 'installing') return
+      if (availableUpdate || isUpdateBusy) return
 
       const now = Date.now()
       if (!shouldAutoCheck(updateChannel, now)) return
@@ -352,7 +461,7 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
       window.clearTimeout(initialTimer)
       window.clearInterval(intervalTimer)
     }
-  }, [availableUpdate, runCheck, status, updateChannel])
+  }, [availableUpdate, isUpdateBusy, runCheck, updateChannel])
 
   const value = useMemo<AppUpdateContextValue>(
     () => ({
@@ -387,5 +496,27 @@ export function AppUpdateProvider({ children }: { children: ReactNode }) {
     ]
   )
 
-  return <AppUpdateContext.Provider value={value}>{children}</AppUpdateContext.Provider>
+  return (
+    <AppUpdateContext.Provider value={value}>
+      {children}
+      <ConfirmDialog
+        open={restartConfirmationOpen}
+        title={t('workbench.app_update_restart_confirm_title', '重启并更新 Wework？')}
+        description={formatAppUpdateVersion(
+          t('workbench.app_update_restart_confirm_description', {
+            defaultValue: '更新到 v{{version}} 需要关闭并重新打开 Wework。请先保存尚未完成的工作。',
+            version: availableUpdate?.version ?? '',
+          }),
+          availableUpdate?.version ?? ''
+        )}
+        cancelLabel={t('common.cancel', '取消')}
+        confirmLabel={t('workbench.app_update_restart_confirm_action', '更新并重启')}
+        confirmTestId="app-update-restart-confirm"
+        onClose={() => setRestartConfirmationOpen(false)}
+        onConfirm={() => {
+          void confirmInstallUpdate()
+        }}
+      />
+    </AppUpdateContext.Provider>
+  )
 }

@@ -5240,7 +5240,7 @@ describe('MessageList', () => {
     expect(screen.getByText('读取 file-3.ts')).toBeInTheDocument()
   })
 
-  test('keeps process text even when it matches the final assistant content', () => {
+  test('does not render process text that duplicates the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
       subtaskId: 1,
@@ -5265,9 +5265,9 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('final-processing-toggle'))
-    expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
-    expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
+    expect(screen.getAllByText('这是最终回答。')).toHaveLength(1)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {

@@ -50,6 +50,7 @@ await mkdir(output, { recursive: true })
 const macArm = await asset(`WeWork_${version}_macos_arm64.zip`)
 const macX64 = await asset(`WeWork_${version}_macos_x64.zip`)
 const windows = await asset(`WeWork_${version}_windows_x64-setup.exe`)
+await Promise.all([macArm, macX64, windows].map(file => requireAsset(`${file.name}.blockmap`)))
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -169,6 +170,12 @@ async function localAsset(name) {
     size: file.size,
     sha512: await sha512(path),
   }
+}
+
+async function requireAsset(name) {
+  const path = resolve(assets, name)
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
 }
 
 async function tauriEntry(name) {

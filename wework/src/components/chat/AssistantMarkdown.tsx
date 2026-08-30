@@ -257,7 +257,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           >
             <Streamdown
               mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
-              isAnimating={isStreaming && index === contentParts.length - 1}
+              isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
@@ -274,7 +274,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           <Streamdown
             key={`markdown-${index}`}
             mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={isStreaming}
+            isAnimating={false}
             controls={false}
             linkSafety={{ enabled: false }}
             lineNumbers={false}

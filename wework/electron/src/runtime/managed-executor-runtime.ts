@@ -12,7 +12,7 @@ import { homedir } from 'node:os'
 import { rm } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import type { Socket } from 'node:net'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { RuntimeSupervisor } from './runtime-supervisor.js'
 
 export interface ManagedExecutorRuntimeOptions {
@@ -50,7 +50,7 @@ export class ManagedExecutorRuntime {
       },
       extraPipeCount: process.platform === 'win32' ? 0 : 1,
       name: 'wegent-executor',
-      log: { path: join(options.logDirectory, 'executor-runtime.log') },
+      log: { path: managedExecutorLogPath(options) },
       probe: async (_child, signal) => {
         await waitForEndpointAuthentication(this.endpoint, this.token, signal)
         this.ownerSocket?.destroy()
@@ -211,6 +211,7 @@ export function prepareManagedExecutorEnvironment(
     CODEX_HOME: codexHome,
     WEGENT_CODEX_HOME: codexHome,
     WEGENT_EXECUTOR_HOME: executorHome,
+    WEGENT_EXECUTOR_DISABLE_FILE_LOG: 'true',
   }
 }
 
@@ -218,6 +219,14 @@ export function managedExecutorHome(
   options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'dataDirectory'>
 ): string {
   return options.environment.WEGENT_EXECUTOR_HOME?.trim() || join(homedir(), '.wework')
+}
+
+export function managedExecutorLogPath(
+  options: Pick<ManagedExecutorRuntimeOptions, 'environment' | 'logDirectory'>
+): string {
+  const logDirectory = options.environment.WEGENT_EXECUTOR_LOG_DIR?.trim() || options.logDirectory
+  const logFile = options.environment.WEGENT_EXECUTOR_LOG_FILE?.trim() || 'executor.log'
+  return isAbsolute(logFile) ? logFile : join(logDirectory, logFile)
 }
 
 function resolveNativeCodexHome(

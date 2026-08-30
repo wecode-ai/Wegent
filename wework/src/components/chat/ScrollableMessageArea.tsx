@@ -17,6 +17,12 @@ import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
+import { computeStreamingScrollStep, STREAM_FOLLOW_SETTLE_PX } from './streamingScrollFollow'
+import {
+  cancelSafeAnimationFrame,
+  requestSafeAnimationFrame,
+  type SafeAnimationFrameHandle,
+} from './safeAnimationFrame'
 import {
   cacheConversationScrollSnapshot,
   getConversationScrollSnapshot,
@@ -273,6 +279,10 @@ function ScrollableMessagePaneContent({
   const hasRenderedRef = useRef(false)
   const scrollTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([])
   const scrollFrameRef = useRef<number | null>(null)
+  const streamingFollowFrameRef = useRef<SafeAnimationFrameHandle | null>(null)
+  const streamingFollowLastFrameAtRef = useRef<number | null>(null)
+  const streamingFollowVelocityRef = useRef(0)
+  const streamingFollowOwnedRef = useRef(false)
   const restoredScrollSnapshotRef = useRef<{
     key: string
     snapshot: ConversationScrollSnapshot
@@ -300,6 +310,8 @@ function ScrollableMessagePaneContent({
   )
   const [loadingTranscriptGapKey, setLoadingTranscriptGapKey] = useState<string | null>(null)
   const lastMessage = messages[messages.length - 1]
+  const streamingFollowActive =
+    lastMessage?.role === 'assistant' && lastMessage.status === 'streaming'
   const latestGuidanceMessageId = findLatestGuidanceMessageId(messages)
   const currentScrollKey = useMemo(() => scrollPositionKey(conversationKey), [conversationKey])
   const virtualScrollOwnsInitialPosition = isDesktopRuntime()
@@ -337,16 +349,27 @@ function ScrollableMessagePaneContent({
     activeScrollRefRef.current = scrollRef
   }, [scrollRef])
 
+  const stopStreamingFollow = useCallback(() => {
+    if (streamingFollowFrameRef.current !== null) {
+      cancelSafeAnimationFrame(streamingFollowFrameRef.current)
+      streamingFollowFrameRef.current = null
+    }
+    streamingFollowLastFrameAtRef.current = null
+    streamingFollowVelocityRef.current = 0
+    streamingFollowOwnedRef.current = false
+  }, [])
+
   const clearScheduledScrolls = useCallback(() => {
     scrollTimersRef.current.forEach(timer => clearTimeout(timer))
     scrollTimersRef.current = []
     followingBottomKeyRef.current = null
+    stopStreamingFollow()
 
     if (scrollFrameRef.current !== null) {
       cancelAnimationFrame(scrollFrameRef.current)
       scrollFrameRef.current = null
     }
-  }, [])
+  }, [stopStreamingFollow])
 
   const scheduleScrollTimer = useCallback((callback: () => void, delay: number) => {
     const timer = setTimeout(() => {
@@ -546,7 +569,9 @@ function ScrollableMessagePaneContent({
         lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
       lastScrollTopRef.current = element.scrollTop
       isAtBottomRef.current = isAtBottom
-      if (isScrolledToBottom) {
+      const layoutMayHaveClampedPausedScroll =
+        userScrollPausedAutoFollowRef.current && !options.forceSave && scrolledUp
+      if (isScrolledToBottom && !layoutMayHaveClampedPausedScroll) {
         userScrollPausedAutoFollowRef.current = false
         userViewportAnchorRef.current = null
       } else if (options.forceSave) {
@@ -593,6 +618,7 @@ function ScrollableMessagePaneContent({
     (behavior: ScrollBehavior = 'auto', options: { saveSnapshot?: boolean } = {}) => {
       const element = activeScrollRefRef.current.current
       if (!element) return
+      stopStreamingFollow()
 
       const scrollHeight = element.scrollHeight
       if (typeof element.scrollTo === 'function') {
@@ -626,7 +652,7 @@ function ScrollableMessagePaneContent({
       userViewportAnchorRef.current = null
       setShowScrollButton(false)
     },
-    [currentScrollKey, saveCurrentScrollPosition]
+    [currentScrollKey, saveCurrentScrollPosition, stopStreamingFollow]
   )
 
   const restoreSavedScrollPosition = useCallback(
@@ -682,6 +708,70 @@ function ScrollableMessagePaneContent({
     },
     [setScrollToBottom]
   )
+
+  const followStreamingToBottom = useCallback(() => {
+    const element = activeScrollRefRef.current.current
+    if (!element) return
+    if (
+      !streamingFollowActive ||
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+    ) {
+      setScrollToBottom('auto', { saveSnapshot: false })
+      return
+    }
+    if (streamingFollowFrameRef.current !== null) return
+
+    followingBottomKeyRef.current = currentScrollKey
+    streamingFollowOwnedRef.current = true
+    const advanceFrame = (now: number) => {
+      streamingFollowFrameRef.current = null
+      if (
+        userScrollPausedAutoFollowRef.current ||
+        autoScrollSuspended ||
+        isTurnNavigationAutoScrollSuspended()
+      ) {
+        stopStreamingFollow()
+        return
+      }
+
+      const target = Math.max(0, element.scrollHeight - element.clientHeight)
+      const lag = Math.max(0, target - element.scrollTop)
+      if (lag <= STREAM_FOLLOW_SETTLE_PX) {
+        element.scrollTo?.({ top: target, behavior: 'auto' })
+        element.scrollTop = target
+        lastScrollTopRef.current = target
+        isAtBottomRef.current = true
+        stopStreamingFollow()
+        return
+      }
+
+      const previousFrameAt = streamingFollowLastFrameAtRef.current
+      streamingFollowLastFrameAtRef.current = now
+      const step = computeStreamingScrollStep(
+        lag,
+        streamingFollowVelocityRef.current,
+        previousFrameAt === null ? 16 : now - previousFrameAt
+      )
+      streamingFollowVelocityRef.current = step.velocityPxPerSecond
+      const nextScrollTop = Math.min(target, element.scrollTop + step.advancePx)
+      element.scrollTo?.({ top: nextScrollTop, behavior: 'auto' })
+      element.scrollTop = nextScrollTop
+      lastScrollTopRef.current = element.scrollTop
+      isAtBottomRef.current = true
+      userScrollPausedAutoFollowRef.current = false
+      setShowScrollButton(false)
+      streamingFollowFrameRef.current = requestSafeAnimationFrame(advanceFrame)
+    }
+
+    streamingFollowFrameRef.current = requestSafeAnimationFrame(advanceFrame)
+  }, [
+    autoScrollSuspended,
+    currentScrollKey,
+    isTurnNavigationAutoScrollSuspended,
+    setScrollToBottom,
+    stopStreamingFollow,
+    streamingFollowActive,
+  ])
 
   const markCurrentConversationPinnedToBottom = useCallback(() => {
     if (currentScrollKey === null) return
@@ -869,8 +959,15 @@ function ScrollableMessagePaneContent({
     if (shouldForceBottom) {
       restoredScrollSnapshotRef.current = null
       pendingAssistantResponseStartRef.current = false
+      userScrollPausedAutoFollowRef.current = false
+      userViewportAnchorRef.current = null
       if (virtualScrollOwnsInitialPosition && (conversationChanged || messagesLoaded)) {
         adoptVirtualBottomPosition()
+        return
+      }
+      if (streamingFollowActive) {
+        preserveLatestUserTurnRef.current = false
+        followStreamingToBottom()
         return
       }
       setScrollToBottom('auto', { saveSnapshot: false })
@@ -893,6 +990,10 @@ function ScrollableMessagePaneContent({
     }
 
     if (isAtBottomRef.current && !userScrollPausedAutoFollowRef.current) {
+      if (streamingFollowActive) {
+        followStreamingToBottom()
+        return
+      }
       const shouldStabilizeExternalBottom =
         externalScrollRef?.current &&
         currentScrollKey !== null &&
@@ -910,6 +1011,7 @@ function ScrollableMessagePaneContent({
     currentScrollKey,
     clearScheduledScrolls,
     externalScrollRef,
+    followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
     isWaitingForAssistant,
     lastMessage,
@@ -923,6 +1025,7 @@ function ScrollableMessagePaneContent({
     scheduleStableScrollToBottom,
     scrollToBottom,
     setScrollToBottom,
+    streamingFollowActive,
     virtualScrollOwnsInitialPosition,
   ])
 
@@ -939,14 +1042,20 @@ function ScrollableMessagePaneContent({
     }
 
     pendingAssistantResponseStartRef.current = false
-    setScrollToBottom('auto', { saveSnapshot: false })
-    scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+    if (streamingFollowActive) {
+      followStreamingToBottom()
+    } else {
+      setScrollToBottom('auto', { saveSnapshot: false })
+      scheduleStableScrollToBottom('auto', { saveSnapshot: false })
+    }
   }, [
     autoScrollSuspended,
+    followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
     messages.length,
     scheduleStableScrollToBottom,
     setScrollToBottom,
+    streamingFollowActive,
     turnNavigationLoading,
     turnNavigationTargetMessageId,
   ])
@@ -1033,22 +1142,32 @@ function ScrollableMessagePaneContent({
       (currentScrollKey !== null &&
         getConversationScrollSnapshot(currentScrollKey)?.pinnedToBottom === true)
     if (shouldFollowBottom) {
-      setScrollToBottom('auto', { saveSnapshot: false })
+      if (streamingFollowActive) {
+        followStreamingToBottom()
+      } else {
+        setScrollToBottom('auto', { saveSnapshot: false })
+      }
       return
     }
 
     if (isAtBottomRef.current) {
-      scrollToBottom('auto', { saveSnapshot: false })
+      if (streamingFollowActive) {
+        followStreamingToBottom()
+      } else {
+        scrollToBottom('auto', { saveSnapshot: false })
+      }
     }
   }, [
     autoScrollSuspended,
     currentScrollKey,
+    followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
     restoreSavedScrollPosition,
     restorePendingLayoutScrollPosition,
     restoreUserViewportAnchor,
     scrollToBottom,
     setScrollToBottom,
+    streamingFollowActive,
   ])
 
   useEffect(() => {
@@ -1117,6 +1236,10 @@ function ScrollableMessagePaneContent({
       }
     }
     if (!userInitiated) {
+      if (streamingFollowOwnedRef.current) {
+        setShowScrollButton(false)
+        return
+      }
       const shouldFollowBottom =
         (currentScrollKey !== null && followingBottomKeyRef.current === currentScrollKey) ||
         (currentScrollKey !== null &&
@@ -1127,7 +1250,11 @@ function ScrollableMessagePaneContent({
           ? Number.POSITIVE_INFINITY
           : scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop
       if (shouldFollowBottom && distanceFromBottom > SCROLLED_TO_BOTTOM_THRESHOLD) {
-        setScrollToBottom('auto', { saveSnapshot: false })
+        if (streamingFollowActive) {
+          followStreamingToBottom()
+        } else {
+          setScrollToBottom('auto', { saveSnapshot: false })
+        }
         return
       }
       updateScrollState({ skipSave: true })
@@ -1141,8 +1268,10 @@ function ScrollableMessagePaneContent({
     autoScrollSuspended,
     captureUserViewportAnchor,
     currentScrollKey,
+    followStreamingToBottom,
     isTurnNavigationAutoScrollSuspended,
     setScrollToBottom,
+    streamingFollowActive,
     updateScrollState,
   ])
 

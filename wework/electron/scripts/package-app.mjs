@@ -15,6 +15,7 @@ const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
+const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const identity = resolveBuildIdentity()
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
@@ -95,6 +96,7 @@ try {
       join(electronRoot, 'resources', 'bundled-plugins'),
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
+      join(repositoryRoot, 'LICENSE'),
     ],
     icon,
     prune: false,

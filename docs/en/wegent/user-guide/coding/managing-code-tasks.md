@@ -116,9 +116,9 @@ bottom terminal:
 
 - Drag a file or folder from the right file tree into the composer to add it to
   the current conversation as a workspace path reference.
-- Select text in a file preview, file editor, or terminal to show the **Add to
-  conversation** action beside the selection. Click it to insert the text into
-  the current composer.
+- Select text in a code or Markdown file preview, file editor, or terminal to
+  show the **Add to conversation** action beside the selection. Click it to
+  insert the text into the current composer.
 - You can also drag selected text into the composer. The desktop system drag
   panel appears only after dragging starts and closes when the drag ends or is
   cancelled.

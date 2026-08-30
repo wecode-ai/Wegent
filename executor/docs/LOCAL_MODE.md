@@ -106,6 +106,8 @@ Local Executor 的配置优先级是：环境变量、`~/.wegent-executor/device
 | `LOCAL_WORKSPACE_ROOT` | `~/.wegent-executor/workspace` | 工作区目录 |
 | `WEGENT_EXECUTOR_LOG_DIR` | `~/.wegent-executor/logs` | 日志目录 |
 | `WEGENT_EXECUTOR_LOG_FILE` | `executor.log` | 日志文件名 |
+| `WEGENT_EXECUTOR_DISABLE_FILE_LOG` | `false` | 禁用 Executor 自身文件日志；由桌面 supervisor 托管日志时设为 `true` |
+| `WEGENT_RUNTIME_RESTORE_CONCURRENCY` | `2` | 应用重启后，同时初始化的持久化任务数量；不改变正常任务并发上限 |
 | `WEGENT_EXECUTOR_LOG_MAX_SIZE` | `10` (MB) | 单个日志最大大小 |
 | `WEGENT_EXECUTOR_LOG_BACKUP_COUNT` | `5` | 保留历史日志数量 |
 | `LOG_LEVEL` | `INFO` | 日志级别 (`DEBUG` / `INFO`) |

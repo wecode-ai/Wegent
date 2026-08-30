@@ -20,6 +20,12 @@ const INHERITED_RUNTIME_ENV_KEYS = [
   'WEWORK_SHARED_EXECUTOR_HOME',
 ]
 
+export function isolateAiVerifyRuntimeEnvironment(processEnvironment) {
+  const isolatedEnvironment = { ...processEnvironment }
+  for (const key of INHERITED_RUNTIME_ENV_KEYS) delete isolatedEnvironment[key]
+  return isolatedEnvironment
+}
+
 export function buildAiVerifyEnvironment(
   processEnvironment,
   {
@@ -34,8 +40,7 @@ export function buildAiVerifyEnvironment(
     sessionDirectory,
   }
 ) {
-  const isolatedEnvironment = { ...processEnvironment }
-  for (const key of INHERITED_RUNTIME_ENV_KEYS) delete isolatedEnvironment[key]
+  const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(processEnvironment)
 
   return {
     ...isolatedEnvironment,

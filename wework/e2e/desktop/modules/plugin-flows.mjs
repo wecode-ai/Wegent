@@ -304,19 +304,9 @@ async function verifyStartupIgnoresBlockedCodexNetwork({
   assert.equal(
     executorStatus.ready,
     true,
-    'The local executor was not ready after Codex initialize'
+    'The local executor was not ready when the workbench became usable'
   )
-  assert.ok(
-    Number.isFinite(executorStatus.codexInitializeElapsedMs),
-    'The local executor did not report the Codex initialize duration'
-  )
-  assert.ok(
-    executorStatus.codexInitializeElapsedMs <= DEFAULT_STEP_TIMEOUT_MS,
-    `Codex initialize took ${executorStatus.codexInitializeElapsedMs}ms with blocked network`
-  )
-  console.log(
-    `Codex initialize completed in ${executorStatus.codexInitializeElapsedMs}ms with a blocking network proxy configured`
-  )
+  console.log('Workbench became usable without waiting for blocked Codex network traffic')
   assert.equal(
     control.modelRequests.length,
     modelRequestCountBeforeRestart,

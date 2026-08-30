@@ -283,6 +283,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  selectedAssistantPlan: SelectedAssistantPlan | null
   rightPanelExtensionTabs?: Partial<
     Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>
   >
@@ -1301,6 +1302,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
     return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
+    () => initialWorkspaceState?.selectedAssistantPlan ?? null
+  )
   const [rightPanelExtensionTabs, setRightPanelExtensionTabs] = useState<
     Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   >(() => initialWorkspaceState?.rightPanelExtensionTabs ?? {})
@@ -1441,6 +1445,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      selectedAssistantPlan,
       rightPanelExtensionTabs,
       temporaryChatAddresses,
       browserStates,
@@ -1455,6 +1460,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    selectedAssistantPlan,
     rightPanelExtensionTabs,
     temporaryChatAddresses,
     browserStates,
@@ -1467,9 +1473,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     text: string
   } | null>(null)
   const temporaryChatInitialInputsRef = useRef(new Map<RightWorkspaceChatTab, string>())
-  const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
-    null
-  )
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
@@ -2816,7 +2819,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onSelectProject={handleSelectCloudProject}
         onRemoveProject={removeCloudProjectContext}
         goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
-        refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
+        refreshKey={`${paneSession.status.taskExecution.running}:${paneSession.status.taskExecution.status ?? ''}`}
         onOpen={() => openRightPanelTab('work-item')}
         onOpenBoard={openBoundProjectSpaceTask}
       />

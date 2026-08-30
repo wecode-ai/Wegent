@@ -301,17 +301,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/fengkuizhi">
-                    <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
-                    <br />
-                    <sub><b>Fengkuizhi</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/lvmowei">
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
                     <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fengkuizhi">
+                    <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+                    <br />
+                    <sub><b>Fengkuizhi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -343,14 +343,21 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
+                    <br />
+                    <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/earthAlone2026">
                     <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
                     <br />
                     <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/RockysGit">
                     <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
@@ -359,17 +366,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/junbaor">
-                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
-                    <br />
-                    <sub><b>Junbaor</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/qwertyerge">
                     <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
                     <br />
                     <sub><b>Erdawang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/junbaor">
+                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
+                    <br />
+                    <sub><b>Junbaor</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -384,13 +391,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
                     <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/hustfisher">
-                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
-                    <br />
-                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">

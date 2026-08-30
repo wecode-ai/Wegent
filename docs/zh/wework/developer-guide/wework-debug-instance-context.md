@@ -33,6 +33,7 @@ Wework 支持从一个正在运行的 Wework 内置 Terminal 中启动另一个�
 - `WEWORK_DEV_PORT`: 当前 Vite/ Electron dev server 端口。
 - `WEWORK_DEV_WORKTREE`: 当前 worktree 根路径。
 - `WEWORK_DEV_BRANCH`: 当前 Git branch，detached HEAD 时为空。
+- `WEWORK_APP_IDENTIFIER`: 当前 Electron 应用身份。默认根据 worktree 路径生成，用于隔离单实例锁、应用数据和 macOS 菜单栏图标位置；只有明确需要复用某个应用身份时才应手动覆盖。
 
 脚本也会把这些值导出为 `VITE_WEWORK_*`，供前端在运行时显示。
 

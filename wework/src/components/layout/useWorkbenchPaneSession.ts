@@ -25,7 +25,10 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  getRuntimeTaskRouteKey,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
@@ -563,12 +566,6 @@ export function useWorkbenchPaneSession({
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
       setThreadGoal(metadata.goal)
-      if (metadata.goal) {
-        clearRuntimePaneGoalSeed(address)
-        setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
-        )
-      }
     }
     syncConversationState()
     return subscribeRuntimeConversation(address, action => {
@@ -3026,13 +3023,30 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
-    key: runtimeTranscriptPaneKey(address),
+    key: runtimeTaskLoadAddressKey(address),
     identityKey: runtimeTranscriptPaneIdentityKey(address),
     address,
   }
 }
 
 const runtimeTranscriptPaneKey = runtimeConversationKey
+
+function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
+  const runtimeHandleThreadId =
+    typeof address.runtimeHandle?.threadId === 'string'
+      ? address.runtimeHandle.threadId.trim()
+      : typeof address.runtimeHandle?.thread_id === 'string'
+        ? address.runtimeHandle.thread_id.trim()
+        : ''
+
+  return JSON.stringify({
+    route: getRuntimeTaskRouteKey(address),
+    runtime: address.runtime ?? null,
+    threadId: address.threadId?.trim() || runtimeHandleThreadId || null,
+    workspaceKind: address.workspaceKind ?? null,
+    worktreeId: address.worktreeId ?? null,
+  })
+}
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`

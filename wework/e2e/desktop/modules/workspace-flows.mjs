@@ -885,7 +885,10 @@ async function verifyDefaultTaskBoardAssociation(control, projectRowSelector) {
   }
 }
 
-async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
+async function verifyTrackedTaskBoardRunningStatus(
+  control,
+  screenshotName = 'workspace-02-running-task-synchronized.png'
+) {
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -923,12 +926,19 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
     /WEWORK_DESKTOP_E2E_TASK/,
     'The running task was also rendered in the review column'
   )
-  await captureVerificationScreenshot(
-    control,
-    'workspace-02-running-task-synchronized.png',
-    activeBoardContentSelector
-  )
+  if (screenshotName) {
+    await captureVerificationScreenshot(control, screenshotName, activeBoardContentSelector)
+  }
+  return {
+    activeBoardContentSelector,
+    reviewColumnSelector,
+    runningColumnSelector,
+  }
+}
 
+async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
+  const { activeBoardContentSelector, reviewColumnSelector, runningColumnSelector } =
+    await verifyTrackedTaskBoardRunningStatus(control)
   const boardCardSelector = [
     `${activeBoardContentSelector} button[data-testid^="cloud-todo-card-"]`,
     ':not([data-testid^="cloud-todo-card-task-"])',
@@ -1688,6 +1698,7 @@ export {
   verifyDefaultWorkspaceStartupTab,
   verifyWorkspaceIssueCreation,
   verifyDefaultTaskBoardAssociation,
+  verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
   verifyExplicitlyTrackedTask,

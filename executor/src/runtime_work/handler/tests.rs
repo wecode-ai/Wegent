@@ -24,6 +24,14 @@ fn defaults_to_ten_parallel_runtime_tasks() {
 }
 
 #[test]
+fn restore_startup_concurrency_defaults_to_two_without_reducing_runtime_capacity() {
+    assert_eq!(normalized_restore_startup_concurrency(None, 10), 2);
+    assert_eq!(normalized_restore_startup_concurrency(Some(8), 10), 8);
+    assert_eq!(normalized_restore_startup_concurrency(Some(20), 10), 10);
+    assert_eq!(normalized_restore_startup_concurrency(Some(0), 10), 1);
+}
+
+#[test]
 fn running_task_count_uses_process_local_execution_state() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let (first_cancel, _first_cancel_rx) = oneshot::channel();
@@ -2922,6 +2930,54 @@ fn user_message_presentation_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_replaces_transient_blob_preview_with_local_path() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "message": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    }))
+    .expect("an image attachment should create presentation metadata");
+
+    assert_eq!(
+        presentation["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
+    );
+}
+
+#[test]
+fn user_message_presentation_preserves_preview_without_usable_local_path() {
+    for local_path in [Value::Null, Value::String(String::new())] {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "message": "Inspect this image",
+            "attachments": [{
+                "id": -1,
+                "filename": "image.png",
+                "file_size": 18,
+                "mime_type": "image/png",
+                "file_extension": ".png",
+                "local_path": local_path,
+                "local_preview_url": "https://example.test/image.png"
+            }]
+        }))
+        .expect("an image attachment should create presentation metadata");
+
+        assert_eq!(
+            presentation["attachments"][0]["local_preview_url"],
+            "https://example.test/image.png"
+        );
+    }
+}
+
+#[test]
 fn legacy_thread_preview_restores_filtered_initial_user_message() {
     let thread = json!({
         "id": "thread-1",
@@ -3060,6 +3116,37 @@ fn transcript_restores_attachment_presentation_over_internal_provider_context() 
     assert_eq!(
         provider_messages[0]["attachments"][0]["filename"],
         "pasted-feedback.zip"
+    );
+}
+
+#[test]
+fn transcript_repairs_persisted_blob_preview_when_local_path_is_available() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "Inspect this image"
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "content": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "status": "ready",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
     );
 }
 
