@@ -14,6 +14,7 @@ import { preloadDefaultDshUiTestModules } from '@/test/setup'
 
 const appIframeMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
+  props: vi.fn(),
 }))
 const workbenchProviderMocks = vi.hoisted(() => ({
   cleanup: vi.fn(),
@@ -35,9 +36,10 @@ const runtimeEnvironmentMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/topnav/AppIframe', () => ({
-  AppIframe: ({ active }: { active?: boolean }) => {
+  AppIframe: (props: { active?: boolean; embeddedBrowserLabel?: string }) => {
+    appIframeMocks.props(props)
     useEffect(() => appIframeMocks.cleanup, [])
-    return <div data-testid="mock-app-iframe" data-active={String(active)} />
+    return <div data-testid="mock-app-iframe" data-active={String(props.active)} />
   },
 }))
 
@@ -116,6 +118,7 @@ describe('WorkspaceTabSurface', () => {
 
   afterEach(() => {
     appIframeMocks.cleanup.mockClear()
+    appIframeMocks.props.mockClear()
     workbenchProviderMocks.cleanup.mockClear()
     workbenchProviderMocks.loadTaskComposerCatalogs.mockClear()
     workbenchProviderMocks.prewarm.mockClear()
@@ -476,5 +479,60 @@ describe('WorkspaceTabSurface', () => {
     unmount()
     expect(harnessAppLauncherMocks.cleanup).toHaveBeenCalledWith(installationId)
     clearHarnessAppLaunch(installationId)
+  })
+
+  test('renders a running Electron Harness app through the DOM webview host', () => {
+    const installationId = 'dom-webview-app'
+    runtimeEnvironmentMocks.electron = true
+    registerHarnessAppTab({
+      id: installationId,
+      manifest: {
+        name: installationId,
+        displayName: 'DOM Webview App',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle',
+        description: '',
+        entry: { installPackage: '.', profile: 'default' },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=20' },
+      },
+      packagePath: '/tmp/dom-webview-app',
+      sha256: 'fixture',
+      modelKey: null,
+      resident: false,
+      runtimeVersion: '0.1.0-rc.8',
+      state: 'running',
+      webUrl: 'http://127.0.0.1:4101',
+      error: null,
+      source: 'linked',
+    })
+
+    const { unmount } = render(
+      <WorkspaceTabSurface
+        active
+        cloudWebUrl={null}
+        lifecycleStore={{} as never}
+        services={{} as never}
+        tab={{
+          id: 'dom-webview-tab',
+          kind: 'auxiliary',
+          title: 'DOM Webview App',
+          contentRoute: `/app/harness-${installationId}`,
+        }}
+        user={{ id: 1, user_name: 'tester', email: 'tester@example.com' }}
+      />
+    )
+
+    expect(screen.getByTestId('mock-app-iframe')).toHaveAttribute('data-active', 'true')
+    expect(appIframeMocks.props).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appKey: `harness-${installationId}`,
+        embeddedBrowserLabel: `smart-app:${installationId}`,
+        src: 'http://127.0.0.1:4101',
+      })
+    )
+    expect(screen.queryByTestId(`app-iframe-harness-${installationId}`)).not.toBeInTheDocument()
+
+    unmount()
+    unregisterHarnessAppTab(installationId)
   })
 })
