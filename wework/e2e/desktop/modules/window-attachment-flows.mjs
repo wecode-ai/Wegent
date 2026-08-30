@@ -875,12 +875,44 @@ async function attachAndSendOnlyFile(control, composerSelector) {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
 }
 
+async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
+  const indexPath = join(executorHome, 'runtime-work', 'index.json')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const index = JSON.parse(await readFile(indexPath, 'utf8').catch(() => '{}'))
+    const attachments = Object.values(index.tasks ?? {}).flatMap(task =>
+      (task.runtime_handle?.userMessagePresentations ?? []).flatMap(presentation =>
+        (presentation.attachments ?? []).filter(
+          attachment => attachment.filename === ATTACHMENT_ONLY_FILENAME
+        )
+      )
+    )
+    if (attachments.length >= expectedCount) {
+      for (const attachment of attachments) {
+        assert.equal(
+          attachment.local_preview_url,
+          attachment.local_path,
+          'A persisted local attachment retained a transient preview URL'
+        )
+        assert.ok(
+          !attachment.local_preview_url.startsWith('blob:'),
+          'A persisted local attachment retained a renderer-scoped Blob URL'
+        )
+      }
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The attachment-only tasks did not persist durable attachment previews')
+}
+
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
   appBundlePath,
   appIdentifier,
   composerSelector,
   control,
+  executorHome,
 }) {
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
@@ -920,6 +952,9 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  if (executorHome) {
+    await waitForDurableAttachmentPreviews(executorHome, 2)
+  }
 
   const twoTaskSnapshot = await waitForSnapshot(
     control,
@@ -954,9 +989,14 @@ async function verifyAttachmentOnlySidebarLifecycle({
     })
     await reactivateMacApplication(appIdentifier, appBundlePath)
     await withTimeout(
-      control.awaitReadyAfter(readyCountBeforeClose),
+      Promise.any([
+        control.awaitReadyAfter(readyCountBeforeClose),
+        control.command('waitFor', 'body', {
+          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+        }),
+      ]),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect during attachment-only verification'
+      'The reopened Wework WebView did not become controllable during attachment-only verification'
     )
   } else {
     await control.command('navigate', '/')

@@ -2930,6 +2930,29 @@ fn user_message_presentation_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_replaces_transient_blob_preview_with_local_path() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "message": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    }))
+    .expect("an image attachment should create presentation metadata");
+
+    assert_eq!(
+        presentation["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
+    );
+}
+
+#[test]
 fn legacy_thread_preview_restores_filtered_initial_user_message() {
     let thread = json!({
         "id": "thread-1",
@@ -3068,6 +3091,37 @@ fn transcript_restores_attachment_presentation_over_internal_provider_context() 
     assert_eq!(
         provider_messages[0]["attachments"][0]["filename"],
         "pasted-feedback.zip"
+    );
+}
+
+#[test]
+fn transcript_repairs_persisted_blob_preview_when_local_path_is_available() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "Inspect this image"
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "content": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "status": "ready",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
     );
 }
 
