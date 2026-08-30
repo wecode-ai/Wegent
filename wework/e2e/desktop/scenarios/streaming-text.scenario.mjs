@@ -702,6 +702,7 @@ export function createDesktopScenario({
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
+  let resolvePartialWritten
   let resolveRequest
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -720,6 +721,9 @@ export function createDesktopScenario({
   })
   const appendWritten = new Promise(resolve => {
     resolveAppendWritten = resolve
+  })
+  const partialWritten = new Promise(resolve => {
+    resolvePartialWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -931,7 +935,14 @@ export function createDesktopScenario({
         })
         response.flushHeaders()
         response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
+        let partialOffset = 0
+        for (const chunk of PARTIAL_TEXT.match(/[\s\S]{1,24}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, partialOffset)))
+          response.flush?.()
+          partialOffset += chunk.length
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        resolvePartialWritten()
         await appendRelease
         await new Promise(resolve => setTimeout(resolve, 100))
         let appendOffset = PARTIAL_TEXT.length
@@ -1467,6 +1478,33 @@ export function createDesktopScenario({
         'The latest user message after sending'
       )
       releaseStart()
+      await partialWritten
+      const runtimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      const runtimeMessages = JSON.parse(
+        await control.command('getRuntimeConversationMessages', 'body', {
+          value: JSON.stringify({
+            deviceId: runtimeTask.deviceId,
+            taskId: runtimeTask.taskId,
+          }),
+        })
+      )
+      const runtimePartial = runtimeMessages
+        .filter(message => message.role === 'assistant')
+        .flatMap(message => message.blocks ?? [])
+        .filter(block => block.type === 'text')
+        .at(-1)?.content
+      assert.equal(
+        runtimePartial,
+        PARTIAL_TEXT,
+        'The runtime conversation cache lost or reordered streamed text before rendering'
+      )
+      const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+      assert.equal(
+        immediatelyRenderedPartial.replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      )
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,

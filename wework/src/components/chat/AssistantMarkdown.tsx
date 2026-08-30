@@ -19,8 +19,6 @@ import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
-import { useStreamingRenderGuard } from './useStreamingRenderGuard'
-import { useStreamingRevealScale } from './StreamingRevealPressureContext'
 import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
@@ -108,13 +106,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   onOpenFile,
   fileChanges,
 }: AssistantMarkdownProps) {
-  const revealScaleRef = useStreamingRevealScale()
-  const { reducedMotion, rootRef, shouldHoldBack } = useStreamingRenderGuard(isStreaming)
-  const bufferedContent = useBufferedStreamingText(content, isStreaming, {
-    reducedMotion,
-    revealScaleRef,
-    shouldHoldBack,
-  })
+  const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
@@ -246,7 +238,6 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 
   return (
     <div
-      ref={rootRef}
       className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
     >
       {contentParts.map((part, index) =>

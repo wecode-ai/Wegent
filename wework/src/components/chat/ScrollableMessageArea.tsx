@@ -17,12 +17,7 @@ import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
 import type { RequestUserInputPayload } from './RequestUserInputCard'
 import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
-import { StreamingRevealPressureProvider } from './StreamingRevealPressureProvider'
-import {
-  computeStreamingRevealScale,
-  computeStreamingScrollStep,
-  STREAM_FOLLOW_SETTLE_PX,
-} from './streamingScrollFollow'
+import { computeStreamingScrollStep, STREAM_FOLLOW_SETTLE_PX } from './streamingScrollFollow'
 import {
   cancelSafeAnimationFrame,
   requestSafeAnimationFrame,
@@ -288,7 +283,6 @@ function ScrollableMessagePaneContent({
   const streamingFollowLastFrameAtRef = useRef<number | null>(null)
   const streamingFollowVelocityRef = useRef(0)
   const streamingFollowOwnedRef = useRef(false)
-  const streamingRevealScaleRef = useRef(1)
   const restoredScrollSnapshotRef = useRef<{
     key: string
     snapshot: ConversationScrollSnapshot
@@ -363,7 +357,6 @@ function ScrollableMessagePaneContent({
     streamingFollowLastFrameAtRef.current = null
     streamingFollowVelocityRef.current = 0
     streamingFollowOwnedRef.current = false
-    streamingRevealScaleRef.current = 1
   }, [])
 
   const clearScheduledScrolls = useCallback(() => {
@@ -741,7 +734,6 @@ function ScrollableMessagePaneContent({
 
       const target = Math.max(0, element.scrollHeight - element.clientHeight)
       const lag = Math.max(0, target - element.scrollTop)
-      streamingRevealScaleRef.current = computeStreamingRevealScale(lag)
       if (lag <= STREAM_FOLLOW_SETTLE_PX) {
         element.scrollTo?.({ top: target, behavior: 'auto' })
         element.scrollTop = target
@@ -1406,41 +1398,39 @@ function ScrollableMessagePaneContent({
                   </button>
                 </div>
               )}
-              <StreamingRevealPressureProvider revealScaleRef={streamingRevealScaleRef}>
-                <MessageList
-                  messages={messages}
-                  scrollElementRef={scrollRef}
-                  initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
-                  className={messageListClassName}
-                  conversationKey={conversationKey}
-                  forceVirtualMessageId={turnNavigationTargetMessageId}
-                  isWaitingForAssistant={isWaitingForAssistant}
-                  disableContentVisibility={turnNavigationLoading}
-                  devices={devices}
-                  onRetryFailedMessage={onRetryFailedMessage}
-                  onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
-                  onLoadFileChangesDiff={onLoadFileChangesDiff}
-                  onRevertFileChanges={onRevertFileChanges}
-                  onOpenFileChangesReview={onOpenFileChangesReview}
-                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                  onOpenWorkspaceFile={onOpenWorkspaceFile}
-                  onOpenLocalSkillFile={onOpenLocalSkillFile}
-                  onRequestUserInputSubmit={onRequestUserInputSubmit}
-                  onRequestUserInputIgnore={onRequestUserInputIgnore}
-                  onOpenAssistantPlan={onOpenAssistantPlan}
-                  onEditLastUserMessage={onEditLastUserMessage}
-                  canEditLastUserMessage={canEditLastUserMessage}
-                  onForkMessage={onForkMessage}
-                  onLoadFullTranscript={onLoadFullTranscript}
-                  loadingFullTranscript={loadingFullTranscript}
-                  hideRequestUserInputBlocks={hideRequestUserInputBlocks}
-                  hiddenRequestUserInputIds={hiddenRequestUserInputIds}
-                  onAddSelectionToConversation={onAddSelectionToConversation}
-                  onAskSelectionInSidebar={onAskSelectionInSidebar}
-                  virtualAnchorToEnd={!showScrollButton}
-                  renderGapAfterMessage={renderTranscriptGapAfterMessage}
-                />
-              </StreamingRevealPressureProvider>
+              <MessageList
+                messages={messages}
+                scrollElementRef={scrollRef}
+                initialDistanceFromBottomPx={getInitialDistanceFromBottomPx(currentScrollKey)}
+                className={messageListClassName}
+                conversationKey={conversationKey}
+                forceVirtualMessageId={turnNavigationTargetMessageId}
+                isWaitingForAssistant={isWaitingForAssistant}
+                disableContentVisibility={turnNavigationLoading}
+                devices={devices}
+                onRetryFailedMessage={onRetryFailedMessage}
+                onSwitchModelForFailedMessage={onSwitchModelForFailedMessage}
+                onLoadFileChangesDiff={onLoadFileChangesDiff}
+                onRevertFileChanges={onRevertFileChanges}
+                onOpenFileChangesReview={onOpenFileChangesReview}
+                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+                onOpenWorkspaceFile={onOpenWorkspaceFile}
+                onOpenLocalSkillFile={onOpenLocalSkillFile}
+                onRequestUserInputSubmit={onRequestUserInputSubmit}
+                onRequestUserInputIgnore={onRequestUserInputIgnore}
+                onOpenAssistantPlan={onOpenAssistantPlan}
+                onEditLastUserMessage={onEditLastUserMessage}
+                canEditLastUserMessage={canEditLastUserMessage}
+                onForkMessage={onForkMessage}
+                onLoadFullTranscript={onLoadFullTranscript}
+                loadingFullTranscript={loadingFullTranscript}
+                hideRequestUserInputBlocks={hideRequestUserInputBlocks}
+                hiddenRequestUserInputIds={hiddenRequestUserInputIds}
+                onAddSelectionToConversation={onAddSelectionToConversation}
+                onAskSelectionInSidebar={onAskSelectionInSidebar}
+                virtualAnchorToEnd={!showScrollButton}
+                renderGapAfterMessage={renderTranscriptGapAfterMessage}
+              />
               {contentFooter ? (
                 <div
                   data-testid={`${scrollTestId}-content-footer`}
