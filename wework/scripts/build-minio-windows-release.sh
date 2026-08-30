@@ -152,7 +152,7 @@ verify_uploaded_artifacts() {
   fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   for url in \
-    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows_x64-setup.exe" \
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe" \
     "$UPDATE_BASE_URL/$electron_channel.yml" \
     "$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"; do
     if ! curl -fsSI -o /dev/null "$url"; then
@@ -280,7 +280,7 @@ VITE_WEWORK_RUNTIME_MODE=local-first \
 
 node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
   windows x64 "$VERSION" "$OUTPUT_DIR"
-notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows_x64.md"
+notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows-x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \

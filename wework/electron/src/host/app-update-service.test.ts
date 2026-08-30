@@ -31,7 +31,7 @@ describe('AppUpdateService', () => {
       updateInfo: {
         version: '0.2.7',
         files: [],
-        path: 'WeWork_0.2.7_windows_x64-setup.exe',
+        path: 'WeWork_0.2.7_windows-x64-setup.exe',
         sha512: 'sha',
         releaseDate: '2026-08-25T00:00:00Z',
         releaseNotes: 'Changes',
