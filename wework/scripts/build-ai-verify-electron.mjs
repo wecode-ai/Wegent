@@ -3,15 +3,17 @@
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { isolateAiVerifyRuntimeEnvironment } from './ai-verify-environment.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { resolveHarnessRuntimeAssetCacheEnvironment } from './lib/harness-runtime-cache.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(process.env)
 const buildEnvironment = {
   ...resolveHarnessRuntimeAssetCacheEnvironment(
-    process.env,
+    isolatedEnvironment,
     { platform: process.platform },
     weworkDir
   ),
