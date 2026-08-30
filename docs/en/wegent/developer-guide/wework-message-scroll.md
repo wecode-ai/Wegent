@@ -17,15 +17,13 @@ Implementations must preserve these invariants:
 
 ## Streaming Rendering Ownership
 
-Streaming text and scroll following each have exactly one animation owner. Component animation, direct scrolling, and delayed scroll timers must not compete:
+Streaming text and scroll following each have exactly one scheduler. Component animation, direct scrolling, and delayed scroll timers must not compete:
 
-- `useBufferedStreamingText` is the sole owner of text reveal pacing. It accelerates with queued character backlog, preserves fractional reveal debt, and advances by Unicode code point. Do not enable an independent typewriter animation in `Streamdown`.
+- `useBufferedStreamingText` only coalesces text updates received within one frame into the next animation frame. It must not maintain a typewriter queue that trails the authoritative message content; the next frame must commit the latest complete prefix, with a short timeout fallback when frames are unavailable.
 - `Streamdown` remains in `streaming` mode for incremental Markdown parsing. Existing windowing and freezing continue to own non-tail Markdown blocks; animation must not rebuild the whole message tree.
-- Offscreen streaming blocks pause text reveal, and all active streaming blocks share one FPS sampling loop. When frame health degrades, new text commits pause until frame health recovers; do not create one sampler per block.
 - Streaming auto-follow in `ScrollableMessageArea` is owned by one damped spring. ResizeObserver callbacks, message appends, and runtime-state changes may only ask that spring to keep tracking the latest bottom; they must not also perform streaming jumps or schedule stabilization timers.
-- When layout growth outruns the spring, a shared reveal scale applies backpressure to the text queue. Backpressure changes only reveal pacing and must not mutate Markdown state, message state, or virtualizer measurement.
-- User upward scrolling, turn-navigation suspension, or auto-scroll suspension immediately cancels the spring and restores the reveal scale. Non-streaming layout stabilization, history restoration, and explicit “scroll to bottom” actions keep their existing paths without running concurrently with the streaming spring.
-- With `prefers-reduced-motion`, skip progressive reveal and spring motion, show the authoritative text immediately, and position the viewport at the bottom.
+- User upward scrolling, turn-navigation suspension, or auto-scroll suspension immediately cancels the spring. Non-streaming layout stabilization, history restoration, and explicit “scroll to bottom” actions keep their existing paths without running concurrently with the streaming spring.
+- With `prefers-reduced-motion`, skip spring motion and position the viewport at the bottom immediately.
 
 Run the desktop regression:
 
@@ -36,7 +34,7 @@ pnpm e2e:desktop:streaming-text
 
 The scenario uses real backend requests and a deterministic SSE response stream supplied by the desktop E2E harness. It pauses the server before output begins so the race between the user message rendering and the later waiting-indicator and virtual-list measurements is deterministic. Do not hide a scroll regression by skipping the scenario, mocking frontend requests, or weakening the bottom or visibility assertions.
 
-Streaming rendering changes must also cover adaptive reveal, Unicode boundaries, layout backpressure, spring convergence, user-scroll pause, and bottom-follow recovery. The real Electron scenario must retain viewport-anchor evidence before and after later streaming appends and verify that those appends do not move the user-selected anchor.
+Streaming rendering changes must also verify that frame coalescing immediately displays the latest complete prefix, including Unicode content, plus spring convergence, user-scroll pause, and bottom-follow recovery. The real Electron scenario must retain viewport-anchor evidence before and after later streaming appends and verify that those appends do not move the user-selected anchor.
 
 The ordering regression first stops a response, sends 26 follow-up turns to move the stopped turn outside the default transcript page, switches to other tasks, reopens the original task, and verifies that the latest AI response—not the “Stopped” notice—occupies the bottom position.
 

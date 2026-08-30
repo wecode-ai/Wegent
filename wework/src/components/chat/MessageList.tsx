@@ -1889,7 +1889,8 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
 
 function getDisplayProcessingBlocks(
   blocks: ProcessingBlock[] | undefined,
-  settleForCancelledTurn = false
+  settleForCancelledTurn = false,
+  finalContent = ''
 ): ProcessingBlock[] {
   if (!blocks?.length) return []
 
@@ -1903,7 +1904,8 @@ function getDisplayProcessingBlocks(
       if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
-      return Boolean(block.content.trim())
+      const content = block.content.trim()
+      return Boolean(content) && content !== finalContent.trim()
     })
 }
 
@@ -1977,8 +1979,8 @@ export function AssistantMessage({
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = useMemo(
-    () => getDisplayProcessingBlocks(message.blocks, isCancelled),
-    [isCancelled, message.blocks]
+    () => getDisplayProcessingBlocks(message.blocks, isCancelled, visibleContent),
+    [isCancelled, message.blocks, visibleContent]
   )
   const fileEditDurationsBySourceBlock = useMemo(
     () => getFileEditDurationsBySourceBlock(displayBlocks),

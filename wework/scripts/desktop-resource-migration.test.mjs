@@ -71,6 +71,7 @@ describe('desktop resource migration', () => {
     expect(aiVerifyBuildScript).toContain("['run', 'prepare:dws']")
     expect(aiVerifyBuildScript).toContain("['--dir', 'electron', 'run', 'build:package']")
     expect(aiVerifyBuildScript).toContain('resolveHarnessRuntimeAssetCacheEnvironment(')
+    expect(aiVerifyBuildScript).toContain('isolateAiVerifyRuntimeEnvironment(process.env)')
     expect(aiVerifyBuildScript).toContain("process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'")
     expect(aiVerifyBuildScript).toContain('wrapWindowsScriptCommand(command, args)')
     expect(devMacScript).toContain('WEWORK_USER_DATA_DIR=')

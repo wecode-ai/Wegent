@@ -1531,6 +1531,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       ])
       return turnId
     }
+    case 'getRuntimeConversationMessages': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      return JSON.stringify(getRuntimeConversationMessagesForLogicalAddress(address))
+    }
     case 'storeLocalProxyUrl':
       return JSON.stringify(saveLocalProxyUrl(command.value?.trim() ?? ''))
     case 'getLocalStorageItem':
