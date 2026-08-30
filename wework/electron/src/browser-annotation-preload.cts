@@ -1,0 +1,553 @@
+const { ipcRenderer } = require('electron') as typeof import('electron')
+
+type Rect = { x: number; y: number; width: number; height: number }
+
+interface ElementAnchor {
+  kind: 'element'
+  pageUrl: string
+  frameUrl: string
+  framePath: string[]
+  selector: string
+  elementPath: string[]
+  tagName: string
+  role?: string
+  name?: string
+  title?: string
+  immediateText?: string
+  nearbyText?: string
+  rect: Rect
+  fixedPosition: boolean
+  scrollContainers: Array<{ selector: string; left: number; top: number }>
+}
+
+interface DesignChange {
+  property: string
+  value: string
+  previousValue: string
+}
+
+interface RuntimeComment {
+  id: string
+  number: number
+  anchor: ElementAnchor
+  designChanges: DesignChange[]
+  textChange?: { before: string; after: string } | null
+}
+
+interface RuntimeState {
+  mode: 'off' | 'quick' | 'batch'
+  comments: RuntimeComment[]
+  originalView: boolean
+}
+
+interface RuntimeCommand {
+  type: 'sync'
+  state?: RuntimeState
+  point?: { x: number; y: number } | null
+}
+
+const ROOT_ID = '__wework_browser_annotation_root__'
+const DESIGN_ATTRIBUTE = 'data-wework-browser-design'
+const DESIGN_STYLE_ATTRIBUTE = 'data-wework-browser-design-style'
+const MARKER_ATTRIBUTE = 'data-wework-browser-annotation-marker'
+const SELECTION_ATTRIBUTE = 'data-wework-browser-annotation-selection'
+const DESIGN_PROPERTIES = [
+  'color',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'background-color',
+  'opacity',
+  'border-radius',
+  'border-color',
+  'border-width',
+  'width',
+  'height',
+  'padding',
+  'margin',
+] as const
+const pageSessionId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+let state: RuntimeState = { mode: 'off', comments: [], originalView: false }
+let rootHost: HTMLElement | null = null
+let shadowRoot: ShadowRoot | null = null
+let renderQueued = false
+let draftAnchor: ElementAnchor | null = null
+const resolvedElements = new Map<string, Element>()
+
+function emit(type: string, payload: Record<string, unknown> = {}) {
+  ipcRenderer.send('wework:browser-annotation-event', {
+    type,
+    pageSessionId,
+    pageUrl: location.href,
+    ...payload,
+  })
+}
+
+function normalizedText(value: string | null | undefined, limit = 240) {
+  return (value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit)
+}
+
+function cssEscape(value: string) {
+  if (globalThis.CSS?.escape) return globalThis.CSS.escape(value)
+  return value.replace(/[^a-zA-Z0-9_-]/g, character => `\\${character}`)
+}
+
+function isGeneratedIdentity(value: string) {
+  return (
+    value.length > 80 ||
+    /(^|[-_])(?:[a-f0-9]{8,}|\d{6,})(?:[-_]|$)/i.test(value) ||
+    /^(?:ember|react|radix|headlessui|mui)-/i.test(value)
+  )
+}
+
+function uniqueSelector(root: Document | ShadowRoot, selector: string) {
+  try {
+    return root.querySelectorAll(selector).length === 1
+  } catch {
+    return false
+  }
+}
+
+function selectorSegment(element: Element, root: Document | ShadowRoot) {
+  if (element.id && !isGeneratedIdentity(element.id)) {
+    const selector = `#${cssEscape(element.id)}`
+    if (uniqueSelector(root, selector)) return selector
+  }
+  for (const name of ['data-testid', 'aria-label', 'name']) {
+    const value = element.getAttribute(name)
+    if (!value || isGeneratedIdentity(value)) continue
+    const selector = `${element.localName}[${name}="${cssEscape(value)}"]`
+    if (uniqueSelector(root, selector)) return selector
+  }
+  const classes = Array.from(element.classList)
+    .filter(value => !isGeneratedIdentity(value))
+    .slice(0, 3)
+    .map(value => `.${cssEscape(value)}`)
+    .join('')
+  if (classes) {
+    const selector = `${element.localName}${classes}`
+    if (uniqueSelector(root, selector)) return selector
+  }
+  const segments: string[] = []
+  let current: Element | null = element
+  while (current) {
+    const parent: Element | null = current.parentElement
+    let segment = current.localName
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(
+        candidate => candidate.localName === current?.localName
+      )
+      if (siblings.length > 1) segment += `:nth-of-type(${siblings.indexOf(current) + 1})`
+    }
+    segments.unshift(segment)
+    const selector = segments.join(' > ')
+    if (uniqueSelector(root, selector)) return selector
+    current = parent
+  }
+  return segments.join(' > ') || element.localName
+}
+
+function selectorFor(element: Element) {
+  const segments: string[] = []
+  let current: Element = element
+  while (true) {
+    const root = current.getRootNode()
+    if (!(root instanceof Document || root instanceof ShadowRoot)) break
+    segments.unshift(selectorSegment(current, root))
+    if (!(root instanceof ShadowRoot)) break
+    current = root.host
+  }
+  return segments.length > 1 ? `shadow:${segments.join(' >>> ')}` : segments[0]
+}
+
+function queryAnchorSelector(selector: string): Element | null {
+  const shadowSelector = selector.startsWith('shadow:')
+  const segments = (shadowSelector ? selector.slice('shadow:'.length) : selector).split(' >>> ')
+  let root: Document | ShadowRoot = document
+  let element: Element | null = null
+  for (const [index, segment] of segments.entries()) {
+    try {
+      element = root.querySelector(segment)
+    } catch {
+      return null
+    }
+    if (!element) return null
+    if (index < segments.length - 1) {
+      if (!element.shadowRoot) return null
+      root = element.shadowRoot
+    }
+  }
+  return element
+}
+
+function accessibleName(element: Element) {
+  return normalizedText(
+    element.getAttribute('aria-label') ||
+      element.getAttribute('alt') ||
+      element.getAttribute('title') ||
+      element.textContent,
+    160
+  )
+}
+
+function roleFor(element: Element) {
+  const explicit = element.getAttribute('role')
+  if (explicit) return explicit
+  if (element instanceof HTMLButtonElement) return 'button'
+  if (element instanceof HTMLAnchorElement && element.href) return 'link'
+  if (element instanceof HTMLInputElement)
+    return element.type === 'checkbox' ? 'checkbox' : 'textbox'
+  return undefined
+}
+
+function elementPath(element: Element) {
+  const path: string[] = []
+  let current: Element | null = element
+  while (current && path.length < 8) {
+    path.unshift(current.localName)
+    const root = current.getRootNode()
+    current = root instanceof ShadowRoot ? root.host : current.parentElement
+  }
+  return path
+}
+
+function scrollContainers(element: Element) {
+  const result: ElementAnchor['scrollContainers'] = []
+  let current = element.parentElement
+  while (current) {
+    const style = getComputedStyle(current)
+    if (/(auto|scroll)/.test(`${style.overflow}${style.overflowX}${style.overflowY}`)) {
+      result.push({
+        selector: selectorFor(current),
+        left: current.scrollLeft,
+        top: current.scrollTop,
+      })
+    }
+    current = current.parentElement
+  }
+  return result
+}
+
+function anchorFor(element: Element): ElementAnchor {
+  const rect = element.getBoundingClientRect()
+  const style = getComputedStyle(element)
+  return {
+    kind: 'element',
+    pageUrl: location.href,
+    frameUrl: location.href,
+    framePath: [],
+    selector: selectorFor(element),
+    elementPath: elementPath(element),
+    tagName: element.localName,
+    role: roleFor(element),
+    name: accessibleName(element),
+    title: normalizedText(element.getAttribute('title'), 160) || undefined,
+    immediateText: normalizedText(element.textContent),
+    nearbyText: normalizedText(element.parentElement?.textContent),
+    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    fixedPosition: style.position === 'fixed' || style.position === 'sticky',
+    scrollContainers: scrollContainers(element),
+  }
+}
+
+function designValuesFor(element: Element) {
+  const style = getComputedStyle(element)
+  return Object.fromEntries(
+    DESIGN_PROPERTIES.map(property => [property, style.getPropertyValue(property).trim()])
+  )
+}
+
+function isVisible(element: Element) {
+  const rect = element.getBoundingClientRect()
+  const style = getComputedStyle(element)
+  return (
+    rect.width > 0 &&
+    rect.height > 0 &&
+    style.display !== 'none' &&
+    style.visibility !== 'hidden' &&
+    Number(style.opacity) !== 0
+  )
+}
+
+function anchorScore(element: Element, anchor: ElementAnchor) {
+  let score = 0
+  const name = accessibleName(element)
+  const text = normalizedText(element.textContent)
+  const nearby = normalizedText(element.parentElement?.textContent)
+  if (anchor.name && name === anchor.name) score += 1000
+  if (anchor.immediateText && text === anchor.immediateText) score += 600
+  if (anchor.nearbyText && nearby === anchor.nearbyText) score += 300
+  if (element.localName === anchor.tagName) score += 100
+  const rect = element.getBoundingClientRect()
+  score -= Math.hypot(rect.x - anchor.rect.x, rect.y - anchor.rect.y)
+  return score
+}
+
+function resolveAnchor(anchor: ElementAnchor) {
+  const direct = queryAnchorSelector(anchor.selector)
+  if (direct && isVisible(direct)) return direct
+  const candidates = Array.from(document.querySelectorAll(anchor.tagName)).filter(isVisible)
+  const ranked = candidates
+    .map(element => ({ element, score: anchorScore(element, anchor) }))
+    .sort((left, right) => right.score - left.score)
+  if (!ranked[0] || ranked[0].score < 400) return null
+  if (ranked[1] && ranked[0].score - ranked[1].score < 100) return null
+  return ranked[0].element
+}
+
+function ensureRoot() {
+  if (rootHost?.isConnected && shadowRoot) return shadowRoot
+  rootHost = document.getElementById(ROOT_ID)
+  if (!rootHost) {
+    rootHost = document.createElement('div')
+    rootHost.id = ROOT_ID
+    Object.assign(rootHost.style, {
+      inset: '0',
+      pointerEvents: 'none',
+      position: 'fixed',
+      zIndex: '2147483647',
+    })
+    document.documentElement.append(rootHost)
+  }
+  shadowRoot = rootHost.shadowRoot ?? rootHost.attachShadow({ mode: 'open' })
+  return shadowRoot
+}
+
+function cleanupDesignChanges() {
+  document.querySelectorAll(`[${DESIGN_ATTRIBUTE}]`).forEach(element => {
+    element.removeAttribute(DESIGN_ATTRIBUTE)
+  })
+  document.querySelectorAll(`style[${DESIGN_STYLE_ATTRIBUTE}]`).forEach(element => element.remove())
+}
+
+function applyDesignChanges() {
+  cleanupDesignChanges()
+  for (const comment of state.comments) {
+    const element = resolvedElements.get(comment.id)
+    if (!element) continue
+    if (comment.textChange) {
+      const expected = state.originalView ? comment.textChange.after : comment.textChange.before
+      const replacement = state.originalView ? comment.textChange.before : comment.textChange.after
+      if (element.textContent === expected) element.textContent = replacement
+    }
+    if (state.originalView || comment.designChanges.length === 0) continue
+    const token = `annotation-${comment.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    element.setAttribute(DESIGN_ATTRIBUTE, token)
+    const style = document.createElement('style')
+    style.setAttribute(DESIGN_STYLE_ATTRIBUTE, comment.id)
+    style.textContent = `[${DESIGN_ATTRIBUTE}="${cssEscape(token)}"] { ${comment.designChanges
+      .map(change => `${change.property}: ${change.value} !important;`)
+      .join(' ')} }`
+    document.head.append(style)
+  }
+}
+
+function markerButton(comment: RuntimeComment, element: Element) {
+  const rect = element.getBoundingClientRect()
+  const marker = document.createElement('button')
+  marker.type = 'button'
+  marker.textContent = String(comment.number)
+  marker.setAttribute(MARKER_ATTRIBUTE, '')
+  marker.setAttribute('data-annotation-id', comment.id)
+  marker.setAttribute('aria-label', `Browser annotation ${comment.number}`)
+  marker.setAttribute('aria-expanded', 'false')
+  Object.assign(marker.style, {
+    alignItems: 'center',
+    background: '#0069fb',
+    border: '2px solid white',
+    borderRadius: '999px',
+    boxShadow: '0 2px 8px rgba(0,0,0,.24)',
+    color: 'white',
+    cursor: 'pointer',
+    display: 'flex',
+    font: '600 12px system-ui, sans-serif',
+    height: '24px',
+    justifyContent: 'center',
+    left: `${Math.max(4, rect.right - 12)}px`,
+    padding: '0',
+    pointerEvents: 'auto',
+    position: 'fixed',
+    top: `${Math.max(4, rect.top - 12)}px`,
+    width: '24px',
+  })
+  marker.addEventListener('click', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    marker.setAttribute('aria-expanded', 'true')
+    draftAnchor = anchorFor(element)
+    scheduleRender()
+    emit('open-comment', {
+      commentId: comment.id,
+      anchor: anchorFor(element),
+      designValues: designValuesFor(element),
+    })
+  })
+  return marker
+}
+
+function selectionOutline(element: Element) {
+  const rect = element.getBoundingClientRect()
+  const outline = document.createElement('div')
+  outline.setAttribute(SELECTION_ATTRIBUTE, '')
+  Object.assign(outline.style, {
+    background: 'rgba(0, 105, 251, .08)',
+    border: '2px solid #0069fb',
+    borderRadius: '6px',
+    boxSizing: 'border-box',
+    height: `${rect.height}px`,
+    left: `${rect.left}px`,
+    pointerEvents: 'none',
+    position: 'fixed',
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+  })
+  return outline
+}
+
+function render() {
+  renderQueued = false
+  const root = ensureRoot()
+  root.replaceChildren()
+  if (draftAnchor) {
+    const selectedElement = resolveAnchor(draftAnchor)
+    if (selectedElement) root.append(selectionOutline(selectedElement))
+  }
+  resolvedElements.clear()
+  const unresolved: string[] = []
+  if (state.mode !== 'off') {
+    for (const comment of state.comments) {
+      const element = resolveAnchor(comment.anchor)
+      if (!element) {
+        unresolved.push(comment.id)
+        continue
+      }
+      resolvedElements.set(comment.id, element)
+      root.append(markerButton(comment, element))
+    }
+  } else {
+    for (const comment of state.comments) {
+      const element = resolveAnchor(comment.anchor)
+      if (element) resolvedElements.set(comment.id, element)
+      else unresolved.push(comment.id)
+    }
+  }
+  applyDesignChanges()
+  emit('anchors-updated', {
+    unresolvedIds: unresolved,
+    anchors: [...resolvedElements.entries()].map(([commentId, element]) => ({
+      commentId,
+      anchor: anchorFor(element),
+    })),
+  })
+}
+
+function scheduleRender() {
+  if (renderQueued) return
+  renderQueued = true
+  requestAnimationFrame(render)
+}
+
+function isInternalMutationNode(node: Node) {
+  return (
+    node === rootHost ||
+    (node instanceof HTMLStyleElement && node.hasAttribute(DESIGN_STYLE_ATTRIBUTE))
+  )
+}
+
+function shouldRenderForMutation(mutation: MutationRecord) {
+  if (
+    mutation.type === 'attributes' &&
+    mutation.attributeName === DESIGN_ATTRIBUTE &&
+    mutation.target instanceof Element
+  ) {
+    return false
+  }
+  if (rootHost && (mutation.target === rootHost || rootHost.contains(mutation.target))) {
+    return false
+  }
+  if (mutation.type !== 'childList') return true
+  const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes]
+  return changedNodes.some(node => !isInternalMutationNode(node))
+}
+
+function deepestElementAtPoint(x: number, y: number): Element | null {
+  let element = document.elementFromPoint(x, y)
+  while (element?.shadowRoot) {
+    const nested = element.shadowRoot.elementFromPoint(x, y)
+    if (!nested || nested === element) break
+    element = nested
+  }
+  return element
+}
+
+function selectElement(element: Element, point?: { x: number; y: number }) {
+  if (element === rootHost || rootHost?.contains(element)) return
+  const anchor = anchorFor(element)
+  draftAnchor = anchor
+  scheduleRender()
+  emit('create-draft', {
+    anchor,
+    designValues: designValuesFor(element),
+    markerPoint: point ?? {
+      x: anchor.rect.x + anchor.rect.width,
+      y: anchor.rect.y,
+    },
+  })
+}
+
+document.addEventListener(
+  'click',
+  event => {
+    if (state.mode === 'off') return
+    const path = event.composedPath()
+    if (rootHost && path.includes(rootHost)) return
+    const target = path.find(candidate => candidate instanceof Element) as Element | undefined
+    if (!target) return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    selectElement(target, { x: event.clientX, y: event.clientY })
+  },
+  true
+)
+
+for (const eventName of ['scroll', 'resize']) {
+  globalThis.addEventListener(eventName, scheduleRender, true)
+}
+globalThis.visualViewport?.addEventListener('scroll', scheduleRender)
+globalThis.visualViewport?.addEventListener('resize', scheduleRender)
+ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: RuntimeCommand) => {
+  if (command.type === 'sync' && command.state) {
+    state = command.state
+    draftAnchor = null
+    if (command.point) {
+      const target = deepestElementAtPoint(command.point.x, command.point.y)
+      if (target) {
+        selectElement(target, command.point)
+        return
+      }
+    }
+    scheduleRender()
+  }
+})
+
+function initializeRuntime() {
+  new MutationObserver(mutations => {
+    if (mutations.some(shouldRenderForMutation)) scheduleRender()
+  }).observe(document.documentElement, {
+    attributes: true,
+    childList: true,
+    subtree: true,
+  })
+  ensureRoot()
+  emit('runtime-ready', {
+    title: document.title,
+    viewport: {
+      width: innerWidth,
+      height: innerHeight,
+      devicePixelRatio,
+    },
+  })
+}
+
+if (document.documentElement) initializeRuntime()
+else document.addEventListener('DOMContentLoaded', initializeRuntime, { once: true })

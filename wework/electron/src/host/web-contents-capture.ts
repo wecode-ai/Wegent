@@ -3,10 +3,20 @@ import { HostCapabilityError } from './capability-router.js'
 
 const CAPTURE_ATTEMPT_TIMEOUT_MS = 10_000
 
-export async function captureWebContentsDataUrl(contents: WebContents): Promise<string> {
+export interface CaptureRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export async function captureWebContentsDataUrl(
+  contents: WebContents,
+  rect?: CaptureRect
+): Promise<string> {
   let nativeCaptureError: unknown = null
   try {
-    const image = await withCaptureTimeout(contents.capturePage(), 'Electron capturePage')
+    const image = await withCaptureTimeout(contents.capturePage(rect), 'Electron capturePage')
     if (!image.isEmpty()) {
       const dataUrl = image.toDataURL()
       if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl
@@ -26,6 +36,7 @@ export async function captureWebContentsDataUrl(contents: WebContents): Promise<
           captureBeyondViewport: false,
           format: 'png',
           fromSurface: true,
+          ...(rect ? { clip: { ...rect, scale: 1 } } : {}),
         }),
         'CDP Page.captureScreenshot'
       )) as { data?: unknown }

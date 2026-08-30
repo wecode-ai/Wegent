@@ -21,6 +21,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'harness-apps': './scenarios/harness-apps.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
+  'browser-annotation-core': './scenarios/embedded-browser-annotation.scenario.mjs',
+  'browser-annotation-anchors': './scenarios/embedded-browser-annotation.scenario.mjs',
+  'browser-annotation-design': './scenarios/embedded-browser-annotation.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
@@ -70,6 +73,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
+  'browser-annotation-core',
+  'browser-annotation-anchors',
+  'browser-annotation-design',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-git-worktree',
@@ -81,6 +87,10 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-device-restart',
 ])
 const COMPOSITE_CHECKPOINTS = new Map([
+  [
+    'browser-annotation',
+    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
+  ],
   [
     'cloud-git-worktree',
     [

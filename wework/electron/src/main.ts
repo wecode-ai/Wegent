@@ -96,6 +96,10 @@ import {
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
+import {
+  BrowserAnnotationController,
+  type BrowserElementAnchor,
+} from './host/browser-annotation-controller.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -103,6 +107,7 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
@@ -133,6 +138,9 @@ let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let browserAnnotations: BrowserAnnotationController | null = null
+let browserAnnotationOverlayWindow: BrowserWindow | null = null
+let browserAnnotationOverlayReadyPromise: Promise<void> | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
@@ -265,7 +273,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
     params.partition = EMBEDDED_BROWSER_PARTITION
     webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    delete webPreferences.preload
+    webPreferences.preload = browserAnnotationPreloadPath
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -307,6 +315,10 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
+
+ipcMain.on('wework:browser-annotation-event', (event, payload: unknown) => {
+  browserAnnotations?.handleRuntimeEvent(event.sender.id, payload)
+})
 
 function embeddedBrowserRouteFromParams(
   params: Record<string, unknown>
@@ -722,6 +734,114 @@ async function createAuxiliaryWindow(
   }
 }
 
+async function showBrowserAnnotationOverlay(
+  label: string,
+  anchor: BrowserElementAnchor
+): Promise<void> {
+  if (!desktopRuntime || !embeddedBrowser) {
+    throw new Error('Browser annotation overlay is unavailable')
+  }
+  let overlay = browserAnnotationOverlayWindow
+  if (!overlay || overlay.isDestroyed()) {
+    const target = resolveDshAppRoute(desktopRuntime.coreDshUrl(), 'browser-annotation-overlay')
+    overlay = new BrowserWindow({
+      width: 360,
+      height: 360,
+      parent: BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined,
+      resizable: false,
+      frame: false,
+      transparent: true,
+      hasShadow: true,
+      skipTaskbar: true,
+      show: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        backgroundThrottling: false,
+        preload: dshPreloadPath,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    })
+    browserAnnotationOverlayWindow = overlay
+    secureDshContents(overlay.webContents, desktopRuntime.coreDshUrl())
+    registerDshWindowLabel(overlay.webContents, 'browser-annotation-overlay')
+    if (keepE2EWindowInBackground) {
+      overlay.webContents.on('console-message', details => {
+        console.info('[browser-annotation-overlay]', {
+          level: details.level,
+          message: details.message,
+          sourceId: details.sourceId,
+        })
+      })
+    }
+    overlay.on('closed', () => {
+      if (browserAnnotationOverlayWindow === overlay) {
+        browserAnnotationOverlayWindow = null
+        browserAnnotationOverlayReadyPromise = null
+      }
+    })
+    const createdOverlay = overlay
+    browserAnnotationOverlayReadyPromise = createdOverlay
+      .loadURL(target.toString(), {
+        extraHeaders: 'X-Wework-Window-Label: browser-annotation-overlay',
+      })
+      .then(() =>
+        waitForRendererSelector(
+          createdOverlay.webContents,
+          '[data-testid="browser-annotation-overlay"]'
+        )
+      )
+  }
+  await browserAnnotationOverlayReadyPromise
+  positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
+  if (keepE2EWindowInBackground) overlay.showInactive()
+  else {
+    overlay.show()
+    overlay.focus()
+  }
+}
+
+function positionBrowserAnnotationOverlay(
+  overlay: BrowserWindow,
+  label: string,
+  rect: BrowserElementAnchor['rect']
+): void {
+  if (!embeddedBrowser) return
+  const target = embeddedBrowser.pageRectToScreen(label, rect)
+  const overlayBounds = overlay.getBounds()
+  const display = screen.getDisplayMatching(target)
+  const workArea = display.workArea
+  const gap = 12
+  let x = target.x + target.width + gap
+  if (x + overlayBounds.width > workArea.x + workArea.width) {
+    x = target.x - overlayBounds.width - gap
+  }
+  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - overlayBounds.width))
+  const y = Math.max(
+    workArea.y,
+    Math.min(target.y, workArea.y + workArea.height - overlayBounds.height)
+  )
+  overlay.setBounds({ ...overlayBounds, x: Math.round(x), y: Math.round(y) })
+}
+
+function resizeBrowserAnnotationOverlay(
+  label: string,
+  anchor: BrowserElementAnchor,
+  size: { width: number; height: number }
+): void {
+  const overlay = browserAnnotationOverlayWindow
+  if (!overlay || overlay.isDestroyed()) return
+  const width = Math.min(Math.max(size.width, 280), 520)
+  const height = Math.min(Math.max(size.height, 160), 680)
+  overlay.setContentSize(width, height, false)
+  positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
+}
+
+function closeBrowserAnnotationOverlay(): void {
+  browserAnnotationOverlayWindow?.hide()
+}
+
 async function showSystemDragPanel(): Promise<void> {
   const target = await ensureAuxiliaryWindow('system-drag-panel')
   const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -1058,6 +1178,10 @@ async function shutdown(): Promise<void> {
   embeddedBrowser?.stop()
   const plugins = workbenchPlugins
   workbenchPlugins = null
+  browserAnnotations = null
+  browserAnnotationOverlayWindow?.destroy()
+  browserAnnotationOverlayWindow = null
+  browserAnnotationOverlayReadyPromise = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
   const computerUseService = computerUse
@@ -1109,6 +1233,26 @@ async function configureDesktopRuntime(): Promise<void> {
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
   })
+  browserAnnotations = new BrowserAnnotationController({
+    browser: embeddedBrowser,
+    overlay: {
+      close: closeBrowserAnnotationOverlay,
+      open: showBrowserAnnotationOverlay,
+      resize: resizeBrowserAnnotationOverlay,
+    },
+    publish: state => {
+      desktopHostEvents.publish(
+        'browser.annotation-state',
+        state as unknown as Record<string, unknown>
+      )
+    },
+    publishOverlay: state => {
+      desktopHostEvents.publish(
+        'browser.annotation-overlay-state',
+        state as unknown as Record<string, unknown>
+      )
+    },
+  })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
@@ -1159,6 +1303,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          browserAnnotations,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
@@ -1173,7 +1318,9 @@ async function configureDesktopRuntime(): Promise<void> {
                 ? (popoutWindow?.webContents ?? null)
                 : windowLabel === 'system-drag-panel'
                   ? (systemDragWindow?.webContents ?? null)
-                  : (workspaceWindows.get(windowLabel)?.webContents ?? null),
+                  : windowLabel === 'browser-annotation-overlay'
+                    ? (browserAnnotationOverlayWindow?.webContents ?? null)
+                    : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusWindow: windowLabel => {

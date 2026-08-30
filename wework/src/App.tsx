@@ -28,6 +28,7 @@ import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
 import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
+import { BrowserAnnotationOverlayPage } from '@/pages/BrowserAnnotationOverlayPage'
 import { stripAppBasePath } from '@/config/runtime'
 import { AppearanceProvider } from '@/features/appearance'
 import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
@@ -663,7 +664,16 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
 
 export default function App() {
   const path = useCurrentPath()
-  const content = isDesktopRuntime() && path === '/system-drag' ? <SystemDragPanel /> : <MainApp />
+  const content =
+    isDesktopRuntime() && path === '/system-drag' ? (
+      <SystemDragPanel />
+    ) : isDesktopRuntime() && path === '/browser-annotation-overlay' ? (
+      <AppearanceProvider>
+        <BrowserAnnotationOverlayPage />
+      </AppearanceProvider>
+    ) : (
+      <MainApp />
+    )
   return (
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />

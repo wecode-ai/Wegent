@@ -45,6 +45,10 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import type {
+  BrowserAnnotationController,
+  BrowserDesignChange,
+} from './browser-annotation-controller.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -52,6 +56,7 @@ export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
@@ -195,6 +200,52 @@ export function createElectronCapabilityRouter(
       bounds: browserBoundsParam(params),
       visible: booleanParam(params, 'visible') ?? true,
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
+    })
+  )
+  router.register('browser.annotation.start', params => {
+    const annotations = requiredBrowserAnnotations(desktopServices)
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
+    const x = nullableNumberParam(params, 'x')
+    const y = nullableNumberParam(params, 'y')
+    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
+    annotations.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
+  })
+  router.register('browser.annotation.stop', params =>
+    requiredBrowserAnnotations(desktopServices).stop(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.clear', params =>
+    requiredBrowserAnnotations(desktopServices).clear(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.state', params =>
+    requiredBrowserAnnotations(desktopServices).state(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.setOriginalView', params =>
+    requiredBrowserAnnotations(desktopServices).setOriginalView(
+      stringParam(params, 'label'),
+      booleanParam(params, 'enabled') ?? false
+    )
+  )
+  router.register('browser.annotation.overlayState', () =>
+    requiredBrowserAnnotations(desktopServices).overlayState()
+  )
+  router.register('browser.annotation.resizeOverlay', params =>
+    requiredBrowserAnnotations(desktopServices).resizeOverlay({
+      width: requiredIntegerParam(params, 'width'),
+      height: requiredIntegerParam(params, 'height'),
+    })
+  )
+  router.register('browser.annotation.closeDraft', () =>
+    requiredBrowserAnnotations(desktopServices).closeDraft()
+  )
+  router.register('browser.annotation.delete', () =>
+    requiredBrowserAnnotations(desktopServices).deleteDraftComment()
+  )
+  router.register('browser.annotation.save', params =>
+    requiredBrowserAnnotations(desktopServices).saveDraft({
+      comment: stringParam(params, 'comment'),
+      designChanges: browserDesignChanges(params.designChanges),
+      textChange: browserTextChange(params.textChange),
     })
   )
   router.register('browser.setBounds', params =>
@@ -1242,6 +1293,41 @@ function compact<Value extends object>(value: Value): Value {
 function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
   if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
   return value
+}
+
+function requiredBrowserAnnotations(
+  services: ElectronDesktopServices
+): BrowserAnnotationController {
+  if (!services.browserAnnotations) {
+    throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
+  }
+  return services.browserAnnotations
+}
+
+function browserDesignChanges(value: unknown): BrowserDesignChange[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) invalidParam('designChanges')
+  return value.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      invalidParam(`designChanges[${index}]`)
+    }
+    const record = item as Record<string, unknown>
+    return {
+      property: stringParam(record, 'property'),
+      value: stringParam(record, 'value'),
+      previousValue: stringParam(record, 'previousValue'),
+    }
+  })
+}
+
+function browserTextChange(value: unknown): { before: string; after: string } | null {
+  if (value == null) return null
+  if (typeof value !== 'object' || Array.isArray(value)) invalidParam('textChange')
+  const record = value as Record<string, unknown>
+  return {
+    before: stringParam(record, 'before'),
+    after: stringParam(record, 'after'),
+  }
 }
 
 function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {

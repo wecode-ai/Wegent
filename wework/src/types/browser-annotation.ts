@@ -27,6 +27,94 @@ export interface BrowserAnnotationRect {
   height: number
 }
 
+export interface BrowserAnnotationScrollContainer {
+  selector: string
+  left: number
+  top: number
+}
+
+export interface BrowserElementAnchor {
+  kind: 'element'
+  pageUrl: string
+  frameUrl: string
+  framePath: string[]
+  selector: string
+  elementPath: string[]
+  tagName: string
+  role?: string
+  name?: string
+  title?: string
+  immediateText?: string
+  nearbyText?: string
+  rect: BrowserAnnotationRect
+  fixedPosition: boolean
+  scrollContainers: BrowserAnnotationScrollContainer[]
+}
+
+export interface BrowserTextAnchor {
+  kind: 'text'
+  pageUrl: string
+  frameUrl: string
+  framePath: string[]
+  selectedText: string
+  rect: BrowserAnnotationRect
+  selectionRects: BrowserAnnotationRect[]
+}
+
+export interface BrowserRegionAnchor {
+  kind: 'region'
+  pageUrl: string
+  frameUrl: string
+  framePath: string[]
+  rect: BrowserAnnotationRect
+}
+
+export type BrowserAnnotationAnchor = BrowserElementAnchor | BrowserTextAnchor | BrowserRegionAnchor
+
+export interface BrowserDesignChange {
+  property: string
+  value: string
+  previousValue: string
+}
+
+export interface BrowserAnnotationComment {
+  id: string
+  number: number
+  comment: string
+  anchor: BrowserAnnotationAnchor
+  designChanges: BrowserDesignChange[]
+  textChange: { before: string; after: string } | null
+  screenshotDataUrl: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BrowserAnnotationState {
+  label: string
+  mode: 'off' | 'quick' | 'batch'
+  scope: BrowserAnnotationScope | null
+  revision: number
+  runtimeRevision: number
+  comments: BrowserAnnotationComment[]
+  originalView: boolean
+  unresolvedIds: string[]
+}
+
+export interface BrowserAnnotationOverlayState {
+  open: boolean
+  draft: {
+    label: string
+    commentId: string | null
+    anchor: BrowserElementAnchor
+    comment: string
+    designChanges: BrowserDesignChange[]
+    designValues: Partial<Record<BrowserAdjustmentProperty, string>>
+    textChange: { before: string; after: string } | null
+    screenshotDataUrl: string | null
+    screenshotState: 'capturing' | 'ready' | 'failed'
+  } | null
+}
+
 export interface BrowserAnnotationScope {
   browserTabId: string
   pageSessionId: string
@@ -49,6 +137,8 @@ export interface BrowserAnnotationContextData {
   scope: BrowserAnnotationScope
   number: number
   target: BrowserAnnotationTargetSnapshot
+  anchor?: BrowserAnnotationAnchor
+  screenshotDataUrl?: string | null
 }
 
 export interface PageAnnotationDto {
