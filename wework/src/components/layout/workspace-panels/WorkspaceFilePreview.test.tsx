@@ -322,6 +322,8 @@ test('keeps CodeView configuration stable across unrelated parent rerenders', ()
     <WorkspaceFilePreview
       file={file}
       loading={false}
+      targetLineStart={1}
+      targetLineEnd={1}
       onRetry={vi.fn()}
       onAddCodeComment={vi.fn()}
     />
@@ -334,7 +336,14 @@ test('keeps CodeView configuration stable across unrelated parent rerenders', ()
   }
 
   rerender(
-    <WorkspaceFilePreview file={file} loading onRetry={vi.fn()} onAddCodeComment={vi.fn()} />
+    <WorkspaceFilePreview
+      file={file}
+      loading
+      targetLineStart={1}
+      targetLineEnd={1}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
   )
   const nextProps = codeViewMocks.render.mock.lastCall?.[0] as typeof firstProps
 
