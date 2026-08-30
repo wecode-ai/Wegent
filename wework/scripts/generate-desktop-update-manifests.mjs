@@ -60,6 +60,10 @@ const requestedTargets = new Set(
     .filter(Boolean)
 )
 const supportedTargets = new Set(['macos-arm64', 'macos-x64', 'windows-x64'])
+const macosReleasePlatforms = new Map([
+  ['macos-arm64', 'darwin-aarch64'],
+  ['macos-x64', 'darwin-x86_64'],
+])
 if (requestedTargets.size === 0) {
   throw new Error('At least one desktop release target is required.')
 }
@@ -69,11 +73,10 @@ if ([...requestedTargets].some(target => !supportedTargets.has(target))) {
 await mkdir(output, { recursive: true })
 
 const macAssets = []
-if (requestedTargets.has('macos-arm64')) {
-  macAssets.push(await asset(`WeWork_${version}_macos_arm64.zip`))
-}
-if (requestedTargets.has('macos-x64')) {
-  macAssets.push(await asset(`WeWork_${version}_macos_x64.zip`))
+for (const [target, platform] of macosReleasePlatforms) {
+  if (requestedTargets.has(target)) {
+    macAssets.push(await asset(`WeWork_${version}_${platform}.zip`))
+  }
 }
 const windows = requestedTargets.has('windows-x64')
   ? await asset(`WeWork_${version}_windows-x64-setup.exe`)
@@ -101,11 +104,10 @@ for (const targetChannel of electronChannels) {
 }
 
 const tauriPlatforms = {}
-if (requestedTargets.has('macos-arm64')) {
-  tauriPlatforms['darwin-aarch64'] = await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`)
-}
-if (requestedTargets.has('macos-x64')) {
-  tauriPlatforms['darwin-x86_64'] = await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`)
+for (const [target, platform] of macosReleasePlatforms) {
+  if (requestedTargets.has(target)) {
+    tauriPlatforms[platform] = await tauriEntry(`WeWork_${version}_${platform}.app.tar.gz`)
+  }
 }
 if (requestedTargets.has('windows-x64')) {
   tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows-x64-setup.exe`)

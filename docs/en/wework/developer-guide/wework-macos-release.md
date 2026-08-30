@@ -21,11 +21,14 @@ Build release installers with:
 pnpm --dir wework/electron build:release
 ```
 
-Artifacts are written under `wework/electron/release-installer/`:
+The release flow normalizes Electron Builder's intermediate output to one
+platform naming convention. Published assets include:
 
 ```text
-WeWork_<version>_macos_<arch>.dmg
-WeWork_<version>_macos_<arch>.zip
+WeWork_<version>_darwin-aarch64.dmg
+WeWork_<version>_darwin-aarch64.zip
+WeWork_<version>_darwin-x86_64.dmg
+WeWork_<version>_darwin-x86_64.zip
 WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```

@@ -52,12 +52,14 @@ if (platform === 'macos') {
   )
   const blockmap = `${zip}.blockmap`
   await requireFile(blockmap)
-  const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
+  const releaseBaseName = `WeWork_${version}_${releasePlatform}`
+  const releaseZip = join(output, `${releaseBaseName}.zip`)
+  const bridge = join(output, `${releaseBaseName}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await Promise.all([
-    cp(dmg, join(output, `WeWork_${version}_${releasePlatform}.dmg`)),
-    cp(zip, join(output, basename(zip))),
-    cp(blockmap, join(output, basename(blockmap))),
+    cp(dmg, join(output, `${releaseBaseName}.dmg`)),
+    cp(zip, releaseZip),
+    cp(blockmap, `${releaseZip}.blockmap`),
   ])
   await signBridge(bridge)
 } else if (platform === 'windows') {

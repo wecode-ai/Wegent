@@ -572,7 +572,7 @@ def test_component_only_secondary_channel_keeps_a_different_app_version(
 
 
 def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
-    artifact = tmp_path / "WeWork_1.2.3_macos_arm64.dmg"
+    artifact = tmp_path / "WeWork_1.2.3_darwin-aarch64.dmg"
     artifact.write_bytes(b"local")
     client = FakeClient()
     client.objects[f"wework/macos/{artifact.name}"] = b"remote"
@@ -606,8 +606,10 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
     assert "WeWork_${VERSION}_$(release_platform).dmg" in script
-    assert "WeWork_${version}_${releasePlatform}.dmg" in preparer
+    assert "WeWork_${VERSION}_$(release_platform).zip" in script
+    assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer
     assert "cp(dmg, join(output, basename(dmg)))" not in preparer
+    assert "cp(zip, join(output, basename(zip)))" not in preparer
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
     assert "--resume-signed-app" in script

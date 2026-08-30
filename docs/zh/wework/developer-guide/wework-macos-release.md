@@ -20,11 +20,14 @@ Electron 发版构建命令：
 pnpm --dir wework/electron build:release
 ```
 
-产物位于 `wework/electron/release-installer/`，主要包括：
+发布流程会将 Electron Builder 的中间产物整理为统一的平台命名。最终发布资产主要
+包括：
 
 ```text
-WeWork_<version>_macos_<arch>.dmg
-WeWork_<version>_macos_<arch>.zip
+WeWork_<version>_darwin-aarch64.dmg
+WeWork_<version>_darwin-aarch64.zip
+WeWork_<version>_darwin-x86_64.dmg
+WeWork_<version>_darwin-x86_64.zip
 WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```

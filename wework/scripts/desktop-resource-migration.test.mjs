@@ -267,6 +267,8 @@ describe('desktop resource migration', () => {
     )
 
     expect(source).toContain('const blockmap = `${zip}.blockmap`')
+    expect(source).toContain('const releaseBaseName = `WeWork_${version}_${releasePlatform}`')
+    expect(source).toContain('cp(blockmap, `${releaseZip}.blockmap`)')
     expect(source).toContain('const blockmap = `${installer}.blockmap`')
     expect(source).toContain('await requireFile(blockmap)')
     expect(source).not.toContain('if (await isFile(blockmap))')
