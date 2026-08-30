@@ -57,6 +57,37 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('keeps the local draft when parent props change before the debounce flush', async () => {
+    const onChange = vi.fn()
+
+    function Harness() {
+      const [expanded, setExpanded] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setExpanded(current => !current)}>
+            Toggle composer mode
+          </button>
+          <BufferedChatInput
+            value=""
+            onChange={onChange}
+            onSubmit={vi.fn()}
+            disabled={false}
+            showExecutionTools={expanded}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    expect(onChange).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Toggle composer mode' }))
+
+    expect(input).toHaveValue('draft')
+  })
+
   test('restores submitted text when it is externally returned for editing', async () => {
     const onSubmit = vi.fn()
     const props = {

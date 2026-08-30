@@ -40,9 +40,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     sourceValue: value,
     draft: value,
   }))
+  const draftRef = useRef(draftState.draft)
   const draft =
-    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftState.draft : value
-  const draftRef = useRef(draft)
+    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftRef.current : value
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
