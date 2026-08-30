@@ -15,6 +15,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
+import { constants as zlibConstants } from 'node:zlib'
 import { spawn } from 'node:child_process'
 import { create, extract } from 'tar'
 
@@ -38,8 +39,8 @@ const targetDirectory = path.join(root, 'resources', 'bundled-harness-runtime')
 const catalogPath = path.join(targetDirectory, 'runtimes.json')
 const placeholder = path.join(targetDirectory, '.resource-placeholder')
 const {
-  cacheRoot: cacheDirectory,
   assetDirectory,
+  cacheRoot: cacheDirectory,
   materializedRoot,
   prepareLockPath,
 } = resolveHarnessRuntimeCachePaths(root)
@@ -427,8 +428,9 @@ async function buildRuntime(runtime) {
       {
         cwd: staging,
         file: temporaryArchive,
-        gzip: true,
+        gzip: { level: zlibConstants.Z_BEST_SPEED },
         portable: true,
+        strict: true,
       },
       ['.']
     )

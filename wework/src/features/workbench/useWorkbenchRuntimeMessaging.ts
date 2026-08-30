@@ -227,6 +227,8 @@ interface RuntimeMessagingModelSelection {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
+  isSelectionReady?: boolean
+  isConfiguredModelUnavailable?: boolean
   getSelectedModel?: () => UnifiedModel | null
   getSelectedModelOptions?: () => ModelOptions
   setSelectionForScope?: (
@@ -420,8 +422,36 @@ export function useWorkbenchRuntimeMessaging({
     [services.attachmentApi, state.devices]
   )
 
+  const blockRuntimeSendForUnavailableModel = useCallback(
+    (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
+      const isCurrentTask =
+        state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+      if (
+        !isCurrentTask ||
+        (modelSelection.isSelectionReady !== false &&
+          modelSelection.isConfiguredModelUnavailable !== true)
+      ) {
+        return false
+      }
+      reportSendBlocked(
+        i18n.t('workbench.harness_model_required', '请选择可用的 Wework 模型'),
+        undefined,
+        options
+      )
+      return true
+    },
+    [
+      modelSelection.isConfiguredModelUnavailable,
+      modelSelection.isSelectionReady,
+      reportSendBlocked,
+      state.currentRuntimeTask,
+    ]
+  )
+
   const sendRuntimePaneMessage = useCallback(
     async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
+      if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
+
       let sendRequested = false
       const optimisticUserMessage = options?.optimisticUserMessage
       const outboundRequestWithClientId = optimisticUserMessage
@@ -497,11 +527,20 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
     },
-    [executorClient, lifecycleStore, prepareRuntimeSendRequest, refreshWorkLists, reportError]
+    [
+      blockRuntimeSendForUnavailableModel,
+      executorClient,
+      lifecycleStore,
+      prepareRuntimeSendRequest,
+      refreshWorkLists,
+      reportError,
+    ]
   )
 
   const interruptAndSendRuntimePaneMessage = useCallback(
     async (request: RuntimeSendRequest, options?: RuntimePaneActionOptions): Promise<boolean> => {
+      if (blockRuntimeSendForUnavailableModel(request.address, options)) return false
+
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
@@ -532,11 +571,20 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
     },
-    [executorClient, lifecycleStore, prepareRuntimeSendRequest, refreshWorkLists, reportError]
+    [
+      blockRuntimeSendForUnavailableModel,
+      executorClient,
+      lifecycleStore,
+      prepareRuntimeSendRequest,
+      refreshWorkLists,
+      reportError,
+    ]
   )
 
   const editLastUserMessage = useCallback(
     async (request: RuntimeRollbackRequest): Promise<boolean> => {
+      if (blockRuntimeSendForUnavailableModel(request.address)) return false
+
       let sendRequested = false
       try {
         const outboundRequest = await prepareRuntimeSendRequest(request)
@@ -577,7 +625,14 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
     },
-    [dispatch, executorClient, lifecycleStore, prepareRuntimeSendRequest, refreshWorkLists]
+    [
+      blockRuntimeSendForUnavailableModel,
+      dispatch,
+      executorClient,
+      lifecycleStore,
+      prepareRuntimeSendRequest,
+      refreshWorkLists,
+    ]
   )
 
   const sendRuntimePaneGuidance = useCallback(

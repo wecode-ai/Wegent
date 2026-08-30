@@ -4,6 +4,7 @@ import { browserAnnotationInjectionScript } from './browser-annotation/injection
 interface RuntimeApi {
   scope: { browserTabId: string; pageSessionId: string; url: string }
   getSnapshot: () => { revision: number; annotations: Array<{ comment: string; number: number }> }
+  openAt: (x: number, y: number) => boolean
   setOriginalViewEnabled: (enabled: boolean) => {
     revision: number
     annotations: Array<{ comment: string; number: number }>
@@ -76,6 +77,15 @@ describe('browser annotation injection', () => {
 
   test('publishes a non-destructive revision snapshot', () => {
     const input = openEditor(document.querySelector('#first-target')!)
+    const draftMarker = document.querySelector<HTMLElement>(
+      '[data-wework-annotation="draft-marker"]'
+    )
+
+    expect(draftMarker).not.toBeNull()
+    expect(draftMarker?.textContent).toBe('')
+    expect(draftMarker?.querySelector('svg')).not.toBeNull()
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot().annotations).toEqual([])
+
     input!.value = 'First comment'
     input!.dispatchEvent(new Event('input', { bubbles: true }))
     click(saveButton()!)
@@ -87,6 +97,30 @@ describe('browser annotation injection', () => {
       revision: 1,
       annotations: [{ comment: 'First comment', number: 1 }],
     })
+    expect(document.querySelector('[data-wework-annotation="draft-marker"]')).toBeNull()
+    expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(1)
+    expect(document.querySelector('[data-wework-annotation="marker"]')?.textContent).toBe('1')
+  })
+
+  test('opens the annotation editor at a context-menu point', () => {
+    elementsFromPointTarget = document.querySelector('#second-target')
+
+    expect(annotationWindow.__WEWORK_BROWSER_ANNOTATION__?.openAt(180, 90)).toBe(true)
+    expect(document.querySelector('[data-wework-annotation="draft-marker"]')).not.toBeNull()
+    expect(
+      document.querySelector<HTMLInputElement>('[data-wework-annotation="comment-input"]')
+    ).toBe(document.activeElement)
+  })
+
+  test('previews the next annotation number after the first published comment', () => {
+    const firstInput = openEditor(document.querySelector('#first-target')!)
+    firstInput!.value = 'First comment'
+    firstInput!.dispatchEvent(new Event('input', { bubbles: true }))
+    click(saveButton()!)
+
+    openEditor(document.querySelector('#second-target')!)
+
+    expect(document.querySelector('[data-wework-annotation="draft-marker"]')?.textContent).toBe('2')
     expect(document.querySelectorAll('[data-wework-annotation="marker"]')).toHaveLength(1)
   })
 
@@ -246,6 +280,7 @@ describe('browser annotation injection', () => {
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
     )
     expect(document.querySelector('[data-wework-annotation="editor"]')).toBeNull()
+    expect(document.querySelector('[data-wework-annotation="draft-marker"]')).toBeNull()
   })
 
   test('intercepts link clicks instead of navigating away', () => {

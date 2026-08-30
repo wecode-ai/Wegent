@@ -6,18 +6,21 @@ source_digest="${SOURCE_DIGEST:?SOURCE_DIGEST is required}"
 repository_owner="${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER is required}"
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
 
-manifest_json="$(docker manifest inspect --verbose "$base_image")"
+manifest_json="$(
+  docker buildx imagetools inspect "$base_image" --format '{{json .Manifest}}'
+)"
 base_digest="$(
   jq -r '
-    if type == "array" then
-      map(
+    if .manifests then
+      [
+        .manifests[] |
         select(
-          .Descriptor.platform.os == "linux" and
-          .Descriptor.platform.architecture == "amd64"
+          .platform.os == "linux" and
+          .platform.architecture == "amd64"
         )
-      )[0].Descriptor.digest
+      ][0].digest
     else
-      .Descriptor.digest
+      .digest
     end
   ' <<< "$manifest_json"
 )"

@@ -50,6 +50,8 @@ import {
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
+import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
+import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
@@ -390,7 +392,7 @@ export function WorkspaceTabSurface({
       ) : null}
       {auxiliaryRoute ? (
         <div data-testid="desktop-auxiliary-surface" className="h-full">
-          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
+          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
       ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
@@ -431,7 +433,6 @@ export function WorkspaceTabSurface({
                 isElectronRuntime() &&
                 getDesktopWindowLabel() === 'main'
               }
-              syncProjectTaskTracking={tab.fixed && tab.kind === 'task'}
               syncRemoteProjects={active}
               syncRuntimeTaskLifecycle={active}
             >
@@ -616,7 +617,6 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
           services={services}
           user={user}
           onStartupReadyChange={onWorkbenchStartupReadyChange}
-          syncProjectTaskTracking={false}
         >
           {isElectronRuntime() && <SystemDragBridge />}
           <PopoutWorkbenchPage />
@@ -796,7 +796,10 @@ function AppShell() {
       : fixedWorkspaceTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
-  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const [workbenchStartupRevealAppKey, setWorkbenchStartupRevealAppKey] = useState<string | null>(
+    null
+  )
+  const workbenchStartupRevealTimedOut = workbenchStartupRevealAppKey === activeAppKey
   const updateImNotificationPresence = useMemo(() => {
     if (!cloudApiBaseUrl || !cloudToken) return undefined
     return createRuntimeWorkApi(
@@ -961,7 +964,7 @@ function AppShell() {
       console.warn(
         `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
       )
-      setWorkbenchStartupRevealTimedOut(true)
+      setWorkbenchStartupRevealAppKey(activeAppKey)
     }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
 
     return () => window.clearTimeout(timer)
@@ -1030,6 +1033,12 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />
+        ) : null}
+        {isMainWindow && isElectron ? (
+          <>
+            <IdleTaskCoordinator active={workbenchStartupReady || workbenchStartupRevealTimedOut} />
+            <WeworkIdleTasks />
+          </>
         ) : null}
         {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />

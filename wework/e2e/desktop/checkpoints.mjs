@@ -35,6 +35,7 @@ export const DESKTOP_CHECKPOINTS = [
   'codex-notification-isolation',
   'split-workbench',
   'release-package-startup',
+  'app-update-differential',
   'component-update',
   'native-window-startup',
   'native-window-chrome',

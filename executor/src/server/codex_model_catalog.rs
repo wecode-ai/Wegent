@@ -4,18 +4,19 @@
 
 //! Process-wide Codex model metadata extensions used by Wework custom models.
 //!
-//! Codex merges remote `/models` entries into its bundled catalog by slug. These
-//! entries therefore add custom-model tool profiles without replacing or
-//! modifying any official model metadata.
+//! Codex merges remote `/models` entries into its bundled catalog by slug.
+//! Wework adds custom-model profiles and applies device-local user overrides
+//! before Codex consumes the effective catalog.
 
 use axum::{
     extract::Query,
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeMap,
     env, fs,
     io::ErrorKind,
     path::{Path, PathBuf},
@@ -73,6 +74,12 @@ struct CatalogCacheEntry {
     refreshed_at: Instant,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct CatalogOverride {
+    slug: String,
+    fields: BTreeMap<String, Value>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ModelsQuery {
     #[serde(rename = "client_version")]
@@ -107,15 +114,16 @@ pub(crate) async fn handle(Query(query): Query<ModelsQuery>) -> Response {
 }
 
 pub(crate) fn catalog() -> Value {
-    json!({
+    let mut catalog = json!({
         "models": models()
-    })
+    });
+    apply_catalog_overrides(&mut catalog, &read_catalog_overrides());
+    append_catalog_vision_sidecars(&mut catalog);
+    catalog
 }
 
 pub(crate) fn models() -> Vec<Value> {
-    let mut models = base_models();
-    append_vision_sidecar_models(&mut models);
-    models
+    base_models()
 }
 
 fn base_models() -> Vec<Value> {
@@ -149,6 +157,95 @@ pub(crate) fn custom_model_slugs() -> Vec<String> {
         .into_iter()
         .filter_map(|entry| entry.get("slug").and_then(Value::as_str).map(str::to_owned))
         .collect()
+}
+
+pub(crate) async fn read_model_overrides(slugs: &[String]) -> Result<Value, String> {
+    let baseline_catalog = load_baseline_catalog(None).await?;
+    let baseline_models = baseline_catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "model catalog must contain a models array".to_owned())?;
+    let overrides = read_catalog_overrides_from(&catalog_overrides_path())?;
+    let requested = slugs
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let models = baseline_models
+        .iter()
+        .filter_map(|baseline| {
+            let slug = baseline.get("slug")?.as_str()?;
+            if !requested.is_empty() && !requested.contains(slug) {
+                return None;
+            }
+            let catalog_override = overrides.iter().find(|entry| entry.slug == slug);
+            let mut effective = baseline.clone();
+            if let Some(catalog_override) = catalog_override {
+                apply_override_fields(&mut effective, &catalog_override.fields);
+            }
+            Some(json!({
+                "slug": slug,
+                "baseline": baseline,
+                "effective": effective,
+                "overridden": catalog_override.is_some(),
+            }))
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({ "models": models }))
+}
+
+pub(crate) async fn write_model_override(slug: &str, entry: &Value) -> Result<bool, String> {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return Err("model catalog override requires a slug".to_owned());
+    }
+    let baseline_catalog = load_baseline_catalog(None).await?;
+    let baseline = baseline_catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|model| model.get("slug").and_then(Value::as_str) == Some(slug))
+        })
+        .cloned()
+        .ok_or_else(|| format!("model catalog entry `{slug}` is not available"))?;
+    let normalized = normalize_compatibility_fields(entry.clone());
+    let fields = catalog_override_fields(&baseline, &normalized, slug)?;
+    let mut effective = baseline;
+    apply_override_fields(&mut effective, &fields);
+    validate_catalog_model(&effective)?;
+
+    let path = catalog_overrides_path();
+    let mut overrides = read_catalog_overrides_from(&path)?;
+    overrides.retain(|catalog_override| catalog_override.slug != slug);
+    if !fields.is_empty() {
+        overrides.push(CatalogOverride {
+            slug: slug.to_owned(),
+            fields,
+        });
+    }
+    overrides.sort_by(|left, right| left.slug.cmp(&right.slug));
+    let overridden = overrides
+        .iter()
+        .any(|catalog_override| catalog_override.slug == slug);
+    write_catalog_overrides_to(&path, &overrides)?;
+    Ok(overridden)
+}
+
+pub(crate) fn delete_model_override(slug: &str) -> Result<bool, String> {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        return Err("model catalog override requires a slug".to_owned());
+    }
+    let path = catalog_overrides_path();
+    let mut overrides = read_catalog_overrides_from(&path)?;
+    let previous_len = overrides.len();
+    overrides.retain(|catalog_override| catalog_override.slug != slug);
+    if overrides.len() == previous_len {
+        return Ok(false);
+    }
+    write_catalog_overrides_to(&path, &overrides)?;
+    Ok(true)
 }
 
 pub(crate) fn invalidate_models_cache() -> Result<(), String> {
@@ -194,12 +291,39 @@ fn validate_custom_model(entry: &Value) -> Result<(), String> {
     if !slug.starts_with("wework-custom-") {
         return Err("custom model catalog slug must start with wework-custom-".to_owned());
     }
-    let model = serde_json::from_value::<CodexCatalogModel>(entry.clone())
-        .map_err(|error| format!("invalid custom model catalog entry: {error}"))?;
+    let model = validate_catalog_model(entry)?;
     if model.slug != slug {
         return Err("custom model catalog slug is inconsistent".to_owned());
     }
     Ok(())
+}
+
+fn validate_catalog_model(entry: &Value) -> Result<CodexCatalogModel, String> {
+    serde_json::from_value::<CodexCatalogModel>(entry.clone())
+        .map_err(|error| format!("invalid model catalog entry: {error}"))
+}
+
+fn catalog_override_fields(
+    baseline: &Value,
+    entry: &Value,
+    slug: &str,
+) -> Result<BTreeMap<String, Value>, String> {
+    let object = entry
+        .as_object()
+        .ok_or_else(|| "model catalog override entry must be an object".to_owned())?;
+    if object.get("slug").and_then(Value::as_str) != Some(slug) {
+        return Err("model catalog override cannot change the slug".to_owned());
+    }
+    let baseline_object = baseline
+        .as_object()
+        .ok_or_else(|| "base model catalog entry must be an object".to_owned())?;
+    Ok(object
+        .iter()
+        .filter(|(key, value)| {
+            key.as_str() != "slug" && baseline_object.get(key.as_str()) != Some(*value)
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect())
 }
 
 fn custom_models_path() -> PathBuf {
@@ -208,6 +332,14 @@ fn custom_models_path() -> PathBuf {
         .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
         .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
         .join("capabilities/model-catalog.json")
+}
+
+fn catalog_overrides_path() -> PathBuf {
+    env::var_os("WEGENT_EXECUTOR_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".wegent-executor")))
+        .unwrap_or_else(|| PathBuf::from(".wegent-executor"))
+        .join("capabilities/model-catalog-overrides.json")
 }
 
 fn read_custom_models() -> Vec<Value> {
@@ -249,6 +381,46 @@ fn write_custom_models_to(path: &Path, entries: &[Value]) -> Result<(), String> 
         path.file_name().unwrap_or_default().to_string_lossy()
     ));
     let bytes = serde_json::to_vec_pretty(entries).map_err(|error| error.to_string())?;
+    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, path).map_err(|error| error.to_string())
+}
+
+fn read_catalog_overrides() -> Vec<CatalogOverride> {
+    match read_catalog_overrides_from(&catalog_overrides_path()) {
+        Ok(overrides) => overrides,
+        Err(error) => {
+            log_executor_event("codex model catalog overrides ignored", &[("error", error)]);
+            Vec::new()
+        }
+    }
+}
+
+fn read_catalog_overrides_from(path: &Path) -> Result<Vec<CatalogOverride>, String> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let overrides = serde_json::from_slice::<Vec<CatalogOverride>>(&bytes)
+        .map_err(|error| error.to_string())?;
+    for catalog_override in &overrides {
+        if catalog_override.slug.trim().is_empty() || catalog_override.fields.contains_key("slug") {
+            return Err("invalid model catalog override".to_owned());
+        }
+    }
+    Ok(overrides)
+}
+
+fn write_catalog_overrides_to(path: &Path, overrides: &[CatalogOverride]) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "model catalog overrides path has no parent".to_owned())?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temporary = parent.join(format!(
+        ".{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    let bytes = serde_json::to_vec_pretty(overrides).map_err(|error| error.to_string())?;
     fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
     fs::rename(&temporary, path).map_err(|error| error.to_string())
 }
@@ -459,9 +631,23 @@ fn configured_catalog_upstream() -> Option<(String, String)> {
     Some((base_url, api_key))
 }
 
+async fn load_baseline_catalog(client_version: Option<&str>) -> Result<Value, String> {
+    let mut catalog = upstream_catalog(client_version)
+        .await?
+        .unwrap_or_else(|| json!({ "models": base_models() }));
+    merge_base_models(&mut catalog);
+    Ok(catalog)
+}
+
 fn merge_capability_models(catalog: &mut Value) {
+    merge_base_models(catalog);
+    apply_catalog_overrides(catalog, &read_catalog_overrides());
+    append_catalog_vision_sidecars(catalog);
+}
+
+fn merge_base_models(catalog: &mut Value) {
     let Some(upstream_models) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
-        *catalog = json!({ "models": models() });
+        *catalog = json!({ "models": base_models() });
         return;
     };
     for capability_model in base_models() {
@@ -473,7 +659,35 @@ fn merge_capability_models(catalog: &mut Value) {
             upstream_models.push(capability_model);
         }
     }
-    append_vision_sidecar_models(upstream_models);
+}
+
+fn apply_catalog_overrides(catalog: &mut Value, overrides: &[CatalogOverride]) {
+    let Some(models) = catalog.get_mut("models").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for model in models {
+        let Some(slug) = model.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(catalog_override) = overrides.iter().find(|entry| entry.slug == slug) {
+            apply_override_fields(model, &catalog_override.fields);
+        }
+    }
+}
+
+fn apply_override_fields(model: &mut Value, fields: &BTreeMap<String, Value>) {
+    let Some(object) = model.as_object_mut() else {
+        return;
+    };
+    for (key, value) in fields {
+        object.insert(key.clone(), value.clone());
+    }
+}
+
+fn append_catalog_vision_sidecars(catalog: &mut Value) {
+    if let Some(models) = catalog.get_mut("models").and_then(Value::as_array_mut) {
+        append_vision_sidecar_models(models);
+    }
 }
 
 fn append_vision_sidecar_models(models: &mut Vec<Value>) {
@@ -863,6 +1077,81 @@ mod tests {
         )
         .expect("custom model catalog should contain JSON");
         assert_eq!(stored, vec![entry]);
+    }
+
+    #[test]
+    fn stores_only_changed_catalog_fields_and_preserves_null_values() {
+        let baseline = json!({
+            "slug": "gpt-test",
+            "display_name": "GPT Test",
+            "context_window": 272_000,
+            "auto_compact_token_limit": 200_000,
+            "future_capability": {"enabled": true}
+        });
+        let entry = json!({
+            "slug": "gpt-test",
+            "display_name": "GPT Test",
+            "context_window": 300_000,
+            "auto_compact_token_limit": null,
+            "future_capability": {"enabled": true}
+        });
+
+        let fields = catalog_override_fields(&baseline, &entry, "gpt-test").expect("catalog diff");
+
+        assert_eq!(
+            fields,
+            BTreeMap::from([
+                ("auto_compact_token_limit".to_owned(), Value::Null),
+                ("context_window".to_owned(), json!(300_000)),
+            ])
+        );
+    }
+
+    #[test]
+    fn applies_catalog_overrides_before_deriving_vision_sidecars() {
+        let mut catalog = json!({
+            "models": [{
+                "slug": "gpt-test",
+                "display_name": "GPT Test",
+                "context_window": 272_000,
+                "input_modalities": ["text"]
+            }]
+        });
+        let overrides = vec![CatalogOverride {
+            slug: "gpt-test".to_owned(),
+            fields: BTreeMap::from([("context_window".to_owned(), json!(300_000))]),
+        }];
+
+        apply_catalog_overrides(&mut catalog, &overrides);
+        append_catalog_vision_sidecars(&mut catalog);
+
+        let models = catalog["models"].as_array().expect("models array");
+        assert_eq!(models[0]["context_window"], 300_000);
+        let sidecar = models
+            .iter()
+            .find(|model| model["slug"] == "gpt-test-vision-sidecar")
+            .expect("vision sidecar");
+        assert_eq!(sidecar["context_window"], 300_000);
+    }
+
+    #[test]
+    fn persists_catalog_overrides_atomically() {
+        let root = tempfile::tempdir().expect("temporary catalog directory");
+        let path = root
+            .path()
+            .join("capabilities/model-catalog-overrides.json");
+        let overrides = vec![CatalogOverride {
+            slug: "gpt-test".to_owned(),
+            fields: BTreeMap::from([("context_window".to_owned(), json!(300_000))]),
+        }];
+
+        write_catalog_overrides_to(&path, &overrides).expect("catalog overrides should be written");
+
+        assert_eq!(
+            read_catalog_overrides_from(&path).expect("catalog overrides should be readable")[0]
+                .fields,
+            overrides[0].fields
+        );
     }
 
     #[test]

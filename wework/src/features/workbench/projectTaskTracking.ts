@@ -1,8 +1,4 @@
-import type { CloudLoopItem, TaskExecutionStatus } from '@/api/deliveries'
-import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
 import type { RuntimeTaskAddress } from '@/types/api'
-import type { RuntimeTaskLifecycleSnapshot } from './runtimeTaskLifecycle'
-import { runtimeTaskTrackingExecutionStatus } from './runtimeTaskLifecycle/projection'
 import type { WorkbenchServices } from './workbenchServices'
 
 const projectStoreByRuntimeTask = new Map<string, 'backend' | 'local'>()
@@ -19,12 +15,6 @@ export function rememberProjectTaskStore(
   if (projectStoreByRuntimeTask.get(key) === projectStore) return false
   projectStoreByRuntimeTask.set(key, projectStore)
   return true
-}
-
-export function runtimeTaskTrackingStatus(
-  lifecycle: RuntimeTaskLifecycleSnapshot
-): TaskExecutionStatus | null {
-  return runtimeTaskTrackingExecutionStatus(lifecycle)
 }
 
 export function projectTaskTrackingApi(services: WorkbenchServices, address: RuntimeTaskAddress) {
@@ -50,16 +40,4 @@ export function projectTaskTrackingApi(services: WorkbenchServices, address: Run
           ? 'cloud'
           : 'local'
   return apis[location] ?? null
-}
-
-export async function reconcileProjectTaskTrackingStatus(
-  services: WorkbenchServices,
-  address: RuntimeTaskAddress,
-  executionStatus: TaskExecutionStatus
-): Promise<CloudLoopItem | null> {
-  const api = projectTaskTrackingApi(services, address)
-  if (!api) return null
-  const item = await api.updateTaskTrackingStatus(address, executionStatus)
-  if (item) publishProjectSpaceTaskContextChanged(address)
-  return item
 }

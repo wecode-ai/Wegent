@@ -4,6 +4,7 @@ import {
   clipboard,
   dialog,
   Notification,
+  powerMonitor,
   shell,
   type WebContents,
   type FileFilter,
@@ -12,6 +13,7 @@ import {
   type SaveDialogOptions,
 } from 'electron'
 import { stat } from 'node:fs/promises'
+import { cpus, freemem, totalmem } from 'node:os'
 import { join } from 'node:path'
 import {
   HOST_CAPABILITIES,
@@ -38,7 +40,7 @@ import {
 } from './feedback-bundle-manager.js'
 import { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import { captureWebContentsDataUrl } from './web-contents-capture.js'
-import type { TrayActivation, TrayAction, TrayMenuState, TraySnapshot } from './tray-manager.js'
+import type { TrayActivation, TrayMenuState, TraySnapshot } from './tray-manager.js'
 import type { StartupSplashSnapshot } from './startup-splash.js'
 import type { VncSessionManager } from './vnc-session-manager.js'
 import type { AppUpdateService, WeworkUpdateChannel } from './app-update-service.js'
@@ -47,6 +49,7 @@ import {
   openLocalWorkspace,
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
+import type { DesktopHostEventBroker } from './desktop-host-events.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -54,10 +57,13 @@ export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   plugins: WorkbenchPluginManager
   vnc?: VncSessionManager
+  cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
+  updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
 export interface CoreDshPluginService {
@@ -72,10 +78,6 @@ export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
   captureWorkbench: (tabId: string) => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
-  closeRequestState: (after: number) => {
-    requested: boolean
-    revision: number
-  }
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
   completeSystemDragDrop: (payload: {
@@ -99,7 +101,6 @@ export interface ElectronE2EHost {
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
   traySnapshot: () => TraySnapshot | null
-  takePendingTrayActions: () => TrayAction[]
   scheduleCoreDshRestart: () => void
   openWorkspace: (input: { label: string; route: string; title: string }) => Promise<void>
   popoutWindowSnapshot: () => {
@@ -111,7 +112,7 @@ export interface ElectronE2EHost {
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
-  showSystemDragPanel: () => Promise<void>
+  showSystemDragPanel: () => void | Promise<void>
   systemDragPanelVisible: () => boolean
   takePendingSystemDrops: () => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
@@ -138,7 +139,6 @@ export function createElectronCapabilityRouter(
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
     captureWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     captureTarget: () => null,
-    closeRequestState: after => ({ requested: false, revision: after }),
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
@@ -158,7 +158,6 @@ export function createElectronCapabilityRouter(
     trayActivate: () => false,
     traySetState: () => undefined,
     traySnapshot: () => null,
-    takePendingTrayActions: () => [],
     scheduleCoreDshRestart: () => undefined,
     openWorkspace: () => Promise.reject(new Error('Workspace windows are unavailable')),
     popoutWindowSnapshot: () => ({ exists: false, focused: false, visible: false }),
@@ -177,6 +176,9 @@ export function createElectronCapabilityRouter(
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
+  router.register('desktop.events', params =>
+    desktopServices.events.read(integerParam(params, 'after') ?? 0)
+  )
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
@@ -271,9 +273,6 @@ export function createElectronCapabilityRouter(
     const label = stringParam(params, 'label')
     return isWorkbenchTabLabel(label) ? e2eHost.captureWorkbench(label) : browser.capture(label)
   })
-  router.register('browser.events', params =>
-    browser.readEvents(integerParam(params, 'after') ?? 0)
-  )
   router.register('browser.pauseDownload', params =>
     browser.pauseDownload(stringParam(params, 'id'))
   )
@@ -415,13 +414,9 @@ export function createElectronCapabilityRouter(
       dockVisible: e2eHost.dockVisible(),
     }
   })
-  router.register('window.closeRequestState', params =>
-    e2eHost.closeRequestState(integerParam(params, 'after') ?? 0)
-  )
   router.register('window.closeToTray', () => e2eHost.closeToTray())
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
   router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
-  router.register('tray.takePendingActions', () => e2eHost.takePendingTrayActions())
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
   router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
@@ -488,7 +483,10 @@ export function createElectronCapabilityRouter(
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       invalidParam('patch')
     }
-    const updated = await preferences.update(patch as Record<string, unknown>)
+    const preferencePatch = patch as Record<string, unknown>
+    const updated = desktopServices.updatePreferences
+      ? await desktopServices.updatePreferences(preferencePatch)
+      : await preferences.update(preferencePatch)
     if (typeof updated.preventSleepWhileTasksRunning === 'boolean') {
       e2eHost.setSystemSleepEnabled(updated.preventSleepWhileTasksRunning)
     }
@@ -716,6 +714,10 @@ export function registerDesktopServiceCapabilities(
 ): void {
   router.register('developer.openLogDirectory', () => developer.openLogDirectory())
   router.register('developer.openDevTools', () => developer.openDevTools())
+  router.register('maintenance.cleanupTemporaryImages', () =>
+    services.cleanupStaleTemporaryImages()
+  )
+  router.register('maintenance.getSystemPressure', () => systemPressureSnapshot())
   router.register('feedback.previewBundle', params =>
     services.feedback.preview(feedbackRequestParam(params))
   )
@@ -760,6 +762,50 @@ export function registerDesktopServiceCapabilities(
 function requiredVnc(vnc: VncSessionManager | undefined): VncSessionManager {
   if (!vnc) throw new HostCapabilityError('unavailable', 'VNC session service is unavailable')
   return vnc
+}
+
+interface CpuTimeSample {
+  idle: number
+  total: number
+}
+
+function cpuTimeSample(): CpuTimeSample {
+  return cpus().reduce<CpuTimeSample>(
+    (sample, cpu) => ({
+      idle: sample.idle + cpu.times.idle,
+      total:
+        sample.total +
+        cpu.times.user +
+        cpu.times.nice +
+        cpu.times.sys +
+        cpu.times.idle +
+        cpu.times.irq,
+    }),
+    { idle: 0, total: 0 }
+  )
+}
+
+export function cpuLoadRatioBetween(before: CpuTimeSample, after: CpuTimeSample): number {
+  const totalDelta = after.total - before.total
+  if (totalDelta <= 0) return 0
+  const idleDelta = Math.max(0, after.idle - before.idle)
+  return Math.min(1, Math.max(0, 1 - idleDelta / totalDelta))
+}
+
+export async function systemPressureSnapshot(): Promise<{
+  cpuLoadRatio: number
+  freeMemoryRatio: number
+  userIdleSeconds: number
+}> {
+  const cpuBefore = cpuTimeSample()
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const cpuAfter = cpuTimeSample()
+  const totalMemory = totalmem()
+  return {
+    cpuLoadRatio: cpuLoadRatioBetween(cpuBefore, cpuAfter),
+    freeMemoryRatio: totalMemory > 0 ? freemem() / totalMemory : 0,
+    userIdleSeconds: powerMonitor.getSystemIdleTime(),
+  }
 }
 
 export function registerCoreDshPluginCapabilities(

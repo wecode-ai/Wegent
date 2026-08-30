@@ -1,10 +1,16 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 
 interface MockMessageListProps {
   virtualAnchorToEnd?: boolean
 }
+
+let resizeObserverCallback: ResizeObserverCallback | null = null
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isDesktopRuntime: () => true,
+}))
 
 vi.mock('./MessageList', () => ({
   MessageList: ({ virtualAnchorToEnd }: MockMessageListProps) => (
@@ -20,6 +26,10 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
     vi.stubGlobal(
       'ResizeObserver',
       class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallback = callback
+        }
+
         observe() {}
         disconnect() {}
       }
@@ -27,6 +37,7 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
   })
 
   afterEach(() => {
+    resizeObserverCallback = null
     vi.unstubAllGlobals()
   })
 
@@ -68,5 +79,87 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       'data-virtual-anchor-to',
       'start'
     )
+  })
+
+  test('switches bottom-pinned conversations without synchronously measuring layout', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(() => 1)
+    const message = (id: string) => ({
+      id,
+      role: 'assistant' as const,
+      content: `Conversation ${id}`,
+      status: 'done' as const,
+      createdAt: '2026-08-29T00:00:00.000Z',
+    })
+    const { rerender } = render(
+      <ScrollableMessageArea conversationKey="long-a" messages={[message('a')]} />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const scrollHeightGetter = vi.fn(() => 10_000)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: scrollHeightGetter,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 9_000,
+      writable: true,
+      configurable: true,
+    })
+
+    rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+    rerender(
+      <ScrollableMessageArea
+        conversationKey="long-b"
+        messages={[message('b'), message('b-follow-up')]}
+      />
+    )
+    const callback = resizeObserverCallback
+    expect(callback).not.toBeNull()
+    act(() => {
+      callback!([], {} as ResizeObserver)
+    })
+
+    expect(scrollHeightGetter).not.toHaveBeenCalled()
+    requestAnimationFrameSpy.mockRestore()
+  })
+
+  test('releases virtual ownership for a keyless conversation after the first layout', () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(() => 1)
+    render(
+      <ScrollableMessageArea
+        conversationKey={null}
+        messages={[
+          {
+            id: 'keyless-message',
+            role: 'assistant',
+            content: 'Keyless conversation',
+            status: 'done',
+            createdAt: '2026-08-29T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const scrollHeightGetter = vi.fn(() => 10_000)
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: scrollHeightGetter,
+      configurable: true,
+    })
+    const callback = resizeObserverCallback
+    expect(callback).not.toBeNull()
+
+    act(() => {
+      callback!([], {} as ResizeObserver)
+    })
+    expect(scrollHeightGetter).not.toHaveBeenCalled()
+
+    act(() => {
+      callback!([], {} as ResizeObserver)
+    })
+    expect(scrollHeightGetter).toHaveBeenCalled()
+    requestAnimationFrameSpy.mockRestore()
   })
 })

@@ -1,5 +1,5 @@
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
-import { delimiter, dirname, join } from 'node:path'
+import { delimiter, dirname, join, win32 } from 'node:path'
 
 export interface ElectronNodeRuntimeOptions {
   dataDirectory: string
@@ -33,11 +33,11 @@ export async function prepareElectronNodeRuntime(
 ): Promise<ElectronNodeRuntime> {
   const configuredNodePath = options.environment.WEWORK_NODE_PATH?.trim()
   if (configuredNodePath) {
+    const runtimeBin = runtimeDirectory(configuredNodePath, options.platform)
     const environment: NodeJS.ProcessEnv = {
-      ...options.environment,
-      PATH: prependPath(dirname(configuredNodePath), options.environment.PATH),
+      ...withPrependedPath(options.environment, runtimeBin, options.platform),
       WEWORK_NODE_PATH: configuredNodePath,
-      WEWORK_RUNTIME_BIN: dirname(configuredNodePath),
+      WEWORK_RUNTIME_BIN: runtimeBin,
     }
     delete environment.ELECTRON_RUN_AS_NODE
     delete environment.WEWORK_NODE_RUNTIME_KIND
@@ -54,9 +54,8 @@ export async function prepareElectronNodeRuntime(
 
   return {
     environment: {
-      ...options.environment,
+      ...withPrependedPath(options.environment, runtimeBin, options.platform),
       ELECTRON_RUN_AS_NODE: '1',
-      PATH: prependPath(runtimeBin, options.environment.PATH),
       WEWORK_NODE_PATH: nodePath,
       WEWORK_NODE_RUNTIME_KIND: 'electron',
       WEWORK_RUNTIME_BIN: runtimeBin,
@@ -126,10 +125,39 @@ async function materializeNodeLauncher(
   await chmod(launcherPath, 0o700)
 }
 
-function prependPath(directory: string, currentPath: string | undefined): string {
+function withPrependedPath(
+  environment: NodeJS.ProcessEnv,
+  directory: string,
+  platform: NodeJS.Platform
+): NodeJS.ProcessEnv {
+  const normalized = { ...environment }
+  const currentPath =
+    environment.PATH ??
+    (platform === 'win32'
+      ? Object.entries(environment).find(([key]) => key.toLowerCase() === 'path')?.[1]
+      : undefined)
+  if (platform === 'win32') {
+    for (const key of Object.keys(normalized)) {
+      if (key !== 'PATH' && key.toLowerCase() === 'path') delete normalized[key]
+    }
+  }
+  normalized.PATH = prependPath(directory, currentPath, platform)
+  return normalized
+}
+
+function prependPath(
+  directory: string,
+  currentPath: string | undefined,
+  platform: NodeJS.Platform
+): string {
   if (!currentPath) return directory
-  const entries = currentPath.split(delimiter).filter(Boolean)
-  return [directory, ...entries.filter(entry => entry !== directory)].join(delimiter)
+  const separator = platform === 'win32' ? win32.delimiter : delimiter
+  const entries = currentPath.split(separator).filter(Boolean)
+  return [directory, ...entries.filter(entry => entry !== directory)].join(separator)
+}
+
+function runtimeDirectory(path: string, platform: NodeJS.Platform): string {
+  return platform === 'win32' ? win32.dirname(path) : dirname(path)
 }
 
 function shellQuote(value: string): string {

@@ -55,6 +55,9 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
+formal_release_segments=(
+  app-update-differential
+)
 cloud_worktree_segments=(
   cloud-worktree-capability
   cloud-worktree-create
@@ -211,7 +214,10 @@ validate_cloud_shards
 validate_registered_checkpoint_coverage() {
   declare -A covered=()
   local segment
-  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+  for segment in \
+    "${core_segments[@]}" \
+    "${cloud_segments[@]}" \
+    "${formal_release_segments[@]}"; do
     covered["$segment"]=true
   done
 
@@ -291,6 +297,7 @@ classify_wework_path() {
     # DSH UI composition verifies that Wework starts empty and gains each
     # application, route, settings page, and navigation item from plugins.
     wework/dsh/app-wework/* | \
+      wework/dsh/examples/ui-extension-demo/* | \
       wework/dsh/ui-*/* | \
       wework/src/features/dsh-runtime/*)
       select_target "plugins:core-dsh-ui-plugin-composition"

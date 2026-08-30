@@ -1281,13 +1281,19 @@ async function confirmLocalProjectName(control, name) {
   )
 }
 
-async function createSingleRootLocalProject(control, workspacePath, name) {
+async function createSingleRootLocalProject(
+  control,
+  workspacePath,
+  name,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const sidebarSnapshot = await waitForSnapshot(
     control,
     snapshot =>
       snapshot.testIds.includes('projects-empty-create-button') ||
       snapshot.testIds.includes('runtime-project-sortable-list'),
-    'The project section did not settle into an empty or populated state'
+    'The project section did not settle into an empty or populated state',
+    timeoutMs
   )
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'

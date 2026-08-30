@@ -4,6 +4,9 @@ import { cp, readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { electronToolchainLockPath } from '../../scripts/lib/electron-toolchain-lock.mjs'
+import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
+import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 import identityModule from './build-identity.cjs'
 import releaseVersionModule from './release-version.cjs'
 
@@ -17,6 +20,7 @@ const sharedResourcesRoot = join(electronRoot, '..', 'resources')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const releaseVersion = resolveReleaseVersion(sourcePackage.version)
 const identity = resolveBuildIdentity()
+const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 const icon =
   process.platform === 'darwin'
     ? join(sharedResourcesRoot, 'icons', 'icon.icns')
@@ -29,7 +33,7 @@ await Promise.all([
   rm(staging, { recursive: true, force: true }),
 ])
 await run(
-  'pnpm',
+  pnpmCommand,
   [
     '--config.inject-workspace-packages=true',
     '--config.node-linker=hoisted',
@@ -68,45 +72,51 @@ await writeFile(
     2
   )}\n`
 )
-const applications = await packager({
-  dir: staging,
-  name: identity.productName,
-  electronVersion: '43.4.1',
-  electronZipDir,
-  appBundleId: identity.identifier,
-  appVersion: releaseVersion,
-  buildVersion: releaseVersion,
-  executableName: identity.executableName,
-  out: output,
-  overwrite: true,
-  asar: {
-    unpack: '**/*.{node,dylib,so,dll}',
-  },
-  extraResource: [
-    join(electronRoot, 'resources', 'harness-runtime'),
-    join(electronRoot, 'resources', 'bin'),
-    join(electronRoot, 'resources', 'codex'),
-    join(electronRoot, 'resources', 'wework-core-plugins'),
-    join(electronRoot, 'resources', 'components.json'),
-    join(electronRoot, 'resources', 'app-update.yml'),
-    join(electronRoot, 'resources', 'bundled-plugins'),
-    join(electronRoot, 'resources', 'bundled-hooks'),
-    join(sharedResourcesRoot, 'licenses'),
-    join(sharedResourcesRoot, 'icons'),
-    join(electronRoot, 'resources', 'vnc'),
-  ],
-  icon,
-  prune: false,
-})
+const releaseToolchainLock = await acquireProcessLock(electronToolchainLockPath)
+let applications
+try {
+  applications = await packager({
+    dir: staging,
+    name: identity.productName,
+    electronVersion: '43.4.1',
+    electronZipDir,
+    appBundleId: identity.identifier,
+    appVersion: releaseVersion,
+    buildVersion: releaseVersion,
+    executableName: identity.executableName,
+    out: output,
+    overwrite: true,
+    asar: {
+      unpack: '**/*.{node,dylib,so,dll}',
+    },
+    extraResource: [
+      join(electronRoot, 'resources', 'harness-runtime'),
+      join(electronRoot, 'resources', 'bin'),
+      join(electronRoot, 'resources', 'codex'),
+      join(electronRoot, 'resources', 'wework-core-plugins'),
+      join(electronRoot, 'resources', 'components.json'),
+      join(electronRoot, 'resources', 'app-update.yml'),
+      join(electronRoot, 'resources', 'bundled-plugins'),
+      join(electronRoot, 'resources', 'bundled-hooks'),
+      join(sharedResourcesRoot, 'licenses'),
+      join(sharedResourcesRoot, 'icons'),
+      join(electronRoot, 'resources', 'vnc'),
+    ],
+    icon,
+    prune: false,
+  })
 
-if (process.platform === 'darwin') {
-  for (const application of applications) {
-    await run(
-      'codesign',
-      ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
-      electronRoot
-    )
+  if (process.platform === 'darwin') {
+    for (const application of applications) {
+      await run(
+        'codesign',
+        ['--force', '--deep', '--sign', '-', join(application, `${identity.productName}.app`)],
+        electronRoot
+      )
+    }
   }
+} finally {
+  await releaseToolchainLock()
 }
 
 await rm(staging, { recursive: true, force: true })
@@ -114,7 +124,8 @@ console.log(JSON.stringify({ applications }, null, 2))
 
 function run(command, args, cwd) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, { cwd, stdio: 'inherit' })
+    const resolved = wrapWindowsScriptCommand(command, args)
+    const child = spawn(resolved.command, resolved.args, { cwd, stdio: 'inherit' })
     child.once('error', reject)
     child.once('exit', code => {
       if (code === 0) resolvePromise()

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 import test from 'node:test'
 import { handleExecutorEvents } from './index.js'
 
@@ -16,28 +17,29 @@ test('passes the browser cursor to the executor-owned event stream', async () =>
   })
 
   assert.equal(receivedAfter, 7)
-  assert.match(response.body, /id: 8/)
-  assert.match(response.body, /id: 9/)
+  assert.doesNotMatch(response.body, /id:/)
+  assert.match(response.body, /"sequence":8/)
+  assert.match(response.body, /"sequence":9/)
 })
 
-test('disconnects an SSE slow consumer instead of opening an executor stream', async () => {
+test('returns an error before opening SSE when the executor stream cannot connect', async () => {
   const request = executorEventRequest()
-  const response = responseFixture({ writable: false })
-  let created = false
+  const response = responseFixture()
 
-  await handleExecutorEvents(request, response, options => {
-    created = true
-    return eventStreamFixture(options)
-  })
+  await handleExecutorEvents(request, response, () =>
+    eventStreamFixture({}, { startError: new Error('executor unavailable') })
+  )
 
-  assert.equal(response.status, 200)
+  assert.equal(response.status, 503)
   assert.equal(response.writableEnded, true)
-  assert.equal(created, false)
 })
 
-test('stops the executor stream when a live SSE consumer applies backpressure', async () => {
+test('pauses until a live SSE consumer drains instead of disconnecting immediately', async () => {
   const request = executorEventRequest()
-  const response = responseFixture({ writableSequence: [true, true, false] })
+  const response = responseFixture({
+    writableSequence: [true, false, true],
+    drainAfterWrite: 2,
+  })
   let stopped = false
 
   await handleExecutorEvents(request, response, options =>
@@ -51,8 +53,31 @@ test('stops the executor stream when a live SSE consumer applies backpressure', 
 
   assert.equal(response.writableEnded, true)
   assert.equal(stopped, true)
-  assert.match(response.body, /id: 1/)
-  assert.match(response.body, /id: 2/)
+  assert.match(response.body, /"sequence":1/)
+  assert.match(response.body, /"sequence":2/)
+})
+
+test('disconnects only the SSE stream when backpressure does not drain', async () => {
+  const request = executorEventRequest()
+  const response = responseFixture({ writable: false })
+  let stopped = false
+
+  await handleExecutorEvents(
+    request,
+    response,
+    options =>
+      eventStreamFixture(options, {
+        events: [executorEvent(1)],
+        onStop: () => {
+          stopped = true
+        },
+      }),
+    { slowConsumerTimeoutMs: 5 }
+  )
+
+  assert.equal(response.status, 200)
+  assert.equal(response.writableEnded, true)
+  assert.equal(stopped, true)
 })
 
 test('forwards content snapshots without Electron-side coalescing', async () => {
@@ -93,12 +118,16 @@ test('closes SSE when the executor event stream closes', async () => {
 })
 
 function eventStreamFixture(options, config = {}) {
+  const source = Readable.from(
+    (config.events ?? []).map(event => Buffer.from(`${JSON.stringify(event)}\n`))
+  )
   return {
     async start() {
-      for (const event of config.events ?? []) options.onEvent(event)
-      if (config.closeAfterStart) options.onClose()
+      if (config.startError) throw config.startError
+      return source
     },
     stop() {
+      source.destroy()
       config.onStop?.()
     },
   }
@@ -154,6 +183,9 @@ function responseFixture(options = {}) {
     const writable = options.writableSequence?.[this.writes] ?? options.writable !== false
     this.writes += 1
     this.body += body
+    if (!writable && options.drainAfterWrite === this.writes) {
+      setImmediate(() => this.emit('drain'))
+    }
     return writable
   }
   response.end = function (body = '') {

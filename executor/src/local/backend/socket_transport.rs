@@ -6,7 +6,10 @@ use std::{
     error::Error as StdError,
     fmt::Debug,
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -73,15 +76,47 @@ where
     }
 }
 
+#[derive(Clone)]
+struct ConnectedSocket {
+    generation: u64,
+    client: Client,
+}
+
 #[derive(Clone, Default)]
 pub struct SocketIoTransport {
-    client: Arc<tokio::sync::Mutex<Option<Client>>>,
+    client: Arc<tokio::sync::Mutex<Option<ConnectedSocket>>>,
+    generation: Arc<AtomicU64>,
     handlers: Arc<Mutex<Vec<(String, EventHandler)>>>,
+}
+
+impl SocketIoTransport {
+    async fn connected_socket(&self) -> Result<ConnectedSocket, String> {
+        self.client
+            .lock()
+            .await
+            .clone()
+            .ok_or_else(|| "Socket.IO client is not connected".to_owned())
+    }
+
+    async fn invalidate_generation(&self, generation: u64) {
+        let mut state = self.client.lock().await;
+        if state
+            .as_ref()
+            .is_some_and(|connected| connected.generation == generation)
+        {
+            state.take();
+        }
+    }
 }
 
 impl LocalBackendTransport for SocketIoTransport {
     fn connect<'a>(&'a self, config: &'a LocalBackendConfig) -> TransportFuture<'a, ()> {
         Box::pin(async move {
+            let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
+            let previous = self.client.lock().await.take();
+            if let Some(previous) = previous {
+                let _ = previous.client.disconnect().await;
+            }
             // The backend socket must never travel through the user's HTTP
             // proxy: macOS system proxies (for example Clash on 127.0.0.1)
             // intercept `localhost` and break the Engine.IO connection.
@@ -92,6 +127,10 @@ impl LocalBackendTransport for SocketIoTransport {
             let socket_url = normalize_socket_url(&config.socket_url);
             let (connect_sender, connect_receiver) = oneshot::channel();
             let connect_sender = Arc::new(Mutex::new(Some(connect_sender)));
+            let closed = Arc::new(AtomicBool::new(false));
+            let close_state = Arc::clone(&self.client);
+            let close_generation = Arc::clone(&self.generation);
+            let close_flag = Arc::clone(&closed);
             let mut builder = ClientBuilder::new(socket_url)
                 .namespace(NAMESPACE)
                 .auth(json!({ "token": config.auth_token }))
@@ -110,6 +149,25 @@ impl LocalBackendTransport for SocketIoTransport {
                 .on("error", |payload: Payload, _socket: Client| {
                     async move {
                         eprintln!("local backend socket error: {payload:?}");
+                    }
+                    .boxed()
+                })
+                .on(Event::Close, move |_payload: Payload, _socket: Client| {
+                    let close_state = Arc::clone(&close_state);
+                    let close_generation = Arc::clone(&close_generation);
+                    let close_flag = Arc::clone(&close_flag);
+                    async move {
+                        close_flag.store(true, Ordering::Release);
+                        if close_generation.load(Ordering::Acquire) != generation {
+                            return;
+                        }
+                        let mut state = close_state.lock().await;
+                        if state
+                            .as_ref()
+                            .is_some_and(|connected| connected.generation == generation)
+                        {
+                            state.take();
+                        }
                     }
                     .boxed()
                 });
@@ -144,19 +202,37 @@ impl LocalBackendTransport for SocketIoTransport {
                 .connect()
                 .await
                 .map_err(|error| format_socket_error("connect", None, &error))?;
-            tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
-                .await
-                .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
-                .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned())?;
-            *self.client.lock().await = Some(socket);
+            let namespace_result =
+                tokio::time::timeout(NAMESPACE_CONNECT_TIMEOUT, connect_receiver)
+                    .await
+                    .map_err(|_| "Socket.IO namespace connection timed out".to_owned())?
+                    .map_err(|_| "Socket.IO namespace connection signal was dropped".to_owned());
+            if let Err(error) = namespace_result {
+                let _ = socket.disconnect().await;
+                return Err(error);
+            }
+            let mut client_state = self.client.lock().await;
+            if closed.load(Ordering::Acquire)
+                || self.generation.load(Ordering::Acquire) != generation
+            {
+                drop(client_state);
+                let _ = socket.disconnect().await;
+                return Err("Socket.IO connection closed during namespace setup".to_owned());
+            }
+            *client_state = Some(ConnectedSocket {
+                generation,
+                client: socket,
+            });
             Ok(())
         })
     }
 
     fn disconnect<'a>(&'a self) -> TransportFuture<'a, ()> {
         Box::pin(async move {
-            if let Some(client) = self.client.lock().await.take() {
-                client
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            if let Some(connected) = self.client.lock().await.take() {
+                connected
+                    .client
                     .disconnect()
                     .await
                     .map_err(|error| format_socket_error("disconnect", None, &error))?;
@@ -172,17 +248,13 @@ impl LocalBackendTransport for SocketIoTransport {
         timeout: Duration,
     ) -> TransportFuture<'a, Value> {
         Box::pin(async move {
-            let client = self
-                .client
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| "Socket.IO client is not connected".to_owned())?;
+            let connected = self.connected_socket().await?;
             let (sender, receiver) = oneshot::channel();
             let sender = Arc::new(Mutex::new(Some(sender)));
             let ack_sender = Arc::clone(&sender);
 
-            client
+            if let Err(error) = connected
+                .client
                 .emit_with_ack(
                     event.to_owned(),
                     payload,
@@ -198,7 +270,10 @@ impl LocalBackendTransport for SocketIoTransport {
                     },
                 )
                 .await
-                .map_err(|error| format_socket_error("call", Some(event), &error))?;
+            {
+                self.invalidate_generation(connected.generation).await;
+                return Err(format_socket_error("call", Some(event), &error));
+            }
 
             tokio::time::timeout(timeout, receiver)
                 .await
@@ -209,16 +284,12 @@ impl LocalBackendTransport for SocketIoTransport {
 
     fn emit<'a>(&'a self, event: &'a str, payload: Value) -> TransportFuture<'a, ()> {
         Box::pin(async move {
-            let client = self
-                .client
-                .lock()
-                .await
-                .clone()
-                .ok_or_else(|| "Socket.IO client is not connected".to_owned())?;
-            client
-                .emit(event.to_owned(), payload)
-                .await
-                .map_err(|error| format_socket_error("emit", Some(event), &error))
+            let connected = self.connected_socket().await?;
+            if let Err(error) = connected.client.emit(event.to_owned(), payload).await {
+                self.invalidate_generation(connected.generation).await;
+                return Err(format_socket_error("emit", Some(event), &error));
+            }
+            Ok(())
         })
     }
 

@@ -10,9 +10,7 @@ const runtimeRoot = process.argv[2]
 const executorPath = process.argv[3]
 if (!runtimeRoot || !executorPath) {
   await exitBeforeReady(
-    new Error(
-      'Usage: pnpm verify:core-ui <materialized-core-runtime-root> <executor-binary>'
-    )
+    new Error('Usage: pnpm verify:core-ui <materialized-core-runtime-root> <executor-binary>')
   )
 }
 
@@ -110,7 +108,7 @@ try {
     )
   )
 } catch (error) {
-  for (const name of ['executor-runtime.log', 'dsh-core-runtime.log']) {
+  for (const name of ['executor.log', 'dsh-core-runtime.log']) {
     try {
       console.error(await readFile(join(root, 'logs', name), 'utf8'))
     } catch {
@@ -153,9 +151,7 @@ async function snapshot(targetWindow) {
 async function waitFor(targetWindow, expression) {
   let lastValue
   for (let attempt = 0; attempt < 120; attempt += 1) {
-    lastValue = await targetWindow.webContents.executeJavaScript(
-      `Boolean(${expression})`
-    )
+    lastValue = await targetWindow.webContents.executeJavaScript(`Boolean(${expression})`)
     if (lastValue) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
   }
