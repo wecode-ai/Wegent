@@ -589,6 +589,9 @@ def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
 
 def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
+    preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
+        encoding="utf-8"
+    )
 
     assert "pnpm --filter wework build:release" in script
     assert "prepare-desktop-release-assets.mjs" in script
@@ -602,6 +605,9 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert "WeWork_${VERSION}_$(release_platform).dmg" in script
+    assert "WeWork_${version}_${releasePlatform}.dmg" in preparer
+    assert "cp(dmg, join(output, basename(dmg)))" not in preparer
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
     assert "--resume-signed-app" in script

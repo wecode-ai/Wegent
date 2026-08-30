@@ -199,7 +199,7 @@ release_arch() {
   esac
 }
 
-legacy_platform() {
+release_platform() {
   case "$MACOS_BUILD_TARGET" in
     aarch64-apple-darwin) printf 'darwin-aarch64\n' ;;
     x86_64-apple-darwin) printf 'darwin-x86_64\n' ;;
@@ -243,7 +243,7 @@ upload_artifacts() {
   WEWORK_MAC_ARM64_RELEASE_S3_PREFIX="$arm64_prefix" \
   WEWORK_MAC_X64_RELEASE_S3_PREFIX="$x64_prefix" \
   WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX="${WEWORK_LEGACY_MACOS_RELEASE_S3_PREFIX:-wework/macos}" \
-  UPDATER_PLATFORMS="$(legacy_platform)" \
+  UPDATER_PLATFORMS="$(release_platform)" \
   RELEASE_VERSION="$VERSION" \
   RELEASE_SOURCE_SHA="$SOURCE_SHA" \
   RELEASE_CHANNEL="$CHANNEL" \
@@ -256,7 +256,7 @@ verify_uploaded_artifacts() {
   local arch
   local component_manifest
   local electron_channel="$CHANNEL"
-  local legacy_manifest
+  local platform_manifest
 
   arch="$(release_arch)"
   component_manifest="components-$CHANNEL-macos-$arch.json"
@@ -271,12 +271,12 @@ verify_uploaded_artifacts() {
     return
   fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
-  legacy_manifest="$CHANNEL-$(legacy_platform).json"
+  platform_manifest="$CHANNEL-$(release_platform).json"
   for url in \
-    "$UPDATE_BASE_URL/WeWork_${VERSION}_macos_${arch}.dmg" \
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_$(release_platform).dmg" \
     "$UPDATE_BASE_URL/WeWork_${VERSION}_macos_${arch}.zip" \
     "$UPDATE_BASE_URL/$electron_channel-mac.yml" \
-    "$UPDATE_MANIFEST_BASE_URL/$legacy_manifest"; do
+    "$UPDATE_MANIFEST_BASE_URL/$platform_manifest"; do
     if ! curl -fsSI -o /dev/null "$url"; then
       echo "Published release file is not publicly readable: $url" >&2
       exit 1

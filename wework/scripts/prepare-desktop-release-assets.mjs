@@ -35,6 +35,7 @@ await mkdir(output, { recursive: true })
 
 if (platform === 'macos') {
   const appDirectory = join(installerRoot, arch === 'arm64' ? 'mac-arm64' : 'mac')
+  const releasePlatform = arch === 'arm64' ? 'darwin-aarch64' : 'darwin-x86_64'
   await requireDirectory(appDirectory)
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
@@ -54,7 +55,7 @@ if (platform === 'macos') {
   const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
   await Promise.all([
-    cp(dmg, join(output, basename(dmg))),
+    cp(dmg, join(output, `WeWork_${version}_${releasePlatform}.dmg`)),
     cp(zip, join(output, basename(zip))),
     cp(blockmap, join(output, basename(blockmap))),
   ])
