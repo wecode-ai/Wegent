@@ -65,7 +65,6 @@ export interface SmartAppSavedExport extends SmartAppExport {
 export interface SmartAppRuntimeHost {
   open(launch: WorkbenchRuntimeLaunch): Promise<void>
   close(tabId: string): Promise<void>
-  activate(tabId: string | null): void
   runningTabIds(): ReadonlySet<string>
 }
 
@@ -368,7 +367,6 @@ export class SmartAppManager {
       const installation = requiredInstallation(installations, input.installationId)
       const id = tabId(installation.id)
       if (runtimeHost.runningTabIds().has(id)) {
-        runtimeHost.activate(id)
         return installation
       }
       const port = await freePort()
@@ -422,16 +420,6 @@ export class SmartAppManager {
       installation.error = null
       await this.writeRegistry(installations)
     })
-  }
-
-  activate(installationId: string | null): void {
-    const host = this.requiredRuntimeHost()
-    if (installationId === null) {
-      host.activate(null)
-      return
-    }
-    const id = tabId(installationId)
-    if (host.runningTabIds().has(id)) host.activate(id)
   }
 
   async update(

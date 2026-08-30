@@ -13,7 +13,6 @@ import {
   session,
   shell,
   Tray,
-  WebContentsView,
   webContents,
   type MenuItemConstructorOptions,
   type OpenDialogOptions,
@@ -48,13 +47,8 @@ import {
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
-import {
-  WorkbenchTabController,
-  type WorkbenchTabView,
-  type WorkbenchViewBounds,
-} from './host/workbench-tab-controller.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
-import { desktopWindowFrameOptions, workbenchDshBounds } from './host/window-layout.js'
+import { desktopWindowFrameOptions } from './host/window-layout.js'
 import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -125,11 +119,9 @@ if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 let mainWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
-let attachedDshView: WebContentsView | null = null
 let primaryDshLoaded = false
 let primaryDshSecurityInstalled = false
 let desktopRuntime: DesktopRuntime | null = null
-let workbenchTabs: WorkbenchTabController<ElectronWorkbenchView> | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
@@ -373,81 +365,8 @@ function installDshWindowLabelHeaders(): void {
   })
 }
 
-function secureDshView(view: WebContentsView, dshUrl: string): void {
-  secureDshContents(view.webContents, dshUrl)
-}
-
 function layoutPrimaryView(): void {
-  workbenchTabs?.layout()
   embeddedBrowser?.layoutAll()
-}
-
-function workbenchViewBounds(): WorkbenchViewBounds {
-  const [width, height] = mainWindow?.getContentSize() ?? [0, 0]
-  return workbenchDshBounds({ width, height })
-}
-
-function showWorkbenchView(view: WebContentsView | null): void {
-  if (!mainWindow || attachedDshView === view) return
-  if (attachedDshView) {
-    mainWindow.contentView.removeChildView(attachedDshView)
-  }
-  attachedDshView = view
-  if (view) {
-    mainWindow.contentView.addChildView(view)
-    view.setBounds(workbenchViewBounds())
-  }
-}
-
-class ElectronWorkbenchView implements WorkbenchTabView {
-  readonly nativeView: WebContentsView
-
-  constructor() {
-    this.nativeView = new WebContentsView({
-      webPreferences: {
-        backgroundThrottling: false,
-        preload: dshPreloadPath,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    })
-  }
-
-  load(url: string): Promise<void> {
-    secureDshView(this.nativeView, url)
-    return this.nativeView.webContents.loadURL(url)
-  }
-
-  setBounds(bounds: WorkbenchViewBounds): void {
-    this.nativeView.setBounds(bounds)
-  }
-
-  evaluate(expression: string): Promise<unknown> {
-    return this.nativeView.webContents.executeJavaScript(expression, true)
-  }
-
-  capture(): Promise<string> {
-    return captureWebContentsDataUrl(this.nativeView.webContents)
-  }
-
-  close(): void {
-    if (attachedDshView === this.nativeView) showWorkbenchView(null)
-    if (!this.nativeView.webContents.isDestroyed()) {
-      this.nativeView.webContents.close()
-    }
-  }
-
-  onRendererGone(listener: (reason: string) => void): () => void {
-    const handler = (_event: Electron.Event, details: Electron.RenderProcessGoneDetails) =>
-      listener(details.reason)
-    this.nativeView.webContents.on('render-process-gone', handler)
-    return () => {
-      if (!this.nativeView.webContents.isDestroyed()) {
-        this.nativeView.webContents.off('render-process-gone', handler)
-      }
-    }
-  }
 }
 
 const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
@@ -831,7 +750,6 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     void handleMainWindowCloseRequest()
   })
   mainWindow.on('closed', () => {
-    attachedDshView = null
     primaryDshLoaded = false
     primaryDshSecurityInstalled = false
     mainWindow = null
@@ -1066,7 +984,6 @@ async function shutdown(): Promise<void> {
     browserBridge?.stop(),
     computerUseService?.stop(),
     plugins?.shutdown(),
-    workbenchTabs?.stop(),
     desktopRuntime?.stop(),
   ])
 }
@@ -1083,14 +1000,14 @@ function prepareApplicationShutdown(): Promise<void> {
 }
 
 function smartAppRuntimeHost(): SmartAppRuntimeHost | null {
-  if (!workbenchTabs) return null
+  if (!desktopRuntime) return null
   return {
     open: async launch => {
-      await workbenchTabs?.open(launch)
+      await desktopRuntime?.openWorkbenchRuntime(launch)
     },
-    close: tabId => workbenchTabs?.close(tabId) ?? Promise.resolve(),
-    activate: tabId => workbenchTabs?.activate(tabId),
-    runningTabIds: () => new Set(workbenchTabs?.list().map(item => item.tabId) ?? []),
+    close: tabId => desktopRuntime?.closeWorkbenchRuntime(tabId) ?? Promise.resolve(),
+    runningTabIds: () =>
+      new Set(desktopRuntime?.diagnostics().workbenchRuntimes.map(item => item.tabId) ?? []),
   }
 }
 
@@ -1205,20 +1122,12 @@ async function configureDesktopRuntime(): Promise<void> {
             await popoutWindowReadyPromise
             return captureWebContentsDataUrl(target.webContents)
           },
-          captureWorkbench: tabId => {
-            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
-            return workbenchTabs.capture(tabId)
-          },
           completeSystemDragDrop: async payload => {
             pendingSystemDrops.push(payload)
             await showPopoutWindow()
           },
           dismissPopout: () => popoutWindow?.hide(),
           dismissSystemDragPanel: () => systemDragWindow?.hide(),
-          evaluateWorkbench: (tabId, expression) => {
-            if (!workbenchTabs) throw new Error('Workbench tabs are unavailable')
-            return workbenchTabs.evaluate(tabId, expression)
-          },
           getSystemDragContext: () => systemDragContext,
           runtimeDiagnostics: () =>
             desktopRuntime?.diagnostics() ?? {
@@ -1269,17 +1178,6 @@ async function configureDesktopRuntime(): Promise<void> {
       return desktopRuntime.requestExecutor(method, params)
     },
     apply: status => trayManager?.setNativeStatus(status),
-  })
-  workbenchTabs = new WorkbenchTabController({
-    runtime: desktopRuntime,
-    surface: {
-      bounds: workbenchViewBounds,
-      show: view => showWorkbenchView(view?.nativeView ?? null),
-    },
-    createView: () => new ElectronWorkbenchView(),
-  })
-  workbenchTabs.on('change', () => {
-    mainWindow?.webContents.send('runtime:changed')
   })
 }
 

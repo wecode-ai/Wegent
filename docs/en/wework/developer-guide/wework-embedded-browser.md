@@ -10,8 +10,8 @@ Wework's embedded browser displays an interactive web page inside the desktop wo
 
 The embedded browser has three layers:
 
-- The Wework Electron main process creates the embedded WebView and updates its bounds, navigation URL, and visibility through commands.
-- The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, and annotation state.
+- The Wework Electron main process owns embedded-page navigation, page state, screenshots, and logical labels; the React renderer creates and positions the matching `<webview>` host.
+- The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, overlay, and annotation state.
 - `executor/src/browser_mcp` exposes browser MCP tools to Codex and uses the Wework bridge to operate the Electron browser view bound to the current task.
 
 When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules Electron browser view navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
@@ -165,7 +165,9 @@ Close requests triggered by task switching or component unmounting must include 
 
 ## Main-interface overlays and address synchronization
 
-The embedded browser is a separate native WebView, so the main React WebView cannot cover it with `z-index`. When a dialog, menu, listbox, or system-level overlay intersects the browser bounds, the browser panel must make the native WebView invisible and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
+Electron embedded pages must be mounted as renderer-owned `<webview>` elements under the shared browser host root. Main-interface dialogs, menus, and listboxes then cover that host through portals and the system-level `z-index`. Do not reintroduce main-process child views such as `BrowserView` or `WebContentsView` for application tabs or Smart apps, because those surfaces leave the renderer stacking context and cover top-tab menus.
+
+Desktop implementations that still use a separate native WebView cannot rely on React `z-index`. When a main-interface overlay intersects such a browser region, the browser panel must hide the native WebView and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
 
 Page-state polling owns the browser's actual URL, while the address field owns the user's editing draft. While the address field is focused, polling may update page URL state, title, and favicon, but it must not overwrite the draft. Restore the actual URL after focus leaves the field. New navigation and page-state synchronization paths must preserve this boundary.
 
@@ -174,6 +176,7 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 - Built-in-browser child WebViews enable DevTools only in debug builds; an explicit build cfg disables it in release builds. On macOS debug builds, Wework saves the child-WebView frame before the Inspector frontend first appears, detaches the Inspector, and restores the frame exactly. F12 therefore opens only a separate window and cannot dock, resize the browser, or cover the workbench. The main-WebView Inspector remains available only through Developer Commands.
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
 - Wegent Agent application tabs in Electron also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
+- Electron Smart apps reuse the same renderer-owned `<webview>` hosting path and use a stable `smart-app:<installationId>` logical label. The renderer owns the visible host; the main process retains Harness runtime and embedded-browser control-plane responsibilities but no longer creates a visible `WebContentsView`. A component remount must atomically replace the old guest, and delayed closes must carry the expected native label so a stale component cannot close the replacement.
 - Browser WebViews use a Chromium-compatible User-Agent so websites do not treat a Chromium User-Agent without a browser product identifier as an unsupported client.
 - Popups, OAuth, SSO, and payment flows may use `window.open` or new-window navigation. Implementations should route them to a controlled browser window or explicitly hand them to the system; the Agent must not operate invisible hidden pages.
 - The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.
