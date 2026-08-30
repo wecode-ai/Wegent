@@ -16,7 +16,10 @@ if (command === 'status' || command === 'request-permissions') {
   }
 } else if (command === 'execute') {
   markStarted(command)
-  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG === command) {
+  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_FAIL === command) {
+    emit({ error: 'Fixture replay failed' })
+    process.exitCode = 1
+  } else if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG === command) {
     setInterval(() => {}, 1_000)
   } else {
     process.stdin.resume()

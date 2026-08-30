@@ -127,27 +127,26 @@ describe('system record replay', () => {
 
   test('allows a new recording after replay failure', async () => {
     const root = await temporaryDirectory('system-record-replay-')
-    const recorder = new SystemRecordReplay(root.path, fixture, 'darwin', {
-      operationTimeoutMs: 500,
-    })
-    await recorder.start('Failed replay')
-    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
-    const recording = await recorder.stop(1)
-    process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG = 'execute'
+    const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
+    process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_FAIL = 'execute'
     try {
+      await recorder.start('Failed replay')
+      await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
+      const recording = await recorder.stop(1)
       await recorder.replay(recording.id)
       await vi.waitFor(async () => expect((await recorder.status()).phase).toBe('failed'), {
         timeout: 3_000,
       })
-    } finally {
-      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG
-    }
 
-    await expect(recorder.start('Recovered recording')).resolves.toMatchObject({
-      phase: 'recording',
-    })
-    await recorder.dispose()
-    await root.remove()
+      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_FAIL
+      await expect(recorder.start('Recovered recording')).resolves.toMatchObject({
+        phase: 'recording',
+      })
+    } finally {
+      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_FAIL
+      await recorder.dispose()
+      await root.remove()
+    }
   })
 
   test('disposes an active helper without saving a partial recording', async () => {
