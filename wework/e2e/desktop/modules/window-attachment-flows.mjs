@@ -979,7 +979,6 @@ async function verifyAttachmentOnlySidebarLifecycle({
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
 
   if (process.platform === 'darwin') {
-    const readyCountBeforeClose = control.readyCount
     const desktopLogPath = desktopWindowLogPath(app.pid)
     const desktopLogLengthBeforeClose = (await readFile(desktopLogPath, 'utf8').catch(() => ''))
       .length
@@ -988,16 +987,14 @@ async function verifyAttachmentOnlySidebarLifecycle({
       fromOffset: desktopLogLengthBeforeClose,
     })
     await reactivateMacApplication(appIdentifier, appBundlePath)
+    const readyCountBeforeReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
     await withTimeout(
-      Promise.any([
-        control.awaitReadyAfter(readyCountBeforeClose),
-        control.command('waitFor', 'body', {
-          timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-        }),
-      ]),
+      control.awaitReadyAfter(readyCountBeforeReload),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not become controllable during attachment-only verification'
+      'The reloaded Wework WebView did not reconnect during attachment-only verification'
     )
+    await control.command('restoreMainWindow', 'body')
   } else {
     await control.command('navigate', '/')
   }
