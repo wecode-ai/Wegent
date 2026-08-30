@@ -75,7 +75,6 @@ export interface CoreDshPluginService {
 
 export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
-  captureWorkbench: (tabId: string) => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
@@ -86,7 +85,6 @@ export interface ElectronE2EHost {
   }) => Promise<void>
   dismissPopout: () => void
   dismissSystemDragPanel: () => void
-  evaluateWorkbench: (tabId: string, expression: string) => Promise<unknown>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
   dockVisible: () => boolean
@@ -136,14 +134,12 @@ export function createElectronCapabilityRouter(
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
-    captureWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     captureTarget: () => null,
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
-    evaluateWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
     dockVisible: () => true,
@@ -283,9 +279,7 @@ export function createElectronCapabilityRouter(
   router.register('browser.evaluate', params => {
     const label = stringParam(params, 'label')
     const expression = stringParam(params, 'expression')
-    return isWorkbenchTabLabel(label)
-      ? e2eHost.evaluateWorkbench(label, expression)
-      : browser.evaluate(label, expression)
+    return browser.evaluate(label, expression)
   })
   router.register('browser.pageState', params => browser.state(stringParam(params, 'label')))
   router.register('browser.relabel', params =>
@@ -307,7 +301,9 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'approved') ?? false
     )
   )
-  router.register('browser.close', params => browser.close(stringParam(params, 'label')))
+  router.register('browser.close', params =>
+    browser.close(stringParam(params, 'label'), optionalStringParam(params, 'expectedNativeLabel'))
+  )
   router.register('browser.closeMany', params =>
     browser.closeMany(stringArrayParam(params, 'labels') ?? [])
   )
@@ -316,7 +312,7 @@ export function createElectronCapabilityRouter(
   )
   router.register('browser.capture', params => {
     const label = stringParam(params, 'label')
-    return isWorkbenchTabLabel(label) ? e2eHost.captureWorkbench(label) : browser.capture(label)
+    return browser.capture(label)
   })
   router.register('browser.pauseDownload', params =>
     browser.pauseDownload(stringParam(params, 'id'))
@@ -710,10 +706,6 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.takeContextToken', params =>
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
   )
-  router.register('workbench.activate', params => {
-    const installationId = nullableStringParam(params, 'installationId') ?? null
-    requiredSmartApps(smartApps).activate(installationId)
-  })
   return router
 }
 
@@ -950,10 +942,6 @@ function localAttachmentRoot(): string {
     'attachments',
     'draft'
   )
-}
-
-function isWorkbenchTabLabel(label: string): boolean {
-  return label.startsWith('smart-app:')
 }
 
 function requiredSmartApps(resolveSmartApps: () => SmartAppManager | null): SmartAppManager {

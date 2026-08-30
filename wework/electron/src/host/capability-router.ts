@@ -128,7 +128,6 @@ export const HOST_CAPABILITIES = [
   'systemDrag.takePending',
   'systemSleep.setTaskActivity',
   'tray.setState',
-  'workbench.activate',
   'workspace.listOpeners',
   'workspace.open',
   'workspace.pickOpener',

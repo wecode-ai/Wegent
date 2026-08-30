@@ -132,6 +132,10 @@ export class EmbeddedBrowserManager {
 
   attach(label: string, contents: WebContents): void {
     const normalizedLabel = requiredLabel(label)
+    const existing = this.entries.get(normalizedLabel)
+    if (existing && existing.contents.id !== contents.id) {
+      this.close(normalizedLabel, existing.nativeLabel)
+    }
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
     this.attachedContents.set(normalizedLabel, contents)
@@ -523,9 +527,10 @@ export class EmbeddedBrowserManager {
     }
   }
 
-  close(label: string): void {
+  close(label: string, expectedNativeLabel?: string | null): void {
     const entry = this.entries.get(label)
     if (!entry) return
+    if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
     this.agentControlPaused.delete(label)
     for (const [approvalId, approval] of this.agentApprovals) {

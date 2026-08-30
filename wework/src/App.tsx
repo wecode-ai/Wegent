@@ -193,7 +193,7 @@ function workspaceTabPath(tab: WorkspaceTab): string {
 function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
-): { appKey: string; src: string; title: string } | null {
+): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
   const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
   if (!match) return null
   const app = resolveDshApp(match[1])
@@ -203,7 +203,12 @@ function workspaceTabIframe(
   }
   const harnessApp = resolveRunningHarnessApp(match[1])
   return harnessApp
-    ? { appKey: harnessApp.key, src: harnessApp.url, title: harnessApp.title }
+    ? {
+        appKey: harnessApp.key,
+        embeddedBrowserLabel: harnessApp.nativeLabel,
+        src: harnessApp.url,
+        title: harnessApp.title,
+      }
     : null
 }
 
@@ -288,9 +293,7 @@ export function WorkspaceTabSurface({
   const dshWorkspaceTabId = dshWorkspaceTabIdFromPath(tabPath)
   const dshWorkspaceTabActive = Boolean(dshWorkspaceTabId)
   const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
-  const electronHarnessAppActive = Boolean(isElectronRuntime() && harnessAppInstallationId)
-  const iframe =
-    isElectronRuntime() && harnessAppInstallationId ? null : workspaceTabIframe(tab, cloudWebUrl)
+  const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryRoute = resolveDshRoute(tabPath)
   const inferredNativeKind = inferWorkspaceTabKind(tabPath)
   const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
@@ -305,18 +308,33 @@ export function WorkspaceTabSurface({
   const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const [harnessAppStartupOwner, setHarnessAppStartupOwner] = useState(() => ({
+    installationId: harnessAppInstallationId,
+    pending: Boolean(harnessAppInstallationId),
+  }))
+  if (harnessAppStartupOwner.installationId !== harnessAppInstallationId) {
+    setHarnessAppStartupOwner({
+      installationId: harnessAppInstallationId,
+      pending: Boolean(harnessAppInstallationId),
+    })
+  }
+  const settleHarnessAppStartup = useCallback((settledInstallationId: string) => {
+    setHarnessAppStartupOwner(current =>
+      current.installationId === settledInstallationId ? { ...current, pending: false } : current
+    )
+  }, [])
+  const harnessAppStartupPending =
+    smartAppsEnabled &&
+    harnessAppStartupOwner.installationId === harnessAppInstallationId &&
+    harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
-    nativeWorkbenchRoute &&
-    !electronHarnessAppActive &&
-    !iframe &&
-    !auxiliaryActive &&
-    !harnessAppLaunchActive
+    nativeWorkbenchRoute && !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const unavailableRouteActive =
     !nativeWorkbenchActive &&
-    !electronHarnessAppActive &&
     !iframe &&
     !auxiliaryActive &&
-    !harnessAppLaunchActive
+    !harnessAppLaunchActive &&
+    !harnessAppStartupPending
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -354,7 +372,7 @@ export function WorkspaceTabSurface({
   const keepIframeActive = Boolean(iframe)
   // Starting an Electron Smart app is an application lifecycle operation, not
   // a visible-tab effect. Keep its launcher connected until startup settles.
-  const keepHarnessAppLaunchActive = electronHarnessAppActive && harnessAppLaunchActive
+  const keepHarnessAppLaunchActive = Boolean(harnessAppInstallationId && harnessAppLaunchActive)
   const keepSurfaceActive =
     keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
@@ -369,14 +387,9 @@ export function WorkspaceTabSurface({
   const workbenchContent = (
     <>
       {harnessAppInstallationId && smartAppsEnabled ? (
-        <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
-      ) : null}
-      {electronHarnessAppActive && !harnessAppLaunchActive ? (
-        <div
-          className="absolute inset-0"
-          data-testid={`app-iframe-harness-${harnessAppInstallationId}`}
-          data-embedded-browser-label={`smart-app:${harnessAppInstallationId}`}
-          data-workspace-tab-id={tab.id}
+        <HarnessAppAutoLauncher
+          installationId={harnessAppInstallationId}
+          onStartupSettled={settleHarnessAppStartup}
         />
       ) : null}
       {onOpenWeworkForAppshot && active && !iframe ? (
@@ -456,6 +469,7 @@ export function WorkspaceTabSurface({
                 active={active && Boolean(iframe)}
                 appKey={renderedIframe.appKey}
                 edgeToEdge={Boolean(harnessAppInstallationId)}
+                embeddedBrowserLabel={renderedIframe.embeddedBrowserLabel}
                 onReady={
                   harnessAppInstallationId
                     ? () => clearHarnessAppLaunch(harnessAppInstallationId)
