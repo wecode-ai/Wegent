@@ -15,22 +15,14 @@ import {
 } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import {
+  calculateAppUpdateDownloadPercent,
+  formatAppUpdateVersion,
+} from '@/features/app-update/app-update-format'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
-
-function formatVersionTemplate(template: string, version: string): string {
-  return template.replace('{{version}}', version)
-}
-
-function calculateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-}
 
 function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
   return (
@@ -174,7 +166,7 @@ export function DesktopSettingsMenu({
   }
 
   const updateButtonLabel = availableUpdate
-    ? formatVersionTemplate(
+    ? formatAppUpdateVersion(
         t('workbench.app_update_install', {
           defaultValue: '更新到 {{version}}',
           version: availableUpdate.version,
@@ -184,13 +176,16 @@ export function DesktopSettingsMenu({
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
   const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
-    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    ? calculateAppUpdateDownloadPercent(
+        downloadProgress.downloadedBytes,
+        downloadProgress.totalBytes
+      )
     : null
   const updateMessage =
     updateStatus === 'installing'
       ? null
       : availableUpdate
-        ? formatVersionTemplate(
+        ? formatAppUpdateVersion(
             t('workbench.app_update_available', {
               defaultValue: '发现新版本 {{version}}',
               version: availableUpdate.version,

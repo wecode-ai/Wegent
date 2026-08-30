@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
@@ -293,7 +293,7 @@ describe('AppUpdateProvider', () => {
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
   })
 
-  test('exposes download progress while installing an available update', async () => {
+  test('asks for confirmation before installing and restarting', async () => {
     let appUpdate: AppUpdateContextValue | null = null
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.0.8',
@@ -319,6 +319,50 @@ describe('AppUpdateProvider', () => {
     })
     await act(async () => {
       await appUpdate?.installUpdate()
+    })
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
+    expect(screen.getByRole('dialog')).toHaveTextContent('v0.0.9')
+    expect(installPendingWeworkUpdate).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(appUpdate?.status).toBe('available')
+    expect(installPendingWeworkUpdate).not.toHaveBeenCalled()
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+  })
+
+  test('exposes download progress after confirming an available update', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.0.8',
+      version: '0.0.9',
+    })
+    vi.mocked(installPendingWeworkUpdate).mockImplementation(async onProgress => {
+      onProgress({ downloadedBytes: 50, totalBytes: 100 })
+    })
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
     })
 
     expect(appUpdate?.status).toBe('installing')
@@ -350,6 +394,10 @@ describe('AppUpdateProvider', () => {
     })
     await act(async () => {
       await appUpdate?.installUpdate()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
     })
 
     expect(JSON.parse(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY) ?? '{}')).toEqual({
@@ -449,6 +497,10 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.installUpdate()
     })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
+    })
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
     expect(appUpdate?.status).toBe('available')
@@ -458,11 +510,15 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.installUpdate()
     })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
+    })
 
     expect(installPendingWeworkUpdate).toHaveBeenCalledTimes(2)
   })
 
-  test('simulates an update download from the developer command menu', async () => {
+  test('routes simulated updates through restart confirmation before downloading', async () => {
     let appUpdate: AppUpdateContextValue | null = null
 
     function Probe() {
@@ -480,11 +536,23 @@ describe('AppUpdateProvider', () => {
       window.dispatchEvent(new Event(APP_UPDATE_SIMULATE_EVENT))
     })
 
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.availableUpdate?.version).toBe('debug-simulation')
+    expect(appUpdate?.downloadProgress).toBeNull()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
+
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+
     expect(appUpdate?.status).toBe('installing')
     expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 0, totalBytes: 10_000_000 })
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_500)
+      await vi.advanceTimersByTimeAsync(5_000)
     })
 
     expect(appUpdate?.availableUpdate).toBeNull()
