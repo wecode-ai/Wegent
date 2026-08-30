@@ -283,8 +283,9 @@ if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
   ! grep -Fq "$workspace_manifests" "$node_action" ||
   ! grep -Fq 'frontend/public/fonts' "$node_action" ||
   ! grep -Fq 'default: "false"' "$node_action" ||
-  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action"; then
-  fail "Node dependencies and generated fonts must share a read-only-by-default cache"
+  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action" ||
+  grep -Fq 'restore-keys:' "$node_action"; then
+  fail "Node dependencies must use an exact, read-only-by-default workspace cache"
 fi
 
 # Shell source is matched literally in workflow source.
