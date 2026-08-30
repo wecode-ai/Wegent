@@ -8,8 +8,7 @@ import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const repositoryDir = resolve(weworkDir, '..')
-const executorTargetDir =
-  process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+const executorTargetDir = join(repositoryDir, 'executor', 'target', 'ai-verify')
 const executorPath = join(
   resolve(executorTargetDir),
   'debug',
@@ -41,8 +40,6 @@ function run(command, args, cwd = weworkDir, environment = process.env) {
 
 await run(pnpmCommand, ['run', 'prepare:electron'])
 await Promise.all([
-  run(pnpmCommand, ['run', 'prepare:codex']),
-  run(pnpmCommand, ['run', 'prepare:dws']),
   run(pnpmCommand, ['--dir', 'electron', 'run', 'build'], weworkDir, buildEnvironment),
   run(
     'cargo',

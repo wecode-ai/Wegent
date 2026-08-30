@@ -13,12 +13,19 @@ use std::{
 
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::{
+    sync::broadcast,
+    time::{self, Duration, MissedTickBehavior},
+};
 
 use super::RUNTIME_EVENT_BUFFER_CAPACITY;
 
 const EVENT_JOURNAL_MAX_EVENTS: usize = 4096;
 const EVENT_JOURNAL_MAX_BYTES: usize = 8 * 1024 * 1024;
+const EVENT_ENVELOPE_MAX_BYTES: usize = 256 * 1024;
+const EVENT_COALESCE_INTERVAL: Duration = Duration::from_millis(16);
+const EVENT_COALESCE_MAX_KEYS: usize = 1024;
+const EVENT_METADATA_MAX_CHARS: usize = 256;
 
 #[derive(Clone)]
 pub(crate) struct ExecutorEventHub {
@@ -58,7 +65,18 @@ impl ExecutorEventHub {
         }
     }
 
+    pub fn from_receiver(receiver: broadcast::Receiver<Value>) -> Self {
+        let (raw_tx, _) = broadcast::channel(1);
+        let hub = Self::new(raw_tx);
+        hub.start(receiver);
+        hub
+    }
+
     pub fn ensure_started(&self) {
+        self.start(self.raw_tx.subscribe());
+    }
+
+    fn start(&self, mut receiver: broadcast::Receiver<Value>) {
         if self
             .started
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -67,23 +85,55 @@ impl ExecutorEventHub {
             return;
         }
 
-        let mut receiver = self.raw_tx.subscribe();
         let hub = self.clone();
         tokio::spawn(async move {
+            let mut pending = VecDeque::<(String, Value)>::new();
+            let mut flush = time::interval(EVENT_COALESCE_INTERVAL);
+            flush.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            flush.tick().await;
             loop {
-                match receiver.recv().await {
-                    Ok(event) => hub.publish(event),
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        hub.publish(json!({
-                            "type": "event",
-                            "event": "executor.event_lagged",
-                            "payload": {
-                                "skipped": skipped,
-                                "reason": "executor_event_ingress_backpressure",
-                            },
-                        }));
+                tokio::select! {
+                    _ = flush.tick(), if !pending.is_empty() => {
+                        hub.flush_pending(&mut pending, None);
                     }
-                    Err(broadcast::error::RecvError::Closed) => return,
+                    result = receiver.recv() => match result {
+                        Ok(event) => {
+                            if let Some(key) = coalescing_key(&event) {
+                                if pending.len() >= EVENT_COALESCE_MAX_KEYS
+                                    && !pending.iter().any(|(pending_key, _)| pending_key == &key)
+                                {
+                                    hub.flush_pending(&mut pending, None);
+                                }
+                                if let Some((_, pending_event)) = pending
+                                    .iter_mut()
+                                    .find(|(pending_key, _)| pending_key == &key)
+                                {
+                                    *pending_event = event;
+                                } else {
+                                    pending.push_back((key, event));
+                                }
+                            } else {
+                                let task_id = event_task_id(&event);
+                                hub.flush_pending(&mut pending, task_id.as_deref());
+                                hub.publish(event);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            hub.flush_pending(&mut pending, None);
+                            hub.publish(json!({
+                                "type": "event",
+                                "event": "executor.event_lagged",
+                                "payload": {
+                                    "skipped": skipped,
+                                    "reason": "executor_event_ingress_backpressure",
+                                },
+                            }));
+                        }
+                        Err(broadcast::error::RecvError::Closed) => {
+                            hub.flush_pending(&mut pending, None);
+                            return;
+                        }
+                    }
                 }
             }
         });
@@ -139,6 +189,18 @@ impl ExecutorEventHub {
         };
         let _ = self.event_tx.send(event);
     }
+
+    fn flush_pending(&self, pending: &mut VecDeque<(String, Value)>, task_id: Option<&str>) {
+        let mut retained = VecDeque::new();
+        while let Some((key, event)) = pending.pop_front() {
+            if task_id.is_none() || event_task_id(&event).as_deref() == task_id {
+                self.publish(event);
+            } else {
+                retained.push_back((key, event));
+            }
+        }
+        *pending = retained;
+    }
 }
 
 impl EventJournal {
@@ -158,14 +220,8 @@ impl EventJournal {
 
     fn append(&mut self, raw: Value) -> Value {
         let sequence = self.take_sequence();
-        let event = event_envelope(raw, sequence);
+        let event = bounded_event_envelope(raw, sequence);
         let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
-        if bytes > EVENT_JOURNAL_MAX_BYTES {
-            self.dropped_through = sequence;
-            self.events.clear();
-            self.bytes = 0;
-            return event;
-        }
 
         self.events.push_back(JournalEvent {
             sequence,
@@ -217,6 +273,53 @@ impl EventJournal {
     }
 }
 
+fn coalescing_key(event: &Value) -> Option<String> {
+    let event_name = event.get("event").and_then(Value::as_str)?;
+    if !matches!(
+        event_name,
+        "response.block.updated"
+            | "response.subagent.activity"
+            | "runtime.plan.updated"
+            | "runtime.goal.updated"
+            | "thread/tokenUsage/updated"
+    ) {
+        return None;
+    }
+    let payload = event.get("payload")?;
+    let task_id = payload
+        .get("taskId")
+        .or_else(|| payload.get("task_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if task_id.is_empty() {
+        return None;
+    }
+    let subtask_id = payload
+        .get("subtaskId")
+        .or_else(|| payload.get("subtask_id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let block_id = payload
+        .get("data")
+        .and_then(|data| {
+            data.get("block_id")
+                .or_else(|| data.get("blockId"))
+                .or_else(|| data.get("item_id"))
+                .or_else(|| data.get("itemId"))
+        })
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(format!("{event_name}\0{task_id}\0{subtask_id}\0{block_id}"))
+}
+
+fn event_task_id(event: &Value) -> Option<String> {
+    event
+        .get("payload")
+        .and_then(|payload| payload.get("taskId").or_else(|| payload.get("task_id")))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+}
+
 pub(crate) fn event_sequence(event: &Value) -> Option<u64> {
     event.get("sequence").and_then(Value::as_u64)
 }
@@ -237,10 +340,66 @@ fn event_envelope(raw: Value, sequence: u64) -> Value {
     })
 }
 
+fn bounded_event_envelope(raw: Value, sequence: u64) -> Value {
+    let original_event = raw
+        .get("event")
+        .and_then(Value::as_str)
+        .unwrap_or("executor.unknown")
+        .chars()
+        .take(EVENT_METADATA_MAX_CHARS)
+        .collect::<String>();
+    let task_id = event_task_id(&raw).map(|task_id| {
+        task_id
+            .chars()
+            .take(EVENT_METADATA_MAX_CHARS)
+            .collect::<String>()
+    });
+    let event = event_envelope(raw, sequence);
+    let bytes = serde_json::to_vec(&event).map_or(0, |encoded| encoded.len());
+    if bytes <= EVENT_ENVELOPE_MAX_BYTES {
+        return event;
+    }
+    let replacement = event_envelope(
+        json!({
+            "type": "event",
+            "event": "executor.event_lagged",
+            "payload": {
+                "reason": "event_too_large",
+                "originalEvent": original_event,
+                "originalBytes": bytes,
+                "taskId": task_id,
+                "latestSequence": sequence,
+            },
+        }),
+        sequence,
+    );
+    if serde_json::to_vec(&replacement).map_or(usize::MAX, |encoded| encoded.len())
+        <= EVENT_ENVELOPE_MAX_BYTES
+    {
+        return replacement;
+    }
+    event_envelope(
+        json!({
+            "type": "event",
+            "event": "executor.event_lagged",
+            "payload": {
+                "reason": "event_too_large",
+                "originalBytes": bytes,
+                "latestSequence": sequence,
+            },
+        }),
+        sequence,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{event_sequence, EventJournal, EVENT_JOURNAL_MAX_BYTES, EVENT_JOURNAL_MAX_EVENTS};
+    use super::{
+        coalescing_key, event_sequence, EventJournal, ExecutorEventHub, EVENT_ENVELOPE_MAX_BYTES,
+        EVENT_JOURNAL_MAX_EVENTS,
+    };
     use serde_json::json;
+    use tokio::sync::broadcast;
 
     #[test]
     fn journal_bounds_events_and_reports_history_loss() {
@@ -263,14 +422,95 @@ mod tests {
     }
 
     #[test]
-    fn oversized_event_is_not_retained() {
+    fn oversized_event_becomes_a_bounded_lag_event() {
         let mut journal = EventJournal::new();
         let event = journal.append(json!({
             "event": "response.block.updated",
-            "payload": {"data": {"content": "x".repeat(EVENT_JOURNAL_MAX_BYTES)}},
+            "payload": {
+                "taskId": "task-1",
+                "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
+            },
         }));
 
-        assert!(journal.events.is_empty());
-        assert_eq!(journal.dropped_through, event_sequence(&event).unwrap());
+        assert_eq!(event["event"], "executor.event_lagged");
+        assert_eq!(event["payload"]["reason"], "event_too_large");
+        assert_eq!(event["payload"]["taskId"], "task-1");
+        assert_eq!(journal.events.len(), 1);
+    }
+
+    #[test]
+    fn oversized_event_metadata_cannot_overflow_the_replacement() {
+        let mut journal = EventJournal::new();
+        let event = journal.append(json!({
+            "event": "e".repeat(EVENT_ENVELOPE_MAX_BYTES),
+            "payload": {
+                "taskId": "t".repeat(EVENT_ENVELOPE_MAX_BYTES),
+                "data": {"content": "x".repeat(EVENT_ENVELOPE_MAX_BYTES)}
+            },
+        }));
+
+        assert_eq!(event["event"], "executor.event_lagged");
+        assert!(
+            serde_json::to_vec(&event).unwrap().len() <= EVENT_ENVELOPE_MAX_BYTES,
+            "replacement event must respect the downstream envelope limit"
+        );
+    }
+
+    #[test]
+    fn block_updates_coalesce_per_task_and_block() {
+        let first = json!({
+            "event": "response.block.updated",
+            "payload": {
+                "taskId": "task-1",
+                "subtaskId": "turn-1",
+                "data": {"block_id": "block-1"}
+            }
+        });
+        let second = json!({
+            "event": "response.block.updated",
+            "payload": {
+                "taskId": "task-2",
+                "subtaskId": "turn-1",
+                "data": {"block_id": "block-1"}
+            }
+        });
+
+        assert_ne!(coalescing_key(&first), coalescing_key(&second));
+    }
+
+    #[tokio::test]
+    async fn latest_block_update_is_flushed_before_terminal_event() {
+        let (raw_tx, _) = broadcast::channel(8);
+        let hub = ExecutorEventHub::new(raw_tx.clone());
+        hub.ensure_started();
+        let mut events = hub.subscribe_live();
+        for content in ["first", "second"] {
+            raw_tx
+                .send(json!({
+                    "event": "response.block.updated",
+                    "payload": {
+                        "taskId": "task-1",
+                        "subtaskId": "turn-1",
+                        "data": {
+                            "block_id": "block-1",
+                            "updates": {"content": content}
+                        }
+                    }
+                }))
+                .unwrap();
+        }
+        raw_tx
+            .send(json!({
+                "event": "response.completed",
+                "payload": {"taskId": "task-1", "subtaskId": "turn-1"}
+            }))
+            .unwrap();
+
+        let update = events.recv().await.unwrap();
+        let terminal = events.recv().await.unwrap();
+
+        assert_eq!(update["payload"]["data"]["updates"]["content"], "second");
+        assert_eq!(terminal["event"], "response.completed");
+        assert!(event_sequence(&terminal).unwrap() > event_sequence(&update).unwrap());
     }
 }

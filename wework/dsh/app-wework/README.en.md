@@ -6,8 +6,10 @@ lifecycle, and UI registration.
 
 The host declares these standard extension points:
 
+- `wework.action`
 - `wework.app`
 - `wework.route`
+- `wework.sidebar.navigation`
 - `wework.settings.page`
 - `wework.shell.before` / `wework.shell.after` / `wework.shell.overlay`
 - `wework.workspace.tab`
@@ -49,3 +51,7 @@ capabilities.
 The package must explicitly export `./package.json`. The DSH client module
 registry resolves that subpath to read the `dsh.client` declaration; without
 the export, the plugin is omitted from the browser boot graph.
+
+The installable third-party example at
+[`../examples/ui-extension-demo`](../examples/ui-extension-demo) covers every
+extension point above.

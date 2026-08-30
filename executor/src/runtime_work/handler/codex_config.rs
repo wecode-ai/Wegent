@@ -107,6 +107,56 @@ impl RuntimeWorkRpcHandler {
         }))
     }
 
+    pub(super) async fn read_codex_model_overrides(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let slugs = payload
+            .get("slugs")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        crate::server::codex_model_catalog::read_model_overrides(&slugs)
+            .await
+            .map_err(|error| AppIpcError::new("codex_model_overrides_read_failed", error))
+    }
+
+    pub(super) async fn write_codex_model_override(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let slug = string_field(&payload, "slug")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "slug is required"))?;
+        let entry = payload
+            .get("entry")
+            .ok_or_else(|| AppIpcError::new("invalid_request", "entry is required"))?;
+        let overridden = crate::server::codex_model_catalog::write_model_override(&slug, entry)
+            .await
+            .map_err(|error| AppIpcError::new("invalid_model_catalog_override", error))?;
+        Ok(json!({"saved": true, "overridden": overridden}))
+    }
+
+    pub(super) async fn delete_codex_model_override(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let slug = string_field(&payload, "slug")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| AppIpcError::new("invalid_request", "slug is required"))?;
+        let deleted = crate::server::codex_model_catalog::delete_model_override(&slug)
+            .map_err(|error| AppIpcError::new("codex_model_override_delete_failed", error))?;
+        Ok(json!({"deleted": deleted}))
+    }
+
     pub(super) async fn read_codex_instructions(&self) -> Result<Value, AppIpcError> {
         let response = self
             .codex_app_server

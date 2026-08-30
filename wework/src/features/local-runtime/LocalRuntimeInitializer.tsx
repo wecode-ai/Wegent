@@ -13,7 +13,7 @@ import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
-  ensureLocalExecutorStarted,
+  ensureLocalExecutorAvailable,
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
@@ -83,7 +83,7 @@ async function resolveLocalRuntimeState(
   errorText: LocalRuntimeErrorText
 ): Promise<LocalRuntimeState> {
   try {
-    const status = await ensureLocalExecutorStarted()
+    const status = await ensureLocalExecutorAvailable()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
       throw new Error(statusError)

@@ -110,6 +110,8 @@ Codex app-server requests from `item/commandExecution/requestApproval`, `item/fi
 
 Wework requests the model catalog from the Codex app-server's `model/list` method through the local executor, then uses the returned provider and model array order unchanged in the model picker. The frontend does not reorder official or default models or custom providers, and does not add models that Codex did not return. The request uses `includeHidden: false`, so models Codex marks as hidden are not displayed.
 
+Existing tasks preserve the model selection saved when the task was created or last sent. If that model is temporarily absent from the current catalog, Wework requires the user to select an available model and blocks sending; it does not silently replace the task model with the default model for new tasks.
+
 ### Supervisor Models
 
 Task supervision and chat use the same model selector component and the same model catalog, while remembering their most recent selections independently. Supervision must not maintain a second model-filtering or ordering path; official Codex models, custom providers, and local models available in chat must also be selectable for supervision.

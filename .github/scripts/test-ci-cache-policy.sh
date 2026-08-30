@@ -93,6 +93,69 @@ docker_only="${warmup_all_false/docker=false/docker=true}"
 assert_warmup_case "Executor E2E resolver" "$docker_only" \
   ".github/scripts/resolve-executor-e2e-runtime.sh"
 
+assert_executor_runtime_resolution() {
+  local name="$1"
+  local manifest_fixture="$2"
+  local expected_base_digest="$3"
+  local temp_dir
+  local output_file
+  local pinned_base_image
+  local expected_runtime_digest
+
+  temp_dir="$(mktemp -d)"
+  output_file="$temp_dir/output"
+  cat > "$temp_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$#" -ne 6 ||
+  "$1" != "buildx" ||
+  "$2" != "imagetools" ||
+  "$3" != "inspect" ||
+  "$5" != "--format" ||
+  "$6" != "{{json .Manifest}}" ]]; then
+  printf 'Unexpected docker invocation: %q ' "$@" >&2
+  printf '\n' >&2
+  exit 1
+fi
+
+printf '%s\n' "${DOCKER_MANIFEST_FIXTURE:?}"
+EOF
+  chmod +x "$temp_dir/docker"
+
+  PATH="$temp_dir:$PATH" \
+    BASE_IMAGE="ghcr.io/wecode-ai/base:test" \
+    SOURCE_DIGEST="source-digest" \
+    GITHUB_REPOSITORY_OWNER="WECODE-AI" \
+    GITHUB_OUTPUT="$output_file" \
+    DOCKER_MANIFEST_FIXTURE="$manifest_fixture" \
+    "$script_dir/resolve-executor-e2e-runtime.sh"
+
+  pinned_base_image="ghcr.io/wecode-ai/base:test@$expected_base_digest"
+  expected_runtime_digest="$(
+    printf '%s\n%s\n' "source-digest" "$pinned_base_image" |
+      sha256sum |
+      cut -d ' ' -f 1
+  )"
+  if ! grep -Fxq "base-image=$pinned_base_image" "$output_file" ||
+    ! grep -Fxq \
+      "image=ghcr.io/wecode-ai/wegent-e2e-claudecode-executor:$expected_runtime_digest" \
+      "$output_file"; then
+    printf 'Executor runtime resolution failed: %s\n' "$name" >&2
+    cat "$output_file" >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  rm -rf "$temp_dir"
+}
+
+assert_executor_runtime_resolution "multi-platform image" \
+  '{"digest":"sha256:index","manifests":[{"digest":"sha256:arm64","platform":{"os":"linux","architecture":"arm64"}},{"digest":"sha256:amd64","platform":{"os":"linux","architecture":"amd64"}}]}' \
+  "sha256:amd64"
+assert_executor_runtime_resolution "single-platform image" \
+  '{"digest":"sha256:single","mediaType":"application/vnd.oci.image.manifest.v1+json"}' \
+  "sha256:single"
+
 desktop_image="${warmup_all_false/docker=false/docker=true}"
 desktop_image="${desktop_image/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework desktop image" "$desktop_image" \

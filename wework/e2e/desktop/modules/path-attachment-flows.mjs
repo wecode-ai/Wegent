@@ -32,6 +32,10 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+const TERMINAL_DRAG_TEXT = 'WEWORK_TERMINAL_DRAG_E2E'
+const SELECTED_TEXT_FILE_NAME = 'selected-text-drag.ts'
+const SELECTED_TEXT_FILE_CONTENT = 'export const selectedTextDrag = true\n'
+
 async function waitForSystemDragPanelVisibility(control, expected, message) {
   const expectedValue = String(expected)
   const startedAt = Date.now()
@@ -231,9 +235,211 @@ async function verifyDroppedWorkspacePaths({ composerSelector, control, workspac
   await mkdir(folderPath, { recursive: true })
   await writeFile(join(folderPath, 'nested.txt'), 'nested dropped path context\n')
   await writeFile(filePath, '# Dropped path context\n')
+  await writeFile(join(workspacePath, SELECTED_TEXT_FILE_NAME), SELECTED_TEXT_FILE_CONTENT)
 
   await control.command('click', '[data-testid="new-chat-button"]')
   await control.command('waitFor', composerSelector, { timeoutMs: WORKBENCH_READY_TIMEOUT_MS })
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+  await control.command('click', '[data-testid="right-workspace-file-option"]')
+  await control.command('waitFor', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragDataTransferStart', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`)
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'Dragging a right-sidebar workspace file did not show the system drag panel'
+  )
+  await control.command('dragDataTransferEnd', `[data-item-path="${DROPPED_PATH_FILE_NAME}"]`, {
+    target: composerSelector,
+  })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'The system drag panel did not close after the workspace-file drag ended'
+  )
+  await control.command('waitFor', '[data-testid="composer-path-chip-dropped-context-md"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const sidebarDragSnapshot = JSON.parse(
+    await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
+  )
+  assert.equal(
+    sidebarDragSnapshot.testIds.includes('attachment-badge'),
+    false,
+    'Dragging a right-sidebar workspace file copied it into attachment uploads'
+  )
+  await captureVerificationScreenshot(control, 'right-sidebar-workspace-file-drag.png')
+  await control.command('fill', composerSelector, { value: '' })
+
+  await control.command('click', `[data-item-path="${SELECTED_TEXT_FILE_NAME}"]`)
+  await control.command('waitFor', '[data-testid="workspace-file-edit-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-line="1"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('selectText', '[data-line="1"]', {
+    value: SELECTED_TEXT_FILE_CONTENT.trim(),
+  })
+  await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-preview-selection-actions.png')
+  assert.equal(
+    await control.command('getSystemDragPanelVisibility', 'body'),
+    'false',
+    'Selecting workspace preview text incorrectly opened the system drag panel'
+  )
+  await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    SELECTED_TEXT_FILE_CONTENT.trim(),
+    'The workspace preview selection action did not insert text into the composer'
+  )
+  await control.command('fill', composerSelector, { value: '' })
+  await control.command('selectText', '[data-line="1"]', {
+    value: SELECTED_TEXT_FILE_CONTENT.trim(),
+  })
+  await control.command('dragDataTransferStart', '[data-line="1"]')
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'Dragging workspace preview text did not show the system drag panel'
+  )
+  await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'The system drag panel did not close after the workspace-preview drag ended'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    SELECTED_TEXT_FILE_CONTENT.trim(),
+    'Dragging selected workspace preview text did not insert it into the composer'
+  )
+  await captureVerificationScreenshot(control, 'workspace-preview-selection-drag.png')
+  await control.command('fill', composerSelector, { value: '' })
+
+  await control.command('click', '[data-testid="workspace-file-edit-button"]')
+  await control.command('waitFor', '[data-testid="workspace-file-editor"] .cm-content', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+    key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
+  })
+  await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'workspace-editor-selection-actions.png')
+  assert.equal(
+    await control.command('getSystemDragPanelVisibility', 'body'),
+    'false',
+    'Selecting CodeMirror workspace text incorrectly opened the system drag panel'
+  )
+  await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    SELECTED_TEXT_FILE_CONTENT.trim(),
+    'The CodeMirror selection action did not insert text into the composer'
+  )
+  await control.command('fill', composerSelector, { value: '' })
+  await control.command('press', '[data-testid="workspace-file-editor"] .cm-content', {
+    key: process.platform === 'darwin' ? 'Meta+a' : 'Control+a',
+  })
+  await control.command(
+    'dragDataTransferStart',
+    '[data-testid="workspace-file-editor"] .cm-content'
+  )
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'Dragging CodeMirror workspace text did not show the system drag panel'
+  )
+  await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'The system drag panel did not close after the selected-text drag ended'
+  )
+  assert.equal(
+    await control.command('getValue', composerSelector),
+    SELECTED_TEXT_FILE_CONTENT.trim(),
+    'Dragging selected workspace editor text did not insert it into the composer'
+  )
+  assert.equal(
+    await control.command('getValue', '[data-testid="workspace-file-editor"] .cm-content'),
+    SELECTED_TEXT_FILE_CONTENT.trim(),
+    'Dragging selected workspace editor text removed it from the source editor'
+  )
+  await captureVerificationScreenshot(control, 'workspace-editor-selection-drag.png')
+  await control.command('fill', composerSelector, { value: '' })
+
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await control.command('waitFor', '.xterm-accessibility-tree [role="listitem"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('terminalInput', '[data-testid="embedded-local-terminal"]', {
+    value: `printf '${TERMINAL_DRAG_TEXT}\\n'\r`,
+  })
+  await control.command('waitFor', '.xterm-accessibility-tree [role="listitem"]', {
+    text: TERMINAL_DRAG_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const selectedTerminalText = await control.command(
+    'selectTerminalText',
+    '.xterm-accessibility-tree [role="listitem"]',
+    { value: TERMINAL_DRAG_TEXT }
+  )
+  assert.equal(
+    selectedTerminalText,
+    TERMINAL_DRAG_TEXT,
+    'The terminal did not expose the expected selectable output'
+  )
+  await control.command('waitFor', '[data-testid="workspace-selection-actions"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'terminal-selection-actions.png')
+  assert.equal(
+    await control.command('getSystemDragPanelVisibility', 'body'),
+    'false',
+    'Selecting terminal text incorrectly opened the system drag panel'
+  )
+  await control.command('click', '[data-testid="add-workspace-selection-to-conversation-button"]')
+  assert.match(
+    await control.command('getValue', composerSelector),
+    new RegExp(TERMINAL_DRAG_TEXT),
+    'The terminal selection action did not insert text into the composer'
+  )
+  await control.command('fill', composerSelector, { value: '' })
+  await control.command('selectTerminalText', '.xterm-accessibility-tree [role="listitem"]', {
+    value: TERMINAL_DRAG_TEXT,
+  })
+  await control.command('waitFor', '[data-testid="xterm-selection-drag-region"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('dragDataTransferStart', '[data-testid="xterm-selection-drag-region"]')
+  await waitForSystemDragPanelVisibility(
+    control,
+    true,
+    'Dragging terminal text did not show the system drag panel'
+  )
+  await control.command('dragDataTransferEnd', 'body', { target: composerSelector })
+  await waitForSystemDragPanelVisibility(
+    control,
+    false,
+    'The system drag panel did not close after the terminal selection drag ended'
+  )
+  assert.match(
+    await control.command('getValue', composerSelector),
+    new RegExp(TERMINAL_DRAG_TEXT),
+    'Dragging selected terminal text did not insert the expected output into the composer'
+  )
+  await captureVerificationScreenshot(control, 'terminal-selection-drag.png')
+  await control.command('fill', composerSelector, { value: '' })
+  await control.command('click', '[data-testid="toggle-bottom-workspace-panel-button"]')
+  await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+
   await control.command('dropPaths', composerSelector, {
     value: JSON.stringify([
       {

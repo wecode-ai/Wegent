@@ -1148,9 +1148,14 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
             "/D".to_owned(),
             "/S".to_owned(),
             "/C".to_owned(),
-            format!("<nul set /p ={}", local_model_proxy::API_KEY),
+            windows_codex_router_auth_script(),
         ],
     )
+}
+
+#[cfg(any(windows, test))]
+fn windows_codex_router_auth_script() -> String {
+    format!("<nul set /p ={} & exit /b 0", local_model_proxy::API_KEY)
 }
 
 async fn read_persistent_codex_app_server_stdout(

@@ -7,12 +7,28 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
 #[test]
+fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
+    let config = CodexRuntimeProxyConfig::default();
+
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url, None);
+}
+
+#[test]
 fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(
         RuntimeSettings::default().max_concurrent_tasks,
         DEFAULT_MAX_CONCURRENT_TASKS
     );
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
+}
+
+#[test]
+fn restore_startup_concurrency_defaults_to_two_without_reducing_runtime_capacity() {
+    assert_eq!(normalized_restore_startup_concurrency(None, 10), 2);
+    assert_eq!(normalized_restore_startup_concurrency(Some(8), 10), 8);
+    assert_eq!(normalized_restore_startup_concurrency(Some(20), 10), 10);
+    assert_eq!(normalized_restore_startup_concurrency(Some(0), 10), 1);
 }
 
 #[test]
@@ -2109,6 +2125,39 @@ fn finishing_execution_removes_its_codex_turn_context() {
 
     assert!(!handler.is_active_local_task("task-1"));
     assert!(handler.active_codex_turn("task-1").is_none());
+}
+
+#[tokio::test]
+async fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut source = RuntimeTaskLink::new_pending(
+        "source-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Source task".to_owned(),
+    );
+    source.thread_id = Some("source-thread".to_owned());
+    handler.upsert_local_task(source);
+    let execution_id = start_test_execution(&handler, "source-task");
+    let waiting_handler = handler.clone();
+    let wait = tokio::spawn(async move {
+        waiting_handler
+            .wait_for_running_side_source_turn("source-thread")
+            .await;
+    });
+
+    tokio::task::yield_now().await;
+    assert!(!wait.is_finished());
+    handler.record_active_codex_turn(
+        "source-task",
+        execution_id,
+        "source-thread".to_owned(),
+        "source-turn".to_owned(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), wait)
+        .await
+        .expect("side source readiness should unblock after turn/start")
+        .expect("side source readiness task should not panic");
 }
 
 #[test]

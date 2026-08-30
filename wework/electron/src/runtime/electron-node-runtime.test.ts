@@ -144,7 +144,9 @@ describe('prepareElectronNodeRuntime', () => {
 
     const runtime = await prepareElectronNodeRuntime({
       dataDirectory: directory,
-      environment: { PATH: 'C:\\Windows\\System32' },
+      environment: {
+        Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+      },
       helperExecPath,
       nodeVersion: '24.13.0',
       platform: 'win32',
@@ -154,5 +156,32 @@ describe('prepareElectronNodeRuntime', () => {
     expect(runtime.environment.WEWORK_NODE_PATH).toBe(helperExecPath)
     expect(await readFile(launcherPath, 'utf8')).toContain('set ELECTRON_RUN_AS_NODE=1')
     expect(await readFile(launcherPath, 'utf8')).toContain(`"${helperExecPath}" %*`)
+    expect(runtime.environment.Path).toBeUndefined()
+    expect(runtime.environment.PATH?.split(';')).toEqual([
+      join(directory, 'runtime', 'bin'),
+      'C:\\Windows\\System32',
+      'C:\\Program Files\\Git\\cmd',
+    ])
+  })
+
+  test('normalizes the Windows PATH key for a configured Node executable', async () => {
+    const runtime = await prepareElectronNodeRuntime({
+      dataDirectory: '/unused',
+      environment: {
+        Path: 'C:\\Windows\\System32;C:\\Program Files\\Git\\cmd',
+        WEWORK_NODE_PATH: 'C:\\Program Files\\nodejs\\node.exe',
+      },
+      helperExecPath: 'C:\\Program Files\\WeWork\\WeWork Helper.exe',
+      nodeVersion: '24.13.0',
+      platform: 'win32',
+    })
+
+    expect(runtime.environment.Path).toBeUndefined()
+    expect(runtime.environment.PATH?.split(';')).toEqual([
+      'C:\\Program Files\\nodejs',
+      'C:\\Windows\\System32',
+      'C:\\Program Files\\Git\\cmd',
+    ])
+    expect(runtime.environment.WEWORK_RUNTIME_BIN).toBe('C:\\Program Files\\nodejs')
   })
 })

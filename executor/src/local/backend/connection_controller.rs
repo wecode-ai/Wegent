@@ -13,14 +13,14 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tokio::{
-    sync::{broadcast, Mutex},
-    task::JoinHandle,
-};
+use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     config::device::{ConnectionConfig, DeviceConfig},
-    local::app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
+    local::{
+        app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
+        event_stream::ExecutorEventHub,
+    },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
 
@@ -30,7 +30,7 @@ use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, Socke
 pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
-    runtime_event_tx: Option<broadcast::Sender<Value>>,
+    runtime_event_hub: Option<ExecutorEventHub>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
     /// Lightweight snapshot of the current connection shared with the
     /// runtime-work handler so App-IPC task runs can resolve backend
@@ -51,16 +51,16 @@ impl LocalBackendConnectionController {
         Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
     }
 
-    pub async fn start_with_runtime(
+    pub(crate) async fn start_with_runtime(
         config: DeviceConfig,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
-        runtime_event_tx: broadcast::Sender<Value>,
+        runtime_event_hub: ExecutorEventHub,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
         Self::start_internal(
             config,
             Some(runtime_work_handler),
-            Some(runtime_event_tx),
+            Some(runtime_event_hub),
             connection_snapshot,
         )
         .await
@@ -69,7 +69,7 @@ impl LocalBackendConnectionController {
     async fn start_internal(
         mut config: DeviceConfig,
         runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
-        runtime_event_tx: Option<broadcast::Sender<Value>>,
+        runtime_event_hub: Option<ExecutorEventHub>,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
         let initial_connection = normalized_connection(&config.connection);
@@ -77,7 +77,7 @@ impl LocalBackendConnectionController {
         let controller = Self {
             base_config: config,
             runtime_work_handler,
-            runtime_event_tx,
+            runtime_event_hub,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
@@ -118,14 +118,14 @@ impl LocalBackendConnectionController {
             let backend_url = connection.backend_url.clone();
             let socket_url = resolved_socket_url(connection);
             let transport = SocketIoTransport::default();
-            let runner = if let (Some(handler), Some(event_tx)) =
-                (&self.runtime_work_handler, &self.runtime_event_tx)
+            let runner = if let (Some(handler), Some(event_hub)) =
+                (&self.runtime_work_handler, &self.runtime_event_hub)
             {
-                LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+                LocalBackendRunner::new_for_app_sidecar_with_event_hub(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                     handler.clone(),
-                    event_tx.subscribe(),
+                    event_hub.clone(),
                 )
             } else {
                 LocalBackendRunner::new_for_app_sidecar(

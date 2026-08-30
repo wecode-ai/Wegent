@@ -39,6 +39,14 @@ version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
 
+Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
+and NSIS installer. `electron-updater` compares the previous cached package with
+the old and new blockmaps and downloads only changed blocks. It falls back to
+the full installer only for a first update, a cleared cache, or a differential
+download failure. The release workflow must fail when any required blockmap is
+missing. Differential plans, transferred sizes, and fallback reasons are
+written to `app-update.log` in the application log directory.
+
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
 
@@ -141,14 +149,18 @@ only components that actually changed and do not redownload Electron and
 Chromium for a component-only change.
 
 The client accepts only a component manifest that exactly matches the running
-Electron application version, channel, platform, and architecture. It verifies
-the archive size and SHA-256 before extraction, then verifies the extracted
-component content SHA-256. Downloads enter a content-addressed store under the
-user data directory as `pending` and the complete component set switches
-through one atomic state file on the next startup. Wework confirms the new set
-only after the workbench and Core DSH start successfully. A failed startup, or
-a process exit before confirmation, rolls back to the previous set on the next
-launch. Packaged resources remain the final fallback.
+Electron application version, channel, platform, and architecture. A
+manifest's `downloadUrl` may point to a version Release, a shared dependency
+Release, or independent object storage; it does not need to share the rolling
+manifest's origin or path. Content integrity defines the download trust
+boundary: the client verifies the archive size and SHA-256 before extraction,
+then verifies the extracted component content SHA-256. Downloads enter a
+content-addressed store under the user data directory as `pending` and the
+complete component set switches through one atomic state file on the next
+startup. Wework confirms the new set only after the workbench and Core DSH
+start successfully. A failed startup, or a process exit before confirmation,
+rolls back to the previous set on the next launch. Packaged resources remain
+the final fallback.
 
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it

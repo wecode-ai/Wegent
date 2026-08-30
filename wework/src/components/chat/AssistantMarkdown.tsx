@@ -19,6 +19,8 @@ import { MarkdownDiagramPreview } from './MarkdownDiagramPreview'
 import { CodexInlineVisualizationHost } from './CodexInlineVisualizationHost'
 import { splitStaticMarkdownChunks } from './assistantMarkdownWindowing'
 import { useBufferedStreamingText } from './useBufferedStreamingText'
+import { useStreamingRenderGuard } from './useStreamingRenderGuard'
+import { useStreamingRevealScale } from './StreamingRevealPressureContext'
 import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
@@ -26,6 +28,7 @@ import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -105,7 +108,13 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   onOpenFile,
   fileChanges,
 }: AssistantMarkdownProps) {
-  const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const revealScaleRef = useStreamingRevealScale()
+  const { reducedMotion, rootRef, shouldHoldBack } = useStreamingRenderGuard(isStreaming)
+  const bufferedContent = useBufferedStreamingText(content, isStreaming, {
+    reducedMotion,
+    revealScaleRef,
+    shouldHoldBack,
+  })
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
@@ -237,6 +246,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
 
   return (
     <div
+      ref={rootRef}
       className={`${variant === 'process' ? 'thinking-markdown text-text-secondary' : 'assistant-markdown'} min-w-0 max-w-full break-words`}
     >
       {contentParts.map((part, index) =>
@@ -256,7 +266,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           >
             <Streamdown
               mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
-              isAnimating={isStreaming && index === contentParts.length - 1}
+              isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
@@ -273,7 +283,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           <Streamdown
             key={`markdown-${index}`}
             mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={isStreaming}
+            isAnimating={false}
             controls={false}
             linkSafety={{ enabled: false }}
             lineNumbers={false}
@@ -304,7 +314,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,7 +332,7 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
 
   return (
     <div
@@ -604,41 +614,42 @@ function AssistantMarkdownLink({
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
     return (
-      <button
-        type="button"
-        className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
-        data-testid="assistant-markdown-link"
-        onClick={() => {
-          if (isHtmlFilePath(filePath)) {
-            if (requestEmbeddedBrowserOpen(filePath)) return
-          }
-          if (openOptions) {
-            onOpenFile?.(filePath, openOptions)
-            return
-          }
-          onOpenFile?.(filePath)
-        }}
-        aria-label={tooltip}
+      <Tooltip
+        label={tooltip}
+        align="start"
+        testId="assistant-markdown-link-tooltip"
+        className="min-w-0 max-w-full !shrink align-baseline"
       >
-        {icon}
-        <span
-          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
-          data-testid="assistant-markdown-link-label"
+        <button
+          type="button"
+          className={ASSISTANT_MARKDOWN_LINK_CLASS}
+          data-testid="assistant-markdown-link"
+          onClick={() => {
+            if (isHtmlFilePath(filePath)) {
+              if (requestEmbeddedBrowserOpen(filePath)) return
+            }
+            if (openOptions) {
+              onOpenFile?.(filePath, openOptions)
+              return
+            }
+            onOpenFile?.(filePath)
+          }}
+          aria-label={tooltip}
         >
-          {children}
-        </span>
-        {lineLabel ? (
-          <span className="shrink-0" data-testid="assistant-markdown-link-line">
-            ({lineLabel})
+          {icon}
+          <span
+            className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+            data-testid="assistant-markdown-link-label"
+          >
+            {children}
           </span>
-        ) : null}
-        <span
-          data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
-        >
-          {tooltip}
-        </span>
-      </button>
+          {lineLabel ? (
+            <span className="shrink-0" data-testid="assistant-markdown-link-line">
+              ({lineLabel})
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
     )
   }
 

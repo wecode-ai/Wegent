@@ -547,6 +547,17 @@ async function waitForElementWidth(control, selector, predicate, description, ti
   throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
 }
 
+async function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (predicate(metrics.top)) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} remained at ${metrics.top}px after ${timeoutMs}ms`)
+}
+
 async function waitForProcessingBlock(
   control,
   selector,
@@ -990,6 +1001,7 @@ export {
   waitForElementInsideScroller,
   waitForTopMetrics,
   waitForElementWidth,
+  waitForElementTop,
   waitForProcessingBlock,
   verifyViewImageProcessingBlock,
   distanceFromBottom,

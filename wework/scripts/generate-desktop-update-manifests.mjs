@@ -78,6 +78,9 @@ if (requestedTargets.has('macos-x64')) {
 const windows = requestedTargets.has('windows-x64')
   ? await asset(`WeWork_${version}_windows_x64-setup.exe`)
   : null
+await Promise.all(
+  [...macAssets, ...(windows ? [windows] : [])].map(file => requireAsset(`${file.name}.blockmap`))
+)
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -217,6 +220,12 @@ async function localAsset(name) {
     size: file.size,
     sha512: await sha512(path),
   }
+}
+
+async function requireAsset(name) {
+  const path = resolve(assets, name)
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
 }
 
 async function tauriEntry(name) {

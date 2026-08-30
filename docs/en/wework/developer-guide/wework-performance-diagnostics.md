@@ -20,6 +20,20 @@ The desktop startup screen waits only for the local executor to report ready thr
 
 When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
 
+### First-Paint Gates and Idle Work
+
+The workbench first paint depends only on the local executor being available. It does not wait for the Codex app-server, plugin marketplace synchronization, or scans of directories eligible for cleanup. Features that need Codex start it on demand; maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.
+
+An idle task starts only when all of these conditions hold:
+
+- The workbench first paint is available.
+- There has been no recent keyboard, pointer, touch, or wheel input, and the renderer receives a sufficiently large idle-callback slice.
+- CPU utilization, available memory, and system idle time sampled by the Electron main process remain below the configured pressure limits.
+
+Pending requests with the same task ID are coalesced, and idle tasks start serially. New user input postpones work that has not started, and a failed pressure probe prevents execution. The scheduler only decides when work may begin; a task must not perform synchronous heavy work on the renderer main thread. File scanning and copying belongs in the Executor blocking pool, directory cleanup uses asynchronous I/O in the Electron main process, and network synchronization remains asynchronous.
+
+After first paint, the bundled plugin marketplace computes a deterministic content SHA-256. When `.wework-content-sha256` in the destination matches the current content, Wework skips the copy. Changed content is replaced through a staging directory, and the hash participates in the Codex local-marketplace registration key. Bundled plugins therefore refresh after a Wework upgrade without recopied content on every launch of the same version.
+
 ## Diagnosing Runtime Task Creation
 
 The frontend writes key task-creation stages to the persisted log with the `[Wework] Runtime task create diagnostic` prefix. This does not require Performance Diagnostics to be enabled. Records contain only the stage, task/device identifiers, model identifiers, elapsed time, and result; they do not contain message content, credentials, or model connection configuration.
