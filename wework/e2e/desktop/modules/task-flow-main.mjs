@@ -1587,6 +1587,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         appIdentifier,
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
       })
       console.log(`Wework desktop attachment-only E2E passed. Evidence: ${resultDir}`)
       return
@@ -3827,6 +3828,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         appIdentifier,
         composerSelector,
         control,
+        executorHome,
       })
 
       phase = 'pasted-zip-attachment'
