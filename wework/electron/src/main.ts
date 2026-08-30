@@ -135,6 +135,7 @@ let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
+let systemRecordReplay: SystemRecordReplay | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
@@ -1063,9 +1064,12 @@ async function shutdown(): Promise<void> {
   embeddedBrowserBridge = null
   const computerUseService = computerUse
   computerUse = null
+  const recordReplay = systemRecordReplay
+  systemRecordReplay = null
   await Promise.allSettled([
     browserBridge?.stop(),
     computerUseService?.stop(),
+    recordReplay?.dispose(),
     plugins?.shutdown(),
     workbenchTabs?.stop(),
     desktopRuntime?.stop(),
@@ -1119,7 +1123,7 @@ async function configureDesktopRuntime(): Promise<void> {
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
   const systemRecordReplayHelper = process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim()
-  const systemRecordReplay = new SystemRecordReplay(
+  systemRecordReplay = new SystemRecordReplay(
     app.getPath('userData'),
     systemRecordReplayHelper ||
       join(

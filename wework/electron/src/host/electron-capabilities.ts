@@ -330,7 +330,9 @@ export function createElectronCapabilityRouter(
   router.register('systemRecordReplay.start', params =>
     desktopServices.systemRecordReplay.start(stringParam(params, 'title'))
   )
-  router.register('systemRecordReplay.stop', () => desktopServices.systemRecordReplay.stop())
+  router.register('systemRecordReplay.stop', params =>
+    desktopServices.systemRecordReplay.stop(integerParam(params, 'preserveStepCount'))
+  )
   router.register('systemRecordReplay.delete', params =>
     desktopServices.systemRecordReplay.remove(stringParam(params, 'id'))
   )
@@ -433,11 +435,9 @@ export function createElectronCapabilityRouter(
   })
   router.register('window.closeToTray', () => e2eHost.closeToTray())
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
-  router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
+  registerTrayE2ECapabilities(router, e2eHost)
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
-  router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
-  router.register('e2e.activateTray', params => e2eHost.trayActivate(trayActivationParam(params)))
   router.register('window.openWorkspace', params =>
     e2eHost.openWorkspace({
       label: stringParam(params, 'label'),
@@ -687,6 +687,27 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).activate(installationId)
   })
   return router
+}
+
+export function registerTrayE2ECapabilities(
+  router: HostCapabilityRouter,
+  e2eHost: ElectronE2EHost
+): void {
+  router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
+  router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
+  router.register('e2e.activateTray', (params, context) => {
+    const activation = trayActivationParam(params)
+    if (activation.type !== 'menu-item' || activation.menuItemId !== 'quit') {
+      return e2eHost.trayActivate(activation)
+    }
+    const quitAvailable =
+      e2eHost.traySnapshot()?.menu.some(item => item.id === activation.menuItemId) === true
+    if (!quitAvailable) return false
+    context.deferUntilResponseSent(() => {
+      e2eHost.trayActivate(activation)
+    })
+    return true
+  })
 }
 
 export function registerRendererStorageCapabilities(

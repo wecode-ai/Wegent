@@ -21,6 +21,15 @@ await run('xcrun', [
   'ApplicationServices',
 ])
 await chmod(output, 0o755)
+const signingIdentity = process.env.APPLE_SIGNING_IDENTITY?.trim() || '-'
+const signingArguments = ['--force']
+if (signingIdentity !== '-') {
+  signingArguments.push('--timestamp', '--options', 'runtime')
+  const keychainPath = process.env.MACOS_KEYCHAIN_PATH?.trim()
+  if (keychainPath) signingArguments.push('--keychain', keychainPath)
+}
+signingArguments.push('--sign', signingIdentity, output)
+await run('codesign', signingArguments)
 
 function run(command, args) {
   return new Promise((resolveRun, reject) => {

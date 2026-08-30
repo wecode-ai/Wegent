@@ -2,7 +2,6 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-private let encoder = JSONEncoder()
 private let startedAt = Date()
 private var eventTap: CFMachPort?
 private var runLoopSource: CFRunLoopSource?
@@ -28,7 +27,9 @@ private func focusedElement(pid: pid_t) -> AXUIElement? {
     let app = AXUIElementCreateApplication(pid)
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &value)
-        == .success
+        == .success,
+        let value,
+        CFGetTypeID(value) == AXUIElementGetTypeID()
     else { return nil }
     return (value as! AXUIElement)
 }
@@ -37,7 +38,9 @@ private func focusedWindowTitle(pid: pid_t) -> String? {
     let app = AXUIElementCreateApplication(pid)
     var value: CFTypeRef?
     guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value)
-        == .success
+        == .success,
+        let value,
+        CFGetTypeID(value) == AXUIElementGetTypeID()
     else { return nil }
     return axString((value as! AXUIElement), kAXTitleAttribute as CFString)
 }
@@ -103,8 +106,9 @@ private func eventCallback(
     let pointerEvent = type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown
     var payload = context(for: event, usePointer: pointerEvent)
     payload["offsetMs"] = max(0, Int(Date().timeIntervalSince(startedAt) * 1000))
-    payload["risk"] = isHighRisk(payload) ? "high" : "low"
-    payload["replayable"] = !isHighRisk(payload)
+    let highRisk = isHighRisk(payload)
+    payload["risk"] = highRisk ? "high" : "low"
+    payload["replayable"] = !highRisk
 
     switch type {
     case .leftMouseDown, .rightMouseDown, .otherMouseDown:

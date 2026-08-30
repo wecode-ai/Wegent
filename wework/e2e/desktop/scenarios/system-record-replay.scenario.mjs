@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -11,7 +12,8 @@ const ITEM = '[data-testid^="record-replay-item-"]'
 const PLAY = '[data-testid^="record-replay-play-"]'
 const DELETE = '[data-testid^="record-replay-delete-"]'
 
-export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
+export function createDesktopScenario({ captureScreenshot, resultDir, uiTimeoutMs }) {
+  const recorderExitFile = join(resultDir, 'system-record-replay-helper-exited')
   return {
     appEnvironment: {
       WEWORK_SYSTEM_RECORD_REPLAY_HELPER: join(
@@ -23,6 +25,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'scripts',
         'system-record-replay-fixture.mjs'
       ),
+      WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_EXIT_FILE: recorderExitFile,
     },
 
     async verify(control) {
@@ -62,10 +65,36 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await control.command('waitFor', '[data-testid="record-replay-empty"]', {
         timeoutMs: uiTimeoutMs,
       })
+
+      await rm(recorderExitFile, { force: true })
+      await control.command('fill', '[data-testid="record-replay-title-input"]', {
+        value: 'Shutdown cleanup',
+      })
+      await control.command('click', START)
+      await control.command('waitFor', STOP, { timeoutMs: uiTimeoutMs })
+      assert.equal(
+        JSON.parse(
+          await control.command('activateTray', 'body', {
+            value: JSON.stringify({ type: 'menu-item', menuItemId: 'quit' }),
+          })
+        ),
+        true,
+        'The Electron Tray Quit action was not activated'
+      )
+      await waitForRecorderExit(recorderExitFile, uiTimeoutMs)
     },
 
     diagnostics() {
       return { systemRecordReplay: true }
     },
   }
+}
+
+async function waitForRecorderExit(path, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if ((await readFile(path, 'utf8').catch(() => '')) === 'stopped\n') return
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  assert.fail('Application shutdown did not terminate the active system recorder helper')
 }

@@ -1,18 +1,41 @@
 #!/usr/bin/env node
 
+import { writeFileSync } from 'node:fs'
+
 const command = process.argv[2] ?? 'status'
 
 if (command === 'status' || command === 'request-permissions') {
-  emit({
-    supported: true,
-    accessibilityGranted: true,
-    inputMonitoringGranted: true,
-  })
+  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG === command) {
+    setInterval(() => {}, 1_000)
+  } else {
+    emit({
+      supported: true,
+      accessibilityGranted: true,
+      inputMonitoringGranted: true,
+    })
+  }
 } else if (command === 'execute') {
-  process.stdin.resume()
-  process.stdin.on('end', () => emit({ ok: true }))
+  markStarted(command)
+  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG === command) {
+    setInterval(() => {}, 1_000)
+  } else {
+    process.stdin.resume()
+    process.stdin.on('end', () => emit({ ok: true }))
+  }
 } else if (command === 'record') {
+  let timer
+  const stop = () => {
+    if (timer) clearInterval(timer)
+    const exitFile = process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_EXIT_FILE
+    if (exitFile) writeFileSync(exitFile, 'stopped\n')
+    process.exit(0)
+  }
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
   emit({ ready: true })
+  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STDERR === 'after-ready') {
+    setTimeout(() => process.stderr.write('non-fatal recorder diagnostic\n'), 25)
+  }
   const samples = [
     {
       type: 'mouse',
@@ -53,7 +76,7 @@ if (command === 'status' || command === 'request-permissions') {
     },
   ]
   let index = 0
-  const timer = setInterval(() => {
+  timer = setInterval(() => {
     const sample = samples[index % samples.length]
     emit({
       ...sample,
@@ -63,12 +86,6 @@ if (command === 'status' || command === 'request-permissions') {
     })
     index += 1
   }, 350)
-  const stop = () => {
-    clearInterval(timer)
-    process.exit(0)
-  }
-  process.on('SIGINT', stop)
-  process.on('SIGTERM', stop)
 } else {
   emit({ error: 'Unknown fixture command' })
   process.exitCode = 1
@@ -76,4 +93,9 @@ if (command === 'status' || command === 'request-permissions') {
 
 function emit(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`)
+}
+
+function markStarted(startedCommand) {
+  const startedFile = process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE
+  if (startedFile) writeFileSync(startedFile, `${startedCommand}\n`)
 }

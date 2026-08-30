@@ -81,22 +81,39 @@ interface HelperStatus {
   error?: string
 }
 
+interface SystemRecordReplayOptions {
+  readyTimeoutMs?: number
+  operationTimeoutMs?: number
+  exitTimeoutMs?: number
+}
+
 const MAX_RECORDINGS = 100
 const MAX_REPLAY_DELAY_MS = 1_500
 const HELPER_READY_TIMEOUT_MS = 5_000
+const HELPER_OPERATION_TIMEOUT_MS = 15_000
+const HELPER_EXIT_TIMEOUT_MS = 2_000
 
 export class SystemRecordReplay {
   private readonly storagePath: string
+  private readonly readyTimeoutMs: number
+  private readonly operationTimeoutMs: number
+  private readonly exitTimeoutMs: number
+  private readonly helperChildren = new Set<ChildProcessWithoutNullStreams>()
   private activeRecording: ActiveRecording | null = null
+  private replayChild: ChildProcessWithoutNullStreams | null = null
   private replayCancelled = false
   private statusValue: SystemRecordReplayStatus = idleStatus(process.platform === 'darwin')
 
   constructor(
     dataDirectory: string,
     private readonly helperPath: string,
-    private readonly platform: NodeJS.Platform = process.platform
+    private readonly platform: NodeJS.Platform = process.platform,
+    options: SystemRecordReplayOptions = {}
   ) {
     this.storagePath = join(dataDirectory, 'system-recordings', 'recordings.json')
+    this.readyTimeoutMs = options.readyTimeoutMs ?? HELPER_READY_TIMEOUT_MS
+    this.operationTimeoutMs = options.operationTimeoutMs ?? HELPER_OPERATION_TIMEOUT_MS
+    this.exitTimeoutMs = options.exitTimeoutMs ?? HELPER_EXIT_TIMEOUT_MS
   }
 
   async status(): Promise<SystemRecordReplayStatus> {
@@ -130,7 +147,7 @@ export class SystemRecordReplay {
   }
 
   async start(title: string): Promise<SystemRecordReplayStatus> {
-    if (this.activeRecording || this.statusValue.phase !== 'idle') {
+    if (this.activeRecording || isActivePhase(this.statusValue.phase)) {
       throw new Error('System record and replay is already active')
     }
     const permissions = await this.helperStatus()
@@ -162,19 +179,19 @@ export class SystemRecordReplay {
     return { ...this.statusValue }
   }
 
-  async stop(): Promise<SystemRecording> {
+  async stop(preserveStepCount?: number): Promise<SystemRecording> {
     const active = this.activeRecording
     if (!active) throw new Error('No system recording is active')
     this.activeRecording = null
     active.child.kill('SIGTERM')
-    await waitForExit(active.child)
+    await waitForExit(active.child, this.exitTimeoutMs)
     const endedAt = Date.now()
     const recording: SystemRecording = {
       id: active.id,
       title: active.title,
       createdAt: active.startedAt,
       endedAt,
-      steps: dropRecorderStopStep(active.steps, endedAt - active.startedAt),
+      steps: preserveObservedSteps(active.steps, preserveStepCount),
     }
     await this.mutate(recordings => [
       recording,
@@ -197,7 +214,7 @@ export class SystemRecordReplay {
   }
 
   async replay(id: string): Promise<SystemRecordReplayStatus> {
-    if (this.activeRecording || this.statusValue.phase !== 'idle') {
+    if (this.activeRecording || isActivePhase(this.statusValue.phase)) {
       throw new Error('System record and replay is already active')
     }
     const recording = (await this.readFile()).recordings.find(item => item.id === id)
@@ -223,9 +240,23 @@ export class SystemRecordReplay {
 
   cancel(): void {
     this.replayCancelled = true
-    if (this.statusValue.phase === 'paused' || this.statusValue.phase === 'failed') {
+    this.replayChild?.kill('SIGKILL')
+    if (
+      this.statusValue.phase === 'replaying' ||
+      this.statusValue.phase === 'paused' ||
+      this.statusValue.phase === 'failed'
+    ) {
       this.statusValue = idleStatus(this.platform === 'darwin')
     }
+  }
+
+  async dispose(): Promise<void> {
+    this.replayCancelled = true
+    this.activeRecording = null
+    this.statusValue = idleStatus(this.platform === 'darwin')
+    const children = [...this.helperChildren]
+    for (const child of children) child.kill('SIGTERM')
+    await Promise.all(children.map(child => waitForExit(child, this.exitTimeoutMs)))
   }
 
   private consumeRecordingOutput(active: ActiveRecording): Promise<void> {
@@ -233,7 +264,7 @@ export class SystemRecordReplay {
       let ready = false
       const timeout = setTimeout(() => {
         reportFailure('System recording helper did not become ready')
-      }, HELPER_READY_TIMEOUT_MS)
+      }, this.readyTimeoutMs)
       const settleReady = () => {
         if (ready) return
         ready = true
@@ -272,13 +303,20 @@ export class SystemRecordReplay {
       })
       active.child.stderr.on('data', chunk => {
         const message = String(chunk).trim()
-        if (message) reportFailure(message)
+        if (!message) return
+        if (!ready) {
+          reportFailure(message)
+          return
+        }
+        console.warn('[system-record-replay] recorder helper diagnostic', message)
       })
       active.child.once('error', error => reportFailure(error.message))
       active.child.once('exit', code => {
-        if (!ready && this.activeRecording === active) {
+        if (this.activeRecording === active) {
           reportFailure(
-            `System recording helper exited before ready with code ${code ?? 'unknown'}`
+            ready
+              ? `System recording helper exited unexpectedly with code ${code ?? 'unknown'}`
+              : `System recording helper exited before ready with code ${code ?? 'unknown'}`
           )
         }
       })
@@ -315,6 +353,10 @@ export class SystemRecordReplay {
       }
       this.statusValue = idleStatus(this.platform === 'darwin')
     } catch (error) {
+      if (this.replayCancelled) {
+        this.statusValue = idleStatus(this.platform === 'darwin')
+        return
+      }
       this.fail(errorMessage(error))
     }
   }
@@ -340,24 +382,56 @@ export class SystemRecordReplay {
 
   private async runHelper(command: string, input?: unknown): Promise<Record<string, unknown>> {
     this.assertSupported()
-    return new Promise((resolveRun, reject) => {
+    return new Promise((resolveRun, rejectRun) => {
       const child = this.spawnHelper(command)
+      if (command === 'execute') this.replayChild = child
       let output = ''
       let errorOutput = ''
-      child.stdout.on('data', chunk => {
+      let settled = false
+      const onStdout = (chunk: Buffer) => {
         output += String(chunk)
-      })
-      child.stderr.on('data', chunk => {
+      }
+      const onStderr = (chunk: Buffer) => {
         errorOutput += String(chunk)
-      })
-      child.once('error', reject)
-      child.once('exit', code => {
+      }
+      const cleanup = () => {
+        clearTimeout(timeout)
+        child.stdout.off('data', onStdout)
+        child.stderr.off('data', onStderr)
+        child.off('error', onError)
+        child.off('exit', onExit)
+        child.stdin.off('error', onStdinError)
+        if (this.replayChild === child) this.replayChild = null
+      }
+      const reject = (error: Error) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        rejectRun(error)
+      }
+      const onError = (error: Error) => reject(error)
+      const onStdinError = (error: NodeJS.ErrnoException) => {
+        if (error.code !== 'EPIPE') reject(error)
+      }
+      const onExit = (code: number | null) => {
+        if (settled) return
+        settled = true
+        cleanup()
         if (code !== 0 && !output.trim()) {
-          reject(new Error(errorOutput.trim() || `System helper exited with code ${code}`))
+          rejectRun(new Error(errorOutput.trim() || `System helper exited with code ${code}`))
           return
         }
         resolveRun(parseJson(output.trim().split('\n').at(-1) ?? '{}'))
-      })
+      }
+      const timeout = setTimeout(() => {
+        child.kill('SIGKILL')
+        reject(new Error(`System helper command '${command}' timed out`))
+      }, this.operationTimeoutMs)
+      child.stdout.on('data', onStdout)
+      child.stderr.on('data', onStderr)
+      child.once('error', onError)
+      child.once('exit', onExit)
+      child.stdin.once('error', onStdinError)
       child.stdin.end(input === undefined ? undefined : JSON.stringify(input))
     })
   }
@@ -369,16 +443,21 @@ export class SystemRecordReplay {
   }
 
   private spawnHelper(command: string): ChildProcessWithoutNullStreams {
-    return this.helperPath.endsWith('.mjs')
+    const child = this.helperPath.endsWith('.mjs')
       ? spawn(process.execPath, [this.helperPath, command], {
           env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
           stdio: ['pipe', 'pipe', 'pipe'],
         })
       : spawn(this.helperPath, [command], { stdio: ['pipe', 'pipe', 'pipe'] })
+    this.helperChildren.add(child)
+    const forget = () => this.helperChildren.delete(child)
+    child.once('error', forget)
+    child.once('exit', forget)
+    return child
   }
 
   private fail(message: string): void {
-    this.activeRecording?.child.kill('SIGTERM')
+    this.activeRecording?.child.kill('SIGKILL')
     this.activeRecording = null
     this.statusValue = {
       ...this.statusValue,
@@ -442,19 +521,16 @@ function normalizeStep(value: Record<string, unknown>): SystemRecordingStep | nu
   }
 }
 
-function dropRecorderStopStep(
+function preserveObservedSteps(
   steps: SystemRecordingStep[],
-  durationMs: number
+  preserveStepCount?: number
 ): SystemRecordingStep[] {
-  const last = steps.at(-1)
-  if (
-    last?.type === 'mouse' &&
-    durationMs - last.offsetMs < 1_500 &&
-    /stop and save|停止并保存/i.test(last.targetTitle)
-  ) {
-    return steps.slice(0, -1)
-  }
-  return steps
+  if (preserveStepCount === undefined) return steps
+  return steps.slice(0, Math.max(0, Math.min(steps.length, preserveStepCount)))
+}
+
+function isActivePhase(phase: SystemRecordReplayStatus['phase']): boolean {
+  return phase === 'recording' || phase === 'replaying' || phase === 'paused'
 }
 
 function idleStatus(supported: boolean): SystemRecordReplayStatus {
@@ -495,9 +571,35 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams): Promise<void> {
+function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
-  return new Promise(resolve => child.once('exit', () => resolve()))
+  return new Promise((resolve, reject) => {
+    let forceTimer: NodeJS.Timeout | null = null
+    const cleanup = () => {
+      clearTimeout(timeout)
+      if (forceTimer) clearTimeout(forceTimer)
+      child.off('exit', onExit)
+      child.off('error', onError)
+    }
+    const onExit = () => {
+      cleanup()
+      resolve()
+    }
+    const onError = (error: Error) => {
+      cleanup()
+      reject(error)
+    }
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      forceTimer = setTimeout(() => {
+        cleanup()
+        reject(new Error('System helper did not exit after SIGKILL'))
+      }, timeoutMs)
+    }, timeoutMs)
+    child.once('exit', onExit)
+    child.once('error', onError)
+    if (child.exitCode !== null || child.signalCode !== null) onExit()
+  })
 }
 
 function errorMessage(error: unknown): string {

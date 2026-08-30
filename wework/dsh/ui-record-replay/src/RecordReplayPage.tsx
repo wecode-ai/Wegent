@@ -101,12 +101,14 @@ export function RecordReplayPage() {
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void load(), 0)
-    const timer = window.setInterval(() => void load(), 500)
+    const activePolling =
+      status.phase === 'recording' || status.phase === 'replaying' || status.phase === 'paused'
+    const timer = window.setInterval(() => void load(), activePolling ? 500 : 3_000)
     return () => {
       window.clearTimeout(initialLoad)
       window.clearInterval(timer)
     }
-  }, [load])
+  }, [load, status.phase])
 
   const active = status.phase !== 'idle' && status.phase !== 'failed'
   const recording = status.phase === 'recording'
@@ -130,7 +132,7 @@ export function RecordReplayPage() {
   const stop = async () => {
     try {
       setError(null)
-      await stopSystemRecording()
+      await stopSystemRecording(status.stepCount)
       await load()
     } catch (stopError) {
       setError(errorMessage(stopError))
@@ -316,7 +318,11 @@ export function RecordReplayPage() {
                       size="icon"
                       variant="ghost"
                       aria-label={t('workbench.record_replay_open_settings', '打开系统设置')}
-                      onClick={() => void openSystemRecordReplayPermissionSettings('accessibility')}
+                      onClick={() =>
+                        void openSystemRecordReplayPermissionSettings(
+                          status.accessibilityGranted ? 'inputMonitoring' : 'accessibility'
+                        )
+                      }
                     >
                       <Settings />
                     </Button>
