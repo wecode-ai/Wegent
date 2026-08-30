@@ -2953,6 +2953,31 @@ fn user_message_presentation_replaces_transient_blob_preview_with_local_path() {
 }
 
 #[test]
+fn user_message_presentation_preserves_preview_without_usable_local_path() {
+    for local_path in [Value::Null, Value::String(String::new())] {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "message": "Inspect this image",
+            "attachments": [{
+                "id": -1,
+                "filename": "image.png",
+                "file_size": 18,
+                "mime_type": "image/png",
+                "file_extension": ".png",
+                "local_path": local_path,
+                "local_preview_url": "https://example.test/image.png"
+            }]
+        }))
+        .expect("an image attachment should create presentation metadata");
+
+        assert_eq!(
+            presentation["attachments"][0]["local_preview_url"],
+            "https://example.test/image.png"
+        );
+    }
+}
+
+#[test]
 fn legacy_thread_preview_restores_filtered_initial_user_message() {
     let thread = json!({
         "id": "thread-1",

@@ -884,7 +884,12 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
                 "local_path",
                 &["local_path", "localPath"],
             );
-            if let Some(local_path) = normalized.get("local_path").cloned() {
+            if let Some(local_path) = normalized
+                .get("local_path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+                .map(|path| Value::String(path.to_owned()))
+            {
                 normalized.insert("local_preview_url".to_owned(), local_path);
             } else {
                 copy_attachment_field_alias(
