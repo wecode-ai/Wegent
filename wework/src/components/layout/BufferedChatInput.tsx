@@ -49,6 +49,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const composerRef = useRef<ChatInputHandle>(null)
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
+  const publishedDraftRef = useRef<{ scopeKey: string | undefined; value: string } | null>(null)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -101,6 +102,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     }
   }, [])
 
+  const publishDraft = useCallback(
+    (nextDraft: string) => {
+      publishedDraftRef.current = { scopeKey, value: nextDraft }
+      onChange(nextDraft)
+    },
+    [onChange, scopeKey]
+  )
+
   const flushDraft = useCallback(
     (nextDraft: string, reason: string) => {
       cancelPendingFlush()
@@ -109,9 +118,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         reason,
         draftLength: nextDraft.length,
       })
-      onChange(nextDraft)
+      publishDraft(nextDraft)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush, onChange, publishDraft]
   )
 
   const scheduleDraftFlush = useCallback(
@@ -124,23 +133,33 @@ export const BufferedChatInput = memo(function BufferedChatInput({
           reason,
           draftLength: nextDraft.length,
         })
-        onChange(nextDraft)
+        publishDraft(nextDraft)
       }, DRAFT_FLUSH_DELAY_MS)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush, onChange, publishDraft]
   )
 
   // Sync external value changes into composer and local state.
   useEffect(() => {
-    const shouldSetComposer = value !== draftRef.current
+    const publishedDraft = publishedDraftRef.current
+    const acknowledgesPublishedDraft = publishedDraft
+      ? publishedDraft.scopeKey === scopeKey && publishedDraft.value === value
+      : false
+    const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
+      acknowledgesPublishedDraft,
       shouldSetComposer,
     })
-    draftRef.current = value
     committedValueRef.current = value
-    setDraftState({ scopeKey, sourceValue: value, draft: value })
+    if (acknowledgesPublishedDraft) {
+      publishedDraftRef.current = null
+      setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
+    } else {
+      draftRef.current = value
+      setDraftState({ scopeKey, sourceValue: value, draft: value })
+    }
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
@@ -228,7 +247,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         setComposerValue('', 0)
-        onChange('')
+        publishDraft('')
       }
       const restoreSubmittedDraft = () => {
         if (!submittedDraft.trim()) return
@@ -239,14 +258,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
         setComposerValue(submittedDraft, submittedDraft.length)
-        onChange(submittedDraft)
+        publishDraft(submittedDraft)
       }
       void Promise.resolve(submission).then(accepted => {
         if (accepted !== false) return
         restoreSubmittedDraft()
       }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, onChange, onSubmit, scopeKey, setComposerValue]
+    [cancelPendingFlush, onSubmit, publishDraft, scopeKey, setComposerValue]
   )
 
   return (

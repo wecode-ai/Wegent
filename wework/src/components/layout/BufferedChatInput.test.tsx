@@ -88,6 +88,34 @@ describe('BufferedChatInput', () => {
     expect(input).toHaveValue('draft')
   })
 
+  test('does not replace newer input with a delayed parent acknowledgement', async () => {
+    let acknowledgeDraft: (() => void) | null = null
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <BufferedChatInput
+          value={value}
+          onChange={nextValue => {
+            acknowledgeDraft = () => setValue(nextValue)
+          }}
+          onSubmit={vi.fn()}
+          disabled={false}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'a')
+    await waitFor(() => expect(acknowledgeDraft).not.toBeNull(), { timeout: 500 })
+    await userEvent.type(input, 'b')
+
+    act(() => acknowledgeDraft?.())
+
+    expect(input).toHaveValue('ab')
+  })
+
   test('restores submitted text when it is externally returned for editing', async () => {
     const onSubmit = vi.fn()
     const props = {
