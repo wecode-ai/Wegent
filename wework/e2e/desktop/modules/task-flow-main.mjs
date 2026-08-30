@@ -125,7 +125,6 @@ import {
   ATTACHMENT_ONLY,
   AUTOMATION_ONLY,
   BLOCKED_CLOUD_MODEL_PATH,
-  BUILD_ONLY,
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
@@ -230,7 +229,6 @@ import {
   createOfficialPluginMarketplaceFixture,
   createPluginMarketplaceFixture,
   createSingleRootLocalProject,
-  dirname,
   ensureModelOptionVisible,
   join,
   loadDesktopScenario,
@@ -998,16 +996,8 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    let prebuiltDesktopApp = null
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (BUILD_ONLY) {
-      const builds = await Promise.all([
-        buildExecutor(),
-        buildDesktopApp(appIdentifier, codexBinary),
-      ])
-      executorBinary = builds[0]
-      prebuiltDesktopApp = builds[1]
-    } else if (
+    if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
@@ -1033,9 +1023,7 @@ async function main() {
       executorBinary = await buildExecutor()
     }
     desktopScenario?.setExecutorBinary?.(executorBinary)
-    const desktopAppPromise = prebuiltDesktopApp
-      ? Promise.resolve(prebuiltDesktopApp)
-      : buildDesktopApp(appIdentifier, codexBinary)
+    const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([
@@ -1048,28 +1036,6 @@ async function main() {
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
-    const buildManifestPath = process.env.WEWORK_E2E_BUILD_MANIFEST
-    if (buildManifestPath) {
-      await mkdir(dirname(buildManifestPath), { recursive: true })
-      await writeFile(
-        buildManifestPath,
-        `${JSON.stringify(
-          {
-            appBinary,
-            controlServerPort: DESKTOP_CONTROL_SERVER_PORT,
-            executorBinary,
-            modelServerPort: DESKTOP_MODEL_SERVER_PORT,
-          },
-          null,
-          2
-        )}\n`,
-        'utf8'
-      )
-    }
-    if (BUILD_ONLY) {
-      console.log(`Wework desktop E2E build passed. Manifest: ${buildManifestPath}`)
-      return
-    }
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,

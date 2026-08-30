@@ -116,7 +116,7 @@ node e2e/utils/mock-connector-upstream-server.mjs
 与重启前不同，再逐项验证三个值均已恢复；这样回归覆盖的是跨 origin 的桌面持久化，
 而不是同一个 renderer 进程内的普通读取。
 
-主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
+主桌面流程的短对话布局回归会保存 `short-conversation-00-ready.png`、`short-conversation-01-prompt-filled.png`、`short-conversation-02-completed-top-aligned.png` 和 `short-conversation-layout-metrics.json`。最后一个截图和 metrics 均在切走并重新打开对话后生成；门禁要求首条消息距离消息视口顶部不超过 `160px`。本地排查该回归时可直接运行 `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`，但该检查同时属于常规 `e2e:desktop` 主流程，不是独立 CI 入口。
 
 主桌面 runner 也支持按有序 checkpoint 分段执行。当前 checkpoint 依次为
 `remote-device-onboarding`、`workspace-tabs`、`cloud-project-creation`、
@@ -226,7 +226,7 @@ pnpm --filter wework e2e:desktop:plugins -- --from-segment skill-mention-renderi
 独立上限；启动、工作台恢复和模型协议矩阵等场景使用各自的专用超时。临时排查慢速
 环境时，可通过 `WEWORK_E2E_STEP_TIMEOUT_MS` 调整普通步骤的全局默认值。
 
-主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`。
+主桌面流程还覆盖从 Finder 粘贴或拖入普通文件和文件夹：输入框必须显示文件与文件夹路径标签，不得创建附件徽标；发送给 Codex 的请求必须包含对应绝对路径，且不得内联文件内容。该判断以桌面原生传输是否解析出文件路径为准，不能仅因输入框当前标记为远程工作区就提前改走附件上传。顶部快捷发送窗口复用相同规则，只读取图片附件的字节。相关场景均使用普通小文件，本地聚焦排查可分别运行 `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` 和 `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`。
 
 mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包括鉴权、模型 ID、stream 参数、消息历史、tool choice、shell 工具，以及 `apply_patch` 的 Lark grammar 或 function wrapper。任何字段错误都会返回非 2xx 并使测试失败。桌面测试同时保存三种接口的追问截图和完整 `model-requests.json`；GitHub Actions 无论成功或失败都会上传桌面诊断产物。
 
@@ -236,7 +236,12 @@ mock 会按 cc-switch 的转换边界严格校验模型侧收到的请求，包�
 CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
-可选的 `WEWORK_E2E_EXECUTOR_BIN` 和 `WEWORK_E2E_APP_BIN` 分别允许复用已经构建的真实 Executor 和真实 Electron 应用。传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在 `wework/test-results/desktop-e2e/`。
+桌面 runner 在未配置二进制时会先运行 `ai:verify:electron:build`，校验打包后的真实
+Electron 应用及其内置 Executor，再启动所选场景。可选的 `WEWORK_E2E_EXECUTOR_BIN`
+和 `WEWORK_E2E_APP_BIN` 必须成对设置，用于复用已经构建的真实 Executor 和真实
+Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景
+复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在
+`wework/test-results/desktop-e2e/`。
 
 `ai:verify:electron:build` 会跨 worktree 复用不可变的 Harness Runtime 归档，macOS 默认缓存到 `~/Library/Caches/wegent/harness-runtime`，Linux 默认缓存到 `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime`，Windows 默认缓存到 `%LOCALAPPDATA%\wegent\harness-runtime`。解压后的开发 Runtime 仍保留在当前 worktree 的 `wework/node_modules/.cache/harness-runtime-dev`，避免不同源码树共享可变状态。可通过 `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` 覆盖归档缓存目录；若构建时只设置了旧的 `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`，该值会被转换为仅用于归档的缓存目录，不会改变当前 worktree 的解压目录。
 

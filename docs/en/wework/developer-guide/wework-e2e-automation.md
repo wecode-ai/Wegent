@@ -118,7 +118,7 @@ original origin before checking that all three values were restored. This makes
 the regression exercise desktop persistence across origins instead of an
 ordinary read within the same renderer process.
 
-The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
+The main desktop flow's short-conversation layout regression stores `short-conversation-00-ready.png`, `short-conversation-01-prompt-filled.png`, `short-conversation-02-completed-top-aligned.png`, and `short-conversation-layout-metrics.json`. The final screenshot and metrics are captured after switching away and reopening the conversation. The gate requires the first message to remain within `160px` of the message viewport's top edge. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --short-conversation-only`; the same check remains part of the regular `e2e:desktop` flow rather than a separate CI entrypoint.
 
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
@@ -256,7 +256,7 @@ steps; startup, workbench recovery, and the model protocol matrix keep their
 dedicated limits. Set `WEWORK_E2E_STEP_TIMEOUT_MS` to temporarily adjust the
 global default for ordinary steps in a slower diagnostic environment.
 
-The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/task-flow.e2e.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/task-flow.e2e.mjs --dropped-workspace-paths-only`.
+The main desktop flow also covers pasting or dropping ordinary files and folders from Finder. The composer must render file and folder path chips without creating an attachment badge. The request sent to Codex must contain the matching absolute paths without inlining file contents. This decision depends on whether the native desktop transfer resolves a file path; the composer must not switch to attachment upload early only because its current workspace is marked as remote. The top quick-send window uses the same rule and reads bytes only for image attachments. Both scenarios use ordinary small files. For focused local diagnosis, run `node wework/e2e/desktop/run-checkpoints.mjs --pasted-workspace-paths-only` or `node wework/e2e/desktop/run-checkpoints.mjs --dropped-workspace-paths-only`.
 
 Following the cc-switch conversion boundary, the mock strictly validates what reaches the model side: authentication, model ID, stream settings, message history, tool choice, shell tools, and either the `apply_patch` Lark grammar or its function wrapper. Any incorrect field returns a non-2xx response and fails the test. The desktop test stores a follow-up screenshot for each interface plus the complete `model-requests.json`; GitHub Actions uploads desktop diagnostics on both success and failure.
 
@@ -266,7 +266,15 @@ The environment needs Rust, Electron build dependencies, and a real Codex binary
 CODEX_BIN=/absolute/path/to/codex pnpm --filter wework e2e:desktop
 ```
 
-Optional `WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` reuse already-built real Executor and Electron application binaries. A supplied application must be built with the desktop E2E Vite environment variables. The lifecycle scenarios share one application launch to control CI duration. Test artifacts, captured model requests, and failure diagnostics are stored in `wework/test-results/desktop-e2e/`.
+When binaries are not configured, the desktop runner first runs
+`ai:verify:electron:build`, validates the packaged real Electron application and
+its bundled Executor, and then starts the selected scenario. Optional
+`WEWORK_E2E_EXECUTOR_BIN` and `WEWORK_E2E_APP_BIN` must be set together to reuse
+already-built real binaries. A supplied application must be built with the
+desktop E2E Vite environment variables. The lifecycle scenarios share one
+application launch to control CI duration. Test artifacts, captured model
+requests, and failure diagnostics are stored in
+`wework/test-results/desktop-e2e/`.
 
 `ai:verify:electron:build` shares immutable Harness Runtime archives across worktrees. The default archive cache is `~/Library/Caches/wegent/harness-runtime` on macOS, `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime` on Linux, and `%LOCALAPPDATA%\wegent/harness-runtime` on Windows. Materialized development runtimes remain under `wework/node_modules/.cache/harness-runtime-dev` in the current worktree so mutable state is not shared across source trees. Set `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` to override the archive cache. If a build only sets the legacy `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`, that value is translated into an archive-only cache override and does not move the current worktree's materialized runtime.
 

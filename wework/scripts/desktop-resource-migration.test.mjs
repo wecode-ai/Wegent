@@ -47,6 +47,22 @@ describe('desktop resource migration', () => {
     expect(packageJson.scripts['ai:verify:electron:build']).toBe(
       'node scripts/build-ai-verify-electron.mjs'
     )
+    expect(
+      Object.entries(packageJson.scripts)
+        .filter(([name]) => name.startsWith('e2e:desktop'))
+        .map(([, command]) => command)
+    ).toEqual([
+      'node e2e/desktop/run-checkpoints.mjs',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-only',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-features-only',
+      'node e2e/desktop/run-checkpoints.mjs --cloud-vision-only',
+      'node e2e/desktop/run-checkpoints.mjs --plugins-only',
+      'node e2e/desktop/run-checkpoints.mjs --memory-only',
+      'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
+      'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
+      'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
+      'node e2e/desktop/run-checkpoints.mjs --segment rendering-extensions',
+    ])
     expect(packageJson.scripts['build:release']).toBe(
       'pnpm run prepare:electron && pnpm --dir electron build:release'
     )
