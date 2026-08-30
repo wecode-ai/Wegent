@@ -17,6 +17,7 @@ test('subscribes to executor events from the requested sequence', async () => {
     endpoint: fixture.endpoint,
     token: fixture.token,
     afterSequence: 42,
+    replayExisting: true,
     onEvent: event => received.push(event),
     onClose: () => {
       closed = true
@@ -28,6 +29,7 @@ test('subscribes to executor events from the requested sequence', async () => {
 
     assert.equal(fixture.authentication.event_stream, true)
     assert.equal(fixture.authentication.after_sequence, 42)
+    assert.equal(fixture.authentication.replay_existing, true)
     assert.equal(received[0].sequence, 43)
     assert.equal(closed, false)
   } finally {

@@ -42,6 +42,12 @@ The version shown in the About page is read from the running Electron applicatio
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Electron configuration use that value in both places.
 When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
+Wework finishes downloading the update package before it asks to restart. No restart confirmation
+appears while the download is in progress; the **Update and restart** confirmation appears only
+when the update is ready to install. Canceling keeps the downloaded update available, so selecting
+the update action again reopens the confirmation without downloading it again. When automatic
+updates have already finished the download in the background, selecting the update action enters
+the same restart-confirmation flow immediately.
 
 Common macOS shortcuts include:
 

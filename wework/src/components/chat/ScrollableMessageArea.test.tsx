@@ -473,6 +473,84 @@ describe('ScrollableMessageArea', () => {
     }
   })
 
+  test('keeps the user anchor when a width reflow clamps the scroller before resize observation', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="width-reflow-clamp"
+        messages={[
+          {
+            id: 'width-reflow-clamp-message',
+            role: 'assistant',
+            content: '关闭文件面板后仍在阅读的段落',
+            status: 'done',
+            createdAt: '2026-08-30T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
+    let scrollHeight = 2_000
+    let anchorTopAtScrollZero = 1_300
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 1_800,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Math.min(Number(top), scrollHeight - scroller.clientHeight)
+    })
+    mockRect(scroller, 100, 300)
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const top = anchorTopAtScrollZero - scroller.scrollTop
+      return {
+        top,
+        bottom: top + 40,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.scroll(scroller)
+    scroller.scrollTop = 1_200
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 1_300
+    anchorTopAtScrollZero = 500
+    scroller.scrollTop = 1_100
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(400)
+    expect(anchor.getBoundingClientRect().top).toBe(100)
+  })
+
   test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver

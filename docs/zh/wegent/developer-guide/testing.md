@@ -319,8 +319,8 @@ CI 稳定性依赖以下约束：
   和 Kimi Code 通过 `.github/claude-code-cli/package-lock.json` 共享一份锁定完整
   依赖图和包完整性的 npm 安装。
 - Rust 单测、Windows check、发布、快照和 macOS 内存门禁通过 sccache 复用编译器
-  输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的桌面
-  `--build-only`，非 `main` 任务以只读模式访问共享 sccache。
+  输出。`main` 预热会在 `macos-14` 上执行与内存门禁一致的 Electron 桌面构建，
+  非 `main` 任务以只读模式访问共享 sccache。
 - Wework Desktop Core E2E 继续使用 `main` 拥有的 Cargo target cache，因为它需要
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
