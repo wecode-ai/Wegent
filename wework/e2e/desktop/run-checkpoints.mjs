@@ -303,7 +303,7 @@ async function sharedBuildEnvironment(environment = process.env) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  if (flag === '--segment') return [checkpoint]
+  if (flag === '--segment') return expandCompositeCheckpoints([checkpoint])
   if (flag === '--from-segment') {
     const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
     const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
