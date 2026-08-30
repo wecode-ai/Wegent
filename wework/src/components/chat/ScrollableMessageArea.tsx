@@ -576,7 +576,9 @@ function ScrollableMessagePaneContent({
         lastScrollTopRef.current !== null && element.scrollTop < lastScrollTopRef.current - 0.5
       lastScrollTopRef.current = element.scrollTop
       isAtBottomRef.current = isAtBottom
-      if (isScrolledToBottom) {
+      const layoutMayHaveClampedPausedScroll =
+        userScrollPausedAutoFollowRef.current && !options.forceSave && scrolledUp
+      if (isScrolledToBottom && !layoutMayHaveClampedPausedScroll) {
         userScrollPausedAutoFollowRef.current = false
         userViewportAnchorRef.current = null
       } else if (options.forceSave) {
