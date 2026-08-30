@@ -67,9 +67,11 @@ import {
 } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
+import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
 import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
@@ -110,12 +112,16 @@ const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||
   packageMetadata.weworkUpdateBaseUrl?.trim() ||
   'https://github.com/wecode-ai/Wegent/releases/download/wework-updater'
-const applicationId = packageMetadata.weworkAppId?.trim() || 'io.wecode.wework'
+const applicationId =
+  process.env.WEWORK_APP_IDENTIFIER?.trim() ||
+  packageMetadata.weworkAppId?.trim() ||
+  'io.wecode.wework'
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 
-const userDataPath =
-  process.env.WEWORK_USER_DATA_DIR?.trim() || join(app.getPath('appData'), applicationId)
-app.setPath('userData', resolve(userDataPath))
+const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
+const userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+app.setPath('userData', userDataPath)
+if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
@@ -165,11 +171,20 @@ const pendingEmbeddedBrowserAttachments = new Map<
 >()
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
+const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
   isPackaged: () => app.isPackaged,
-  prepareInstall: prepareApplicationShutdown,
+  prepareInstall: async () => {
+    await prepareApplicationShutdown()
+    await appUpdateLogger
+      .flush()
+      .catch(error =>
+        console.error('[app-update] failed to flush updater log before installation', error)
+      )
+  },
   updateBaseUrl,
 })
 const systemResume = new SystemResumeBridge(powerMonitor, () => webContents.getAllWebContents())
@@ -920,8 +935,9 @@ function dispatchTrayAction(action: TrayAction): void {
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
   const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1155,6 +1171,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
           plugins: workbenchPlugins,
@@ -1333,9 +1350,6 @@ if (hasSingleInstanceLock) {
       app.dock?.hide()
       dockVisible = false
     }
-    await cleanupStaleTemporaryImages().catch(error => {
-      console.error('[context-menu] failed to remove stale temporary images', error)
-    })
     preferences = new PreferencesStore(app.getPath('userData'))
     popoutShortcut = new GlobalShortcutController(globalShortcut, showPopoutWindow, error =>
       console.error('[popout-window] global shortcut failed', error)

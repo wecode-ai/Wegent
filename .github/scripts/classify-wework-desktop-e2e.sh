@@ -56,6 +56,9 @@ plugin_segments=(
   skill-mention-rendering
   sites-plugin-auto-install
 )
+formal_release_segments=(
+  app-update-differential
+)
 cloud_worktree_segments=(
   cloud-worktree-capability
   cloud-worktree-create
@@ -212,7 +215,10 @@ validate_cloud_shards
 validate_registered_checkpoint_coverage() {
   declare -A covered=()
   local segment
-  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+  for segment in \
+    "${core_segments[@]}" \
+    "${cloud_segments[@]}" \
+    "${formal_release_segments[@]}"; do
     covered["$segment"]=true
   done
 

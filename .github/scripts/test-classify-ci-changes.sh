@@ -11,6 +11,7 @@ desktop_build_flows="$repo_root/wework/e2e/desktop/modules/desktop-build-flows.m
 desktop_checkpoint_runner="$repo_root/wework/e2e/desktop/run-checkpoints.mjs"
 memory_tool_flows="$repo_root/wework/e2e/desktop/modules/memory-tool-flows.mjs"
 notification_isolation_scenario="$repo_root/wework/e2e/desktop/scenarios/codex-notification-isolation.scenario.mjs"
+wework_app_workflow="$repo_root/.github/workflows/wework-app.yml"
 
 assert_invalid_desktop_shards_rejected() {
   local temp_dir
@@ -75,6 +76,11 @@ assert_invalid_cloud_shards_rejected() {
 
 assert_invalid_desktop_shards_rejected
 assert_invalid_cloud_shards_rejected
+
+if ! grep -Fq -- '--segment app-update-differential' "$wework_app_workflow"; then
+  printf 'The formal release workflow must invoke app-update-differential\n' >&2
+  exit 1
+fi
 
 if ! grep -Fq 'const NOISE_DELTA_COUNT = 2200' "$notification_isolation_scenario" ||
   ! grep -Fq 'const BURST_RENDER_TIMEOUT_MS = 30_000' "$notification_isolation_scenario"; then

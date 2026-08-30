@@ -16,6 +16,7 @@ import {
   verifyViewImageProcessingBlock,
   verifyWorktreeCreationStatus,
   waitForElementInsideScroller,
+  waitForElementTop,
   waitForElementWidth,
   waitForOverflowMetrics,
   waitForSnapshot,
@@ -100,6 +101,7 @@ import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
+  verifyCodexCatalogOverride,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
   verifyTelemetryPreference,
@@ -123,7 +125,6 @@ import {
   ATTACHMENT_ONLY,
   AUTOMATION_ONLY,
   BLOCKED_CLOUD_MODEL_PATH,
-  BUILD_ONLY,
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
@@ -151,6 +152,8 @@ import {
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
+  FOLLOW_UP_COMPLETION_TEXT,
+  FOLLOW_UP_PROMPT,
   GIT_SEED_CONTENT,
   GIT_SEED_NAME,
   GOAL_BUSY_ONLY,
@@ -226,7 +229,6 @@ import {
   createOfficialPluginMarketplaceFixture,
   createPluginMarketplaceFixture,
   createSingleRootLocalProject,
-  dirname,
   ensureModelOptionVisible,
   join,
   loadDesktopScenario,
@@ -272,6 +274,7 @@ import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
+  verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
   verifyDefaultWorkspaceStartupTab,
@@ -993,16 +996,8 @@ async function main() {
     console.log(`Using real Codex: ${codexVersion}`)
     const appIdentifier = `io.wecode.wework.e2e.run${process.pid}`
     let executorBinary
-    let prebuiltDesktopApp = null
     const scenarioRequiresCloudEnvironment = desktopScenario?.requiresCloudEnvironment === true
-    if (BUILD_ONLY) {
-      const builds = await Promise.all([
-        buildExecutor(),
-        buildDesktopApp(appIdentifier, codexBinary),
-      ])
-      executorBinary = builds[0]
-      prebuiltDesktopApp = builds[1]
-    } else if (
+    if (
       CLOUD_ONLY ||
       CLOUD_FEATURES_ONLY ||
       CLOUD_VISION_ONLY ||
@@ -1028,9 +1023,7 @@ async function main() {
       executorBinary = await buildExecutor()
     }
     desktopScenario?.setExecutorBinary?.(executorBinary)
-    const desktopAppPromise = prebuiltDesktopApp
-      ? Promise.resolve(prebuiltDesktopApp)
-      : buildDesktopApp(appIdentifier, codexBinary)
+    const desktopAppPromise = buildDesktopApp(appIdentifier, codexBinary)
     const desktopApp = cloudEnvironment
       ? (
           await Promise.all([
@@ -1043,28 +1036,6 @@ async function main() {
     const appBinary = desktopApp.binaryPath
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
-    const buildManifestPath = process.env.WEWORK_E2E_BUILD_MANIFEST
-    if (buildManifestPath) {
-      await mkdir(dirname(buildManifestPath), { recursive: true })
-      await writeFile(
-        buildManifestPath,
-        `${JSON.stringify(
-          {
-            appBinary,
-            controlServerPort: DESKTOP_CONTROL_SERVER_PORT,
-            executorBinary,
-            modelServerPort: DESKTOP_MODEL_SERVER_PORT,
-          },
-          null,
-          2
-        )}\n`,
-        'utf8'
-      )
-    }
-    if (BUILD_ONLY) {
-      console.log(`Wework desktop E2E build passed. Manifest: ${buildManifestPath}`)
-      return
-    }
     if (!RUNS_PLUGIN_E2E) {
       await writeCodexConfig(
         codexHome,
@@ -1186,6 +1157,7 @@ async function main() {
       appEnvironment.WEWORK_HARNESS_RUNTIME_ROOT = electronCoreRuntimeRoot
     }
     Object.assign(appEnvironment, desktopScenario?.appEnvironment ?? {})
+    appEnvironment.WEWORK_APP_IDENTIFIER = appIdentifier
     const electronLaunchArguments = resolveElectronLaunchArguments()
     const startDesktopAppProcess = async () => {
       const child = spawn(appBinary, electronLaunchArguments, {
@@ -1615,6 +1587,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         appIdentifier,
         composerSelector: ACTIVE_COMPOSER_SELECTOR,
         control,
+        executorHome,
       })
       console.log(`Wework desktop attachment-only E2E passed. Evidence: ${resultDir}`)
       return
@@ -1935,6 +1908,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     if (shouldRunDesktopCheckpoint('telemetry-consent')) {
       phase = 'telemetry-preference'
       await verifyTelemetryPreference(control)
+      phase = 'codex-catalog-override'
+      await verifyCodexCatalogOverride(control, DEFAULT_MODEL_ID)
       verifyTelemetryRemainsDisabled(control)
       if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
         console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
@@ -2379,6 +2354,27 @@ last_updated = "2026-07-30T00:00:00Z"`
           timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
         })
         await verifyTrackedTaskSettledStatus(control)
+        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
+        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        control.setScenario('follow_up')
+        await sendPromptUntilScenarioRequest(
+          control,
+          composerSelector,
+          FOLLOW_UP_PROMPT,
+          'follow_up'
+        )
+        try {
+          await verifyTrackedTaskBoardRunningStatus(control, null)
+        } finally {
+          control.releaseFollowUpResponse()
+        }
+        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: FOLLOW_UP_COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
         await writeFile(
           join(resultDir, 'model-requests.json'),
           `${JSON.stringify(control.modelRequests, null, 2)}\n`,
@@ -3194,15 +3190,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      const filePanelScrollerAfterOpen = await getSingleElementMetrics(
+      const filePanelScrollerAfterOpen = await waitForElementWidth(
         control,
         conversationScrollerSelector,
-        'The conversation after opening a linked file'
+        width => width < filePanelScrollerBeforeOpen.width - 100,
+        'The conversation after opening a linked file',
+        DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterOpen = await getSingleElementMetrics(
+      const filePanelAnchorAfterOpen = await waitForElementTop(
         control,
         filePanelAnchorSelector,
-        'The linked file paragraph after opening the file panel'
+        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+        'The linked file paragraph after opening the file panel',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.ok(
         filePanelScrollerAfterOpen.width < filePanelScrollerBeforeOpen.width - 100,
@@ -3233,15 +3233,19 @@ last_updated = "2026-07-30T00:00:00Z"`
       )
       await control.command('finishAnimations', 'body')
       await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-      const filePanelScrollerAfterClose = await getSingleElementMetrics(
+      const filePanelScrollerAfterClose = await waitForElementWidth(
         control,
         conversationScrollerSelector,
-        'The conversation after closing a linked file'
+        width => Math.abs(width - filePanelScrollerBeforeOpen.width) <= 1,
+        'The conversation after closing a linked file',
+        DEFAULT_STEP_TIMEOUT_MS
       )
-      const filePanelAnchorAfterClose = await getSingleElementMetrics(
+      const filePanelAnchorAfterClose = await waitForElementTop(
         control,
         filePanelAnchorSelector,
-        'The linked file paragraph after closing the file panel'
+        top => Math.abs(top - filePanelAnchorBeforeOpen.top) <= 8,
+        'The linked file paragraph after closing the file panel',
+        DEFAULT_STEP_TIMEOUT_MS
       )
       assert.ok(
         Math.abs(filePanelScrollerAfterClose.width - filePanelScrollerBeforeOpen.width) <= 1,
@@ -3251,7 +3255,6 @@ last_updated = "2026-07-30T00:00:00Z"`
         Math.abs(filePanelAnchorAfterClose.top - filePanelAnchorBeforeOpen.top) <= 8,
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
-
       await control.command('click', filePanelLinkSelector)
       await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -3825,6 +3828,7 @@ last_updated = "2026-07-30T00:00:00Z"`
         appIdentifier,
         composerSelector,
         control,
+        executorHome,
       })
 
       phase = 'pasted-zip-attachment'

@@ -267,7 +267,6 @@ export class ComponentUpdateManager {
     const componentPath = component.entryPath === '.' ? target : join(target, component.entryPath)
     if (await componentMatches(componentPath, component.contentSha256)) return
 
-    validateDownloadUrl(component.downloadUrl, this.updateBaseUrl)
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     const archive = `${target}.${process.pid}.tar.gz`
     const temporary = `${target}.${process.pid}.tmp`
@@ -405,23 +404,6 @@ function validateState(input: unknown): ComponentState {
     return { schemaVersion: 1 }
   }
   return input as unknown as ComponentState
-}
-
-function validateDownloadUrl(downloadUrl: string, updateBaseUrl: string): void {
-  const download = new URL(downloadUrl)
-  const base = new URL(`${updateBaseUrl}/`)
-  const loopbackBase =
-    base.protocol === 'http:' && (base.hostname === '127.0.0.1' || base.hostname === 'localhost')
-  if (
-    download.protocol !== base.protocol ||
-    (!loopbackBase && download.protocol !== 'https:') ||
-    download.origin !== base.origin
-  ) {
-    throw new Error('Component download URL is outside the configured updater origin')
-  }
-  if (!download.pathname.startsWith(base.pathname)) {
-    throw new Error('Component download URL is outside the configured updater path')
-  }
 }
 
 async function componentMatches(path: string, expectedSha256: string): Promise<boolean> {

@@ -68,6 +68,8 @@ export const HOST_CAPABILITIES = [
   'feedback.confirmBundle',
   'feedback.discardBundle',
   'feedback.previewBundle',
+  'maintenance.cleanupTemporaryImages',
+  'maintenance.getSystemPressure',
   'notification.show',
   'preferences.get',
   'preferences.update',

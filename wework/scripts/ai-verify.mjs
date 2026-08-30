@@ -356,8 +356,7 @@ export async function buildSourceRuntimeEnvironment(
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const codex = lock.targets[target]
   if (!codex?.binaryPath) throw new Error(`Codex binary is not configured for ${target}`)
-  const executorTargetDir =
-    process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+  const executorTargetDir = join(repositoryDir, 'executor', 'target', 'ai-verify')
   return {
     CODEX_BINARY_PATH: join(weworkDir, 'resources', 'binaries', 'codex', target, codex.binaryPath),
     DWS_BINARY_PATH: join(

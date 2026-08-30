@@ -4,7 +4,10 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { LocalEndpointEventStream } from './local-endpoint-event-stream.js'
+import {
+  LocalEndpointEventByteStream,
+  LocalEndpointEventStream,
+} from './local-endpoint-event-stream.js'
 
 test('subscribes to executor events from the requested sequence', async () => {
   const fixture = await eventServerFixture()
@@ -14,6 +17,7 @@ test('subscribes to executor events from the requested sequence', async () => {
     endpoint: fixture.endpoint,
     token: fixture.token,
     afterSequence: 42,
+    replayExisting: true,
     onEvent: event => received.push(event),
     onClose: () => {
       closed = true
@@ -25,6 +29,7 @@ test('subscribes to executor events from the requested sequence', async () => {
 
     assert.equal(fixture.authentication.event_stream, true)
     assert.equal(fixture.authentication.after_sequence, 42)
+    assert.equal(fixture.authentication.replay_existing, true)
     assert.equal(received[0].sequence, 43)
     assert.equal(closed, false)
   } finally {
@@ -33,7 +38,27 @@ test('subscribes to executor events from the requested sequence', async () => {
   }
 })
 
-async function eventServerFixture() {
+test('fails stalled authentication with a retryable timeout', async () => {
+  const fixture = await eventServerFixture({ respondToAuthentication: false })
+  const stream = new LocalEndpointEventByteStream({
+    endpoint: fixture.endpoint,
+    token: fixture.token,
+    afterSequence: 0,
+    authenticationTimeoutMs: 20,
+  })
+  try {
+    await assert.rejects(stream.start(), error => {
+      assert.equal(error.code, 'authentication_timeout')
+      assert.equal(error.retryable, true)
+      return true
+    })
+  } finally {
+    stream.stop()
+    await fixture.stop()
+  }
+})
+
+async function eventServerFixture({ respondToAuthentication = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-executor-events-'))
   const endpoint =
     process.platform === 'win32'
@@ -53,6 +78,7 @@ async function eventServerFixture() {
       for (const line of lines) {
         if (!line.trim()) continue
         authentication = JSON.parse(line)
+        if (!respondToAuthentication) continue
         socket.write(
           `${JSON.stringify({ type: 'authenticated', ok: true, protocol_version: 1 })}\n`
         )
