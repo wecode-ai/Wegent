@@ -240,7 +240,7 @@ describe('DesktopSettingsMenu', () => {
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: {
         downloadedBytes: 50,
         totalBytes: 100,
@@ -263,7 +263,7 @@ describe('DesktopSettingsMenu', () => {
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: {
         downloadedBytes: 50,
         totalBytes: 100,

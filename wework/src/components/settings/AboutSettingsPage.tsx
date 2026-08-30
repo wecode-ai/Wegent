@@ -78,7 +78,8 @@ export function AboutSettingsPage() {
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const formattedUpdateError = formatUpdateError(updateError, t)
-  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const isUpdateBusy =
+    updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
     ? calculateAppUpdateDownloadPercent(
         downloadProgress.downloadedBytes,
@@ -145,7 +146,9 @@ export function AboutSettingsPage() {
                 defaultValue: '自动更新',
               })}
               checked={autoUpdateEnabled}
-              disabled={!appUpdate || updateStatus === 'installing'}
+              disabled={
+                !appUpdate || updateStatus === 'downloading' || updateStatus === 'installing'
+              }
               onCheckedChange={checked => {
                 appUpdate?.setAutoUpdateEnabled(checked)
               }}
@@ -195,7 +198,7 @@ export function AboutSettingsPage() {
             {formattedUpdateError ?? updateMessage}
           </span>
         ) : null}
-        {updateStatus === 'installing' ? (
+        {updateStatus === 'downloading' ? (
           <div data-testid="about-update-download-progress" className="w-[240px] space-y-1.5">
             <div
               role="progressbar"

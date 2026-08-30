@@ -174,7 +174,8 @@ export function DesktopSettingsMenu({
         availableUpdate.version
       )
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
-  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const isUpdateBusy =
+    updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
     ? calculateAppUpdateDownloadPercent(
         downloadProgress.downloadedBytes,
@@ -182,7 +183,7 @@ export function DesktopSettingsMenu({
       )
     : null
   const updateMessage =
-    updateStatus === 'installing'
+    updateStatus === 'downloading' || updateStatus === 'installing'
       ? null
       : availableUpdate
         ? formatAppUpdateVersion(
@@ -198,7 +199,7 @@ export function DesktopSettingsMenu({
             })
           : null
   const downloadMessage =
-    updateStatus === 'installing'
+    updateStatus === 'downloading'
       ? downloadPercent === null
         ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
         : t('workbench.app_update_downloading_progress', {
@@ -234,7 +235,7 @@ export function DesktopSettingsMenu({
       <SettingsMenuItem
         testId="check-app-update-button"
         icon={
-          updateStatus === 'installing' && downloadPercent !== null ? (
+          updateStatus === 'downloading' && downloadPercent !== null ? (
             <UpdateDownloadProgressIcon progress={downloadPercent} />
           ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />

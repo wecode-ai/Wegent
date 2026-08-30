@@ -9,13 +9,13 @@ export function AppUpdateTitlebarButton() {
 
   if (!availableUpdate) return null
 
-  const isInstalling = status === 'installing'
+  const isBusy = status === 'downloading' || status === 'installing'
 
   return (
     <button
       type="button"
       data-testid="titlebar-app-update-button"
-      disabled={isInstalling}
+      disabled={isBusy}
       onClick={() => {
         void installUpdate()
       }}
@@ -23,13 +23,13 @@ export function AppUpdateTitlebarButton() {
         'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 px-2.5 text-sm font-medium leading-none text-primary transition-colors hover:bg-primary/15 disabled:cursor-not-allowed disabled:opacity-70'
       )}
     >
-      {isInstalling ? (
+      {isBusy ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
       ) : (
         <Download className="h-3.5 w-3.5" />
       )}
       <span>
-        {isInstalling
+        {isBusy
           ? t('workbench.app_update_installing_short', {
               defaultValue: '更新中',
             })
