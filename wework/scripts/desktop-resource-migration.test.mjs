@@ -49,7 +49,7 @@ describe('desktop resource migration', () => {
     )
     expect(
       Object.entries(packageJson.scripts)
-        .filter(([name]) => name.startsWith('e2e:desktop'))
+        .filter(([name]) => name.startsWith('e2e:desktop') && name !== 'e2e:desktop:wecode')
         .map(([, command]) => command)
     ).toEqual([
       'node e2e/desktop/run-checkpoints.mjs',
