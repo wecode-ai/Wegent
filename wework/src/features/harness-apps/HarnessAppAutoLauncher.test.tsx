@@ -124,6 +124,8 @@ describe('HarnessAppAutoLauncher', () => {
 
   test('starts an installation only once across concurrent mounts', async () => {
     let resolveInstallations: ((value: (typeof installation)[]) => void) | undefined
+    const firstSettled = vi.fn()
+    const secondSettled = vi.fn()
     mocks.list.mockImplementation(
       () =>
         new Promise(resolve => {
@@ -139,13 +141,17 @@ describe('HarnessAppAutoLauncher', () => {
 
     render(
       <>
-        <HarnessAppAutoLauncher installationId="app-1" />
-        <HarnessAppAutoLauncher installationId="app-1" />
+        <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={firstSettled} />
+        <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={secondSettled} />
       </>
     )
 
     expect(mocks.list).toHaveBeenCalledTimes(1)
     resolveInstallations?.([installation])
     await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(firstSettled).toHaveBeenCalledWith('app-1')
+      expect(secondSettled).toHaveBeenCalledWith('app-1')
+    })
   })
 })

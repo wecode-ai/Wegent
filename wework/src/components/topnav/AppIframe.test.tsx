@@ -88,11 +88,13 @@ describe('AppIframe', () => {
         true
       )
     )
+    await waitFor(() => expect(screen.queryByText('Loading 智能体...')).not.toBeInTheDocument())
     boundsSpy.mockRestore()
   })
 
   test('uses the runtime label for an Electron workbench webview', async () => {
     runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -115,6 +117,10 @@ describe('AppIframe', () => {
       />
     )
 
+    expect(screen.getByTestId('workspace-browser-electron-webview-placeholder')).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-wework-browser-webview-host-root] webview')
+    ).toHaveAttribute('data-wework-browser-label', 'smart-app:review')
     await waitFor(() =>
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
         'http://localhost:4101',
@@ -124,6 +130,7 @@ describe('AppIframe', () => {
         true
       )
     )
+    await waitFor(() => expect(screen.queryByText('Loading Review...')).not.toBeInTheDocument())
     boundsSpy.mockRestore()
   })
 

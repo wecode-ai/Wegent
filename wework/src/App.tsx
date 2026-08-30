@@ -307,10 +307,33 @@ export function WorkspaceTabSurface({
   const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const [harnessAppStartupOwner, setHarnessAppStartupOwner] = useState(() => ({
+    installationId: harnessAppInstallationId,
+    pending: Boolean(harnessAppInstallationId),
+  }))
+  if (harnessAppStartupOwner.installationId !== harnessAppInstallationId) {
+    setHarnessAppStartupOwner({
+      installationId: harnessAppInstallationId,
+      pending: Boolean(harnessAppInstallationId),
+    })
+  }
+  const settleHarnessAppStartup = useCallback((settledInstallationId: string) => {
+    setHarnessAppStartupOwner(current =>
+      current.installationId === settledInstallationId ? { ...current, pending: false } : current
+    )
+  }, [])
+  const harnessAppStartupPending =
+    smartAppsEnabled &&
+    harnessAppStartupOwner.installationId === harnessAppInstallationId &&
+    harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
     nativeWorkbenchRoute && !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const unavailableRouteActive =
-    !nativeWorkbenchActive && !iframe && !auxiliaryActive && !harnessAppLaunchActive
+    !nativeWorkbenchActive &&
+    !iframe &&
+    !auxiliaryActive &&
+    !harnessAppLaunchActive &&
+    !harnessAppStartupPending
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -363,7 +386,10 @@ export function WorkspaceTabSurface({
   const workbenchContent = (
     <>
       {harnessAppInstallationId && smartAppsEnabled ? (
-        <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
+        <HarnessAppAutoLauncher
+          installationId={harnessAppInstallationId}
+          onStartupSettled={settleHarnessAppStartup}
+        />
       ) : null}
       {onOpenWeworkForAppshot && active && !iframe ? (
         <AppshotBridge onOpenWework={onOpenWeworkForAppshot} />

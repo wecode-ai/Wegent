@@ -52,7 +52,13 @@ vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
 }))
 
 vi.mock('@/features/harness-apps/HarnessAppAutoLauncher', () => ({
-  HarnessAppAutoLauncher: ({ installationId }: { installationId: string }) => {
+  HarnessAppAutoLauncher: ({
+    installationId,
+    onStartupSettled,
+  }: {
+    installationId: string
+    onStartupSettled?: (installationId: string) => void
+  }) => {
     useEffect(() => {
       let cancelled = false
       harnessAppLauncherMocks.requested(installationId)
@@ -60,13 +66,14 @@ vi.mock('@/features/harness-apps/HarnessAppAutoLauncher', () => ({
         if (!cancelled) {
           harnessAppLauncherMocks.started(installationId)
           harnessAppLauncherMocks.registered(installationId)
+          onStartupSettled?.(installationId)
         }
       })
       return () => {
         cancelled = true
         harnessAppLauncherMocks.cleanup(installationId)
       }
-    }, [installationId])
+    }, [installationId, onStartupSettled])
     return null
   },
 }))
@@ -429,6 +436,34 @@ describe('WorkspaceTabSurface', () => {
     unregisterHarnessAppTab(installationId)
   })
 
+  test('does not render an unavailable route before Smart app startup establishes launch state', () => {
+    const installationId = 'initially-empty-launch'
+    runtimeEnvironmentMocks.electron = true
+    harnessAppLauncherMocks.waitUntilReady.mockReturnValue(new Promise(() => undefined))
+
+    const { unmount } = render(
+      <WorkspaceTabSurface
+        active
+        cloudWebUrl={null}
+        lifecycleStore={{} as never}
+        services={{} as never}
+        smartAppsEnabled
+        tab={{
+          id: 'initially-empty-launch-tab',
+          kind: 'auxiliary',
+          title: 'Initially empty launch',
+          contentRoute: `/app/harness-${installationId}`,
+        }}
+        user={{ id: 1, user_name: 'tester', email: 'tester@example.com' }}
+      />
+    )
+
+    expect(harnessAppLauncherMocks.requested).toHaveBeenCalledWith(installationId)
+    expect(screen.queryByTestId('workspace-route-unavailable')).not.toBeInTheDocument()
+    unmount()
+    harnessAppLauncherMocks.cleanup.mockClear()
+  })
+
   test('keeps an Electron Harness app launch connected while its tab is inactive', async () => {
     const installationId = 'launching-app'
     runtimeEnvironmentMocks.electron = true
@@ -530,8 +565,6 @@ describe('WorkspaceTabSurface', () => {
         src: 'http://127.0.0.1:4101',
       })
     )
-    expect(screen.queryByTestId(`app-iframe-harness-${installationId}`)).not.toBeInTheDocument()
-
     unmount()
     unregisterHarnessAppTab(installationId)
   })

@@ -176,7 +176,7 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 - 内置浏览器子 WebView 只在 debug 构建中启用 DevTools；release 构建通过显式 build cfg 禁用。macOS debug 构建会在 Inspector frontend 首次显示前保存子 WebView frame、执行 detach 并原样恢复 frame，因此 F12 只能打开独立窗口，不能停靠、改变浏览器尺寸或覆盖工作台。主 WebView 的 Inspector 仍只通过 Developer Commands 显式打开。
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
 - Electron 中的 Wegent 智能体应用标签页也使用原生子 WebView，而不是跨源 iframe。所有应用标签共享同一个固定数据存储标识，因此同一来源的完整网站存储（包括全部 `localStorage` key、Cookie 和 IndexedDB）会在标签关闭、重新打开和应用重启后继续可用；标签 label 只标识 WebView 生命周期，不划分存储。macOS 14 及以上由 `data_store_identifier` 选择持久化 `WKWebsiteDataStore`，`data_directory` 主要服务其它平台。不要在 Wework 主界面逐 key 镜像或恢复页面存储。
-- Electron 智能工作台复用同一个 renderer-owned `<webview>` 承载链路，并使用稳定的 `smart-app:<installationId>` logical label；主进程只管理 Harness runtime 进程，不再创建可视 `WebContentsView`。组件重挂载时必须原子替换旧 guest，并让延迟关闭携带 expected native label，避免旧组件关闭新实例。
+- Electron 智能工作台复用同一个 renderer-owned `<webview>` 承载链路，并使用稳定的 `smart-app:<installationId>` logical label。renderer 拥有可视宿主；主进程继续管理 Harness runtime 和嵌入式浏览器控制面，但不再创建可视 `WebContentsView`。组件重挂载时必须原子替换旧 guest，并让延迟关闭携带 expected native label，避免旧组件关闭新实例。
 - 浏览器 WebView 使用 Chromium 兼容 User-Agent，避免网站把缺少浏览器产品标识的 Chromium User-Agent 识别为不受支持的客户端。
 - 弹窗、OAuth、SSO 和支付流程可能通过 `window.open` 或新窗口导航触发。实现应把它们路由到受控浏览器窗口或明确交给外部系统处理，不能让 Agent 不可见地操作隐藏页面。
 - 下载处理器从应用偏好读取下载目录和“下载前询问”开关；取消系统保存对话框必须取消本次下载。
