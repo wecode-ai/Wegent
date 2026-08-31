@@ -20,6 +20,15 @@ from app.services.prompt_protection import (
 from shared.models import ExecutionRequest
 
 
+def test_gate_exports_failure_groups_for_offline_evaluation():
+    assert prompt_protection.MODEL_CALL_FAILURE_TYPES == frozenset(
+        {"missing_model_config", "timeout", "call_error"}
+    )
+    assert prompt_protection.PARSE_FAILURE_TYPES == frozenset(
+        {"invalid_json", "invalid_structure", "unknown_risk"}
+    )
+
+
 @pytest.mark.parametrize(
     ("payload", "expected"),
     [
@@ -433,7 +442,19 @@ async def test_pipeline_next_stage_marks_internal_handoff_with_previous_bot_id(
 
 
 @pytest.mark.asyncio
-async def test_unified_trigger_skips_gate_when_disabled(monkeypatch):
+@pytest.mark.parametrize(
+    ("prompt_protection_enabled", "entrypoint"),
+    [
+        (False, PromptProtectionEntrypoint.WEB_USER_MESSAGE),
+        (True, None),
+    ],
+    ids=["disabled-web-entrypoint", "enabled-unprotected-entrypoint"],
+)
+async def test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint(
+    monkeypatch,
+    prompt_protection_enabled,
+    entrypoint,
+):
     from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
 
@@ -453,6 +474,12 @@ async def test_unified_trigger_skips_gate_when_disabled(monkeypatch):
     monkeypatch.setattr(unified, "evaluate_prompt_protection", evaluate)
     dispatcher = MagicMock()
     dispatcher.dispatch = AsyncMock()
+    team_spec = {
+        "members": [],
+        "collaborationModel": "solo",
+    }
+    if prompt_protection_enabled:
+        team_spec["promptProtectionEnabled"] = True
     team = SimpleNamespace(
         id=11,
         name="support",
@@ -461,10 +488,7 @@ async def test_unified_trigger_skips_gate_when_disabled(monkeypatch):
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
             "metadata": {"name": "support", "namespace": "default"},
-            "spec": {
-                "members": [],
-                "collaborationModel": "solo",
-            },
+            "spec": team_spec,
         },
     )
 
@@ -477,7 +501,7 @@ async def test_unified_trigger_skips_gate_when_disabled(monkeypatch):
             message="hello",
             payload=None,
             task_room="task:22",
-            prompt_protection_entrypoint=(PromptProtectionEntrypoint.WEB_USER_MESSAGE),
+            prompt_protection_entrypoint=entrypoint,
         )
 
     evaluate.assert_not_awaited()
