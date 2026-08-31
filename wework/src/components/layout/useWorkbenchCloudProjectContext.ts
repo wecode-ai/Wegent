@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
+import type { CloudLoopItem, CloudProject, TaskExecutionStatus } from '@/api/deliveries'
 import {
   findProjectSpaceContextForTask,
   isDefaultWorkItemProject,
@@ -56,9 +56,20 @@ interface UseWorkbenchCloudProjectContextOptions {
   currentProjectId?: number
   defaultProjectSpace: RuntimeProjectSpaceRef | null
   paneKey: string
+  runtimeTaskDescription?: string
+  runtimeTaskExecutionKnown?: boolean
+  runtimeTaskExecutionStatus?: string | null
+  runtimeTaskRunning?: boolean
   runtimeTaskTitle: string | null
   services?: WorkbenchServices
   userId?: number
+}
+
+interface TaskBoardAssociationState {
+  project: CloudProject
+  items: CloudLoopItem[]
+  loading: boolean
+  pending: boolean
 }
 
 const pendingTodoBindingsByPane = new Map<string, PendingTodoBinding>()
@@ -174,6 +185,23 @@ function cloudLoopItemStatusLabel(
   return ''
 }
 
+function normalizeTaskExecutionStatus(
+  status: string | null | undefined,
+  running: boolean,
+  known: boolean
+): TaskExecutionStatus | null {
+  if (running) return 'running'
+  const normalized = status?.trim().toLowerCase()
+  if (!normalized) return known ? 'succeeded' : null
+  if (['queued', 'pending'].includes(normalized)) return 'queued'
+  if (['running', 'in_progress', 'active'].includes(normalized)) return 'running'
+  if (['succeeded', 'completed', 'complete', 'done'].includes(normalized)) return 'succeeded'
+  if (['failed', 'error'].includes(normalized)) return 'failed'
+  if (['cancelled', 'canceled', 'interrupted'].includes(normalized)) return 'cancelled'
+  if (['archived'].includes(normalized)) return 'archived'
+  return null
+}
+
 export function cloudItemAsLocalWorkItem(
   item: CloudLoopItem,
   runtimeTask: RuntimeTaskAddress
@@ -244,6 +272,10 @@ export function useWorkbenchCloudProjectContext({
   currentProjectId,
   defaultProjectSpace,
   paneKey,
+  runtimeTaskDescription = '',
+  runtimeTaskExecutionKnown = false,
+  runtimeTaskExecutionStatus,
+  runtimeTaskRunning = false,
   runtimeTaskTitle,
   services,
   userId,
@@ -302,6 +334,8 @@ export function useWorkbenchCloudProjectContext({
     string | null
   >(null)
   const [cloudActionNotice, setCloudActionNotice] = useState<string | null>(null)
+  const [taskBoardAssociation, setTaskBoardAssociation] =
+    useState<TaskBoardAssociationState | null>(null)
   const [cloudMentionState, setCloudMentionState] = useState<{
     todoId: string
     candidates: ComposerCloudMentionCandidate[]
@@ -758,42 +792,130 @@ export function useWorkbenchCloudProjectContext({
     [cloudProjects, defaultProjectOptionKey, t]
   )
 
-  const bindComposerCloudProject = useCallback(
-    (project: CloudProject, notice: string) => {
-      setCloudActionNotice(notice)
+  const handleSelectCloudProject = useCallback(
+    (project: CloudProject) => {
+      setDismissedDefaultCloudProjectKey(null)
       if (!contextRuntimeTask) {
+        setCloudActionNotice(t('workbench.cloud_project_bound_notice', { name: project.name }))
         setPendingCloudContext(project, null)
         return
       }
       const api = projectSpaceApiFor(project)
       if (!api) return
+      setTaskBoardAssociation({
+        project,
+        items: [],
+        loading: true,
+        pending: false,
+      })
       void api
-        .bindProjectTask(project.id, contextRuntimeTask, runtimeTaskTitle)
-        .then(() => {
-          setBoundCloudProject(project)
-          setBoundCloudItem(null)
-          setDeliveryItem(null)
+        .listLoopItems(project.id)
+        .then(response => {
+          setTaskBoardAssociation(current =>
+            current &&
+            current.project.id === project.id &&
+            current.project.project_store === project.project_store
+              ? { ...current, items: response.items, loading: false }
+              : current
+          )
         })
         .catch(cause => {
+          setTaskBoardAssociation(current =>
+            current &&
+            current.project.id === project.id &&
+            current.project.project_store === project.project_store
+              ? { ...current, loading: false }
+              : current
+          )
           setTodoBindingError(
             cause instanceof Error
               ? cause.message
-              : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+              : t('workbench.task_board_items_load_failed', '加载看板任务失败')
           )
         })
     },
-    [contextRuntimeTask, projectSpaceApiFor, runtimeTaskTitle, setPendingCloudContext, t]
+    [contextRuntimeTask, projectSpaceApiFor, setPendingCloudContext, t]
   )
 
-  const handleSelectCloudProject = useCallback(
-    (project: CloudProject) => {
-      setDismissedDefaultCloudProjectKey(null)
-      bindComposerCloudProject(
-        project,
-        t('workbench.cloud_project_bound_notice', { name: project.name })
-      )
+  const closeTaskBoardAssociation = useCallback(() => {
+    setTaskBoardAssociation(current => (current?.pending ? current : null))
+  }, [])
+
+  const associateRuntimeTask = useCallback(
+    async (item: CloudLoopItem | null) => {
+      if (!contextRuntimeTask || !taskBoardAssociation) return
+      const { project } = taskBoardAssociation
+      const api = projectSpaceApiFor(project)
+      if (!api) return
+      setTaskBoardAssociation(current => (current ? { ...current, pending: true } : current))
+      setTodoBindingError(null)
+      const taskTitle =
+        runtimeTaskTitle ||
+        truncateRuntimeTaskTitle(runtimeTaskDescription) ||
+        t('workbench.untitled_task', '未命名任务')
+      try {
+        let linkedItem: CloudLoopItem
+        if (item) {
+          await api.bindTask(item.id, contextRuntimeTask, taskTitle)
+          linkedItem = item
+        } else {
+          const tracked = await api.trackProjectTask(
+            project.id,
+            contextRuntimeTask,
+            taskTitle,
+            runtimeTaskDescription
+          )
+          linkedItem = tracked.item
+          const executionStatus = normalizeTaskExecutionStatus(
+            runtimeTaskExecutionStatus,
+            runtimeTaskRunning,
+            runtimeTaskExecutionKnown
+          )
+          if (executionStatus) {
+            linkedItem =
+              (await api.updateTaskTrackingStatus(contextRuntimeTask, executionStatus)) ??
+              linkedItem
+          }
+        }
+        publishBoundProjectSpaceContext({
+          task: contextRuntimeTask,
+          project,
+          item: linkedItem,
+        })
+        setBoundCloudProject(project)
+        setBoundCloudItem(linkedItem)
+        setDeliveryItem(cloudItemAsLocalWorkItem(linkedItem, contextRuntimeTask))
+        setTaskBoardAssociation(null)
+        setCloudActionNotice(t('workbench.task_board_association_success', { name: project.name }))
+      } catch (cause) {
+        setTaskBoardAssociation(current => (current ? { ...current, pending: false } : current))
+        setTodoBindingError(
+          cause instanceof Error
+            ? cause.message
+            : t('workbench.cloud_project_bind_failed', '关联项目空间失败')
+        )
+      }
     },
-    [bindComposerCloudProject, t]
+    [
+      contextRuntimeTask,
+      projectSpaceApiFor,
+      runtimeTaskDescription,
+      runtimeTaskExecutionKnown,
+      runtimeTaskExecutionStatus,
+      runtimeTaskRunning,
+      runtimeTaskTitle,
+      t,
+      taskBoardAssociation,
+    ]
+  )
+
+  const associateRuntimeTaskWithNewItem = useCallback(
+    () => void associateRuntimeTask(null),
+    [associateRuntimeTask]
+  )
+  const associateRuntimeTaskWithExistingItem = useCallback(
+    (item: CloudLoopItem) => void associateRuntimeTask(item),
+    [associateRuntimeTask]
   )
 
   const activeDeliveryItem =
@@ -1004,6 +1126,10 @@ export function useWorkbenchCloudProjectContext({
     pendingTodoItem,
     prepareSubmission,
     removeCloudProjectContext,
+    taskBoardAssociation,
+    closeTaskBoardAssociation,
+    associateRuntimeTaskWithNewItem,
+    associateRuntimeTaskWithExistingItem,
     todoBindingError,
     visibleCloudMentionCandidates,
   }
