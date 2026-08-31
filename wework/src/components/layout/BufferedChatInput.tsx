@@ -8,6 +8,7 @@ import {
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
 import {
   consumeWorkbenchComposerFocusRequest,
+  hasWorkbenchComposerFocusRequest,
   WORKBENCH_COMPOSER_FOCUS_EVENT,
   type WorkbenchComposerFocusDetail,
 } from '@/lib/workbenchComposerFocus'
@@ -58,21 +59,30 @@ export const BufferedChatInput = memo(function BufferedChatInput({
 
   useLayoutEffect(() => {
     const focusComposer = () => {
-      composerRef.current?.focus()
+      const composer = composerRef.current
+      if (!composer) return false
+      const element = composer.element
+      const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
+      if (pane?.dataset.activeWorkbenchPane !== 'true') return false
+      if (element?.closest('[hidden], [aria-hidden="true"]')) return false
+      composer.focus()
+      return true
     }
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
-      if (!consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
-      focusComposer()
+      if (!hasWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
+      if (!focusComposer()) return
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
     }
     window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
     if (
       !props.disabled &&
       scopeKey &&
-      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
-    ) {
+      hasWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current) &&
       focusComposer()
+    ) {
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
     }
     return () => {
       window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
