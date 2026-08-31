@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { copyFile, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -21,7 +21,6 @@ const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR =
   `${ACTIVE_WORKBENCH_SELECTOR} ` +
   '[data-testid="workspace-browser-annotation-original-view-button"]'
 const COMPOSER_SELECTOR = '[data-testid="chat-message-input"][contenteditable="true"]'
-const OVERLAY_WINDOW_LABEL = 'browser-annotation-overlay'
 const OVERLAY_INPUT_SELECTOR = '[data-testid="browser-annotation-comment-input"]'
 const OVERLAY_SUBMIT_SELECTOR = '[data-testid="browser-annotation-submit-button"]'
 const OVERLAY_REMOVE_SELECTION_SELECTOR =
@@ -191,35 +190,91 @@ async function callBridge(identity, label, payload) {
   return body.data
 }
 
-async function waitForWindowCommand(control, windowLabel, action, selector, options = {}) {
-  const timeoutMs = options.timeoutMs ?? 10_000
+function annotationRootExpression(expression) {
+  return `(() => {
+    const root = document.getElementById(${JSON.stringify(MARKER_ROOT_ID)})?.shadowRoot
+    if (!root) return null
+    return (${expression})(root)
+  })()`
+}
+
+async function waitForEditorElement(bridge, selector, timeoutMs) {
   const startedAt = Date.now()
-  let lastError = null
   while (Date.now() - startedAt < timeoutMs) {
-    try {
-      return await control.commandForWindow(windowLabel, action, selector, {
-        ...options,
-        timeoutMs: Math.min(timeoutMs, 2_000),
-      })
-    } catch (error) {
-      lastError = error
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
+    const exists = await pageValue(
+      bridge,
+      annotationRootExpression(`root => Boolean(root.querySelector(${JSON.stringify(selector)}))`)
+    )
+    if (exists) return
+    await new Promise(resolve => setTimeout(resolve, 50))
   }
-  throw new Error(
-    `Timed out waiting for ${windowLabel} ${selector}: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`
+  throw new Error(`Timed out waiting for the in-page annotation editor: ${selector}`)
+}
+
+async function editorValue(bridge, selector, property = 'value') {
+  return pageValue(
+    bridge,
+    annotationRootExpression(
+      `root => root.querySelector(${JSON.stringify(selector)})?.[${JSON.stringify(property)}] ?? null`
+    )
   )
 }
 
-async function captureWindowScreenshot(control, resultDir, windowLabel, name) {
-  const dataUrl = await control.commandForWindow(windowLabel, 'capture', 'body', {
-    timeoutMs: 30_000,
+async function editorElementPoint(bridge, selector) {
+  return pageValue(
+    bridge,
+    annotationRootExpression(`root => {
+      const element = root.querySelector(${JSON.stringify(selector)})
+      if (!element) return null
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    }`)
+  )
+}
+
+async function clickEditorElement(bridge, selector) {
+  const point = await editorElementPoint(bridge, selector)
+  assert.ok(point, `Could not locate in-page annotation editor control: ${selector}`)
+  const diagnostics = await pageValue(
+    bridge,
+    annotationRootExpression(`root => {
+      const element = root.querySelector(${JSON.stringify(selector)})
+      if (!element) return null
+      const hit = root.elementFromPoint(${Number(point?.x)}, ${Number(point?.y)})
+      return {
+        disabled: Boolean(element.disabled),
+        hitTestId: hit?.getAttribute?.('data-testid') ?? null,
+        textContent: element.textContent,
+      }
+    }`)
+  )
+  const result = await bridge({
+    action: 'click',
+    x: point.x,
+    y: point.y,
+    timeoutMs: 5_000,
+    options: { riskApproved: true },
   })
-  const prefix = 'data:image/png;base64,'
-  assert.ok(dataUrl.startsWith(prefix), `${windowLabel} screenshot did not return PNG data`)
-  await writeFile(join(resultDir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+  assert.equal(
+    result.ok,
+    true,
+    `Could not click in-page annotation editor control: ${selector}; diagnostics=${JSON.stringify(
+      diagnostics
+    )}; result=${JSON.stringify(result)}`
+  )
+}
+
+async function fillEditorElement(bridge, selector, value) {
+  const point = await editorElementPoint(bridge, selector)
+  assert.ok(point, `Could not locate in-page annotation editor input: ${selector}`)
+  const result = await bridge({
+    action: 'fill',
+    x: point.x,
+    y: point.y,
+    text: value,
+    timeoutMs: 5_000,
+  })
+  assert.equal(result.ok, true, `Could not fill in-page annotation editor control: ${selector}`)
 }
 
 async function captureBrowserScreenshot(bridge, resultDir, name) {
@@ -261,32 +316,16 @@ async function waitForBrowserAnnotationRender(control, previousRevision, timeout
   throw new Error(`${message}; previous=${previousRevision}, actual=${actual}`)
 }
 
-async function waitForAnnotationSave(control, previousRuntimeRevision, timeoutMs) {
+async function waitForAnnotationSave(control, bridge, previousRuntimeRevision, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const editorCount = Number(
-      await control
-        .commandForWindow(OVERLAY_WINDOW_LABEL, 'getElementCount', OVERLAY_INPUT_SELECTOR)
-        .catch(() => 0)
-    )
-    if (editorCount > 0) {
-      const errorCount = Number(
-        await control
-          .commandForWindow(
-            OVERLAY_WINDOW_LABEL,
-            'getElementCount',
-            '[data-testid="browser-annotation-submit-error"]'
-          )
-          .catch(() => 0)
+    const editorOpen = await pageValue(
+      bridge,
+      annotationRootExpression(
+        `root => Boolean(root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)}))`
       )
-      if (errorCount > 0) {
-        const message = await control.commandForWindow(
-          OVERLAY_WINDOW_LABEL,
-          'getText',
-          '[data-testid="browser-annotation-submit-error"]'
-        )
-        throw new Error(`Browser annotation submit failed: ${message}`)
-      }
+    )
+    if (editorOpen) {
       await new Promise(resolve => setTimeout(resolve, 100))
       continue
     }
@@ -549,16 +588,8 @@ async function selectElementAnnotationPoint(control, bridge, targetPoint, uiTime
     true,
     message
   )
-  await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_INPUT_SELECTOR, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await waitForWindowCommand(
-    control,
-    OVERLAY_WINDOW_LABEL,
-    'waitFor',
-    OVERLAY_SCREENSHOT_SELECTOR,
-    { timeoutMs: uiTimeoutMs }
-  )
+  await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
+  await waitForEditorElement(bridge, OVERLAY_SCREENSHOT_SELECTOR, uiTimeoutMs)
 }
 
 async function startElementAnnotation(control, bridge, targetSelector, uiTimeoutMs) {
@@ -567,13 +598,11 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
   await selectElementAnnotationTarget(control, bridge, targetSelector, uiTimeoutMs)
 }
 
-async function submitOverlayComment(control, comment, uiTimeoutMs) {
+async function submitOverlayComment(control, bridge, comment, uiTimeoutMs) {
   const previousRuntimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'fill', OVERLAY_INPUT_SELECTOR, {
-    value: comment,
-  })
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_SUBMIT_SELECTOR)
-  await waitForAnnotationSave(control, previousRuntimeRevision, uiTimeoutMs)
+  await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, comment)
+  await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
+  await waitForAnnotationSave(control, bridge, previousRuntimeRevision, uiTimeoutMs)
 }
 
 async function pageValue(bridge, expression) {
@@ -685,26 +714,23 @@ async function verifyCore(
   control.activateWindow('main')
   await captureScreenshot(control, 'browser-annotation-01b-target-hover.png')
   await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
-  await captureWindowScreenshot(
-    control,
-    resultDir,
-    OVERLAY_WINDOW_LABEL,
-    'browser-annotation-02-comment-card.png'
-  )
+  await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-02-comment-card.png')
   assert.equal(
     await pageValue(
       bridge,
-      `Boolean(document.querySelector('[data-testid="browser-annotation-comment-input"]'))`
+      annotationRootExpression(
+        `root => Boolean(root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)}))`
+      )
     ),
-    false,
-    'The comment editor was mounted inside the annotated page'
+    true,
+    'The comment editor was not mounted inside the annotated page Shadow DOM'
   )
   assert.equal(
     await pageValue(bridge, `document.querySelector('#page-click-state')?.textContent`),
     'not-clicked',
     'Selecting a target triggered the page action'
   )
-  await submitOverlayComment(control, 'Primary browser annotation comment', uiTimeoutMs)
+  await submitOverlayComment(control, bridge, 'Primary browser annotation comment', uiTimeoutMs)
 
   const savedMarker = await markerState(bridge)
   assert.equal(savedMarker?.number, '1', 'The first saved comment did not render marker 1')
@@ -714,22 +740,21 @@ async function verifyCore(
   await hoverElementAnnotationTarget(bridge, '#annotation-secondary', uiTimeoutMs)
   await selectElementAnnotationTarget(control, bridge, '#annotation-secondary', uiTimeoutMs)
   assert.equal(
-    await control.commandForWindow(
-      OVERLAY_WINDOW_LABEL,
-      'getAttribute',
-      '[data-testid="browser-annotation-editor-surface"]',
-      { value: 'data-testid' }
+    await pageValue(
+      bridge,
+      annotationRootExpression(
+        `root => root.querySelector('[data-testid="browser-annotation-editor-surface"]')?.getAttribute('data-testid') ?? null`
+      )
     ),
     'browser-annotation-editor-surface',
     'The second annotation did not render the comment editor surface'
   )
-  await captureWindowScreenshot(
-    control,
+  await captureBrowserScreenshot(
+    bridge,
     resultDir,
-    OVERLAY_WINDOW_LABEL,
     'browser-annotation-03b-second-comment-card.png'
   )
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_REMOVE_SELECTION_SELECTOR)
+  await clickEditorElement(bridge, OVERLAY_REMOVE_SELECTION_SELECTOR)
   control.activateWindow('main')
   await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
     text: '1',
@@ -737,28 +762,17 @@ async function verifyCore(
   })
 
   await clickMarker(bridge)
-  await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_INPUT_SELECTOR, {
-    timeoutMs: uiTimeoutMs,
-  })
-  await captureWindowScreenshot(
-    control,
-    resultDir,
-    OVERLAY_WINDOW_LABEL,
-    'browser-annotation-04-edit-card.png'
-  )
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'fill', OVERLAY_INPUT_SELECTOR, {
-    value: 'Edited browser annotation comment',
-  })
+  await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
+  await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-04-edit-card.png')
+  await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Edited browser annotation comment')
   const editRuntimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_SUBMIT_SELECTOR)
-  await waitForAnnotationSave(control, editRuntimeRevision, uiTimeoutMs)
+  await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
+  await waitForAnnotationSave(control, bridge, editRuntimeRevision, uiTimeoutMs)
 
   await clickMarker(bridge)
-  await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_DELETE_SELECTOR, {
-    timeoutMs: uiTimeoutMs,
-  })
+  await waitForEditorElement(bridge, OVERLAY_DELETE_SELECTOR, uiTimeoutMs)
   const deleteRuntimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_DELETE_SELECTOR)
+  await clickEditorElement(bridge, OVERLAY_DELETE_SELECTOR)
   control.activateWindow('main')
   await waitForElementCount(
     control,
@@ -787,7 +801,7 @@ async function verifyCore(
 
   await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
   await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
-  await submitOverlayComment(control, 'Annotation cleared through the toolbar', uiTimeoutMs)
+  await submitOverlayComment(control, bridge, 'Annotation cleared through the toolbar', uiTimeoutMs)
   control.activateWindow('main')
   await control.command('click', BROWSER_ANNOTATION_CLEAR_SELECTOR)
   await control.command('waitFor', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR, {
@@ -837,7 +851,12 @@ async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTi
   })
 
   await startElementAnnotation(control, bridge, '#replace-target', uiTimeoutMs)
-  await submitOverlayComment(control, 'Keep this comment attached after replacement', uiTimeoutMs)
+  await submitOverlayComment(
+    control,
+    bridge,
+    'Keep this comment attached after replacement',
+    uiTimeoutMs
+  )
   const originalMarkerId = (await markerState(bridge))?.id
   assert.ok(originalMarkerId, 'The replaceable target did not receive a marker')
 
@@ -958,53 +977,34 @@ async function verifyDesign(
   })
 
   await startElementAnnotation(control, bridge, '#design-target', uiTimeoutMs)
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'fill', OVERLAY_INPUT_SELECTOR, {
-    value: 'Use the requested design color',
-  })
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_DESIGN_SELECTOR)
+  await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Use the requested design color')
+  await clickEditorElement(bridge, OVERLAY_DESIGN_SELECTOR)
   assert.equal(
-    await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'getValue', OVERLAY_FONT_SIZE_SELECTOR),
+    await editorValue(bridge, OVERLAY_FONT_SIZE_SELECTOR),
     '16px',
     'The design editor did not show the target computed font size'
   )
   assert.equal(
-    await control.commandForWindow(
-      OVERLAY_WINDOW_LABEL,
-      'getValue',
-      OVERLAY_BACKGROUND_COLOR_SELECTOR
-    ),
+    await editorValue(bridge, OVERLAY_BACKGROUND_COLOR_SELECTOR),
     '#f8fafc',
     'The design editor did not normalize the target computed background color'
   )
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'fill', OVERLAY_COLOR_SELECTOR, {
-    value: '#ef4444',
-  })
-  await waitForWindowCommand(
-    control,
-    OVERLAY_WINDOW_LABEL,
-    'waitFor',
-    OVERLAY_SCREENSHOT_SELECTOR,
-    { timeoutMs: uiTimeoutMs }
-  )
+  await fillEditorElement(bridge, OVERLAY_COLOR_SELECTOR, '#ef4444')
+  await waitForEditorElement(bridge, OVERLAY_SCREENSHOT_SELECTOR, uiTimeoutMs)
   assert.equal(
-    await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'getValue', OVERLAY_INPUT_SELECTOR),
+    await editorValue(bridge, OVERLAY_INPUT_SELECTOR),
     'Use the requested design color',
     'The controlled comment input lost its value before submit'
   )
   assert.equal(
-    await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'getValue', OVERLAY_COLOR_SELECTOR),
+    await editorValue(bridge, OVERLAY_COLOR_SELECTOR),
     '#ef4444',
     'The controlled design input lost its value before submit'
   )
-  await captureWindowScreenshot(
-    control,
-    resultDir,
-    OVERLAY_WINDOW_LABEL,
-    'browser-annotation-05-design-editor.png'
-  )
+  await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-05-design-editor.png')
   let runtimeRevision = await browserAnnotationRuntimeRevision(control)
-  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_SUBMIT_SELECTOR)
-  runtimeRevision = await waitForAnnotationSave(control, runtimeRevision, uiTimeoutMs)
+  await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
+  runtimeRevision = await waitForAnnotationSave(control, bridge, runtimeRevision, uiTimeoutMs)
 
   await waitForPageValue(
     bridge,

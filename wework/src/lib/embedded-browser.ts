@@ -1,11 +1,7 @@
 import { invokeDesktopHost, subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
 import { normalizeBrowserUrl } from './browser-url'
 import { isElectronRuntime } from './runtime-environment'
-import type {
-  BrowserAnnotationOverlayState,
-  BrowserAnnotationState,
-  BrowserDesignChange,
-} from '@/types/browser-annotation'
+import type { BrowserAnnotationState } from '@/types/browser-annotation'
 
 type UnlistenFn = () => void
 
@@ -26,8 +22,6 @@ export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusi
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
 export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
 export const EMBEDDED_BROWSER_ANNOTATION_STATE_EVENT = 'wework:embedded-browser-annotation-state'
-export const EMBEDDED_BROWSER_ANNOTATION_OVERLAY_STATE_EVENT =
-  'wework:embedded-browser-annotation-overlay-state'
 
 export function browserDiagnosticUrl(value: string): string {
   try {
@@ -201,17 +195,6 @@ export function listenEmbeddedBrowserAnnotationState(
   const unlisten = subscribeDesktopHostEvents(event => {
     if (event.type !== 'browser.annotation-state') return
     handler(event.payload as unknown as BrowserAnnotationState)
-  })
-  return Promise.resolve(unlisten)
-}
-
-export function listenEmbeddedBrowserAnnotationOverlayState(
-  handler: (state: BrowserAnnotationOverlayState) => void
-): Promise<UnlistenFn> | null {
-  if (!canUseEmbeddedBrowser()) return null
-  const unlisten = subscribeDesktopHostEvents(event => {
-    if (event.type !== 'browser.annotation-overlay-state') return
-    handler(event.payload as unknown as BrowserAnnotationOverlayState)
   })
   return Promise.resolve(unlisten)
 }
@@ -427,33 +410,6 @@ export async function setEmbeddedBrowserAnnotationOriginalView(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.annotation.setOriginalView', { label, enabled })
-}
-
-export async function readEmbeddedBrowserAnnotationOverlayState(): Promise<BrowserAnnotationOverlayState> {
-  return invokeDesktopHost<BrowserAnnotationOverlayState>('browser.annotation.overlayState')
-}
-
-export async function resizeEmbeddedBrowserAnnotationOverlay(input: {
-  width: number
-  height: number
-}): Promise<void> {
-  await invokeDesktopHost<void>('browser.annotation.resizeOverlay', input)
-}
-
-export async function saveEmbeddedBrowserAnnotationDraft(input: {
-  comment: string
-  designChanges: BrowserDesignChange[]
-  textChange?: { before: string; after: string } | null
-}): Promise<void> {
-  await invokeDesktopHost<void>('browser.annotation.save', input)
-}
-
-export async function deleteEmbeddedBrowserAnnotationDraft(): Promise<void> {
-  await invokeDesktopHost<void>('browser.annotation.delete')
-}
-
-export async function closeEmbeddedBrowserAnnotationDraft(): Promise<void> {
-  await invokeDesktopHost<void>('browser.annotation.closeDraft')
 }
 
 export async function navigateEmbeddedBrowser(

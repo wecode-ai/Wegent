@@ -29,12 +29,6 @@ function anchor(selector = '#target'): BrowserElementAnchor {
 function harness() {
   const sent: Array<{ channel: string; payload: unknown }> = []
   const states: unknown[] = []
-  const overlayStates: unknown[] = []
-  const overlay = {
-    close: vi.fn(),
-    open: vi.fn().mockResolvedValue(undefined),
-    resize: vi.fn(),
-  }
   const browser = {
     capture: vi.fn().mockResolvedValue('data:image/png;base64,c2NyZWVuc2hvdA=='),
     labelForContentsId: vi.fn().mockReturnValue(LABEL),
@@ -45,9 +39,7 @@ function harness() {
   }
   const controller = new BrowserAnnotationController({
     browser,
-    overlay,
     publish: state => states.push(state),
-    publishOverlay: state => overlayStates.push(state),
   })
   controller.handleRuntimeEvent(7, {
     type: 'runtime-ready',
@@ -55,16 +47,15 @@ function harness() {
     pageUrl: URL,
     title: 'Example',
   })
-  return { browser, controller, overlay, overlayStates, sent, states }
+  return { browser, controller, sent, states }
 }
 
 describe('BrowserAnnotationController', () => {
   test('owns comment state outside the page and restores it after reload', async () => {
-    const { browser, controller, overlay, sent } = harness()
+    const { browser, controller, sent } = harness()
 
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
     await vi.waitFor(() => expect(browser.capture).toHaveBeenCalledOnce())
     await controller.saveDraft({
       comment: 'Keep this attached',
@@ -109,11 +100,19 @@ describe('BrowserAnnotationController', () => {
   })
 
   test('exits annotation mode and closes a stale draft after real navigation', async () => {
-    const { controller, overlay } = harness()
+    const { controller, sent } = harness()
     controller.start(LABEL, 'batch')
     controller.setOriginalView(LABEL, true)
     controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
+    await vi.waitFor(() =>
+      expect(
+        (
+          sent.at(-1)?.payload as {
+            state?: { draft?: unknown }
+          }
+        ).state?.draft
+      ).not.toBeNull()
+    )
 
     controller.handleRuntimeEvent(7, {
       type: 'runtime-ready',
@@ -127,15 +126,20 @@ describe('BrowserAnnotationController', () => {
       originalView: false,
       comments: [],
     })
-    expect(controller.overlayState()).toEqual({ open: false, draft: null })
-    expect(overlay.close).toHaveBeenCalledOnce()
+    expect(
+      (
+        sent.at(-1)?.payload as {
+          state?: { draft?: unknown }
+        }
+      ).state?.draft
+    ).toBeNull()
   })
 
   test('replaces an anchor without changing comment identity', async () => {
-    const { controller, overlay } = harness()
+    const { browser, controller } = harness()
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(browser.capture).toHaveBeenCalledOnce())
     await controller.saveDraft({ comment: 'Follow replacement', designChanges: [] })
     const comment = controller.state(LABEL).comments[0]
 
@@ -152,17 +156,22 @@ describe('BrowserAnnotationController', () => {
   })
 
   test('persists design changes and supports original-view commands', async () => {
-    const { browser, controller, overlay } = harness()
+    const { browser, controller, sent } = harness()
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, {
       type: 'create-draft',
       anchor: anchor(),
       designValues: { color: 'rgb(17, 24, 39)' },
     })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
-    expect(controller.overlayState().draft?.designValues).toEqual({
-      color: 'rgb(17, 24, 39)',
-    })
+    await vi.waitFor(() =>
+      expect(
+        (
+          sent.at(-1)?.payload as {
+            state?: { draft?: { designValues?: Record<string, string> } | null }
+          }
+        ).state?.draft?.designValues
+      ).toEqual({ color: 'rgb(17, 24, 39)' })
+    )
     await controller.saveDraft({
       comment: 'Make it red',
       designChanges: [{ property: 'color', value: '#ef4444', previousValue: 'rgb(17, 24, 39)' }],
@@ -197,14 +206,14 @@ describe('BrowserAnnotationController', () => {
   })
 
   test('accepts a design-only annotation with an empty comment', async () => {
-    const { controller, overlay } = harness()
+    const { browser, controller } = harness()
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, {
       type: 'create-draft',
       anchor: anchor(),
       designValues: { color: 'rgb(17, 24, 39)' },
     })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(browser.capture).toHaveBeenCalledOnce())
 
     await controller.saveDraft({
       comment: '',
@@ -217,21 +226,22 @@ describe('BrowserAnnotationController', () => {
     })
   })
 
-  test('clears an existing comment draft when the overlay cannot reopen', async () => {
-    const { controller, overlay } = harness()
+  test('accepts editor actions from the page runtime', async () => {
+    const { controller } = harness()
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
-    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
-    await controller.saveDraft({ comment: 'Saved comment', designChanges: [] })
-    const commentId = controller.state(LABEL).comments[0]?.id
-    overlay.open.mockRejectedValueOnce(new Error('overlay unavailable'))
-
     controller.handleRuntimeEvent(7, {
-      type: 'open-comment',
-      commentId,
-      anchor: anchor(),
+      type: 'save-draft',
+      comment: 'Saved from the page',
+      designChanges: [],
     })
+    await vi.waitFor(() =>
+      expect(controller.state(LABEL).comments[0]?.comment).toBe('Saved from the page')
+    )
+    const commentId = controller.state(LABEL).comments[0]?.id
 
-    await vi.waitFor(() => expect(controller.overlayState()).toEqual({ open: false, draft: null }))
+    controller.handleRuntimeEvent(7, { type: 'open-comment', commentId, anchor: anchor() })
+    controller.handleRuntimeEvent(7, { type: 'delete-draft' })
+    expect(controller.state(LABEL).comments).toEqual([])
   })
 })

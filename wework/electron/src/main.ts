@@ -90,10 +90,7 @@ import {
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
-import {
-  BrowserAnnotationController,
-  type BrowserElementAnchor,
-} from './host/browser-annotation-controller.js'
+import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -131,9 +128,6 @@ let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
-let browserAnnotationOverlayWindow: BrowserWindow | null = null
-let browserAnnotationOverlayReadyPromise: Promise<void> | null = null
-let browserAnnotationOverlayPresentationVersion = 0
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
@@ -443,9 +437,6 @@ function disposeCoreDshViews(): void {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
-  browserAnnotationOverlayWindow?.destroy()
-  browserAnnotationOverlayWindow = null
-  browserAnnotationOverlayReadyPromise = null
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null
@@ -655,139 +646,6 @@ async function createAuxiliaryWindow(
     if (!auxiliaryWindow.isDestroyed()) auxiliaryWindow.destroy()
     throw error
   }
-}
-
-async function showBrowserAnnotationOverlay(
-  label: string,
-  anchor: BrowserElementAnchor
-): Promise<void> {
-  if (!desktopRuntime || !embeddedBrowser) {
-    throw new Error('Browser annotation overlay is unavailable')
-  }
-  const presentationVersion = ++browserAnnotationOverlayPresentationVersion
-  let overlay = browserAnnotationOverlayWindow
-  if (!overlay || overlay.isDestroyed()) {
-    const target = resolveDshAppRoute(desktopRuntime.coreDshUrl(), 'browser-annotation-overlay')
-    overlay = new BrowserWindow({
-      width: 360,
-      height: 360,
-      parent: BrowserWindow.getFocusedWindow() ?? mainWindow ?? undefined,
-      resizable: false,
-      frame: false,
-      transparent: true,
-      hasShadow: true,
-      skipTaskbar: true,
-      show: false,
-      backgroundColor: '#00000000',
-      webPreferences: {
-        backgroundThrottling: false,
-        preload: dshPreloadPath,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    })
-    browserAnnotationOverlayWindow = overlay
-    secureDshContents(overlay.webContents, desktopRuntime.coreDshUrl())
-    registerDshWindowLabel(overlay.webContents, 'browser-annotation-overlay')
-    if (keepE2EWindowInBackground) {
-      overlay.webContents.on('console-message', details => {
-        console.info('[browser-annotation-overlay]', {
-          level: details.level,
-          message: details.message,
-          sourceId: details.sourceId,
-        })
-      })
-    }
-    overlay.on('closed', () => {
-      if (browserAnnotationOverlayWindow === overlay) {
-        browserAnnotationOverlayWindow = null
-        browserAnnotationOverlayReadyPromise = null
-      }
-    })
-    const createdOverlay = overlay
-    const rendererReady = waitForRendererSelector(
-      createdOverlay.webContents,
-      '[data-testid="browser-annotation-overlay"]'
-    )
-    const loadFailure = createdOverlay
-      .loadURL(target.toString(), {
-        extraHeaders: 'X-Wework-Window-Label: browser-annotation-overlay',
-      })
-      .then(() => new Promise<void>(() => {}))
-    browserAnnotationOverlayReadyPromise = Promise.race([rendererReady, loadFailure])
-  }
-  const readyPromise = browserAnnotationOverlayReadyPromise
-  if (!readyPromise) throw new Error('Browser annotation overlay failed to initialize')
-  try {
-    await readyPromise
-  } catch (error) {
-    if (browserAnnotationOverlayReadyPromise === readyPromise) {
-      browserAnnotationOverlayReadyPromise = null
-    }
-    if (browserAnnotationOverlayWindow === overlay) {
-      browserAnnotationOverlayWindow = null
-    }
-    if (!overlay.isDestroyed()) overlay.destroy()
-    throw error
-  }
-  if (presentationVersion !== browserAnnotationOverlayPresentationVersion) return
-  positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
-  overlay.setIgnoreMouseEvents(false)
-  overlay.setFocusable(true)
-  overlay.setOpacity(1)
-  if (keepE2EWindowInBackground) overlay.showInactive()
-  else {
-    overlay.show()
-    overlay.focus()
-  }
-}
-
-function positionBrowserAnnotationOverlay(
-  overlay: BrowserWindow,
-  label: string,
-  rect: BrowserElementAnchor['rect']
-): void {
-  if (!embeddedBrowser) return
-  const target = embeddedBrowser.pageRectToScreen(label, rect)
-  const overlayBounds = overlay.getBounds()
-  const display = screen.getDisplayMatching(target)
-  const workArea = display.workArea
-  const gap = 12
-  let x = target.x + target.width + gap
-  if (x + overlayBounds.width > workArea.x + workArea.width) {
-    x = target.x - overlayBounds.width - gap
-  }
-  x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - overlayBounds.width))
-  const y = Math.max(
-    workArea.y,
-    Math.min(target.y, workArea.y + workArea.height - overlayBounds.height)
-  )
-  overlay.setBounds({ ...overlayBounds, x: Math.round(x), y: Math.round(y) })
-}
-
-function resizeBrowserAnnotationOverlay(
-  label: string,
-  anchor: BrowserElementAnchor,
-  size: { width: number; height: number }
-): void {
-  const overlay = browserAnnotationOverlayWindow
-  if (!overlay || overlay.isDestroyed()) return
-  const width = Math.min(Math.max(size.width, 280), 520)
-  const height = Math.min(Math.max(size.height, 160), 680)
-  overlay.setContentSize(width, height, false)
-  positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
-}
-
-function closeBrowserAnnotationOverlay(): void {
-  browserAnnotationOverlayPresentationVersion += 1
-  const overlay = browserAnnotationOverlayWindow
-  if (!overlay || overlay.isDestroyed()) return
-  overlay.setIgnoreMouseEvents(true)
-  overlay.setFocusable(false)
-  overlay.setOpacity(0)
-  const owner = overlay.getParentWindow() ?? mainWindow
-  if (owner && !owner.isDestroyed()) owner.focus()
 }
 
 async function showSystemDragPanel(): Promise<void> {
@@ -1126,10 +984,6 @@ async function shutdown(): Promise<void> {
   const plugins = workbenchPlugins
   workbenchPlugins = null
   browserAnnotations = null
-  browserAnnotationOverlayWindow?.destroy()
-  browserAnnotationOverlayWindow = null
-  browserAnnotationOverlayReadyPromise = null
-  browserAnnotationOverlayPresentationVersion += 1
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
   const computerUseService = computerUse
@@ -1182,20 +1036,9 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   browserAnnotations = new BrowserAnnotationController({
     browser: embeddedBrowser,
-    overlay: {
-      close: closeBrowserAnnotationOverlay,
-      open: showBrowserAnnotationOverlay,
-      resize: resizeBrowserAnnotationOverlay,
-    },
     publish: state => {
       desktopHostEvents.publish(
         'browser.annotation-state',
-        state as unknown as Record<string, unknown>
-      )
-    },
-    publishOverlay: state => {
-      desktopHostEvents.publish(
-        'browser.annotation-overlay-state',
         state as unknown as Record<string, unknown>
       )
     },
@@ -1271,9 +1114,7 @@ async function configureDesktopRuntime(): Promise<void> {
                 ? (popoutWindow?.webContents ?? null)
                 : windowLabel === 'system-drag-panel'
                   ? (systemDragWindow?.webContents ?? null)
-                  : windowLabel === 'browser-annotation-overlay'
-                    ? (browserAnnotationOverlayWindow?.webContents ?? null)
-                    : (workspaceWindows.get(windowLabel)?.webContents ?? null),
+                  : (workspaceWindows.get(windowLabel)?.webContents ?? null),
           cancelCloseToTray: cancelMainWindowClose,
           closeToTray: closeMainWindowToTray,
           focusWindow: windowLabel => {

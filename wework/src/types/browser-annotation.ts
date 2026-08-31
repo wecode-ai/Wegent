@@ -100,21 +100,6 @@ export interface BrowserAnnotationState {
   unresolvedIds: string[]
 }
 
-export interface BrowserAnnotationOverlayState {
-  open: boolean
-  draft: {
-    label: string
-    commentId: string | null
-    anchor: BrowserElementAnchor
-    comment: string
-    designChanges: BrowserDesignChange[]
-    designValues: Partial<Record<BrowserAdjustmentProperty, string>>
-    textChange: { before: string; after: string } | null
-    screenshotDataUrl: string | null
-    screenshotState: 'capturing' | 'ready' | 'failed'
-  } | null
-}
-
 export interface BrowserAnnotationScope {
   browserTabId: string
   pageSessionId: string

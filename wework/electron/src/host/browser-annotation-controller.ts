@@ -58,7 +58,7 @@ interface BrowserAnnotationSession {
   unresolvedIds: string[]
 }
 
-interface BrowserAnnotationDraft {
+export interface BrowserAnnotationDraft {
   label: string
   commentId: string | null
   anchor: BrowserElementAnchor
@@ -68,11 +68,6 @@ interface BrowserAnnotationDraft {
   textChange: { before: string; after: string } | null
   screenshotDataUrl: string | null
   screenshotState: 'capturing' | 'ready' | 'failed'
-}
-
-export interface BrowserAnnotationOverlayState {
-  open: boolean
-  draft: BrowserAnnotationDraft | null
 }
 
 export interface BrowserAnnotationState {
@@ -97,17 +92,9 @@ interface BrowserAnnotationPage {
   state(label: string): { title: string | null; url: string | null }
 }
 
-interface BrowserAnnotationOverlay {
-  close(): void
-  open(label: string, anchor: BrowserElementAnchor): Promise<void>
-  resize(label: string, anchor: BrowserElementAnchor, size: { width: number; height: number }): void
-}
-
 interface BrowserAnnotationControllerOptions {
   browser: BrowserAnnotationPage
-  overlay: BrowserAnnotationOverlay
   publish: (state: BrowserAnnotationState) => void
-  publishOverlay: (state: BrowserAnnotationOverlayState) => void
 }
 
 export class BrowserAnnotationController {
@@ -178,15 +165,6 @@ export class BrowserAnnotationController {
     }
   }
 
-  overlayState(): BrowserAnnotationOverlayState {
-    return { open: this.draft !== null, draft: this.draft }
-  }
-
-  resizeOverlay(size: { width: number; height: number }): void {
-    const draft = this.requiredDraft()
-    this.options.overlay.resize(draft.label, draft.anchor, size)
-  }
-
   async saveDraft(input: {
     comment: string
     designChanges: BrowserDesignChange[]
@@ -251,8 +229,6 @@ export class BrowserAnnotationController {
   closeDraft(syncRuntime = true): void {
     const label = this.draft?.label ?? null
     this.draft = null
-    this.options.overlay.close()
-    this.options.publishOverlay(this.overlayState())
     if (label && syncRuntime) this.sync(label)
   }
 
@@ -278,6 +254,25 @@ export class BrowserAnnotationController {
     }
     if (type === 'open-comment') {
       void this.openComment(label, event)
+      return
+    }
+    if (type === 'save-draft') {
+      if (this.draft?.label !== label) return
+      void this.saveDraft({
+        comment: stringValue(event.comment) ?? '',
+        designChanges: designChanges(event.designChanges),
+        textChange: textChange(event.textChange),
+      })
+      return
+    }
+    if (type === 'delete-draft') {
+      if (this.draft?.label !== label) return
+      this.deleteDraftComment()
+      return
+    }
+    if (type === 'close-draft') {
+      if (this.draft?.label !== label) return
+      this.closeDraft()
       return
     }
     if (type === 'anchors-updated') this.updateAnchors(label, event)
@@ -328,17 +323,7 @@ export class BrowserAnnotationController {
       screenshotDataUrl: null,
       screenshotState: 'capturing',
     }
-    this.options.publishOverlay(this.overlayState())
-    try {
-      await this.options.overlay.open(label, anchor)
-    } catch (error) {
-      console.error('[browser-annotation] failed to open overlay', error)
-      if (this.draft?.label === label && this.draft.anchor === anchor) {
-        this.draft = null
-        this.options.publishOverlay(this.overlayState())
-      }
-      return
-    }
+    this.sync(label)
     try {
       const screenshotDataUrl = await this.options.browser.capture(label, paddedRect(anchor.rect))
       if (!this.draft || this.draft.label !== label || this.draft.anchor !== anchor) return
@@ -348,7 +333,7 @@ export class BrowserAnnotationController {
       if (!this.draft || this.draft.label !== label || this.draft.anchor !== anchor) return
       this.draft.screenshotState = 'failed'
     }
-    this.options.publishOverlay(this.overlayState())
+    this.sync(label)
   }
 
   private async openComment(label: string, event: Record<string, unknown>): Promise<void> {
@@ -371,17 +356,7 @@ export class BrowserAnnotationController {
       screenshotDataUrl: comment.screenshotDataUrl,
       screenshotState: comment.screenshotDataUrl ? 'ready' : 'failed',
     }
-    this.options.publishOverlay(this.overlayState())
-    const draft = this.draft
-    try {
-      await this.options.overlay.open(label, draft.anchor)
-    } catch (error) {
-      console.error('[browser-annotation] failed to reopen overlay', error)
-      if (this.draft === draft) {
-        this.draft = null
-        this.options.publishOverlay(this.overlayState())
-      }
-    }
+    this.sync(label)
   }
 
   private updateAnchors(label: string, event: Record<string, unknown>): void {
@@ -423,6 +398,7 @@ export class BrowserAnnotationController {
       point,
       state: {
         mode: session.mode,
+        draft: this.draft?.label === label ? this.draft : null,
         comments: comments.map(comment => ({
           id: comment.id,
           number: comment.number,
@@ -539,6 +515,31 @@ function stringRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   )
+}
+
+function designChanges(value: unknown): BrowserDesignChange[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(item => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+    const record = item as Record<string, unknown>
+    const property = stringValue(record.property)
+    const designValue = stringValue(record.value)
+    if (!property || designValue === null) return []
+    return [
+      {
+        property,
+        value: designValue,
+        previousValue: typeof record.previousValue === 'string' ? record.previousValue : '',
+      },
+    ]
+  })
+}
+
+function textChange(value: unknown): { before: string; after: string } | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (typeof record.before !== 'string' || typeof record.after !== 'string') return null
+  return { before: record.before, after: record.after }
 }
 
 function elementAnchor(value: unknown): BrowserElementAnchor | null {

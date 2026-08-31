@@ -34,8 +34,20 @@ interface RuntimeComment {
   textChange?: { before: string; after: string } | null
 }
 
+interface RuntimeDraft {
+  label: string
+  commentId: string | null
+  anchor: ElementAnchor
+  comment: string
+  designChanges: DesignChange[]
+  designValues: Record<string, string>
+  textChange: { before: string; after: string } | null
+  screenshotState: 'capturing' | 'ready' | 'failed'
+}
+
 interface RuntimeState {
   mode: 'off' | 'quick' | 'batch'
+  draft: RuntimeDraft | null
   comments: RuntimeComment[]
   originalView: boolean
 }
@@ -82,13 +94,18 @@ const DESIGN_PROPERTIES = [
   'margin',
 ] as const
 const pageSessionId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
-let state: RuntimeState = { mode: 'off', comments: [], originalView: false }
+let state: RuntimeState = { mode: 'off', draft: null, comments: [], originalView: false }
 let rootHost: HTMLElement | null = null
 let shadowRoot: ShadowRoot | null = null
 let renderTimer: ReturnType<typeof setTimeout> | null = null
 let draftAnchor: ElementAnchor | null = null
 let hoveredElement: Element | null = null
 let pointerPosition: { x: number; y: number } | null = null
+let editorDraftIdentity: string | null = null
+let editorComment = ''
+let editorDesignOpen = false
+let editorDesignValues: Record<string, string> = {}
+let editorNeedsFocus = false
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
   string,
@@ -543,10 +560,384 @@ function interactionLayer() {
   return layer
 }
 
+const EDITOR_DESIGN_PROPERTIES = [
+  'color',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'background-color',
+  'opacity',
+  'border-radius',
+  'border-color',
+  'border-width',
+  'width',
+  'height',
+  'padding',
+  'margin',
+] as const
+
+function editorIdentity(draft: RuntimeDraft) {
+  return `${draft.commentId ?? 'new'}:${draft.anchor.selector}`
+}
+
+function syncEditorState(draft: RuntimeDraft | null) {
+  if (!draft) {
+    editorDraftIdentity = null
+    editorComment = ''
+    editorDesignOpen = false
+    editorDesignValues = {}
+    return
+  }
+  const identity = editorIdentity(draft)
+  if (editorDraftIdentity === identity) return
+  editorDraftIdentity = identity
+  editorComment = draft.comment
+  editorDesignOpen = draft.designChanges.length > 0
+  editorDesignValues = Object.fromEntries(
+    draft.designChanges.map(change => [change.property, change.value])
+  )
+  editorNeedsFocus = true
+}
+
+function editorTargetLabel(anchor: ElementAnchor) {
+  return (
+    anchor.immediateText?.trim() ||
+    anchor.name?.trim() ||
+    anchor.title?.trim() ||
+    anchor.role?.trim() ||
+    anchor.selector
+  )
+}
+
+function editorDesignChanges(draft: RuntimeDraft): DesignChange[] {
+  return Object.entries(editorDesignValues).flatMap(([property, rawValue]) => {
+    const value = rawValue.trim()
+    if (!value) return []
+    const previous = draft.designChanges.find(change => change.property === property)
+    return [
+      {
+        property,
+        value,
+        previousValue: previous?.previousValue ?? draft.designValues[property] ?? '',
+      },
+    ]
+  })
+}
+
+function editorDesignInputValue(property: string, value: string) {
+  if (!['color', 'background-color', 'border-color'].includes(property)) return value
+  const match = value.match(
+    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d+(?:\.\d+)?))?\s*\)$/i
+  )
+  if (!match || (match[4] !== undefined && Number(match[4]) !== 1)) return value
+  return `#${match
+    .slice(1, 4)
+    .map(component =>
+      Math.round(Math.min(255, Math.max(0, Number(component))))
+        .toString(16)
+        .padStart(2, '0')
+    )
+    .join('')}`
+}
+
+function editorPosition(anchor: ElementAnchor, width: number, height: number) {
+  const margin = 16
+  const gap = 12
+  const maxX = Math.max(margin, innerWidth - width - margin)
+  const maxY = Math.max(margin, innerHeight - height - margin)
+  const x = Math.min(Math.max(margin, anchor.rect.x), maxX)
+  const below = anchor.rect.y + anchor.rect.height + gap
+  const above = anchor.rect.y - height - gap
+  const y = below <= maxY ? below : Math.max(margin, above)
+  return { x, y }
+}
+
+function styleElement(element: HTMLElement, styles: Partial<CSSStyleDeclaration>) {
+  Object.assign(element.style, styles)
+  return element
+}
+
+function editorButton(label: string, testId: string) {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.setAttribute('aria-label', label)
+  button.setAttribute('data-testid', testId)
+  styleElement(button, {
+    alignItems: 'center',
+    background: 'transparent',
+    border: '0',
+    borderRadius: '8px',
+    color: 'inherit',
+    cursor: 'pointer',
+    display: 'flex',
+    font: '500 13px system-ui, sans-serif',
+    height: '28px',
+    justifyContent: 'center',
+    padding: '0 8px',
+  })
+  return button
+}
+
+function editorPanel(draft: RuntimeDraft) {
+  const designChanges = editorDesignChanges(draft)
+  const width = editorDesignOpen ? 376 : 326
+  const height = editorDesignOpen ? Math.min(540, innerHeight - 32) : 220
+  const position = editorPosition(draft.anchor, width, height)
+  const surface = document.createElement('form')
+  surface.setAttribute('data-testid', 'browser-annotation-editor-surface')
+  styleElement(surface, {
+    background: 'Canvas',
+    border: '1px solid color-mix(in srgb, CanvasText 18%, transparent)',
+    borderRadius: '22px',
+    boxShadow: '0 18px 48px rgba(0, 0, 0, .28)',
+    boxSizing: 'border-box',
+    color: 'CanvasText',
+    display: 'flex',
+    flexDirection: 'column',
+    height: `${height}px`,
+    left: `${position.x}px`,
+    overflow: 'hidden',
+    pointerEvents: 'auto',
+    position: 'fixed',
+    top: `${position.y}px`,
+    width: `${width}px`,
+    zIndex: '4',
+  })
+  surface.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    emit('close-draft')
+  })
+
+  const header = styleElement(document.createElement('div'), {
+    alignItems: 'center',
+    display: 'flex',
+    gap: '8px',
+    minHeight: '50px',
+    padding: '8px 12px 4px',
+  })
+  const designButton = editorButton('调整样式', 'browser-annotation-design-button')
+  designButton.textContent = '☷'
+  designButton.style.width = '28px'
+  designButton.style.padding = '0'
+  if (editorDesignOpen)
+    designButton.style.background = 'color-mix(in srgb, CanvasText 10%, transparent)'
+  designButton.addEventListener('click', () => {
+    editorDesignOpen = !editorDesignOpen
+    renderImmediately()
+  })
+  header.append(designButton)
+
+  const chip = styleElement(document.createElement('span'), {
+    alignItems: 'center',
+    background: 'color-mix(in srgb, CanvasText 7%, transparent)',
+    border: '1px solid color-mix(in srgb, CanvasText 14%, transparent)',
+    borderRadius: '9px',
+    display: 'flex',
+    flex: '1',
+    font: '12px system-ui, sans-serif',
+    gap: '6px',
+    minWidth: '0',
+    overflow: 'hidden',
+    padding: '3px 4px 3px 6px',
+  })
+  chip.setAttribute('data-testid', 'browser-annotation-selection-chip')
+  const tag = styleElement(document.createElement('span'), {
+    border: '1px solid color-mix(in srgb, CanvasText 14%, transparent)',
+    borderRadius: '6px',
+    flexShrink: '0',
+    font: '12px ui-monospace, SFMono-Regular, Menlo, monospace',
+    padding: '1px 5px',
+  })
+  tag.textContent = draft.anchor.tagName.toLowerCase()
+  const label = styleElement(document.createElement('span'), {
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  })
+  label.textContent = editorTargetLabel(draft.anchor)
+  const remove = editorButton('移除选择', 'browser-annotation-remove-selection-button')
+  remove.textContent = '×'
+  remove.style.flexShrink = '0'
+  remove.style.fontSize = '20px'
+  remove.style.padding = '0'
+  remove.style.width = '24px'
+  remove.addEventListener('click', () => emit('close-draft'))
+  chip.append(tag, label, remove)
+  header.append(chip)
+  surface.append(header)
+
+  if (editorDesignOpen) surface.append(editorDesignEditor(draft))
+
+  const textarea = document.createElement('textarea')
+  textarea.setAttribute('aria-label', '添加评论')
+  textarea.setAttribute('data-testid', 'browser-annotation-comment-input')
+  textarea.placeholder = editorDesignOpen ? '描述希望如何调整…' : '添加评论…'
+  textarea.value = editorComment
+  styleElement(textarea, {
+    background: 'transparent',
+    border: '0',
+    boxSizing: 'border-box',
+    color: 'inherit',
+    flex: editorDesignOpen ? '0 0 64px' : '1',
+    font: '14px system-ui, sans-serif',
+    minHeight: '56px',
+    outline: 'none',
+    padding: '8px 16px',
+    resize: 'none',
+    width: '100%',
+  })
+  textarea.addEventListener('input', () => {
+    editorComment = textarea.value
+    submit.disabled = editorComment.trim().length === 0 && editorDesignChanges(draft).length === 0
+  })
+  textarea.addEventListener('keydown', event => {
+    if (
+      event.key === 'Enter' &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.metaKey || event.ctrlKey)
+    ) {
+      event.preventDefault()
+      surface.requestSubmit()
+    }
+  })
+  surface.append(textarea)
+
+  const footer = styleElement(document.createElement('div'), {
+    alignItems: 'center',
+    borderTop: '1px solid color-mix(in srgb, CanvasText 12%, transparent)',
+    display: 'flex',
+    flexShrink: '0',
+    height: '48px',
+    justifyContent: draft.commentId ? 'space-between' : 'flex-end',
+    padding: '0 12px',
+  })
+  footer.setAttribute('data-testid', 'browser-annotation-footer-actions')
+  if (draft.commentId) {
+    const deleteButton = editorButton('删除批注', 'browser-annotation-delete-button')
+    deleteButton.textContent = '⌫'
+    deleteButton.addEventListener('click', () => emit('delete-draft'))
+    footer.append(deleteButton)
+  }
+  const actions = styleElement(document.createElement('div'), {
+    display: 'flex',
+    gap: '6px',
+  })
+  if (draft.commentId || editorDesignOpen) {
+    const cancel = editorButton('取消', 'browser-annotation-cancel-button')
+    cancel.textContent = '取消'
+    cancel.style.border = '1px solid color-mix(in srgb, CanvasText 16%, transparent)'
+    cancel.addEventListener('click', () => emit('close-draft'))
+    actions.append(cancel)
+  }
+  const submit = editorButton(
+    draft.commentId ? '保存批注' : '添加批注',
+    'browser-annotation-submit-button'
+  )
+  submit.type = 'submit'
+  submit.textContent = draft.commentId ? '保存' : editorDesignOpen ? '添加' : '↑'
+  submit.disabled = editorComment.trim().length === 0 && designChanges.length === 0
+  submit.style.background = 'CanvasText'
+  submit.style.color = 'Canvas'
+  submit.style.minWidth = draft.commentId || editorDesignOpen ? '56px' : '28px'
+  submit.style.opacity = submit.disabled ? '.35' : '1'
+  actions.append(submit)
+  footer.append(actions)
+  surface.append(footer)
+
+  const screenshotState = document.createElement('span')
+  screenshotState.setAttribute(
+    'data-testid',
+    draft.screenshotState === 'ready'
+      ? 'browser-annotation-screenshot-ready'
+      : 'browser-annotation-screenshot-state'
+  )
+  screenshotState.hidden = true
+  screenshotState.textContent = draft.screenshotState
+  surface.append(screenshotState)
+
+  surface.addEventListener('submit', event => {
+    event.preventDefault()
+    const nextDesignChanges = editorDesignChanges(draft)
+    if (editorComment.trim().length === 0 && nextDesignChanges.length === 0) return
+    emit('save-draft', {
+      comment: editorComment,
+      designChanges: nextDesignChanges,
+      textChange: draft.textChange,
+    })
+  })
+  queueMicrotask(() => {
+    if (!editorNeedsFocus || !textarea.isConnected) return
+    editorNeedsFocus = false
+    textarea.focus()
+  })
+  return surface
+}
+
+function editorDesignEditor(draft: RuntimeDraft) {
+  const editor = styleElement(document.createElement('div'), {
+    borderTop: '1px solid color-mix(in srgb, CanvasText 12%, transparent)',
+    flex: '1',
+    minHeight: '0',
+    overflowY: 'auto',
+    padding: '8px 16px',
+  })
+  editor.setAttribute('data-testid', 'browser-annotation-design-editor')
+  for (const property of EDITOR_DESIGN_PROPERTIES) {
+    const row = styleElement(document.createElement('label'), {
+      alignItems: 'center',
+      display: 'grid',
+      font: '13px system-ui, sans-serif',
+      gap: '8px',
+      gridTemplateColumns: 'minmax(0, 1fr) 150px 28px',
+      minHeight: '34px',
+    })
+    const name = document.createElement('span')
+    name.textContent = property
+    const input = document.createElement('input')
+    input.setAttribute(
+      'data-testid',
+      property === 'color'
+        ? 'browser-annotation-design-color'
+        : `browser-annotation-design-${property}`
+    )
+    input.value =
+      editorDesignValues[property] ??
+      editorDesignInputValue(property, draft.designValues[property] ?? '')
+    styleElement(input, {
+      background: 'Canvas',
+      border: '1px solid color-mix(in srgb, CanvasText 16%, transparent)',
+      borderRadius: '8px',
+      boxSizing: 'border-box',
+      color: 'inherit',
+      font: '12px ui-monospace, SFMono-Regular, Menlo, monospace',
+      height: '28px',
+      minWidth: '0',
+      outline: 'none',
+      padding: '0 8px',
+    })
+    input.addEventListener('input', () => {
+      editorDesignValues[property] = input.value
+    })
+    const reset = editorButton(`重置 ${property}`, `browser-annotation-reset-${property}`)
+    reset.textContent = '↶'
+    reset.style.padding = '0'
+    reset.addEventListener('click', () => {
+      delete editorDesignValues[property]
+      renderImmediately()
+    })
+    row.append(name, input, reset)
+    editor.append(row)
+  }
+  return editor
+}
+
 function render() {
   renderTimer = null
   const root = ensureRoot()
   root.replaceChildren()
+  syncEditorState(state.draft)
   if (state.mode !== 'off' && !draftAnchor) {
     root.append(interactionLayer())
     if (hoveredElement?.isConnected && isVisible(hoveredElement)) {
@@ -563,6 +954,7 @@ function render() {
     const selectedElement = resolveAnchor(draftAnchor)
     if (selectedElement) root.append(selectionOutline(selectedElement))
   }
+  if (state.draft) root.append(editorPanel(state.draft))
   resolvedElements.clear()
   const unresolved: string[] = []
   if (state.mode !== 'off') {
@@ -719,7 +1111,7 @@ globalThis.visualViewport?.addEventListener('resize', scheduleRender)
 ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: RuntimeCommand) => {
   if (command.type === 'sync' && command.state) {
     state = command.state
-    draftAnchor = null
+    draftAnchor = state.draft?.anchor ?? null
     if (state.mode === 'off') {
       hoveredElement = null
       pointerPosition = null

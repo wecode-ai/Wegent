@@ -76,11 +76,7 @@ test('injects the Electron workspace window label', () => {
 })
 
 test('injects Electron auxiliary window labels', () => {
-  for (const label of [
-    'popout-window',
-    'system-drag-panel',
-    'browser-annotation-overlay',
-  ]) {
+  for (const label of ['popout-window', 'system-drag-panel']) {
     const html = injectRuntimeConfig('<html><head></head><body></body></html>', {}, label)
 
     assert.ok(html.includes(`"desktopWindowLabel":"${label}"`))

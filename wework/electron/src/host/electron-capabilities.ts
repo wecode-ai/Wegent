@@ -45,10 +45,7 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
-import type {
-  BrowserAnnotationController,
-  BrowserDesignChange,
-} from './browser-annotation-controller.js'
+import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -370,9 +367,7 @@ export function createElectronCapabilityRouter(
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents, {
-      debuggerOnly: windowLabel !== 'browser-annotation-overlay',
-    })
+    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')
@@ -812,28 +807,6 @@ export function registerBrowserAnnotationCapabilities(
       booleanParam(params, 'enabled') ?? false
     )
   )
-  router.register('browser.annotation.overlayState', () =>
-    requiredBrowserAnnotations(annotations).overlayState()
-  )
-  router.register('browser.annotation.resizeOverlay', params =>
-    requiredBrowserAnnotations(annotations).resizeOverlay({
-      width: requiredIntegerParam(params, 'width'),
-      height: requiredIntegerParam(params, 'height'),
-    })
-  )
-  router.register('browser.annotation.closeDraft', () =>
-    requiredBrowserAnnotations(annotations).closeDraft()
-  )
-  router.register('browser.annotation.delete', () =>
-    requiredBrowserAnnotations(annotations).deleteDraftComment()
-  )
-  router.register('browser.annotation.save', params =>
-    requiredBrowserAnnotations(annotations).saveDraft({
-      comment: rawStringParam(params, 'comment'),
-      designChanges: browserDesignChanges(params.designChanges),
-      textChange: browserTextChange(params.textChange),
-    })
-  )
 }
 
 interface CpuTimeSample {
@@ -1028,14 +1001,6 @@ function stringParam(params: Record<string, unknown>, key: string): string {
     throw new HostCapabilityError('invalid_params', `${key} is required`)
   }
   return value.trim()
-}
-
-function rawStringParam(params: Record<string, unknown>, key: string): string {
-  const value = params[key]
-  if (typeof value !== 'string') {
-    throw new HostCapabilityError('invalid_params', `${key} is required`)
-  }
-  return value
 }
 
 function messageBoxOptions(params: Record<string, unknown>): MessageBoxOptions {
@@ -1349,32 +1314,6 @@ function requiredBrowserAnnotations(
     throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
   }
   return annotations
-}
-
-function browserDesignChanges(value: unknown): BrowserDesignChange[] {
-  if (value === undefined) return []
-  if (!Array.isArray(value)) invalidParam('designChanges')
-  return value.map((item, index) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      invalidParam(`designChanges[${index}]`)
-    }
-    const record = item as Record<string, unknown>
-    return {
-      property: stringParam(record, 'property'),
-      value: stringParam(record, 'value'),
-      previousValue: stringParam(record, 'previousValue'),
-    }
-  })
-}
-
-function browserTextChange(value: unknown): { before: string; after: string } | null {
-  if (value == null) return null
-  if (typeof value !== 'object' || Array.isArray(value)) invalidParam('textChange')
-  const record = value as Record<string, unknown>
-  return {
-    before: rawStringParam(record, 'before'),
-    after: rawStringParam(record, 'after'),
-  }
 }
 
 function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {

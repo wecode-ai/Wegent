@@ -2365,9 +2365,7 @@ function installDesktopControlClient() {
   const windowLabel = getDesktopWindowLabel()
   if (
     !url ||
-    (windowLabel !== 'main' &&
-      windowLabel !== 'browser-annotation-overlay' &&
-      !windowLabel.startsWith('workspace-')) ||
+    (windowLabel !== 'main' && !windowLabel.startsWith('workspace-')) ||
     window.location.pathname.startsWith('/system-drag')
   ) {
     return

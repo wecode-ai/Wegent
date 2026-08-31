@@ -292,7 +292,6 @@ function desktopWindowLabel(value) {
     (label === 'main' ||
       label === 'popout-window' ||
       label === 'system-drag-panel' ||
-      label === 'browser-annotation-overlay' ||
       /^workspace-[a-zA-Z0-9_-]+$/.test(label))
     ? label
     : 'main'
