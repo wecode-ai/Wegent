@@ -374,6 +374,16 @@ class Settings(BaseSettings):
             return [item.strip() for item in raw.split(",") if item.strip()]
         return v
 
+    @field_validator("PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS")
+    @classmethod
+    def validate_plugin_publication_max_active_requests(cls, v: int) -> int:
+        """Keep request capacity from becoming an implicit publication kill switch."""
+        if v < 1:
+            raise ValueError(
+                "PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1"
+            )
+        return v
+
     @field_validator("LOCAL_DEVICE_COMMANDS", mode="before")
     @classmethod
     def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
@@ -592,9 +602,17 @@ class Settings(BaseSettings):
     PLUGIN_STORAGE_BUCKET: str = "plugins"
     PLUGIN_PACKAGE_URL_EXPIRES_SECONDS: int = 600
     PLUGIN_SUBMISSION_SCAN_TIMEOUT_SECONDS: int = 1200
-    PLUGIN_PUBLISH_ENABLED: bool = False
-    PLUGIN_PUBLISH_USER_IDS: list[int] = []
     PLUGIN_LEGACY_UPLOAD_ENABLED: bool = False
+    PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS: int = 5
+    PLUGIN_PUBLICATION_GITLAB_API_URL: str = ""
+    PLUGIN_PUBLICATION_GITLAB_PROJECT_ID: str = ""
+    PLUGIN_PUBLICATION_GITLAB_PROJECT_URL: str = ""
+    PLUGIN_PUBLICATION_GITLAB_TOKEN: str = ""
+    PLUGIN_PUBLICATION_GITLAB_MATERIALIZER_USER_ID: int = 0
+    PLUGIN_PUBLICATION_GITLAB_TARGET_BRANCH: str = "master"
+    PLUGIN_PUBLICATION_GITLAB_MAX_FILES: int = 500
+    PLUGIN_PUBLICATION_GITLAB_WEBHOOK_SECRET: str = ""
+    PLUGIN_RELEASE_KEY_MAX_DAYS: int = 180
 
     # Attachment encryption configuration
     # Enable/disable AES-256-CBC encryption for attachment binary data

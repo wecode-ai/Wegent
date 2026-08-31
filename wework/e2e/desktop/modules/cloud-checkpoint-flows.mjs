@@ -400,12 +400,44 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await control.command('clickWhenEnabled', '[data-testid="plugin-creator-publish-plugin"]')
-  await control.command('waitFor', '[data-testid="plugin-publish-dialog"]', {
+  await control.command('waitFor', '[data-testid="plugin-share-intent-dialog"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('clickWhenEnabled', '[data-testid="plugin-publish-confirm"]')
+  const intentSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="plugin-share-intent-dialog"]')
+  )
+  assert.ok(intentSnapshot.testIds.includes('plugin-share-intent-restricted'))
+  assert.ok(intentSnapshot.testIds.includes('plugin-share-intent-enterprise'))
+  assert.equal(
+    intentSnapshot.testIds.some(testId => /organization|workspace|public/.test(testId)),
+    false,
+    'The share intent dialog exposed a third organization/public scope'
+  )
+  await control.command('clickWhenEnabled', '[data-testid="plugin-share-intent-enterprise"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-plugin-share-intents.png')
+  await control.command('click', '[data-testid="plugin-share-intent-continue"]')
+  await control.command('waitFor', '[data-testid="plugin-publication-step-version"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-plugin-publication-version.png')
+  await control.command('fill', '[data-testid="plugin-publication-release-notes"]', {
+    value: 'Exercise the immutable enterprise publication workflow.',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="plugin-publication-next-risk"]')
+  await control.command('fill', '[data-testid="plugin-publication-test-notes"]', {
+    value: 'Desktop E2E verified the personal plugin and enterprise request flow.',
+  })
+  await captureVerificationScreenshot(control, 'cloud-plugin-publication-risk.png')
+  await control.command('clickWhenEnabled', '[data-testid="plugin-publication-next-confirm"]')
+  await captureVerificationScreenshot(control, 'cloud-plugin-publication-confirm.png')
+  await control.command('click', '[data-testid="plugin-publication-declaration"]')
+  await control.command('clickWhenEnabled', '[data-testid="plugin-publication-submit"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="plugin-workspace-result"]', {
-    text: '已发布',
+    text: '已提交审核',
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
@@ -428,6 +460,17 @@ async function verifyPluginWorkspacePublication({ cloudEnvironment, control }) {
   )
   assert.ok(snapshot.text.includes('Cloud Workspace E2E'))
   await captureVerificationScreenshot(control, 'cloud-plugin-workspace-published.png')
+
+  await control.command('click', `[data-testid="${publishedRow}"]`)
+  await control.command('waitFor', '[data-testid^="plugin-publication-card-"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-plugin-personal-detail.png')
+  await control.command('clickWhenEnabled', '[data-testid^="plugin-publication-view-progress-"]')
+  await control.command('waitFor', '[data-testid="plugin-publication-progress-drawer"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'cloud-plugin-publication-submitted.png')
 }
 
 async function verifyCloudCheckpoint({

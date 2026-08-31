@@ -66,8 +66,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     expect(getPluginMarketplaceCache(key)?.deviceId).toBe('device-1')
@@ -94,8 +92,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -127,8 +123,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     }
     const heavyRaw = JSON.stringify({ entries: { [key]: heavySnapshot } })
@@ -158,8 +152,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -182,8 +174,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     window.localStorage.setItem(
@@ -223,8 +213,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     flushPluginMarketplaceCachePersist()
@@ -284,8 +272,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -439,8 +425,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-live',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
 
@@ -463,8 +447,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     }
     setPluginMarketplaceCache(snapshot, { persistImmediately: true })
@@ -488,8 +470,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-1',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     }
     setPluginMarketplaceCache(snapshot, { persistImmediately: true })
@@ -531,8 +511,6 @@ describe('pluginMarketplaceCache', () => {
       marketplaces: [],
       selectedMarketplaceKey: '',
       deviceId: 'device-flush',
-      canPublish: false,
-      canSharePersonalPlugins: true,
       fetchedAt: Date.now(),
     })
     expect(window.localStorage.getItem(storageKey)).toBeNull()

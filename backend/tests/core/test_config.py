@@ -78,6 +78,14 @@ class TestSettings:
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 120
         assert s.ENABLE_API_DOCS is False
 
+    def test_plugin_publication_active_request_limit_must_be_positive(self):
+        """Prevent capacity configuration from disabling publication globally."""
+        with pytest.raises(
+            ValidationError,
+            match="PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS must be at least 1",
+        ):
+            build_settings(PLUGIN_PUBLICATION_MAX_ACTIVE_REQUESTS=0)
+
     def test_git_token_crypto_environment_uses_dotenv_without_overriding_process_env(
         self, monkeypatch, tmp_path
     ):

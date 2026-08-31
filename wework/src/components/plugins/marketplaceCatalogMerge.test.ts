@@ -148,6 +148,36 @@ describe('mergeMarketplaceCatalog', () => {
     expect(merged.map(item => item.id).sort()).toEqual([4, 9])
   })
 
+  test('keeps personal and enterprise identities separate and links local source to personal', () => {
+    const enterprise = {
+      ...cloudPlugin(),
+      id: 10,
+      visibility: 'workspace' as const,
+      latestReleaseId: 15,
+      relatedPersonalPluginId: 4,
+    }
+
+    const merged = mergeMarketplaceCatalog(
+      [enterprise, cloudPlugin()],
+      [localCatalogPlugin()],
+      [localInstalledPlugin()]
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged.find(item => item.id === 4)).toMatchObject({
+      visibility: 'personal',
+      localPersonalSource: {
+        marketplacePath: '/Users/test/plugins/personal-marketplace.json',
+        pluginName: 'dev-tools',
+      },
+    })
+    expect(merged.find(item => item.id === 10)).toMatchObject({
+      visibility: 'workspace',
+      relatedPersonalPluginId: 4,
+    })
+    expect(merged.find(item => item.id === 10)?.localPersonalSource).toBeUndefined()
+  })
+
   test('keeps local installed actions available while signed out', () => {
     expect(shouldShowInstalledMarketplaceActions(localCatalogPlugin(), false)).toBe(true)
     expect(shouldShowInstalledMarketplaceActions(cloudPlugin(), false)).toBe(false)

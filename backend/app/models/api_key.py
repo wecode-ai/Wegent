@@ -8,7 +8,7 @@ API Key model for programmatic access.
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -16,6 +16,7 @@ from app.db.base import Base
 # Key type constants
 KEY_TYPE_PERSONAL = "personal"
 KEY_TYPE_SERVICE = "service"
+KEY_TYPE_PLUGIN_RELEASE = "plugin_release"
 
 
 class APIKey(Base):
@@ -34,6 +35,8 @@ class APIKey(Base):
         String(20), nullable=False, default=KEY_TYPE_PERSONAL, index=True
     )  # Key type: personal or service
     description = Column(String(500), nullable=False, default="")  # Key description
+    scopes_json = Column(JSON, nullable=False, default=list)
+    restrictions_json = Column(JSON, nullable=False, default=dict)
     expires_at = Column(
         DateTime, nullable=False, default=datetime(9999, 12, 31, 23, 59, 59)
     )  # Default: never expires (far future date)

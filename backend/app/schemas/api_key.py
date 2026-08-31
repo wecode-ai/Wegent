@@ -7,9 +7,9 @@ API Key schemas for request/response validation.
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class APIKeyCreate(BaseModel):
@@ -93,7 +93,7 @@ class ServiceKeyResponse(BaseModel):
 
 
 class ServiceKeyCreatedResponse(ServiceKeyResponse):
-    """Response schema when creating a service key (includes full key, shown only once)."""
+    """Creation response containing the full key, which is shown only once."""
 
     key: str  # Full key, only returned at creation time
 
@@ -102,6 +102,52 @@ class ServiceKeyListResponse(BaseModel):
     """Response schema for listing service keys."""
 
     items: List[ServiceKeyResponse]
+    total: int
+
+
+class PluginReleaseKeyCreate(BaseModel):
+    """Create a short-lived key for one protected GitLab release job."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=500)
+    expiresAt: datetime
+    projectIds: List[str] = Field(min_length=1, max_length=20)
+    environments: List[Literal["production"]] = Field(
+        default_factory=lambda: ["production"], min_length=1
+    )
+
+    @field_validator("projectIds")
+    @classmethod
+    def normalize_project_ids(cls, values: List[str]) -> List[str]:
+        normalized = list(
+            dict.fromkeys(value.strip() for value in values if value.strip())
+        )
+        if not normalized:
+            raise ValueError("projectIds must contain at least one project")
+        return normalized
+
+
+class PluginReleaseKeyResponse(BaseModel):
+    id: int
+    name: str
+    keyPrefix: str
+    description: Optional[str] = None
+    scopes: List[str]
+    projectIds: List[str]
+    environments: List[str]
+    expiresAt: datetime
+    lastUsedAt: datetime
+    createdAt: datetime
+    isActive: bool
+    createdBy: Optional[str] = None
+
+
+class PluginReleaseKeyCreatedResponse(PluginReleaseKeyResponse):
+    key: str
+
+
+class PluginReleaseKeyListResponse(BaseModel):
+    items: List[PluginReleaseKeyResponse]
     total: int
 
 

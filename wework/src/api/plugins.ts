@@ -13,12 +13,14 @@ import type {
   PluginDeviceReportResponse,
   PluginDeviceSyncResponse,
   PluginMarketplaceInstallResponse,
-  PluginMarketplaceCapabilities,
   PluginMarketplaceListResponse,
+  PluginPublicationCreateRequest,
+  PluginPublicationInitResponse,
+  PluginPublicationRequestItem,
+  PluginPublicationRequestListResponse,
   PluginSubmissionCompleteResponse,
   PluginSubmissionInitRequest,
   PluginSubmissionInitResponse,
-  PluginSubmissionItem,
 } from '@/types/api'
 import { sha256Hex } from './fileHash'
 import type { HttpClient } from './http'
@@ -35,6 +37,67 @@ export interface PluginShareGroupSearchItem {
   display_name?: string | null
 }
 
+function idempotencyOptions(key: string) {
+  return { headers: { 'Idempotency-Key': key } }
+}
+
+function publicationPayloadFingerprint(payload: object): string {
+  const serialized = JSON.stringify(payload)
+  let first = 2166136261
+  let second = 2246822507
+  for (let index = 0; index < serialized.length; index += 1) {
+    const code = serialized.charCodeAt(index)
+    first = Math.imul(first ^ code, 16777619)
+    second = Math.imul(second ^ code, 3266489917)
+  }
+  return `${(first >>> 0).toString(16).padStart(8, '0')}${(second >>> 0)
+    .toString(16)
+    .padStart(8, '0')}${serialized.length.toString(16)}`
+}
+
+async function uploadPublicationSnapshot(
+  client: HttpClient,
+  file: File,
+  initialize: (snapshot: {
+    filename: string
+    snapshotSha256: string
+    sizeBytes: number
+  }) => Promise<PluginPublicationInitResponse>,
+  onUploadFailure?: (initialized: PluginPublicationInitResponse) => Promise<unknown>
+): Promise<PluginPublicationRequestItem> {
+  const snapshotSha256 = await sha256Hex(file)
+  const initialized = await initialize({
+    filename: file.name,
+    snapshotSha256,
+    sizeBytes: file.size,
+  })
+  const revision = initialized.revision.number
+  try {
+    const upload = await globalThis.fetch(initialized.uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/zip' },
+      body: file,
+    })
+    if (!upload.ok) {
+      throw new Error('Plugin upload failed with HTTP ' + upload.status)
+    }
+    return await client.post<PluginPublicationRequestItem>(
+      '/plugins/publication-requests/' +
+        initialized.requestId +
+        '/revisions/' +
+        revision +
+        '/complete',
+      undefined,
+      idempotencyOptions(
+        `plugin-publication-complete-${initialized.requestId}-r${revision}-${snapshotSha256}`
+      )
+    )
+  } catch (error) {
+    await onUploadFailure?.(initialized).catch(() => undefined)
+    throw error
+  }
+}
+
 export function createPluginApi(client: HttpClient) {
   const deviceQuery = (deviceId?: string) => {
     const normalized = deviceId?.trim()
@@ -42,9 +105,6 @@ export function createPluginApi(client: HttpClient) {
   }
 
   return {
-    getCapabilities(): Promise<PluginMarketplaceCapabilities> {
-      return client.get('/plugins/capabilities')
-    },
     listInstalledPlugins(deviceId?: string): Promise<InstalledPluginListResponse> {
       return client.get(`/plugins/installed${deviceQuery(deviceId)}`)
     },
@@ -71,12 +131,6 @@ export function createPluginApi(client: HttpClient) {
     },
     uninstallInstalledPlugin(id: string | number, deviceId?: string): Promise<void> {
       return client.delete(`/plugins/installed/${id}${deviceQuery(deviceId)}`)
-    },
-    uploadPlugin(file: File, enabled = true): Promise<InstalledPlugin> {
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('enabled', String(enabled))
-      return client.post('/plugins/upload', formData)
     },
     listMarketplacePlugins(
       params: { q?: string; source?: string; deviceId?: string } = {}
@@ -130,19 +184,106 @@ export function createPluginApi(client: HttpClient) {
     searchPluginShareGroups(
       query: string
     ): Promise<{ items: PluginShareGroupSearchItem[]; total: number }> {
-      return client.get(`/groups/search?q=${encodeURIComponent(query)}&limit=20`)
+      return client.get(
+        `/groups/search?q=${encodeURIComponent(query)}&limit=20&include_organization=true`
+      )
     },
-    initSubmission(data: PluginSubmissionInitRequest): Promise<PluginSubmissionInitResponse> {
-      return client.post('/plugins/submissions/init', data)
+    listPublicationRequests(
+      params: { sourcePluginId?: number; activeOnly?: boolean; page?: number; limit?: number } = {}
+    ): Promise<PluginPublicationRequestListResponse> {
+      const query = new URLSearchParams()
+      if (params.sourcePluginId) query.set('sourcePluginId', String(params.sourcePluginId))
+      if (params.activeOnly !== undefined) query.set('activeOnly', String(params.activeOnly))
+      if (params.page) query.set('page', String(params.page))
+      if (params.limit) query.set('limit', String(params.limit))
+      const suffix = query.toString() ? '?' + query.toString() : ''
+      return client.get('/plugins/publication-requests' + suffix)
     },
-    completeSubmission(id: number): Promise<PluginSubmissionCompleteResponse> {
-      return client.post(`/plugins/submissions/${id}/complete`)
+    getPublicationRequest(id: number, revision?: number): Promise<PluginPublicationRequestItem> {
+      const suffix = revision === undefined ? '' : '?revision=' + encodeURIComponent(revision)
+      return client.get('/plugins/publication-requests/' + id + suffix)
     },
-    cancelSubmission(id: number): Promise<PluginSubmissionItem> {
-      return client.post(`/plugins/submissions/${id}/cancel`)
+    withdrawPublicationRequest(
+      id: number,
+      currentRevision: number
+    ): Promise<PluginPublicationRequestItem> {
+      return client.post(
+        '/plugins/publication-requests/' + id + '/withdraw',
+        undefined,
+        idempotencyOptions(`plugin-publication-withdraw-${id}-r${currentRevision}`)
+      )
     },
-    getSubmission(id: number): Promise<PluginSubmissionItem> {
-      return client.get(`/plugins/submissions/${id}`)
+    async publishPublicationRequest(
+      file: File,
+      metadata: Omit<PluginPublicationCreateRequest, 'filename' | 'snapshotSha256' | 'sizeBytes'>,
+      operationAttemptId: string
+    ): Promise<PluginPublicationRequestItem> {
+      return uploadPublicationSnapshot(
+        client,
+        file,
+        snapshot => {
+          const payload = {
+            ...metadata,
+            ...snapshot,
+          }
+          return client.post<PluginPublicationInitResponse>(
+            '/plugins/publication-requests',
+            payload,
+            idempotencyOptions(
+              `plugin-publication-create-${operationAttemptId}-${publicationPayloadFingerprint(payload)}`
+            )
+          )
+        },
+        initialized =>
+          client.post(
+            '/plugins/publication-requests/' + initialized.requestId + '/withdraw',
+            undefined,
+            idempotencyOptions(
+              `plugin-publication-withdraw-${initialized.requestId}-r${initialized.revision.number}`
+            )
+          )
+      )
+    },
+    publishPublicationRevision(
+      requestId: number,
+      file: File,
+      metadata: Omit<
+        PluginPublicationCreateRequest,
+        | 'sourcePluginId'
+        | 'slug'
+        | 'displayName'
+        | 'listingType'
+        | 'filename'
+        | 'snapshotSha256'
+        | 'sizeBytes'
+      >,
+      operationAttemptId: string
+    ): Promise<PluginPublicationRequestItem> {
+      return uploadPublicationSnapshot(
+        client,
+        file,
+        snapshot => {
+          const payload = {
+            ...metadata,
+            ...snapshot,
+          }
+          return client.post<PluginPublicationInitResponse>(
+            '/plugins/publication-requests/' + requestId + '/revisions',
+            payload,
+            idempotencyOptions(
+              `plugin-publication-revision-${requestId}-${operationAttemptId}-${publicationPayloadFingerprint(payload)}`
+            )
+          )
+        },
+        initialized =>
+          client.post(
+            '/plugins/publication-requests/' + initialized.requestId + '/withdraw',
+            undefined,
+            idempotencyOptions(
+              `plugin-publication-withdraw-${initialized.requestId}-r${initialized.revision.number}`
+            )
+          )
+      )
     },
     ensureBuiltinPluginInstalled(
       pluginKey: string,
