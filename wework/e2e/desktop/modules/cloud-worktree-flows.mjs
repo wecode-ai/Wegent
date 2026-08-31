@@ -373,12 +373,12 @@ async function verifyCapability(context) {
   const log = await readFile(cloudEnvironment.remoteExecutorLogPath, 'utf8')
   assert.match(
     log,
-    /runtime:rpc received method=runtime\.worktrees\.capabilities/,
+    /runtime:rpc received [^\n]*method=runtime\.worktrees\.capabilities/,
     'The capability assertion did not cross the real Backend-to-Executor RPC route'
   )
   assert.match(
     log,
-    /runtime:rpc received method=runtime\.worktrees\.preflight/,
+    /runtime:rpc received [^\n]*method=runtime\.worktrees\.preflight/,
     'The preflight assertion did not cross the real Backend-to-Executor RPC route'
   )
 }

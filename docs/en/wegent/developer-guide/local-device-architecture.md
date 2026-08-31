@@ -78,6 +78,18 @@ The Electron layer does not retain an event journal, generate sequences, or impl
 
 Backend connectivity is optional, not a required dependency for the local app. When login, model/capability sync, cloud projects, or web control of the local computer are needed, the executor can register as a local device over the Backend Socket.IO channel. The same executor sidecar reuses one command handler and one runtime work handler while serving Wework App and core DSH over the local App IPC endpoint and Backend over Socket.IO. This design does not introduce a local HTTP gateway and does not require Wework App to start Backend itself.
 
+### Cross-Component Request Log Correlation
+
+Wework generates a request ID when a request enters a cross-process or cross-service boundary and reuses it in downstream logs for that request. This field diagnoses one request only. It does not replace task IDs, device IDs, thread IDs, or OpenTelemetry trace IDs, and it must not be used to infer business state.
+
+- Renderer HTTP requests to Backend use `wework-http-<uuid>` and pass it through `X-Request-ID`. Backend reuses that value in its request context and returns `X-Request-ID` in the response; CORS explicitly exposes the response header.
+- Renderer calls through core DSH to the local executor use `wework-local-<uuid>`. The same `request_id` appears in DSH request-started, completed, or failed logs and in the executor's `runtime:rpc` received and responded logs.
+- Wework calls to a remote executor through Backend Socket.IO use `cloud-runtime-<uuid>`. Backend binds the value to the request context while handling `runtime:request` and copies it unchanged into the downstream `runtime:rpc` envelope; the remote executor continues logging the same value.
+
+When no request ID exists, the protocol layer omits the `request_id` field instead of sending a null value, and each component uses its normal no-context log placeholder. Request IDs must be bounded printable diagnostic identifiers. Logs must not pair them with request bodies, authentication data, model keys, or local credentials.
+
+To investigate a request, take the `request_id` from the Wework frontend, DSH, or Backend log near the user-visible failure, then search for that exact value in the same diagnostic directory or centralized log system. Start and finish entries also record the method, outcome, and elapsed time, so a missing boundary identifies the component where the request stopped without relying on approximate timestamps or task names.
+
 ### Executor Startup Environment and Codex Home Initialization
 
 Before creating its asynchronous runtime or starting Agent child processes, a Unix executor runs the current user's interactive login shell to read the complete environment. It prefers the login shell from the system user database and falls back through `$SHELL`, `zsh`, `bash`, and `sh`. Environment capture has a fixed timeout. On failure, the executor keeps its parent environment and still appends standard developer locations such as Homebrew and `/usr/local`. The executor then passes the resulting environment consistently to Codex, Claude Code, plugins, skills, hooks, PTYs, and device commands, so Wework local sidecars, standalone local devices, and Linux cloud or remote devices share the same PATH resolution behavior.

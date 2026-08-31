@@ -15,6 +15,7 @@ from app.api.ws import device_namespace, local_task_responses, wework_runtime_na
 from app.api.ws.device_namespace import DeviceNamespace
 from app.api.ws.wework_runtime_namespace import WeworkRuntimeNamespace
 from app.core.socketio import SOCKETIO_MAX_HTTP_BUFFER_SIZE
+from shared.telemetry.context import get_request_id
 
 
 @pytest.fixture(autouse=True)
@@ -517,6 +518,7 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
     )
 
     assert response == {"id": "req-1", "ok": True, "result": {"accepted": True}}
+    assert get_request_id() == "req-1"
     runtime_rpc.assert_awaited_once_with(
         user_id=7,
         device_id="cloud-device",
