@@ -572,7 +572,9 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
     )
 
     plan = review_state(generation, phase="plan")
-    plan_evidence = plan.get("handoff") or plan.get("review") or {}
+    plan_evidence = (
+        plan.get("effectivePlan") or plan.get("handoff") or plan.get("review") or {}
+    )
     pages_total = len(plan_evidence.get("paths") or [])
     plan_only = review_policy(generation) == PLAN_ONLY_REVIEW_POLICY
     total_steps = 3 if plan_only else 4
