@@ -16,6 +16,7 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   consumeRuntimeTaskLifecycleBlock,
+  runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -24,7 +25,10 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  getRuntimeTaskRouteKey,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
@@ -166,16 +170,6 @@ interface PendingRuntimeGoalState {
 
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
-const configuredRuntimeTranscriptPageSize = Number(
-  getDesktopE2ERuntimeConfig().transcriptPageSize ??
-    import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
-)
-const RUNTIME_TRANSCRIPT_PAGE_SIZE =
-  import.meta.env.VITE_WEWORK_E2E === 'true' &&
-  Number.isInteger(configuredRuntimeTranscriptPageSize) &&
-  configuredRuntimeTranscriptPageSize > 0
-    ? configuredRuntimeTranscriptPageSize
-    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
@@ -187,6 +181,7 @@ export function useWorkbenchPaneSession({
   currentRuntimeTask,
   debugSnapshotEnabled = true,
 }: WorkbenchPaneSessionOptions) {
+  const runtimeTranscriptPageSize = resolveRuntimeTranscriptPageSize()
   const {
     state: workbenchState,
     projectChat,
@@ -457,6 +452,13 @@ export function useWorkbenchPaneSession({
       }),
     [currentRuntimeTask, messages, taskLifecycle]
   )
+  const readCurrentPaneBusy = useCallback(
+    () =>
+      currentRuntimeTask
+        ? (lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy)
+        : paneStatus.isBusy,
+    [currentRuntimeTask, lifecycleStore, paneStatus.isBusy]
+  )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
     let resolvedGoal: RuntimeGoal | null
@@ -564,12 +566,6 @@ export function useWorkbenchPaneSession({
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
       setThreadGoal(metadata.goal)
-      if (metadata.goal) {
-        clearRuntimePaneGoalSeed(address)
-        setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
-        )
-      }
     }
     syncConversationState()
     return subscribeRuntimeConversation(address, action => {
@@ -719,7 +715,7 @@ export function useWorkbenchPaneSession({
     void Promise.resolve()
       .then(() =>
         loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
         })
       )
       .then(transcript => {
@@ -735,7 +731,7 @@ export function useWorkbenchPaneSession({
           )
           loadedRuntimeTranscriptKeyRef.current = loadKey
           setTranscriptFullContent(transcript.fullContent === true)
-          setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+          setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
           setTurnNavigation(transcript.turnNavigation ?? [])
@@ -788,7 +784,13 @@ export function useWorkbenchPaneSession({
         rebuildingTranscriptIdentityRef.current = null
       }
     }
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, transcriptReloadVersion])
+  }, [
+    dispatchMessages,
+    lifecycleStore,
+    runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
+    transcriptReloadVersion,
+  ])
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const reloadRuntimeTranscript = useCallback(() => {
@@ -822,7 +824,7 @@ export function useWorkbenchPaneSession({
 
       void loadRuntimeTranscriptForPaneRef
         .current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         .then(transcript => {
@@ -838,7 +840,7 @@ export function useWorkbenchPaneSession({
           )
           loadedRuntimeTranscriptKeyRef.current = target.key
           setTranscriptFullContent(transcript.fullContent === true)
-          setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+          setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
           setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
           setLoadedTranscriptRanges(transcriptRangeFromPage(transcript))
           setTurnNavigation(transcript.turnNavigation ?? [])
@@ -865,7 +867,7 @@ export function useWorkbenchPaneSession({
           rebuildingTranscriptIdentityRef.current = null
         })
     })
-  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget])
+  }, [dispatchMessages, lifecycleStore, runtimeTaskLoadTarget, runtimeTranscriptPageSize])
 
   const loadMoreTranscriptBefore = useCallback(async () => {
     if (
@@ -881,7 +883,7 @@ export function useWorkbenchPaneSession({
     setTranscriptLoadingMoreBefore(true)
     try {
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-        limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+        limit: runtimeTranscriptPageSize,
         beforeCursor,
       })
       const nextMessages = reconcileRuntimeConversationSnapshot(address, transcript.turns)
@@ -889,7 +891,7 @@ export function useWorkbenchPaneSession({
         loadedTranscriptRangesRef.current,
         transcriptRangeFromPage(transcript)
       )
-      setTranscriptHasMoreBefore(Boolean(transcript.hasMoreBefore))
+      setTranscriptHasMoreBefore(runtimeTranscriptHasMoreBefore(transcript))
       setTranscriptBeforeCursor(transcript.beforeCursor ?? null)
       setLoadedTranscriptRanges(nextRanges)
       setTurnNavigation(current =>
@@ -911,6 +913,7 @@ export function useWorkbenchPaneSession({
   }, [
     dispatchMessages,
     runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
     transcriptBeforeCursor,
     transcriptFullContent,
     transcriptLoadingMoreBefore,
@@ -929,12 +932,16 @@ export function useWorkbenchPaneSession({
       }
 
       const { address } = runtimeTaskLoadTarget
-      const loadOptions = runtimeTurnNavigationLoadOptions(item, loadedTranscriptRangesRef.current)
+      const loadOptions = runtimeTurnNavigationLoadOptions(
+        item,
+        loadedTranscriptRangesRef.current,
+        runtimeTranscriptPageSize
+      )
       const transcript = await loadRuntimeTranscriptForPaneRef.current(address, loadOptions)
       const nextHasMoreBefore =
         loadOptions.beforeCursor === undefined
           ? transcriptHasMoreBefore
-          : Boolean(transcript.hasMoreBefore)
+          : runtimeTranscriptHasMoreBefore(transcript)
       const nextBeforeCursor =
         loadOptions.beforeCursor === undefined
           ? transcriptBeforeCursor
@@ -957,6 +964,7 @@ export function useWorkbenchPaneSession({
     [
       dispatchMessages,
       runtimeTaskLoadTarget,
+      runtimeTranscriptPageSize,
       transcriptBeforeCursor,
       transcriptFullContent,
       transcriptHasMoreBefore,
@@ -968,7 +976,7 @@ export function useWorkbenchPaneSession({
       if (!runtimeTaskLoadTarget || transcriptFullContent || gap.end <= gap.start) return
 
       const { address } = runtimeTaskLoadTarget
-      const limit = Math.min(RUNTIME_TRANSCRIPT_PAGE_SIZE, gap.end - gap.start)
+      const limit = Math.min(runtimeTranscriptPageSize, gap.end - gap.start)
       const loadOptions = {
         limit,
         afterCursor: `offset:${gap.start}`,
@@ -987,7 +995,7 @@ export function useWorkbenchPaneSession({
       )
       dispatchMessages({ type: 'reset', messages: nextMessages })
     },
-    [dispatchMessages, runtimeTaskLoadTarget, transcriptFullContent]
+    [dispatchMessages, runtimeTaskLoadTarget, runtimeTranscriptPageSize, transcriptFullContent]
   )
 
   const loadFullTranscript = useCallback(async () => {
@@ -1432,7 +1440,7 @@ export function useWorkbenchPaneSession({
           return true
         }
         const transcript = await loadRuntimeTranscriptForPaneRef.current(currentRuntimeTask, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         removeRuntimeConversationTurn(currentRuntimeTask, {
@@ -1447,7 +1455,7 @@ export function useWorkbenchPaneSession({
       } catch (error) {
         const transcript = await loadRuntimeTranscriptForPaneRef
           .current(currentRuntimeTask, {
-            limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+            limit: runtimeTranscriptPageSize,
             refresh: true,
           })
           .catch(() => null)
@@ -1467,7 +1475,14 @@ export function useWorkbenchPaneSession({
         return false
       }
     },
-    [currentRuntimeTask, editLastUserMessage, getRuntimeModelFields, paneStatus.isBusy, setError]
+    [
+      currentRuntimeTask,
+      editLastUserMessage,
+      getRuntimeModelFields,
+      paneStatus.isBusy,
+      runtimeTranscriptPageSize,
+      setError,
+    ]
   )
 
   const ignoreRequestUserInput = useCallback(
@@ -1529,6 +1544,9 @@ export function useWorkbenchPaneSession({
       )
 
       try {
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         let sendError: string | null = null
         const sent = await sendRuntimeMessage(queuedMessage, {
           appendLocalMessage: false,
@@ -1552,15 +1570,26 @@ export function useWorkbenchPaneSession({
           return
         }
         if (isRuntimeTaskBusyError(sendError)) {
-          const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycle)
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          const lifecycleAlreadyChanged = runtimeTaskLifecycleTransitionChanged(
+            lifecycleBeforeSend,
+            lifecycleAfterSend
+          )
+          if (lifecycleAlreadyChanged) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           console.info('[Wework] Queued runtime message remains queued while executor is busy', {
             id: queuedMessage.id,
             deviceId: currentRuntimeTask?.deviceId ?? null,
             taskId: currentRuntimeTask?.taskId ?? null,
-            executionPhase: lifecycle?.execution.phase ?? null,
-            turnPhase: lifecycle?.turn.phase ?? null,
-            executorSnapshotRunning: lifecycle?.task?.running ?? null,
+            executionPhase: lifecycleBeforeSend?.execution.phase ?? null,
+            turnPhase: lifecycleBeforeSend?.turn.phase ?? null,
+            executorSnapshotRunning: lifecycleBeforeSend?.task?.running ?? null,
+            lifecycleAlreadyChanged,
           })
         } else {
           queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
@@ -1662,7 +1691,7 @@ export function useWorkbenchPaneSession({
   }, [runtimeTaskLoadTarget])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    async (queuedMessage: RuntimePaneQueuedMessage) => {
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
       const id = queuedMessage.id
       queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       if (!currentRuntimeTask) {
@@ -1680,7 +1709,7 @@ export function useWorkbenchPaneSession({
       if (queuedMessage.status === 'sending') return
 
       setError(null)
-      if (!paneStatus.isBusy) {
+      if (!readCurrentPaneBusy() && !forceActiveTurn) {
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
@@ -1805,7 +1834,7 @@ export function useWorkbenchPaneSession({
     },
     [
       currentRuntimeTask,
-      paneStatus.isBusy,
+      readCurrentPaneBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
       setError,
@@ -1819,6 +1848,7 @@ export function useWorkbenchPaneSession({
         const submittedInput = (inputOverride ?? input).trim()
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
+        const paneIsBusy = readCurrentPaneBusy()
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
           submittedValue: textMetrics(inputOverride),
@@ -1831,7 +1861,7 @@ export function useWorkbenchPaneSession({
           guideWhenBusy: options.guideWhenBusy === true,
           interruptWhenBusy: options.interruptWhenBusy === true,
           hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
-          paneBusy: paneStatus.isBusy,
+          paneBusy: paneIsBusy,
         })
 
         if (goalDraftActive) {
@@ -1861,7 +1891,7 @@ export function useWorkbenchPaneSession({
             }
 
             resetAttachments()
-            if (paneStatus.isBusy && options.guideWhenBusy) {
+            if (paneIsBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1877,7 +1907,7 @@ export function useWorkbenchPaneSession({
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
-              await sendQueuedMessageAsGuidance(baseMessage)
+              await sendQueuedMessageAsGuidance(baseMessage, true)
               return true
             }
 
@@ -1885,7 +1915,7 @@ export function useWorkbenchPaneSession({
               ...baseMessage,
               initialGoal,
             }
-            if (paneStatus.isBusy) {
+            if (paneIsBusy) {
               setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
@@ -1998,7 +2028,7 @@ export function useWorkbenchPaneSession({
             setError('当前对话还没有可压缩的 Codex 线程')
             return false
           }
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             setError('当前回复进行中，完成后再压缩上下文')
             return false
           }
@@ -2158,7 +2188,7 @@ export function useWorkbenchPaneSession({
             ...getRuntimeModelFields(),
           }
 
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             resetAttachments()
             setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
@@ -2177,6 +2207,9 @@ export function useWorkbenchPaneSession({
           }
 
           let sendError: string | null = null
+          const lifecycleBeforeSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
           const sent = await sendRuntimeMessage(queuedMessage, {
             onError: nextError => {
               sendError = nextError
@@ -2187,10 +2220,14 @@ export function useWorkbenchPaneSession({
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
-            queuedMessageBusyBlockSnapshotsRef.current.set(
-              queuedMessage.id,
-              currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-            )
+            const lifecycleAfterSend = currentRuntimeTask
+              ? lifecycleStore.getTask(currentRuntimeTask)
+              : null
+            if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+              queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+            } else {
+              queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+            }
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
             resetAttachments()
@@ -2212,7 +2249,7 @@ export function useWorkbenchPaneSession({
         }
 
         resetAttachments()
-        if (paneStatus.isBusy) {
+        if (paneIsBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
@@ -2225,12 +2262,15 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
           if (options.guideWhenBusy) {
-            await sendQueuedMessageAsGuidance(queuedMessage)
+            await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
           return true
         }
 
         let sendError: string | null = null
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         const sent = await sendRuntimeMessage(queuedMessage, {
           onError: nextError => {
             sendError = nextError
@@ -2240,10 +2280,14 @@ export function useWorkbenchPaneSession({
           setInput('')
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
-          queuedMessageBusyBlockSnapshotsRef.current.set(
-            queuedMessage.id,
-            currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          )
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
         } else {
@@ -2269,8 +2313,8 @@ export function useWorkbenchPaneSession({
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
-        paneStatus.isBusy,
         queuedMessages.length,
+        readCurrentPaneBusy,
         resetAttachments,
         restoreInputAfterFailure,
         sendCurrentInput,
@@ -2735,7 +2779,7 @@ export function useWorkbenchPaneSession({
       rebuildingTranscriptIdentityRef.current = identityKey
       try {
         const transcript = await loadRuntimeTranscriptForPaneRef.current(address, {
-          limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+          limit: runtimeTranscriptPageSize,
           refresh: true,
         })
         if (cancelled || runtimeTaskLoadTargetRef.current?.identityKey !== identityKey) {
@@ -2799,6 +2843,7 @@ export function useWorkbenchPaneSession({
     lifecycleStore,
     messages,
     runtimeTaskLoadTarget,
+    runtimeTranscriptPageSize,
     transcriptLoading,
   ])
 
@@ -2940,6 +2985,21 @@ export function useWorkbenchPaneSession({
   }
 }
 
+export function resolveRuntimeTranscriptPageSize(
+  configuredPageSize = Number(
+    getDesktopE2ERuntimeConfig().transcriptPageSize ??
+      import.meta.env.VITE_WEWORK_E2E_TRANSCRIPT_PAGE_SIZE
+  )
+): number {
+  return Number.isInteger(configuredPageSize) && configuredPageSize > 0
+    ? configuredPageSize
+    : DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE
+}
+
+export function runtimeTranscriptHasMoreBefore(transcript: RuntimePaneTranscript): boolean {
+  return Boolean(transcript.beforeCursor || transcript.hasMoreBefore)
+}
+
 export type WorkbenchPaneSession = ReturnType<typeof useWorkbenchPaneSession>
 
 export function rollbackRejectedRuntimeConversationTurn(
@@ -2963,13 +3023,30 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
-    key: runtimeTranscriptPaneKey(address),
+    key: runtimeTaskLoadAddressKey(address),
     identityKey: runtimeTranscriptPaneIdentityKey(address),
     address,
   }
 }
 
 const runtimeTranscriptPaneKey = runtimeConversationKey
+
+function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
+  const runtimeHandleThreadId =
+    typeof address.runtimeHandle?.threadId === 'string'
+      ? address.runtimeHandle.threadId.trim()
+      : typeof address.runtimeHandle?.thread_id === 'string'
+        ? address.runtimeHandle.thread_id.trim()
+        : ''
+
+  return JSON.stringify({
+    route: getRuntimeTaskRouteKey(address),
+    runtime: address.runtime ?? null,
+    threadId: address.threadId?.trim() || runtimeHandleThreadId || null,
+    workspaceKind: address.workspaceKind ?? null,
+    worktreeId: address.worktreeId ?? null,
+  })
+}
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
@@ -3168,21 +3245,19 @@ function cursorOffset(cursor: string | null | undefined): number | null {
 
 function runtimeTurnNavigationLoadOptions(
   item: RuntimeTurnNavigationItem,
-  loadedRanges: LoadedTranscriptRange[]
+  loadedRanges: LoadedTranscriptRange[],
+  pageSize: number
 ) {
   const messageIndex = Number.isFinite(item.messageIndex) ? Math.max(0, item.messageIndex) : 0
   const sortedRanges = mergeTranscriptRanges(loadedRanges, [])
   const nextLoadedRange = sortedRanges.find(range => range.start > messageIndex)
   const pageEnd = Math.max(
     messageIndex + 1,
-    Math.min(
-      nextLoadedRange?.start ?? messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE,
-      messageIndex + RUNTIME_TRANSCRIPT_PAGE_SIZE
-    )
+    Math.min(nextLoadedRange?.start ?? messageIndex + pageSize, messageIndex + pageSize)
   )
 
   return {
-    limit: RUNTIME_TRANSCRIPT_PAGE_SIZE,
+    limit: pageSize,
     beforeCursor: `offset:${pageEnd}`,
   }
 }

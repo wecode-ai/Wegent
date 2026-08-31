@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactNode } from 'react'
-import { AlertCircle, Boxes, Loader2, Plus, RefreshCw, Search } from 'lucide-react'
+import { AlertCircle, Boxes, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { ApiError } from '@/api/http'
 import { isSitesUnavailableError } from '@/api/sites'
 import type { Site, SiteAppType, SiteListItem, SitesApi } from '@/api/sites'
@@ -14,12 +14,14 @@ import {
   type ApplicationCreateStrategy,
   getApplicationTypeDefinition,
 } from './applicationTypeDefinitions'
+import { ApplicationContextToolbar } from './ApplicationContextToolbar'
 import { DeleteSiteDialog } from './DeleteSiteDialog'
 import { EditSiteDialog } from './EditSiteDialog'
 import { useApplicationTypeDefinitions } from './useApplicationTypeDefinitions'
 
 interface SitesWorkspaceProps {
   api: SitesApi
+  search: string
   onCreate: (appType: SiteAppType, create: ApplicationCreateStrategy) => void | Promise<void>
   onContinueDevelopment?: (site: Site, create: ApplicationCreateStrategy) => void | Promise<void>
   creatingType?: SiteAppType | null
@@ -32,7 +34,6 @@ interface SitesWorkspaceProps {
   onOpenPlugins?: () => void
   smartAppsContent?: ReactNode
   smartAppsEnabled?: boolean
-  smartAppsMode?: 'marketplace' | 'owned'
 }
 
 type ApplicationWorkspaceType = SiteAppType | 'smart_app'
@@ -62,9 +63,8 @@ function isSecurityCheckingError(error: unknown): boolean {
   return detail?.code === 'SECURITY_CHECKING' || nestedError?.code === 'SECURITY_CHECKING'
 }
 
-function getInitialAppType(smartAppsEnabled: boolean): ApplicationWorkspaceType {
-  if (typeof window === 'undefined') return DEFAULT_APPLICATION_TYPE
-  const requestedType = new URLSearchParams(window.location.search).get('app_type')
+function getAppType(search: string, smartAppsEnabled: boolean): ApplicationWorkspaceType {
+  const requestedType = new URLSearchParams(search).get('app_type')
   if (smartAppsEnabled && (!requestedType || requestedType === 'smart_app')) return 'smart_app'
   return getApplicationTypeDefinition(requestedType ?? '')?.appType ?? DEFAULT_APPLICATION_TYPE
 }
@@ -215,6 +215,7 @@ function SitesCreateNotice({ message }: { message: string }) {
 
 export function SitesWorkspace({
   api,
+  search,
   onCreate,
   onContinueDevelopment,
   creatingType = null,
@@ -227,14 +228,10 @@ export function SitesWorkspace({
   onOpenPlugins,
   smartAppsContent,
   smartAppsEnabled = false,
-  smartAppsMode = 'marketplace',
 }: SitesWorkspaceProps) {
   const { t } = useTranslation('sites')
-  const { t: commonT } = useTranslation('common')
   const applicationTypes = useApplicationTypeDefinitions(api)
-  const [activeAppType, setActiveAppType] = useState<ApplicationWorkspaceType>(() =>
-    getInitialAppType(smartAppsEnabled)
-  )
+  const activeAppType = getAppType(search, smartAppsEnabled)
   const [query, setQuery] = useState('')
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set())
@@ -250,27 +247,9 @@ export function SitesWorkspace({
     return () => window.clearTimeout(timeout)
   }, [query])
 
-  useEffect(() => {
-    const handlePopState = () => setActiveAppType(getInitialAppType(smartAppsEnabled))
-    handlePopState()
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [smartAppsEnabled])
-
   const smartAppsActive = smartAppsEnabled && activeAppType === 'smart_app'
-  const pageTitle = smartAppsActive
-    ? smartAppsMode === 'owned'
-      ? commonT('workbench.smart_apps_my_title', '我的工作台')
-      : commonT('workbench.smart_apps_marketplace_title', '智能工作台市场')
-    : t('title', '应用')
-  const pageDescription = smartAppsActive
-    ? smartAppsMode === 'owned'
-      ? commonT('workbench.smart_apps_my_description', '管理你创建、导入和安装的智能应用。')
-      : commonT(
-          'workbench.smart_apps_marketplace_description',
-          '发现官方工作台，以及成员定向分享给你的工作台。'
-        )
-    : t('subtitle', '创建、管理并发布你的应用')
+  const pageTitle = t('title', '应用')
+  const pageDescription = t('subtitle', '创建、管理并发布你的应用')
   const activeSiteAppType = activeAppType === 'smart_app' ? DEFAULT_APPLICATION_TYPE : activeAppType
   const activeApplicationType =
     applicationTypes.find(item => item.definition.appType === activeSiteAppType) ??
@@ -289,7 +268,6 @@ export function SitesWorkspace({
   const items = collection.items.filter(activeDefinition.isItem)
 
   const selectAppType = useCallback((appType: ApplicationWorkspaceType) => {
-    setActiveAppType(appType)
     setQuery('')
     setDebouncedQuery('')
     const params = new URLSearchParams(window.location.search)
@@ -300,14 +278,10 @@ export function SitesWorkspace({
   }, [])
 
   useEffect(() => {
-    if (activeAppType === 'smart_app' && !smartAppsEnabled) {
-      selectAppType(activeDefinition.appType)
-      return
-    }
     if (activeAppType !== 'smart_app' && activeDefinition.appType !== activeAppType) {
       selectAppType(activeDefinition.appType)
     }
-  }, [activeAppType, activeDefinition.appType, selectAppType, smartAppsEnabled])
+  }, [activeAppType, activeDefinition.appType, selectAppType])
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     const appTypes: ApplicationWorkspaceType[] = [
@@ -428,6 +402,14 @@ export function SitesWorkspace({
     activeDefinition.emptyDescription.key,
     activeDefinition.emptyDescription.fallback
   )
+  const unavailableTitle = t(
+    activeDefinition.unavailableTitle.key,
+    activeDefinition.unavailableTitle.fallback
+  )
+  const unavailableDescription = t(
+    activeDefinition.unavailableDescription.key,
+    activeDefinition.unavailableDescription.fallback
+  )
 
   return (
     <main
@@ -437,28 +419,43 @@ export function SitesWorkspace({
       <div className="sticky top-0 z-40 border-b border-transparent bg-background/95 backdrop-blur-xl">
         <div
           className={[
-            'mx-auto flex h-12 max-w-[1420px] items-center justify-between pl-20 pr-5 md:h-[52px] md:pr-7',
+            'mx-auto flex h-12 max-w-[1420px] items-center pl-20 pr-5 md:h-[52px] md:pr-7',
             sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
           ].join(' ')}
         >
           <div>{topBarLeftActions}</div>
-          <div className="flex items-center gap-2">
-            {!smartAppsActive && !collection.unavailable ? (
-              <button
-                type="button"
-                data-testid="sites-refresh-button"
-                aria-label={t(activeDefinition.refresh.key, activeDefinition.refresh.fallback)}
-                disabled={collection.loading}
-                onClick={() => void collection.loadFirstPage()}
-                className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-8 md:w-8"
-              >
-                <RefreshCw
-                  className={collection.loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
-                  aria-hidden="true"
-                />
-              </button>
-            ) : null}
-            {!smartAppsActive ? (
+        </div>
+      </div>
+
+      <div
+        data-testid="applications-content"
+        className="relative mx-auto flex w-full max-w-[1120px] flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4"
+      >
+        <section className="flex min-h-16 flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-1.5">
+            <h1 className="text-xl font-normal leading-9 text-text-primary">{pageTitle}</h1>
+            <p className="text-base leading-6 text-text-secondary md:text-lg">{pageDescription}</p>
+          </div>
+          {!smartAppsActive ? (
+            <div
+              data-testid="applications-page-header-actions"
+              className="flex shrink-0 items-center gap-2 md:pt-1"
+            >
+              {!collection.unavailable ? (
+                <button
+                  type="button"
+                  data-testid="sites-refresh-button"
+                  aria-label={t(activeDefinition.refresh.key, activeDefinition.refresh.fallback)}
+                  disabled={collection.loading}
+                  onClick={() => void collection.loadFirstPage()}
+                  className="flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:cursor-wait disabled:opacity-60 md:h-9 md:w-9"
+                >
+                  <RefreshCw
+                    className={collection.loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'}
+                    aria-hidden="true"
+                  />
+                </button>
+              ) : null}
               <ActionMenu
                 ariaLabel={t('create_application', '创建应用')}
                 testId="sites-create-button"
@@ -468,24 +465,12 @@ export function SitesWorkspace({
                 disabled={Boolean(creatingType)}
                 placement="bottom-end"
                 triggerClassName={[
-                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-8',
+                  'flex h-11 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40 disabled:cursor-wait disabled:opacity-60 md:h-9',
                   creatingType ? '[&>svg:first-child]:animate-spin' : '',
                 ].join(' ')}
               />
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <div
-        className={[
-          'relative mx-auto flex w-full flex-col px-5 pb-14 pt-5 md:px-8 md:pt-4',
-          smartAppsActive ? 'max-w-[1120px]' : 'max-w-[920px]',
-        ].join(' ')}
-      >
-        <section className="space-y-1.5">
-          <h1 className="text-xl font-normal leading-9 text-text-primary">{pageTitle}</h1>
-          <p className="text-base leading-6 text-text-secondary md:text-lg">{pageDescription}</p>
+            </div>
+          ) : null}
         </section>
 
         <div
@@ -554,29 +539,21 @@ export function SitesWorkspace({
             id="applications-tab-panel"
             role="tabpanel"
             aria-labelledby="applications-tab-smart-app"
-            className="mt-5"
+            className="mt-4"
             data-testid="applications-smart-app-panel"
           >
             {smartAppsContent}
           </div>
         ) : (
           <>
-            <label className="relative mt-5 block">
-              <span className="sr-only">
-                {t(activeDefinition.search.key, activeDefinition.search.fallback)}
-              </span>
-              <Search
-                className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
-                aria-hidden="true"
-              />
-              <input
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                data-testid="sites-search-input"
-                placeholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
-                className="h-11 w-full rounded-full border border-border bg-background pl-10 pr-4 text-base text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-focus focus:ring-2 focus:ring-focus/15 md:h-9"
-              />
-            </label>
+            <ApplicationContextToolbar
+              className="mt-4"
+              searchLabel={t(activeDefinition.search.key, activeDefinition.search.fallback)}
+              searchPlaceholder={t(activeDefinition.search.key, activeDefinition.search.fallback)}
+              searchTestId="sites-search-input"
+              value={query}
+              onValueChange={setQuery}
+            />
 
             {createError && (
               <SitesCreateError
@@ -591,7 +568,7 @@ export function SitesWorkspace({
               id="applications-tab-panel"
               role="tabpanel"
               aria-labelledby={`applications-tab-${activeAppType}`}
-              className="mt-8"
+              className="mt-5"
             >
               {!collection.unavailable ? (
                 <div
@@ -616,10 +593,16 @@ export function SitesWorkspace({
               ) : collection.unavailable ? (
                 <div
                   data-testid="sites-unavailable-state"
-                  className="flex min-h-56 items-center justify-center text-center"
+                  className="flex min-h-[320px] flex-col items-center justify-center rounded-2xl border border-border/45 bg-background px-8 text-center"
                 >
-                  <p className="text-sm text-text-secondary">
-                    {t('unavailable', '应用功能尚未推出')}
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-border/40 bg-surface/25 text-text-secondary">
+                    <ActiveApplicationIcon className="h-7 w-7" aria-hidden="true" />
+                  </div>
+                  <h2 className="mt-5 text-base font-medium text-text-primary">
+                    {unavailableTitle}
+                  </h2>
+                  <p className="mt-2 max-w-md text-sm leading-6 text-text-secondary">
+                    {unavailableDescription}
                   </p>
                 </div>
               ) : collection.loadError && items.length === 0 ? (

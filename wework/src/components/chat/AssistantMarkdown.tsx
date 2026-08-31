@@ -26,6 +26,7 @@ import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -42,7 +43,7 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
+const MARKDOWN_WINDOW_ROOT_MARGIN = '1600px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
@@ -256,7 +257,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           >
             <Streamdown
               mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
-              isAnimating={isStreaming && index === contentParts.length - 1}
+              isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
@@ -273,7 +274,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
           <Streamdown
             key={`markdown-${index}`}
             mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={isStreaming}
+            isAnimating={false}
             controls={false}
             linkSafety={{ enabled: false }}
             lineNumbers={false}
@@ -304,7 +305,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,19 +323,27 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
+
+  const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content)
 
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={
-        nearViewport
-          ? undefined
-          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
-      }
+      style={nearViewport ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? children : null}
+      {nearViewport ? (
+        children
+      ) : (
+        <div
+          data-markdown-window-placeholder
+          className="overflow-hidden whitespace-pre-wrap leading-6"
+          style={{ maxHeight: reservedHeight }}
+        >
+          {content}
+        </div>
+      )}
     </div>
   )
 }
@@ -604,41 +613,42 @@ function AssistantMarkdownLink({
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
     return (
-      <button
-        type="button"
-        className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
-        data-testid="assistant-markdown-link"
-        onClick={() => {
-          if (isHtmlFilePath(filePath)) {
-            if (requestEmbeddedBrowserOpen(filePath)) return
-          }
-          if (openOptions) {
-            onOpenFile?.(filePath, openOptions)
-            return
-          }
-          onOpenFile?.(filePath)
-        }}
-        aria-label={tooltip}
+      <Tooltip
+        label={tooltip}
+        align="start"
+        testId="assistant-markdown-link-tooltip"
+        className="min-w-0 max-w-full !shrink align-baseline"
       >
-        {icon}
-        <span
-          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
-          data-testid="assistant-markdown-link-label"
+        <button
+          type="button"
+          className={ASSISTANT_MARKDOWN_LINK_CLASS}
+          data-testid="assistant-markdown-link"
+          onClick={() => {
+            if (isHtmlFilePath(filePath)) {
+              if (requestEmbeddedBrowserOpen(filePath)) return
+            }
+            if (openOptions) {
+              onOpenFile?.(filePath, openOptions)
+              return
+            }
+            onOpenFile?.(filePath)
+          }}
+          aria-label={tooltip}
         >
-          {children}
-        </span>
-        {lineLabel ? (
-          <span className="shrink-0" data-testid="assistant-markdown-link-line">
-            ({lineLabel})
+          {icon}
+          <span
+            className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+            data-testid="assistant-markdown-link-label"
+          >
+            {children}
           </span>
-        ) : null}
-        <span
-          data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
-        >
-          {tooltip}
-        </span>
-      </button>
+          {lineLabel ? (
+            <span className="shrink-0" data-testid="assistant-markdown-link-line">
+              ({lineLabel})
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
     )
   }
 

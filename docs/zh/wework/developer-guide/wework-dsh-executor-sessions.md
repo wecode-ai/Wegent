@@ -15,6 +15,13 @@ Executor。
 消费的 `sequence` 断线续传。每个 `(deviceId, taskId)` 映射为一个稳定、独立的
 Session，因此并行任务不会合并到同一个事件流。
 
+Wework renderer 使用同一 DSH runtime 暴露的浏览器 SSE 事件流。首次浏览器订阅会
+显式关闭历史回放；Executor 原子记录当前 journal 的最新 `sequence`，先发送内部
+`executor.stream.cursor` 基线，再只转发新事件。浏览器消费该基线但不把它交给业务
+listener。连接建立后的重连会显式开启回放，并从最后消费的 `sequence` 补齐断线期间
+的事件。不能仅用 `after=0` 判断是否首次连接，因为尚未收到普通业务事件的重连也可能
+携带零游标；混淆两种语义会导致全量历史事件阻塞 renderer，或漏掉断线期间的事件。
+
 主要映射如下：
 
 | Executor 事件                              | DSH Session 事件                            |
@@ -29,9 +36,21 @@ Session，因此并行任务不会合并到同一个事件流。
 投影保留原始用户消息和模型输出。安装并信任插件意味着允许插件按标准 DSH
 Session 契约读取这些内容；Wework 不再为同一数据维护一套匿名摘要扩展点。
 
-Codex 的 `tokenUsage.last` 表示当前 turn 的累计用量，投影后的 usage chunk
-也保持这一语义。需要实时 token 速度的插件应对同一 Session 的相邻
-`outputTokens` 求差分，再除以采样间隔；不能把多个累计值直接相加。
+Codex 的 `tokenUsage.last` 表示最近一次模型调用的用量；同一 Executor turn
+可能包含多次模型调用，因此该值会在调用之间重置。投影层使用 thread 级
+`tokenUsage.total` 计算相邻增量，再把增量累计为当前 DSH turn 的 usage。
+所以投影后的 `outputTokens` 在同一 turn 内单调递增，`assistant/message.usage`
+也使用相同的整轮累计口径。
+
+需要实时 token 速度的插件应对同一 Session、同一 turn 的相邻
+`outputTokens` 求差分，再除以采样间隔；不能把多个累计值直接相加。新 turn
+开始后应重置插件自己的差分基线。
+
+Codex 的准确 usage 通常按模型调用结算，不会随每个输出 token 上报。需要更低
+延迟反馈的插件可以同时监听标准 `text-delta` 和 `reasoning-delta` chunk，用
+滑动窗口估算实时生成速度，再用后续 usage 样本校准估算结果。Executor 的流式
+文本和思考 block 会被投影成这两类标准 chunk；工具、计划等非模型文本 block
+不会混入模型输出流。
 
 ```js
 export const inject = ["sessions"];

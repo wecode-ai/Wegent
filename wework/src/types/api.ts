@@ -24,7 +24,6 @@ export interface UserPreferences {
     string,
     {
       use_user_config?: boolean
-      use_proxy?: boolean
     }
   > | null
 }
@@ -264,17 +263,6 @@ export interface RuntimeTaskAddress {
   runtimeHandle?: Record<string, unknown> | null
 }
 
-export interface RuntimeTaskStatusReplayRequest {
-  deviceId: string
-  taskIds: string[]
-}
-
-export interface RuntimeTaskStatusReplayResponse {
-  success: boolean
-  replayedTaskIds: string[]
-  missingTaskIds: string[]
-}
-
 export type RuntimeAdditionalContextKind = 'application' | 'untrusted'
 
 export interface RuntimeAdditionalContextEntry {
@@ -501,6 +489,7 @@ export interface RuntimeProjectRef {
   source?: 'legacy_root' | 'local_project' | 'remote_project' | string
   stateDeviceId?: string | null
   roots?: RuntimeProjectRoot[]
+  sidebarOrder?: number | null
   pinned?: boolean
   pinnedOrder?: number | null
   active?: boolean
@@ -2751,6 +2740,7 @@ export interface Attachment {
 export interface AttachmentUploadProgress {
   file: File
   progress: number
+  previewUrl?: string
 }
 
 export interface MultiAttachmentUploadState {

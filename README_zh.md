@@ -7,10 +7,13 @@
 [![CI](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml/badge.svg)](https://github.com/wecode-ai/Wegent/actions/workflows/test.yml)
 [![License](https://img.shields.io/github/license/wecode-ai/Wegent)](LICENSE)
 [![GitHub Issues](https://img.shields.io/github/issues/wecode-ai/Wegent)](https://github.com/wecode-ai/Wegent/issues)
+    <a href="https://linux.do" alt="LINUX DO">
+        <img
+            src="https://img.shields.io/badge/LINUX-DO-FFB003.svg?logo=data:image/svg%2bxml;base64,DQo8c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiPjxwYXRoIGQ9Ik00Ni44Mi0uMDU1aDYuMjVxMjMuOTY5IDIuMDYyIDM4IDIxLjQyNmM1LjI1OCA3LjY3NiA4LjIxNSAxNi4xNTYgOC44NzUgMjUuNDV2Ni4yNXEtMi4wNjQgMjMuOTY4LTIxLjQzIDM4LTExLjUxMiA3Ljg4NS0yNS40NDUgOC44NzRoLTYuMjVxLTIzLjk3LTIuMDY0LTM4LjAwNC0yMS40M1EuOTcxIDY3LjA1Ni0uMDU0IDUzLjE4di02LjQ3M0MxLjM2MiAzMC43ODEgOC41MDMgMTguMTQ4IDIxLjM3IDguODE3IDI5LjA0NyAzLjU2MiAzNy41MjcuNjA0IDQ2LjgyMS0uMDU2IiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZWNlY2VjO2ZpbGwtb3BhY2l0eToxIi8+PHBhdGggZD0iTTQ3LjI2NiAyLjk1N3EyMi41My0uNjUgMzcuNzc3IDE1LjczOGE0OS43IDQ5LjcgMCAwIDEgNi44NjcgMTAuMTU3cS00MS45NjQuMjIyLTgzLjkzIDAgOS43NS0xOC42MTYgMzAuMDI0LTI0LjM4N2E2MSA2MSAwIDAgMSA5LjI2Mi0xLjUwOCIgc3R5bGU9InN0cm9rZTpub25lO2ZpbGwtcnVsZTpldmVub2RkO2ZpbGw6IzE5MTkxOTtmaWxsLW9wYWNpdHk6MSIvPjxwYXRoIGQ9Ik03Ljk4IDcwLjkyNmMyNy45NzctLjAzNSA1NS45NTQgMCA4My45My4xMTNRODMuNDI2IDg3LjQ3MyA2Ni4xMyA5NC4wODZxLTE4LjgxIDYuNTQ0LTM2LjgzMi0xLjg5OC0xNC4yMDMtNy4wOS0yMS4zMTctMjEuMjYyIiBzdHlsZT0ic3Ryb2tlOm5vbmU7ZmlsbC1ydWxlOmV2ZW5vZGQ7ZmlsbDojZjlhZjAwO2ZpbGwtb3BhY2l0eToxIi8+PC9zdmc+" /></a>
 
 Wegent 包含桌面工作台和可自托管的 Web 平台。Wegent Desktop 用于处理本地项目、文件、命令、测试和代码变更；Wegent Web 提供网页端智能体、知识库、自动化和管理功能；Wegent Backend 为这些应用提供共享项目空间、模型和执行设备。
 
-[下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
+[下载最新版 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) · [查看文档](https://wecode-ai.github.io/wegent-docs/zh/) · [参与贡献](CONTRIBUTING.md)
 
 ## Wegent Desktop
 
@@ -53,25 +56,53 @@ Wegent Web 提供远程智能体的网页界面。智能体使用配置好的模
 
 ## 工作方式
 
-Wegent Desktop 直接使用本地项目和本机运行时，也可以连接 Wegent Backend 使用共享资源和执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
+Wework 是 Wegent 的桌面工作台。Electron 负责桌面窗口、系统能力和进程管理；DeepSeek Harness（DSH）是内嵌的应用与插件运行时，Wework 的产品界面由一组 DSH 插件组合而成。Executor 负责管理任务与会话，并驱动 Codex 在本地项目中完成实际工作。
 
 ```mermaid
 flowchart LR
-    User["用户"] --> Desktop["Wegent Desktop"]
-    User --> Web["Wegent Web"]
-    Desktop --> Local["本地项目与运行环境"]
-    Desktop <--> Backend["Wegent Backend"]
-    Web <--> Backend
-    Backend --> Agents["共享智能体与知识"]
-    Backend --> Space["项目空间"]
-    Backend --> Remote["云端与远程设备"]
+    Electron["Electron<br/>桌面宿主"]
+
+    subgraph DSH["DSH Runtime"]
+        direction TB
+        Core["DSH Core<br/>插件发现、依赖注入与生命周期"]
+        App["dsh-app-wework<br/>Wework 产品外壳与 UI 扩展点"]
+        UI["dsh-ui-*<br/>任务、项目空间、设置、应用与自动化"]
+        ElectronPlugin["dsh-electron-host<br/>Electron 能力桥接"]
+        ExecutorPlugin["dsh-executor-runtime<br/>任务执行与事件适配"]
+        TerminalPlugin["dsh-terminal-runtime<br/>本地交互式终端"]
+
+        Core --> App
+        Core --> UI
+        Core --> ElectronPlugin
+        Core --> ExecutorPlugin
+        Core --> TerminalPlugin
+        App --> UI
+    end
+
+    Executor["Executor<br/>任务与会话执行"]
+    Codex["Codex<br/>编码 Agent"]
+    Workspace["本地项目<br/>文件与命令"]
+
+    Electron -->|"启动并托管"| Core
+    Electron -->|"启动并监管"| Executor
+    ElectronPlugin <-->|"受限桌面能力"| Electron
+    UI <-->|"用户操作与界面更新"| ExecutorPlugin
+    ExecutorPlugin -->|"创建、追问、审批、取消"| Executor
+    Executor -->|"状态、消息、工具事件、结果"| ExecutorPlugin
+    Executor <-->|"启动、控制与事件"| Codex
+    Codex <-->|"读取、修改与执行"| Workspace
+    TerminalPlugin <-->|"PTY"| Workspace
 ```
+
+DSH 不直接执行编码任务。`dsh-app-wework` 定义产品外壳和扩展点，`dsh-ui-*` 提供具体产品模块，`dsh-electron-host` 桥接受限的 Electron 能力，`dsh-executor-runtime` 在执行过程中与 Executor 双向通信，`dsh-terminal-runtime` 管理本地交互式终端。Executor 是任务执行层，Codex 是由它驱动的具体编码 Agent。
+
+Wework 也可以连接 Wegent Backend 使用共享项目空间、模型和远程执行设备。Wegent Web 是基于同一 Backend 的独立网页界面。
 
 ## 快速开始
 
 ### Wegent Desktop
 
-1. 从 [Releases 下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases) 并安装。
+1. 从 [最新版本页下载 Wegent Desktop](https://github.com/wecode-ai/Wegent/releases/latest) 并安装。
 2. 打开应用，添加或选择一个本地项目。
 3. 创建任务并描述需要执行的工作。
 4. 查看智能体活动、命令输出和文件变更。
@@ -105,17 +136,17 @@ pnpm --filter wework dev:mac
 
 ## 仓库结构
 
-| 目录                       | 职责                                 |
-| -------------------------- | ------------------------------------ |
+| 目录                       | 职责                                    |
+| -------------------------- | --------------------------------------- |
 | `wework/`                  | Wegent Desktop（Electron、Vite、React） |
-| `executor/`                | 本地与远程的智能体任务执行环境       |
-| `frontend/`                | Wegent 平台 Web 管理界面             |
-| `backend/`                 | REST API 和核心业务逻辑              |
-| `executor_manager/`        | 执行器调度与编排                     |
-| `chat_shell/`              | 对话运行时                           |
-| `knowledge_runtime/`       | 知识检索服务                         |
-| `knowledge_doc_converter/` | 文档解析与转换                       |
-| `shared/`                  | 跨服务共享模块                       |
+| `executor/`                | 本地与远程的智能体任务执行环境          |
+| `frontend/`                | Wegent 平台 Web 管理界面                |
+| `backend/`                 | REST API 和核心业务逻辑                 |
+| `executor_manager/`        | 执行器调度与编排                        |
+| `chat_shell/`              | 对话运行时                              |
+| `knowledge_runtime/`       | 知识检索服务                            |
+| `knowledge_doc_converter/` | 文档解析与转换                          |
+| `shared/`                  | 跨服务共享模块                          |
 
 ## 文档
 
@@ -134,6 +165,7 @@ pnpm --filter wework dev:mac
 - [贡献指南](CONTRIBUTING.md)
 - [安全策略](SECURITY.md)
 - [问题反馈](https://github.com/wecode-ai/Wegent/issues)
+- 钉钉社区群：“wework社区交流”，群号 `190890002451`
 - [Discord 社区](https://discord.gg/MVzJzyqEUp)
 - [开源许可证](LICENSE)
 
@@ -269,17 +301,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/fengkuizhi">
-                    <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
-                    <br />
-                    <sub><b>Fengkuizhi</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/lvmowei">
                     <img src="https://avatars.githubusercontent.com/u/5328905?v=4" width="80;" alt="lvmowei"/>
                     <br />
                     <sub><b>lvmowei</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/fengkuizhi">
+                    <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+                    <br />
+                    <sub><b>Fengkuizhi</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -311,14 +343,21 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
+                <a href="https://github.com/hustfisher">
+                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
+                    <br />
+                    <sub><b>fishermen</b></sub>
+                </a>
+            </td>
+		</tr>
+		<tr>
+            <td align="center">
                 <a href="https://github.com/earthAlone2026">
                     <img src="https://avatars.githubusercontent.com/u/270281822?v=4" width="80;" alt="earthAlone2026"/>
                     <br />
                     <sub><b>xiaoqiang</b></sub>
                 </a>
             </td>
-		</tr>
-		<tr>
             <td align="center">
                 <a href="https://github.com/RockysGit">
                     <img src="https://avatars.githubusercontent.com/u/61232321?v=4" width="80;" alt="RockysGit"/>
@@ -327,17 +366,17 @@ pnpm --filter wework dev:mac
                 </a>
             </td>
             <td align="center">
-                <a href="https://github.com/junbaor">
-                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
-                    <br />
-                    <sub><b>Junbaor</b></sub>
-                </a>
-            </td>
-            <td align="center">
                 <a href="https://github.com/qwertyerge">
                     <img src="https://avatars.githubusercontent.com/u/13088125?v=4" width="80;" alt="qwertyerge"/>
                     <br />
                     <sub><b>Erdawang</b></sub>
+                </a>
+            </td>
+            <td align="center">
+                <a href="https://github.com/junbaor">
+                    <img src="https://avatars.githubusercontent.com/u/10198622?v=4" width="80;" alt="junbaor"/>
+                    <br />
+                    <sub><b>Junbaor</b></sub>
                 </a>
             </td>
             <td align="center">
@@ -352,13 +391,6 @@ pnpm --filter wework dev:mac
                     <img src="https://avatars.githubusercontent.com/u/11422037?v=4" width="80;" alt="fingki"/>
                     <br />
                     <sub><b>Fingki</b></sub>
-                </a>
-            </td>
-            <td align="center">
-                <a href="https://github.com/hustfisher">
-                    <img src="https://avatars.githubusercontent.com/u/1677452?v=4" width="80;" alt="hustfisher"/>
-                    <br />
-                    <sub><b>fishermen</b></sub>
                 </a>
             </td>
             <td align="center">

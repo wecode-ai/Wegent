@@ -14,6 +14,7 @@ import pytest
 from chat_shell.tools import skill_factory
 from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.skill_factory import (
+    _apply_skill_runtime_tool_policies,
     _load_skill_mcp_tools,
     _with_request_skill_plan,
     prepare_skill_tools,
@@ -60,6 +61,27 @@ def test_sandbox_config_carries_request_scoped_skill_plan():
     assert sandbox_bot["preload_skills"] == ["sandbox", "wegent-knowledge"]
     assert sandbox_bot["skill_refs"]["wegent-knowledge"]["skill_id"] == 42
     assert "skills" not in skill_config["config"]["bot_config"][0]
+
+
+def test_runtime_policy_marks_only_configured_tool_return_direct():
+    card_tool = MagicMock()
+    card_tool.name = "video_skill_cards_create_async_video_card"
+    card_tool.return_direct = False
+    generation_tool = MagicMock()
+    generation_tool.name = "generate_final_video"
+    generation_tool.return_direct = False
+
+    tools = _apply_skill_runtime_tool_policies(
+        {
+            "name": "video_skill",
+            "runtime": {"returnDirectTools": ["create_async_video_card"]},
+        },
+        [card_tool, generation_tool],
+    )
+
+    assert tools == [card_tool, generation_tool]
+    assert card_tool.return_direct is True
+    assert generation_tool.return_direct is False
 
 
 class TestLoadSkillMcpTools:
@@ -495,6 +517,9 @@ class TestPrepareSkillToolsWithMcp:
                 "name": "test_skill",
                 "description": "A test skill",
                 "prompt": "Test skill prompt",
+                "runtime": {
+                    "returnDirectTools": ["create_async_video_card"],
+                },
                 "mcpServers": {
                     "server1": {
                         "type": "stdio",
@@ -520,8 +545,9 @@ class TestPrepareSkillToolsWithMcp:
         mock_client.is_connected = True
 
         mock_mcp_tool = MagicMock()
-        mock_mcp_tool.name = "test_skill_server1_list_kbs"
+        mock_mcp_tool.name = "test_skill_server1_create_async_video_card"
         mock_mcp_tool.server_name = "test_skill_server1"
+        mock_mcp_tool.return_direct = False
 
         mock_client.get_tools_with_server.return_value = {
             "test_skill_server1": [mock_mcp_tool]
@@ -546,6 +572,7 @@ class TestPrepareSkillToolsWithMcp:
             assert len(clients) == 1
             assert load_skill_tool.get_skill_tools("test_skill") == [mock_mcp_tool]
             assert mock_mcp_tool in load_skill_tool.get_available_tools()
+            assert mock_mcp_tool.return_direct is True
 
     @pytest.mark.asyncio
     async def test_skill_without_mcp_servers(self):

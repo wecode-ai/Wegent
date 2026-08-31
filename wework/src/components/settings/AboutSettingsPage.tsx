@@ -1,6 +1,10 @@
 import { Bot, Download, ExternalLink, Loader2 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import {
+  calculateAppUpdateDownloadPercent,
+  formatAppUpdateVersion,
+} from '@/features/app-update/app-update-format'
 import { useAppVersion } from '@/hooks/useAppVersion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
@@ -9,18 +13,6 @@ import { SettingsGroup, SettingsPage, SettingsRow, SettingsSwitch } from './sett
 const PROJECT_URL = 'https://github.com/wecode-ai/Wegent'
 const LICENSE_URL = `${PROJECT_URL}/blob/main/LICENSE`
 const DISCORD_URL = 'https://discord.gg/MVzJzyqEUp'
-
-function formatVersionTemplate(template: string, version: string): string {
-  return template.replace('{{version}}', version)
-}
-
-function calculateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-}
 
 function formatUpdateError(message: string | null, t: ReturnType<typeof useTranslation>['t']) {
   if (!message) return null
@@ -86,12 +78,16 @@ export function AboutSettingsPage() {
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
   const formattedUpdateError = formatUpdateError(updateError, t)
-  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const isUpdateBusy =
+    updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
-    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    ? calculateAppUpdateDownloadPercent(
+        downloadProgress.downloadedBytes,
+        downloadProgress.totalBytes
+      )
     : null
   const updateButtonLabel = availableUpdate
-    ? formatVersionTemplate(
+    ? formatAppUpdateVersion(
         t('workbench.app_update_install', {
           defaultValue: '更新到 {{version}}',
           version: availableUpdate.version,
@@ -100,7 +96,7 @@ export function AboutSettingsPage() {
       )
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
   const updateMessage = availableUpdate
-    ? formatVersionTemplate(
+    ? formatAppUpdateVersion(
         t('workbench.app_update_available', {
           defaultValue: '发现新版本 {{version}}',
           version: availableUpdate.version,
@@ -150,7 +146,9 @@ export function AboutSettingsPage() {
                 defaultValue: '自动更新',
               })}
               checked={autoUpdateEnabled}
-              disabled={!appUpdate || updateStatus === 'installing'}
+              disabled={
+                !appUpdate || updateStatus === 'downloading' || updateStatus === 'installing'
+              }
               onCheckedChange={checked => {
                 appUpdate?.setAutoUpdateEnabled(checked)
               }}
@@ -200,7 +198,7 @@ export function AboutSettingsPage() {
             {formattedUpdateError ?? updateMessage}
           </span>
         ) : null}
-        {updateStatus === 'installing' ? (
+        {updateStatus === 'downloading' ? (
           <div data-testid="about-update-download-progress" className="w-[240px] space-y-1.5">
             <div
               role="progressbar"

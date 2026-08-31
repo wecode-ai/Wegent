@@ -828,6 +828,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     const configureExecution = `${activeBoard} [data-testid="cloud-todo-card-configure-execution-${inheritedWorkflowIssue.id}"]`
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
@@ -837,6 +838,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('waitFor', '[data-testid="issue-execution-config-dialog"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="issue-execution-config-default-device"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
@@ -859,6 +864,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The execution configuration dialog did not close',
       uiTimeoutMs
     )
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
@@ -984,6 +990,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('select', executionModel, { value: `public:${CLOUD_MODEL_NAME}` })
     await control.command('select', executionProject, { value: 'standalone' })
     const initialUpstreamRequestOffset = upstreamResponseRequests.length
+    await control.command('setLocalProxyUrl', 'body', {
+      value: 'http://127.0.0.1:1',
+    })
     await control.command('clickWhenEnabled', '[data-testid="issue-execution-config-confirm"]', {
       timeoutMs: uiTimeoutMs,
     })
@@ -1066,6 +1075,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       initialIssueRequests.every(request => request.model === CLOUD_MODEL_UPSTREAM_ID),
       'The Issue produced a duplicate request through a model other than Moonshot'
     )
+    await control.command('setLocalProxyUrl', 'body', { value: '' })
 
     const runtimeWork = await waitForValue(
       () => cloudRequest('/api/runtime-work'),
@@ -1553,6 +1563,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'Automation detail panel remained visible after clearing the canvas selection',
       uiTimeoutMs
     )
+    await control.command('waitFor', '[data-testid="automation-trigger-node"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+      stableMs: 250,
+    })
     await control.command('click', '[data-testid="automation-trigger-node"]', {
       visible: true,
     })
@@ -1584,6 +1599,9 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     })
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
+    })
+    await control.command('select', '[data-testid^="execution-node-workspace-"]', {
+      value: 'composer',
     })
     await control.command('click', '[data-testid^="execution-node-add-deliverable-"]', {
       visible: true,
@@ -1668,6 +1686,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.roleSource, 'generic')
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
+    assert.deepEqual(
+      unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
+        .workspace_binding,
+      { type: 'standalone' }
+    )
     const unifiedGraphNodes = unifiedRule.eventConfig.wework_flow.graph.nodes
     assert.equal(unifiedGraphNodes.length, 2)
     const unifiedDeliverable = unifiedGraphNodes[0].deliverables[0]
@@ -2838,6 +2861,15 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         timeoutMs: uiTimeoutMs,
         visible: true,
       })
+      await waitForValue(
+        async () => JSON.parse(await control.command('snapshot', projectChatPanel)),
+        snapshot =>
+          !snapshot.testIds.includes('thinking-indicator') &&
+          !snapshot.testIds.includes('message-assistant-waiting') &&
+          !snapshot.testIds.includes('pause-response-button'),
+        'Project chat remained in the thinking state after the runtime task completed',
+        uiTimeoutMs
+      )
       await captureScreenshot(control, 'project-chat-model-routing.png')
       await control.command(
         'click',

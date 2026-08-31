@@ -53,10 +53,10 @@ describe('desktop localStorage persistence', () => {
         shared: 'current',
       },
     })
-    expect(Object.fromEntries(Object.entries(localStorage))).toEqual({
-      restored: 'value',
-      shared: 'durable',
-    })
+    expect(localStorage).toHaveLength(2)
+    expect(localStorage.getItem('origin-only')).toBeNull()
+    expect(localStorage.getItem('restored')).toBe('value')
+    expect(localStorage.getItem('shared')).toBe('durable')
   })
 
   it('persists set, remove, and clear operations without affecting sessionStorage', async () => {

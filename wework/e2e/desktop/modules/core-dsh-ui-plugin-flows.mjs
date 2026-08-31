@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile, readdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   DEFAULT_STEP_TIMEOUT_MS,
@@ -94,14 +95,31 @@ const UI_PLUGINS = [
     testId: 'cloud-work-page',
   },
 ]
+const DEMO_PLUGIN = {
+  name: '@wegent/dsh-wework-extension-demo',
+  directory: fileURLToPath(new URL('../../../dsh/examples/ui-extension-demo', import.meta.url)),
+  contributions: {
+    'wework.action': ['dsh-extension-demo.open'],
+    'wework.app': ['dsh-extension-demo'],
+    'wework.route': ['dsh-extension-demo.route'],
+    'wework.sidebar.navigation': ['dsh-extension-demo.navigation'],
+    'wework.settings.page': ['dsh-extension-demo.settings'],
+    'wework.workspace.tab': ['dsh-extension-demo.workspace'],
+    'wework.workspace.sidebar.tab': ['dsh-extension-demo.inspector'],
+    'wework.shell.before': ['dsh-extension-demo.before'],
+    'wework.shell.after': ['dsh-extension-demo.after'],
+    'wework.shell.overlay': ['dsh-extension-demo.overlay'],
+  },
+}
 
 export async function verifyCoreDshUiPluginComposition({
   control,
   initialRendererLocation,
+  pluginsRoot,
   restartDesktopApp,
   runtimeRoot,
 }) {
-  const pluginSources = await resolveCoreUiPluginSources(runtimeRoot)
+  const pluginSources = await resolveCoreUiPluginSources(runtimeRoot, pluginsRoot)
   let rendererOrigin = new URL(initialRendererLocation).origin
   const installedContributions = new Map()
 
@@ -204,6 +222,47 @@ export async function verifyCoreDshUiPluginComposition({
     await assertInstalledFeatureVisible(control, plugin)
   }
 
+  rendererOrigin = await installDemoPlugin({
+    control,
+    pluginSource: pluginSources.get(DEMO_PLUGIN.name),
+    rendererOrigin,
+    restartDesktopApp,
+  })
+  await assertDemoPluginVisible(control)
+
+  rendererOrigin = await setPluginEnabledAndRestart(
+    control,
+    rendererOrigin,
+    restartDesktopApp,
+    DEMO_PLUGIN,
+    false
+  )
+  await assertDemoPluginAbsent(control)
+
+  rendererOrigin = await setPluginEnabledAndRestart(
+    control,
+    rendererOrigin,
+    restartDesktopApp,
+    DEMO_PLUGIN,
+    true
+  )
+  await assertDemoPluginVisible(control)
+
+  const afterUninstall = await invokeCoreDshPluginCapability(
+    rendererOrigin,
+    'runtime.uninstallCoreDshPlugin',
+    { name: DEMO_PLUGIN.name }
+  )
+  assert.equal(
+    afterUninstall.some(item => item.name === DEMO_PLUGIN.name),
+    false,
+    `${DEMO_PLUGIN.name} remained in the Core DSH inventory after uninstall`
+  )
+  await restartDesktopApp()
+  await dismissCodexHomeInitializer(control)
+  rendererOrigin = await control.command('getLocationOrigin', 'body')
+  await assertDemoPluginAbsent(control)
+
   const inventory = await readCoreDshPlugins(rendererOrigin)
   for (const plugin of UI_PLUGINS) {
     const installed = inventory.find(item => item.name === plugin.name)
@@ -212,6 +271,84 @@ export async function verifyCoreDshUiPluginComposition({
   }
   await control.command('navigate', 'body', { value: '/' })
   await ensureExperimentalFeaturesDisabled(control)
+}
+
+async function installDemoPlugin({ control, pluginSource, rendererOrigin, restartDesktopApp }) {
+  assert.ok(pluginSource, `${DEMO_PLUGIN.name} source is unavailable`)
+  await assertDemoPluginAbsent(control)
+  const plugins = await invokeCoreDshPluginCapability(
+    rendererOrigin,
+    'runtime.installCoreDshPlugin',
+    { spec: `file:${pluginSource}` }
+  )
+  const installed = plugins.find(item => item.name === DEMO_PLUGIN.name)
+  assert.ok(installed, `${DEMO_PLUGIN.name} was absent after install`)
+  assert.equal(installed.enabled, true, `${DEMO_PLUGIN.name} was disabled after install`)
+  await restartDesktopApp()
+  await dismissCodexHomeInitializer(control)
+  return control.command('getLocationOrigin', 'body')
+}
+
+async function assertDemoPluginVisible(control) {
+  await waitForSlotState(control, slots =>
+    Object.entries(DEMO_PLUGIN.contributions).every(([slot, ids]) =>
+      ids.every(id => slots[slot]?.includes(id))
+    )
+  )
+  await control.command('waitFor', '[data-testid="dsh-extension-demo-overlay"]')
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="dsh-extension-demo-shell-before"]')
+    ),
+    1,
+    'Demo shell-before component was not mounted'
+  )
+  assert.equal(
+    Number(
+      await control.command('getElementCount', '[data-testid="dsh-extension-demo-shell-after"]')
+    ),
+    1,
+    'Demo shell-after component was not mounted'
+  )
+
+  await control.command('click', '[data-testid="dsh-extension-demo-navigation"]')
+  await control.command('waitFor', '[data-testid="dsh-extension-demo-route"]')
+  await control.command('click', '[data-testid="dsh-extension-demo-open-settings"]')
+  await control.command('waitFor', '[data-testid="dsh-extension-demo-settings"]')
+
+  await control.command('navigate', 'body', { value: '/app/dsh-extension-demo' })
+  await control.command('waitFor', '[data-testid="dsh-extension-demo-app"]')
+
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command(
+    'click',
+    '[data-testid="workspace-tab-add-dsh-dsh-extension-demo.workspace"]'
+  )
+  await control.command('waitFor', '[data-testid="dsh-extension-demo-workspace-tab"]')
+}
+
+async function assertDemoPluginAbsent(control) {
+  await waitForSlotState(control, slots =>
+    Object.entries(DEMO_PLUGIN.contributions).every(([slot, ids]) =>
+      ids.every(id => !slots[slot]?.includes(id))
+    )
+  )
+  for (const selector of [
+    '[data-testid="dsh-extension-demo-navigation"]',
+    '[data-testid="dsh-extension-demo-overlay"]',
+    '[data-testid="dsh-extension-demo-route"]',
+    '[data-testid="dsh-extension-demo-settings"]',
+    '[data-testid="dsh-extension-demo-app"]',
+    '[data-testid="dsh-extension-demo-workspace-tab"]',
+  ]) {
+    assert.equal(
+      Number(await control.command('getElementCount', selector)),
+      0,
+      `${selector} remained mounted after the Demo plugin was removed`
+    )
+  }
+  await control.command('navigate', 'body', { value: '/' })
 }
 
 async function assertFeatureAbsent(control, plugin) {
@@ -321,32 +458,37 @@ async function readCoreDshPlugins(origin) {
   return invokeCoreDshPluginCapability(origin, 'runtime.listCoreDshPlugins')
 }
 
-async function resolveCoreUiPluginSources(runtimeRoot) {
+async function resolveCoreUiPluginSources(runtimeRoot, pluginsRoot) {
   assert.ok(runtimeRoot, 'Core DSH UI plugin composition requires WEWORK_HARNESS_RUNTIME_ROOT')
+  assert.ok(pluginsRoot, 'Core DSH UI plugin composition requires the packaged Core plugin root')
   const roots = await runtimeCandidates(resolve(runtimeRoot))
-  const matching = []
-  for (const root of roots) {
-    const identity = await readJson(join(root, 'runtime.json'))
-    if (identity?.role !== 'core') continue
-    const sources = new Map(
-      UI_PLUGINS.map(plugin => [plugin.name, join(root, 'plugins', plugin.directory)])
+  const matching = (
+    await Promise.all(
+      roots.map(async root => {
+        const identity = await readJson(join(root, 'runtime.json'))
+        return identity?.role === 'core' ? root : null
+      })
     )
-    if (
-      await Promise.all(
-        [...sources.values()].map(source => pathExists(join(source, 'package.json')))
-      ).then(results => results.every(Boolean))
-    ) {
-      matching.push({ root, sources })
-    }
-  }
+  ).filter(Boolean)
   assert.equal(
     matching.length,
     1,
-    `Expected one bundled Core DSH runtime with Wework UI plugins, found ${matching
-      .map(item => item.root)
-      .join(', ')}`
+    `Expected one bundled Core DSH runtime, found ${matching.join(', ')}`
   )
-  return matching[0].sources
+  const sources = new Map(
+    UI_PLUGINS.map(plugin => [plugin.name, join(resolve(pluginsRoot), plugin.directory)])
+  )
+  sources.set(DEMO_PLUGIN.name, DEMO_PLUGIN.directory)
+  const missing = (
+    await Promise.all(
+      [...sources].map(async ([name, source]) => [
+        name,
+        (await pathExists(join(source, 'package.json'))) ? null : source,
+      ])
+    )
+  ).filter(([, source]) => source)
+  assert.deepEqual(missing, [], `Packaged Core DSH plugins are unavailable: ${missing.join(', ')}`)
+  return sources
 }
 
 async function runtimeCandidates(root) {

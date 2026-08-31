@@ -171,14 +171,26 @@ async function assertReleasePackageResources() {
     readFile(
       join(
         resourcesRoot,
+        'bundled-plugins',
+        'wework-personal',
+        '.claude-plugin',
+        'marketplace.json'
+      )
+    ),
+    readFile(
+      join(
+        resourcesRoot,
         'bin',
         process.platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
       )
     ),
+    readFile(join(resourcesRoot, 'bin', process.platform === 'win32' ? 'dws.exe' : 'dws')),
   ])
   assert.deepEqual(Object.keys(components.components).sort(), [
+    'bundledPlugins',
     'codex',
     'coreDsh',
+    'dws',
     'electron',
     'executor',
     'weworkCorePlugins',
@@ -190,7 +202,12 @@ async function assertReleasePackageResources() {
   await readFile(join(resourcesRoot, components.components.codex.path))
 }
 
-export async function createDesktopScenario({ electronUserDataDirectory, resultDir, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  electronUserDataDirectory,
+  resultDir,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   await assertReleasePackageResources()
   await seedTauriProfile(electronUserDataDirectory)
   const profileManifest = join(
@@ -206,7 +223,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {

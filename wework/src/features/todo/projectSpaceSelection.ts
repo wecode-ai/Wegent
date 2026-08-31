@@ -110,14 +110,49 @@ export function projectSupportsRobotAutomation(project: CloudProject): boolean {
 
 export async function findProjectSpaceContextForTask(
   apis: ProjectSpaceApi[],
-  task: RuntimeTaskAddress
+  task: RuntimeTaskAddress,
+  timeoutMs = 5_000
 ): ReturnType<ProjectSpaceApi['findCloudContextForTask']> {
-  const results = await Promise.allSettled(apis.map(api => api.findCloudContextForTask(task)))
-  const contexts = results.flatMap(result => (result.status === 'fulfilled' ? [result.value] : []))
+  type TaskContext = Awaited<ReturnType<ProjectSpaceApi['findCloudContextForTask']>>
+  const results: Array<PromiseSettledResult<TaskContext> | undefined> = new Array(apis.length)
+  let resolveUserContext: ((context: TaskContext) => void) | undefined
+  const userContextFound = new Promise<TaskContext>(resolve => {
+    resolveUserContext = resolve
+  })
+  const requests = apis.map((api, index) =>
+    api.findCloudContextForTask(task).then(
+      value => {
+        results[index] = { status: 'fulfilled', value }
+        if (!isDefaultWorkItemProject(value.project)) resolveUserContext?.(value)
+      },
+      reason => {
+        results[index] = { status: 'rejected', reason }
+      }
+    )
+  )
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    Promise.all(requests).then(() => ({ kind: 'settled' as const })),
+    userContextFound.then(context => ({ kind: 'user-context' as const, context })),
+    new Promise<void>(resolve => {
+      timeoutId = setTimeout(resolve, timeoutMs)
+    }).then(() => ({ kind: 'timeout' as const })),
+  ])
+  if (timeoutId !== undefined) clearTimeout(timeoutId)
+  if (outcome.kind === 'user-context') return outcome.context
+  const settledResults = results.filter(result => result !== undefined)
+  const contexts = settledResults.flatMap(result =>
+    result.status === 'fulfilled' ? [result.value] : []
+  )
   const userContext = contexts.find(context => !isDefaultWorkItemProject(context.project))
   if (userContext) return userContext
   if (contexts[0]) return contexts[0]
-  const errors = results.flatMap(result => (result.status === 'rejected' ? [result.reason] : []))
+  const errors = settledResults.flatMap(result =>
+    result.status === 'rejected' ? [result.reason] : []
+  )
+  if (settledResults.length < apis.length) {
+    errors.push(new Error(`Project-space context lookup timed out after ${timeoutMs}ms`))
+  }
   throw new AggregateError(errors, 'Task is not linked to a project space')
 }
 

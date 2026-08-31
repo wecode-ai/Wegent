@@ -42,7 +42,6 @@ class UserRuntimeConfigPreference(BaseModel):
     """User-level runtime configuration preference."""
 
     use_user_config: bool = False
-    use_proxy: bool = False
 
 
 class UserProjectWorkPreference(BaseModel):
@@ -238,6 +237,12 @@ class WeworkAuthSessionCreateResponse(BaseModel):
     poll_interval_seconds: int
 
 
+class WeworkAuthSessionCreateRequest(BaseModel):
+    """Optional device key for refresh-capable Wework desktop clients."""
+
+    device_public_key: Optional[dict[str, str]] = None
+
+
 class WeworkWebConfigResponse(BaseModel):
     """Web application metadata exposed to Wework desktop."""
 
@@ -250,6 +255,7 @@ class WeworkAuthSessionPollResponse(BaseModel):
 
     status: str
     access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     token_type: Optional[str] = None
     username: Optional[str] = None
     error: Optional[str] = None
@@ -259,3 +265,18 @@ class WeworkAuthSessionActionResponse(BaseModel):
     """Response model for Web authorization approve/decline actions."""
 
     status: str
+
+
+class WeworkTokenRefreshRequest(BaseModel):
+    """Refresh token plus a proof signed by its bound desktop device."""
+
+    refresh_token: str
+    proof: str
+
+
+class WeworkTokenRefreshResponse(BaseModel):
+    """A newly issued short-lived desktop access token."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int

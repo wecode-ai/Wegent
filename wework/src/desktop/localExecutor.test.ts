@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  DshExecutorTransportError,
   describeDshExecutor,
   requestDshExecutor,
   subscribeDshExecutorEvents,
@@ -9,6 +10,7 @@ import {
   connectLocalExecutorToBackend,
   disconnectLocalExecutorFromBackend,
   ensureBundledPluginInstalled,
+  ensureLocalExecutorAvailable,
   ensureLocalExecutorStarted,
   getInitializedBundledPluginMarketplace,
   getLocalExecutorStatus,
@@ -17,7 +19,8 @@ import {
   subscribeLocalExecutorEvents,
 } from './localExecutor'
 
-vi.mock('@/api/dsh/executorTransport', () => ({
+vi.mock('@/api/dsh/executorTransport', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/api/dsh/executorTransport')>()),
   describeDshExecutor: vi.fn(),
   requestDshExecutor: vi.fn(),
   subscribeDshExecutorEvents: vi.fn(),
@@ -32,6 +35,7 @@ const marketplace = {
   path: '/Users/test/.wework/capabilities/bundled-marketplaces/wework-personal',
   pluginCount: 1,
   defaultPluginNames: ['smart-app-builder'],
+  contentHash: 'abc123',
 }
 
 function mockStartup(): void {
@@ -63,6 +67,20 @@ describe('localExecutor', () => {
     mockStartup()
   })
 
+  test('reports executor availability without starting Codex or copying plugins', async () => {
+    await expect(ensureLocalExecutorAvailable()).resolves.toEqual({
+      running: true,
+      ready: true,
+      deviceId: 'electron-device',
+      runtimeInstanceId: 'electron-runtime',
+      version: '1.8.6',
+    })
+
+    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+    expect(requestDshExecutorMock).not.toHaveBeenCalled()
+    expect(getInitializedBundledPluginMarketplace()).toBeNull()
+  })
+
   test('starts the Electron-managed DSH executor and caches its marketplace', async () => {
     await expect(ensureLocalExecutorStarted()).resolves.toEqual({
       running: true,
@@ -90,12 +108,42 @@ describe('localExecutor', () => {
     })
   })
 
-  test('performs a fresh DSH health check for status requests', async () => {
+  test('reuses the initialized executor status for repeated startup checks', async () => {
     const first = await ensureLocalExecutorStarted()
 
     await expect(getLocalExecutorStatus()).resolves.toEqual(first)
 
+    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(3)
+  })
+
+  test('invalidates the initialized status after an executor request failure', async () => {
+    await ensureLocalExecutorStarted()
+    requestDshExecutorMock.mockRejectedValueOnce(new Error('executor unavailable'))
+
+    await expect(requestLocalExecutor('runtime.tasks.list')).rejects.toThrow('executor unavailable')
+    mockStartup()
+    await ensureLocalExecutorStarted()
+
     expect(describeDshExecutorMock).toHaveBeenCalledTimes(2)
+  })
+
+  test('keeps the initialized status after an executor business error', async () => {
+    await ensureLocalExecutorStarted()
+    requestDshExecutorMock.mockRejectedValueOnce(
+      new DshExecutorTransportError(
+        'connector_cloud_disconnected',
+        'Connect Wework to Wegent cloud before synchronizing apps'
+      )
+    )
+
+    await expect(requestLocalExecutor('runtime.connectors.apps.sync')).rejects.toThrow(
+      'Connect Wework to Wegent cloud'
+    )
+    await ensureLocalExecutorStarted()
+
+    expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+    expect(requestDshExecutorMock).toHaveBeenCalledTimes(4)
   })
 
   test('installs a declared bundled plugin through Codex app-server', async () => {

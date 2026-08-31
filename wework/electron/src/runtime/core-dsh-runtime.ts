@@ -1,6 +1,7 @@
 import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import semver from 'semver'
+import { hashComponentPath } from './component-update-manager.js'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 
 export const CORE_DSH_VERSION = '0.1.1-rc.2'
@@ -47,6 +48,7 @@ interface RuntimeIdentity {
 
 interface ProfileStamp extends RuntimeIdentity {
   managedUiPlugins: boolean
+  corePluginsFingerprint: string
 }
 
 export interface BundledDshRuntime {
@@ -92,17 +94,22 @@ export type CommandRunner = (
 ) => Promise<void>
 
 export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Promise<CoreDshLaunch> {
-  const runtime = await selectCoreDshRuntime(
-    options.runtimeRoot,
-    options.environment.WEWORK_CORE_PLUGIN_ROOT
-  )
+  const pluginsRoot = options.environment.WEWORK_CORE_PLUGIN_ROOT?.trim()
+  if (!pluginsRoot) {
+    throw new Error('WEWORK_CORE_PLUGIN_ROOT is required for the packaged Core DSH runtime')
+  }
+  const runtime = await selectCoreDshRuntime(options.runtimeRoot, pluginsRoot)
   const nodeCommand = options.environment.WEWORK_NODE_PATH?.trim() || 'node'
   const dshHome = resolve(options.dataDirectory, 'dsh-core')
   const managedUiPlugins = !usesEmptyUiPluginProfile(options.environment)
+  const corePluginsFingerprint =
+    options.environment.WEWORK_CORE_PLUGINS_SHA256?.trim() ||
+    (await hashComponentPath(resolve(pluginsRoot)))
   await prepareProfile({
     runtime,
     dshHome,
     managedUiPlugins,
+    corePluginsFingerprint,
   })
   return {
     command: nodeCommand,
@@ -130,12 +137,10 @@ export async function prepareCoreDshLaunch(options: PrepareCoreDshOptions): Prom
 
 export async function selectCoreDshRuntime(
   root: string,
-  configuredPluginsRoot?: string
+  configuredPluginsRoot: string
 ): Promise<CoreDshRuntime> {
   const runtime = await selectBundledDshRuntime(root, 'core', CORE_DSH_VERSION)
-  const pluginsRoot = configuredPluginsRoot?.trim()
-    ? resolve(configuredPluginsRoot)
-    : runtime.pluginsRoot
+  const pluginsRoot = resolve(configuredPluginsRoot)
   const pluginRoots = Object.fromEntries(
     CORE_PLUGIN_PACKAGES.map(([packageName, directory]) => [
       packageName,
@@ -185,6 +190,7 @@ async function prepareProfile(options: {
   runtime: CoreDshRuntime
   dshHome: string
   managedUiPlugins: boolean
+  corePluginsFingerprint: string
 }): Promise<void> {
   const profileRoot = join(options.dshHome, 'profiles', PROFILE_NAME)
   const workspacePath = join(profileRoot, 'pnpm-workspace.yaml')
@@ -193,6 +199,7 @@ async function prepareProfile(options: {
     role: 'core',
     sourceFingerprint: options.runtime.sourceFingerprint,
     managedUiPlugins: options.managedUiPlugins,
+    corePluginsFingerprint: options.corePluginsFingerprint,
   }
   const managedDependencies = managedCoreDependencies(options.runtime, options.managedUiPlugins)
   const managedDependencyNames = Object.keys(managedDependencies)
@@ -280,6 +287,7 @@ async function prepareProfile(options: {
   for (const packageName of managedDependencyNames) {
     const source = options.runtime.pluginRoots[packageName as CorePluginPackage]
     const destination = join(profileRoot, 'node_modules', ...packageName.split('/'))
+    await rm(destination, { recursive: true, force: true })
     await cp(source, destination, { recursive: true })
   }
   await ensureNodePtySpawnHelpersExecutable(profileRoot)
@@ -513,7 +521,8 @@ async function stampMatches(path: string, expected: ProfileStamp): Promise<boole
     return (
       current.dshVersion === expected.dshVersion &&
       current.sourceFingerprint === expected.sourceFingerprint &&
-      current.managedUiPlugins === expected.managedUiPlugins
+      current.managedUiPlugins === expected.managedUiPlugins &&
+      current.corePluginsFingerprint === expected.corePluginsFingerprint
     )
   } catch {
     return false

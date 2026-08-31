@@ -1585,7 +1585,7 @@ P6 出口：
 - Core `runtime.json` 标记 `role: core` 并物理包含 Wework App、Electron Host、
   executor runtime 和 terminal runtime；Workbench 标记 `role: workbench`
   且不包含这些核心插件目录。
-- `pnpm --dir wework/electron verify:core-dsh-host <core-runtime-root>`：Core rc.2
+- `pnpm --dir wework/electron verify:core-dsh-host <core-runtime-root> <core-plugins-root>`：Core rc.2
   通过真实 DSH CLI 安装、私有管道握手、桌面能力调用、executor health/RPC，
   并确认 Renderer boot graph 包含
   `@wegent/dsh-electron-host → @wegent/dsh-app-wework`。

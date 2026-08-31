@@ -4,18 +4,26 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
 from chat_shell.tools.deferred_input import DeferredUserInputExit
 from chat_shell.tools.events import (
+    _extract_card_result,
     _extract_retrieval_summary,
     create_tool_event_handler,
 )
 
 
 class _State:
+    def __init__(self):
+        self.blocks = []
+
+    def add_block(self, block):
+        self.blocks.append(block)
+
     def add_sources(self, sources):
         return None
 
@@ -23,10 +31,56 @@ class _State:
         return None
 
 
+def test_extract_card_result_supports_mcp_text_content():
+    result = _extract_card_result(
+        [{"type": "text", "text": '{"id":"abc","card_type":"video"}'}]
+    )
+
+    assert result == {"id": "abc", "card_type": "video"}
+
+
 class _AgentBuilder:
     def __init__(self, tool_instance):
         self.tool_registry = {"search_docs": tool_instance}
         self.all_tools = [tool_instance]
+
+
+@pytest.mark.asyncio
+async def test_card_result_stores_block_without_tool_name_coupling():
+    emitter = AsyncMock()
+    tool = SimpleNamespace(
+        name="publish_result_card",
+        _wegent_tool_protocol="mcp",
+        _wegent_mcp_server_label="wegent-cards",
+    )
+    agent_builder = _AgentBuilder(tool)
+    agent_builder.tool_registry = {"publish_result_card": tool}
+    state = _State()
+    handler = create_tool_event_handler(state, emitter, agent_builder)
+    handler(
+        "tool_end",
+        {
+            "run_id": "card-run",
+            "tool_use_id": "card-call",
+            "name": "publish_result_card",
+            "data": {
+                "input": {},
+                "output": {
+                    "id": "card-abc",
+                    "card_type": "video_director_generation",
+                    "status": "pending",
+                    "data": {},
+                    "preview_data": {"title": "生成中"},
+                },
+            },
+        },
+    )
+    await handler.wait_pending()
+
+    emitter.block_created.assert_not_awaited()
+    assert state.blocks[0]["id"] == "card-abc"
+    assert state.blocks[0]["type"] == "card"
+    assert state.blocks[0]["card_status"] == "pending"
 
 
 def test_extract_retrieval_summary_preserves_provider_source_pairs():
@@ -81,7 +135,7 @@ def test_streaming_state_aggregates_retrieval_summary_by_provider_pair():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
+async def test_mcp_tool_end_error_emits_failed_status():
     emitter = AsyncMock()
     tool = SimpleNamespace(
         name="search_docs",
@@ -90,12 +144,6 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
     )
     agent_builder = _AgentBuilder(tool)
     state = _State()
-    pending = []
-
-    def run_immediately(coro):
-        pending.append(asyncio.create_task(coro))
-
-    monkeypatch.setattr("chat_shell.tools.events._run_async", run_immediately)
 
     handler = create_tool_event_handler(
         state=state,
@@ -116,7 +164,7 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
         },
     )
 
-    await asyncio.gather(*pending)
+    await handler.wait_pending()
 
     emitter.tool_done.assert_awaited_once_with(
         call_id="mcp_123",
@@ -131,7 +179,7 @@ async def test_mcp_tool_end_error_emits_failed_status(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkeypatch):
+async def test_deferred_interactive_form_tool_end_emits_result_then_exits():
     emitter = AsyncMock()
     tool = SimpleNamespace(
         name="interactive_form_question",
@@ -140,12 +188,6 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkey
     )
     agent_builder = _AgentBuilder(tool)
     state = _State()
-    pending = []
-
-    def run_immediately(coro):
-        pending.append(asyncio.create_task(coro))
-
-    monkeypatch.setattr("chat_shell.tools.events._run_async", run_immediately)
 
     handler = create_tool_event_handler(
         state=state,
@@ -176,7 +218,7 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkey
     assert state.is_deferred_user_input is True
     assert state.deferred_user_input_tool_use_id == "mcp_123"
 
-    await asyncio.gather(*pending)
+    await handler.wait_pending()
 
     emitter.tool_done.assert_awaited_once_with(
         call_id="mcp_123",
@@ -187,4 +229,36 @@ async def test_deferred_interactive_form_tool_end_emits_result_then_exits(monkey
         server_label="wegent-interactive-form-question",
         status="completed",
         error=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_event_handler_waits_for_pending_emissions() -> None:
+    emitter = AsyncMock()
+    release = asyncio.Event()
+
+    async def delayed_delta(**kwargs: Any) -> dict[str, Any]:
+        await release.wait()
+        return kwargs
+
+    emitter.tool_argument_delta.side_effect = delayed_delta
+    handler = create_tool_event_handler(_State(), emitter, object())
+    handler(
+        "tool_argument_delta",
+        {
+            "call_id": "call-1",
+            "arguments_delta": "late",
+        },
+    )
+
+    waiter = asyncio.create_task(handler.wait_pending())
+    await asyncio.sleep(0)
+    assert not waiter.done()
+
+    release.set()
+    await waiter
+    emitter.tool_argument_delta.assert_awaited_once_with(
+        call_id="call-1",
+        arguments_delta="late",
+        arguments_summary=None,
     )

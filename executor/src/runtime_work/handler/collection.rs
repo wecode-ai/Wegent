@@ -724,6 +724,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn upsert_local_task(&self, link: RuntimeTaskLink) {
+        self.project_runtime_link_status(&link);
         self.store.upsert_task(link);
     }
 
@@ -785,6 +786,9 @@ impl RuntimeWorkRpcHandler {
             apply_local_execution_state(link, true, None);
             link.completed_at = None;
         });
+        if let Some(link) = self.local_task_link(&local_task_id) {
+            self.project_runtime_link_status_now(&link);
+        }
         Ok(execution_id)
     }
 
@@ -888,6 +892,9 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status_now(&link);
+        }
         self.schedule_worktree_prune();
         log_executor_event(
             "runtime work local execution force settled",
@@ -928,6 +935,9 @@ impl RuntimeWorkRpcHandler {
             link.status = "cancelled".to_owned();
             apply_local_execution_state(link, false, None);
         });
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status_now(&link);
+        }
         self.schedule_worktree_prune();
         true
     }
@@ -1023,6 +1033,45 @@ impl RuntimeWorkRpcHandler {
             tokio::time::sleep(std::time::Duration::from_millis(ACTIVE_CODEX_TURN_WAIT_MS)).await;
         }
         None
+    }
+
+    pub(super) async fn wait_for_running_side_source_turn(&self, thread_id: &str) {
+        let Some(source) = self.local_task_by_thread_id(thread_id) else {
+            return;
+        };
+        if !self.is_active_local_task(&source.local_task_id)
+            || self.active_codex_turn(&source.local_task_id).is_some()
+        {
+            return;
+        }
+
+        log_executor_event(
+            "runtime side source turn awaiting",
+            &[
+                ("local_task_id", source.local_task_id.clone()),
+                ("thread_id", thread_id.to_owned()),
+            ],
+        );
+        while self.is_active_local_task(&source.local_task_id) {
+            if self.active_codex_turn(&source.local_task_id).is_some() {
+                log_executor_event(
+                    "runtime side source turn ready",
+                    &[
+                        ("local_task_id", source.local_task_id),
+                        ("thread_id", thread_id.to_owned()),
+                    ],
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(ACTIVE_CODEX_TURN_WAIT_MS)).await;
+        }
+        log_executor_event(
+            "runtime side source turn settled before start",
+            &[
+                ("local_task_id", source.local_task_id),
+                ("thread_id", thread_id.to_owned()),
+            ],
+        );
     }
 
     pub(super) fn clear_active_codex_turn(&self, local_task_id: &str, execution_id: u64) {
@@ -1141,6 +1190,9 @@ impl RuntimeWorkRpcHandler {
                 clear_runtime_handle_messages(&mut link.runtime_handle);
             }
         });
+        if let Some(link) = self.local_task_link(local_task_id) {
+            self.project_runtime_link_status_now(&link);
+        }
         if status != "running" {
             self.schedule_worktree_prune();
         }

@@ -10,6 +10,15 @@
   -webkit-app-region: no-drag;
 }
 
+/* While a panel resize drag is active, embedded browser surfaces (<webview>
+   guest content or the iframe fallback) must not intercept pointer events,
+   otherwise document-level drag handlers stop receiving pointermove/pointerup
+   and the resize stalls. */
+body[data-wework-panel-resizing] [data-wework-browser-webview],
+body[data-wework-panel-resizing] [data-testid='workspace-browser-frame'] {
+  pointer-events: none !important;
+}
+
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;

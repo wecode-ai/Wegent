@@ -68,6 +68,84 @@ test('projects executor text, reasoning, usage, and completion into standard ses
   assert.equal(session.events.at(-1).data.reason.kind, 'completed')
 })
 
+test('projects streamed Executor text blocks into standard assistant deltas', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(executorEvent(1, 'response.created', {}))
+  projector.handle(
+    executorEvent(2, 'response.block.created', {
+      block: {
+        id: 'reasoning-1',
+        type: 'thinking',
+        process_kind: 'reasoning',
+        content: 'Inspect',
+        status: 'streaming',
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(3, 'response.block.updated', {
+      block_id: 'reasoning-1',
+      updates: { content_delta: ' logs', status: 'streaming' },
+    })
+  )
+  projector.handle(
+    executorEvent(4, 'response.block.created', {
+      block: {
+        id: 'message-1',
+        type: 'text',
+        process_kind: 'assistant_message',
+        content: 'Fix',
+        status: 'streaming',
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(5, 'response.block.updated', {
+      block_id: 'message-1',
+      updates: { content: 'Fixed', status: 'done' },
+    })
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  const deltas = session.events
+    .filter(
+      event =>
+        event.type === 'assistant/chunk' &&
+        (event.data.chunk.type === 'text-delta' || event.data.chunk.type === 'reasoning-delta')
+    )
+    .map(event => [event.data.chunk.type, event.data.chunk.text])
+  assert.deepEqual(deltas, [
+    ['reasoning-delta', 'Inspect'],
+    ['reasoning-delta', ' logs'],
+    ['text-delta', 'Fix'],
+    ['text-delta', 'ed'],
+  ])
+})
+
+test('ignores non-model workbench blocks in the standard assistant stream', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(
+    executorEvent(1, 'response.block.created', {
+      block: {
+        id: 'tool-1',
+        type: 'tool',
+        content: 'command output',
+        status: 'streaming',
+      },
+    })
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  assert.equal(
+    session.events.some(event => event.type === 'assistant/chunk'),
+    false
+  )
+})
+
 test('keeps parallel executor tasks in independent DSH sessions', () => {
   const sessions = new SessionStoreFixture()
   const projector = new ExecutorSessionProjector(sessions)
@@ -113,6 +191,127 @@ test('uses final response usage when no live token update was emitted', () => {
     outputTokens: 10,
     cacheReadTokens: 20,
     reasoningTokens: 3,
+  })
+})
+
+test('projects per-call Codex usage as cumulative usage within the DSH turn', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(executorEvent(1, 'response.created', {}))
+  projector.handle(
+    executorEvent(2, 'thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: usageBreakdown(1000, 100, 400, 10, 20),
+        last: usageBreakdown(1000, 100, 400, 10, 20),
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(3, 'thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: usageBreakdown(2200, 160, 1200, 20, 25),
+        last: usageBreakdown(1200, 60, 800, 10, 5),
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(4, 'thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: usageBreakdown(3100, 220, 1900, 30, 35),
+        last: usageBreakdown(900, 60, 700, 10, 10),
+      },
+    })
+  )
+  projector.handle(
+    executorEvent(5, 'response.completed', {
+      response: {
+        usage: {
+          input_tokens: 900,
+          output_tokens: 60,
+          input_tokens_details: { cached_tokens: 700 },
+          output_tokens_details: { reasoning_tokens: 10 },
+        },
+      },
+    })
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  const usageEvents = session.events.filter(
+    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
+  )
+  assert.deepEqual(
+    usageEvents.map(event => event.data.chunk.usage),
+    [
+      {
+        inputTokens: 600,
+        outputTokens: 100,
+        cacheReadTokens: 400,
+        cacheWriteTokens: 10,
+        reasoningTokens: 20,
+      },
+      {
+        inputTokens: 1000,
+        outputTokens: 160,
+        cacheReadTokens: 1200,
+        cacheWriteTokens: 20,
+        reasoningTokens: 25,
+      },
+      {
+        inputTokens: 1200,
+        outputTokens: 220,
+        cacheReadTokens: 1900,
+        cacheWriteTokens: 30,
+        reasoningTokens: 35,
+      },
+    ]
+  )
+  assert.deepEqual(
+    session.events.find(event => event.type === 'assistant/message').data.usage,
+    usageEvents.at(-1).data.chunk.usage
+  )
+})
+
+test('keeps the source usage baseline while resetting projected usage for a new turn', () => {
+  const sessions = new SessionStoreFixture()
+  const projector = new ExecutorSessionProjector(sessions)
+
+  projector.handle(executorEvent(1, 'response.created', {}))
+  projector.handle(
+    executorEvent(2, 'thread/tokenUsage/updated', {
+      tokenUsage: {
+        total: usageBreakdown(1000, 100, 400, 10, 20),
+        last: usageBreakdown(1000, 100, 400, 10, 20),
+      },
+    })
+  )
+  projector.handle(executorEvent(3, 'response.completed', {}))
+  projector.handle(executorEvent(4, 'response.created', {}, 'task-1', 'turn-2'))
+  projector.handle(
+    executorEvent(
+      5,
+      'thread/tokenUsage/updated',
+      {
+        tokenUsage: {
+          total: usageBreakdown(1800, 150, 1000, 20, 25),
+          last: usageBreakdown(800, 50, 600, 10, 5),
+        },
+      },
+      'task-1',
+      'turn-2'
+    )
+  )
+
+  const session = sessions.get(executorSessionId('device-1', 'task-1'))
+  const usageEvents = session.events.filter(
+    event => event.type === 'assistant/chunk' && event.data.chunk.type === 'usage'
+  )
+  assert.deepEqual(usageEvents.at(-1).data.chunk.usage, {
+    inputTokens: 200,
+    outputTokens: 50,
+    cacheReadTokens: 600,
+    cacheWriteTokens: 10,
+    reasoningTokens: 5,
   })
 })
 
@@ -170,7 +369,7 @@ class SessionFixture {
   }
 }
 
-function executorEvent(sequence, event, data, taskId = 'task-1') {
+function executorEvent(sequence, event, data, taskId = 'task-1', subtaskId = `${taskId}-turn-1`) {
   return {
     type: 'event',
     protocolVersion: 1,
@@ -178,12 +377,29 @@ function executorEvent(sequence, event, data, taskId = 'task-1') {
     event,
     payload: {
       taskId,
-      subtaskId: `${taskId}-turn-1`,
+      subtaskId,
       deviceId: 'device-1',
       data,
       ...(data.runtimeGeneratedUserMessage
         ? { runtimeGeneratedUserMessage: data.runtimeGeneratedUserMessage }
         : {}),
     },
+  }
+}
+
+function usageBreakdown(
+  inputTokens,
+  outputTokens,
+  cachedInputTokens,
+  cacheWriteInputTokens,
+  reasoningOutputTokens
+) {
+  return {
+    totalTokens: inputTokens + outputTokens,
+    inputTokens,
+    cachedInputTokens,
+    cacheWriteInputTokens,
+    outputTokens,
+    reasoningOutputTokens,
   }
 }

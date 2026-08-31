@@ -116,6 +116,34 @@ e2e/
 └── config/            # Test configuration
 ```
 
+## 钉钉导入 remote 检索验证
+
+`tests/knowledge/dingtalk-import.spec.ts` 的 7 个场景由 CI 的
+`provider-native-chromium` 项目执行。Backend 必须设置 `RAG_RUNTIME_MODE=remote`
+和 `KNOWLEDGE_RUNTIME_URL`，并启动真实 Knowledge Runtime、Qdrant、MySQL 和 Redis。
+Runtime 与 Backend 共用数据库、`INTERNAL_SERVICE_TOKEN` 和 `GIT_TOKEN_AES_KEY/IV`，
+通过 `KNOWLEDGE_RUNTIME_DATABASE_URL` 和 `KNOWLEDGE_RUNTIME_BACKEND_INTERNAL_URL` 连接。
+
+测试通过真实 API 创建并清理专用 Embedding Model、Retriever 和各场景知识库，
+知识库显式绑定检索配置，不依赖管理员预先配置。只模拟钉钉 MCP 和外部 embedding HTTP
+接口；导入任务、remote 索引、Qdrant 存储及分块读取均走真实链路。
+
+格式可选性单独验证：PDF 可选，普通表格和 AI 表格缺少各自 MCP 配置时不可选并展示配置入口。
+批量导入目录固定为三篇在线文档；文件下载契约由后端 Provider 测试覆盖，
+本套 E2E 不覆盖 PDF 下载到检索的完整链路。
+
+本地服务就绪后，在 `frontend` 目录执行：
+
+```bash
+E2E_QDRANT_URL=http://localhost:6333 \
+E2E_KNOWLEDGE_RUNTIME_URL=http://localhost:8200 \
+pnpm exec playwright test e2e/tests/knowledge/dingtalk-import.spec.ts \
+  --project=provider-native-chromium --workers=1
+```
+
+非默认端口另设 `E2E_BASE_URL`、`E2E_API_URL` 和 `MOCK_MODEL_SERVER_URL`。
+模拟 embedding 返回确定性的 32 维向量，只验证检索基础设施契约，不评估语义检索质量。
+
 ## Agent Conversation Regression
 
 `tests/tasks/agent-conversation-regression.spec.ts` covers these backend-integrated task flows:
@@ -212,10 +240,13 @@ workflow job, uploads it as `frontend-next-build`, and restores that artifact in
 each browser/API shard and in the executor E2E job before starting the generated
 Next.js standalone server.
 
-The executor regression job also consumes `executor-e2e-runtime`, which is built
-once by `build-executor-e2e-runtime`. That artifact contains the
-`wegent/e2e-claudecode-executor:latest` Docker image and the extracted local
-executor binary used by device-mode coverage.
+The executor regression job consumes a content-addressed Executor image keyed by
+the Dockerfile, Rust sources, lockfile, and shared assets. Internal pull requests
+publish that immutable image once, so merge-queue validation can pull the exact
+same build input without recompiling it. The merge-queue job still extracts the
+local executor binary from that image and runs the full device-mode and Docker
+executor coverage against its own merged source tree. Fork pull requests use a
+workflow artifact instead because their tokens cannot publish packages.
 
 The workflow caches Python virtualenvs, frontend `node_modules`, and the executor
 job's Claude Code CLI. Playwright browsers and their operating-system

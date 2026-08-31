@@ -127,10 +127,9 @@ def wrap_tool_with_protection(
                 if arun_accepts_config and "config" not in kwargs:
                     kwargs["config"] = None
 
-                result = await asyncio.wait_for(
+                return await asyncio.wait_for(
                     original_arun(*args, **kwargs), timeout=timeout
                 )
-                return result
             return _format_error(f"Error: Tool {tool.name} has no async implementation")
         except asyncio.TimeoutError:
             error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { adminApis, type AdminPublicBot } from '@/apis/admin'
+import { adminApis, type AdminPublicBot, type AdminPublicModel } from '@/apis/admin'
 import {
   publicResourceApis,
   transformPublicBotToBot,
@@ -14,6 +14,7 @@ jest.mock('@/apis/admin', () => ({
     createPublicBot: jest.fn(),
     updatePublicBot: jest.fn(),
     getPublicBots: jest.fn(),
+    getPublicModels: jest.fn(),
   },
 }))
 
@@ -47,6 +48,33 @@ const adminPublicBot: AdminPublicBot = {
   default_knowledge_base_refs: [],
 }
 
+const publicVideoModel: AdminPublicModel = {
+  id: 20,
+  name: 'seedance-2.5',
+  namespace: 'default',
+  display_name: 'Seedance 2.5',
+  json: {
+    metadata: {
+      name: 'seedance-2.5',
+      namespace: 'default',
+      displayName: 'Seedance 2.5',
+    },
+    spec: {
+      modelType: 'video',
+      modelConfig: {
+        env: {
+          model: 'seedance',
+          model_id: 'seedance-2.5',
+        },
+      },
+    },
+  },
+  is_active: true,
+  is_advanced: false,
+  created_at: '2026-01-01T00:00:00Z',
+  updated_at: '2026-01-01T00:00:00Z',
+}
+
 describe('publicResourceApis', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -57,6 +85,17 @@ describe('publicResourceApis', () => {
 
     expect(bot.preload_skills).toEqual(['repo-reader'])
     expect(bot.preload_skill_refs).toEqual(adminPublicBot.preload_skill_refs)
+  })
+
+  it('preserves the Bot planning LLM reference from admin responses', () => {
+    const bot = transformPublicBotToBot({
+      ...adminPublicBot,
+      secondary_model_name: 'planning-llm',
+      secondary_model_namespace: 'default',
+    })
+
+    expect(bot.secondary_model_name).toBe('planning-llm')
+    expect(bot.secondary_model_namespace).toBe('default')
   })
 
   it('forwards preload skill fields when creating public bots', async () => {
@@ -83,5 +122,47 @@ describe('publicResourceApis', () => {
         preload_skill_refs: skillRefs,
       })
     )
+  })
+
+  it('forwards the planning LLM when creating public video bots', async () => {
+    const formData: PublicBotFormData = {
+      name: 'test-video-bot',
+      namespace: 'default',
+      shell_name: 'Chat',
+      agent_config: {
+        bind_model: 'seedance-2.5',
+        bind_model_type: 'public',
+        bind_model_namespace: 'default',
+      },
+      secondary_model_name: 'planning-llm',
+      secondary_model_namespace: 'default',
+    }
+    ;(adminApis.createPublicBot as jest.Mock).mockResolvedValue(adminPublicBot)
+
+    await publicResourceApis.createPublicBot(formData)
+
+    expect(adminApis.createPublicBot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        secondary_model_name: 'planning-llm',
+        secondary_model_namespace: 'default',
+      })
+    )
+  })
+
+  it('returns public video models for the video category', async () => {
+    ;(adminApis.getPublicModels as jest.Mock).mockResolvedValue({
+      total: 1,
+      items: [publicVideoModel],
+    })
+
+    const models = await publicResourceApis.getPublicModels(undefined, 'video')
+
+    expect(models).toEqual([
+      expect.objectContaining({
+        name: 'seedance-2.5',
+        displayName: 'Seedance 2.5',
+        modelCategoryType: 'video',
+      }),
+    ])
   })
 })

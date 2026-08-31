@@ -14,7 +14,7 @@ const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
-  'The completed response contains one long SQL block.',
+  'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
   ...Array.from(
@@ -23,6 +23,12 @@ const LONG_CODE_COMPLETION = [
       `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
   ),
   '```',
+  '',
+  ...Array.from(
+    { length: 24 },
+    (_, index) =>
+      `### Rapid scroll section ${index + 1}\n\n${`Visible fallback content ${index + 1} keeps the conversation painted during rapid scrolling. `.repeat(18)}`
+  ),
 ].join('\n')
 const LONG_CODE_REASONING = Array.from(
   { length: 180 },
@@ -391,6 +397,29 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
   throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
 }
 
+async function waitForRuntimeAssistantText(control, address, expectedText, timeoutMs) {
+  const startedAt = Date.now()
+  let latestText = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    const runtimeMessages = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(address),
+      })
+    )
+    latestText =
+      runtimeMessages
+        .filter(message => message.role === 'assistant')
+        .flatMap(message => message.blocks ?? [])
+        .filter(block => block.type === 'text')
+        .at(-1)?.content ?? ''
+    if (latestText === expectedText) return latestText
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `The runtime conversation cache did not converge to the streamed text; received ${latestText.length} of ${expectedText.length} characters`
+  )
+}
+
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
@@ -702,6 +731,7 @@ export function createDesktopScenario({
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
+  let resolvePartialWritten
   let resolveRequest
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -720,6 +750,9 @@ export function createDesktopScenario({
   })
   const appendWritten = new Promise(resolve => {
     resolveAppendWritten = resolve
+  })
+  const partialWritten = new Promise(resolve => {
+    resolvePartialWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -761,6 +794,19 @@ export function createDesktopScenario({
       'The long completed code block rendered syntax token nodes'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    const rapidScrollSamples = JSON.parse(
+      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+        value: JSON.stringify({
+          contentSelector: '[data-markdown-window-chunk] > *',
+          ratios: [0.75, 0.5, 0.25],
+        }),
+      })
+    )
+    assert.equal(
+      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      true,
+      `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
@@ -931,7 +977,14 @@ export function createDesktopScenario({
         })
         response.flushHeaders()
         response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
+        let partialOffset = 0
+        for (const chunk of PARTIAL_TEXT.match(/[\s\S]{1,24}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, partialOffset)))
+          response.flush?.()
+          partialOffset += chunk.length
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        resolvePartialWritten()
         await appendRelease
         await new Promise(resolve => setTimeout(resolve, 100))
         let appendOffset = PARTIAL_TEXT.length
@@ -1467,6 +1520,29 @@ export function createDesktopScenario({
         'The latest user message after sending'
       )
       releaseStart()
+      await partialWritten
+      const runtimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      const runtimePartial = await waitForRuntimeAssistantText(
+        control,
+        {
+          deviceId: runtimeTask.deviceId,
+          taskId: runtimeTask.taskId,
+        },
+        PARTIAL_TEXT,
+        uiTimeoutMs
+      )
+      assert.equal(
+        runtimePartial,
+        PARTIAL_TEXT,
+        'The runtime conversation cache lost or reordered streamed text before rendering'
+      )
+      const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+      assert.equal(
+        immediatelyRenderedPartial.replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      )
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,

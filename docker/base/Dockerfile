@@ -9,14 +9,14 @@ RUN dnf upgrade -y \
     nspr nss nss-util atk at-spi2-atk cups-libs libxcb libxkbcommon at-spi2-core \
     libX11 libXcomposite libXdamage libXext libXfixes libXrandr mesa-libgbm cairo pango alsa-lib libdrm \
     # OCR dependencies for scanned PDF support
-    tesseract tesseract-langpack-chi-sim tesseract-langpack-eng poppler-utils \
+    tesseract tesseract-langpack-chi_sim tesseract-langpack-eng poppler-utils \
  && curl -fsSL https://rpm.nodesource.com/setup_22.x | bash - \
  && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip \
- && npm install -g @anthropic-ai/claude-code@2.1.199 \
+ && npm install -g @anthropic-ai/claude-code@2.1.247 \
  && npm cache clean --force \
  && dnf clean all \
  && yum clean all \
@@ -31,16 +31,26 @@ ENV PATH="/root/.local/bin:${PATH}"
 RUN pip install playwright \
     && playwright install chromium
 
-# Install SQLite 3.50.4 (required by executor)
-RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
-    tar -xvf sqlite-autoconf-3500400.tar.gz && \
-    cd sqlite-autoconf-3500400 && \
-    ./configure --prefix=/usr/local && \
-    make -j$(nproc) && \
-    make install && \
-    cd .. && \
-    rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz && \
-    cp -f /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6
+# Install a standalone SQLite CLI for Agno image validation. Keep AlmaLinux's
+# RPM-managed sqlite-libs unchanged because dnf and rpm depend on it.
+ARG SQLITE_VERSION=3.50.4
+ARG SQLITE_AUTOCONF_VERSION=3500400
+ARG SQLITE_SHA256=a3db587a1b92ee5ddac2f66b3edb41b26f9c867275782d46c3a088977d6a5b18
+RUN set -eux; \
+    archive="sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}.tar.gz"; \
+    source_dir="sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}"; \
+    wget "https://www.sqlite.org/2025/${archive}"; \
+    echo "${SQLITE_SHA256}  ${archive}" | sha256sum -c -; \
+    tar -xzf "${archive}"; \
+    cd "${source_dir}"; \
+    ./configure --disable-shared; \
+    make -j"$(nproc)" sqlite3; \
+    install -m 0755 sqlite3 /usr/local/bin/sqlite3; \
+    cd ..; \
+    rm -rf "${source_dir}" "${archive}"; \
+    sqlite3 --version | grep -q "^${SQLITE_VERSION} "; \
+    ! ldd /usr/local/bin/sqlite3 | grep -q libsqlite3; \
+    rpm -V sqlite-libs
 ENV PATH="/usr/local/bin:${PATH}"
 
 # claude code mode: bypassPermissions

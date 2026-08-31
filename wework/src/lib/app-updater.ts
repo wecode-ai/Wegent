@@ -98,15 +98,12 @@ export async function downloadPendingWeworkUpdate(
   }
 }
 
-export async function installPendingWeworkUpdate(
-  onProgress: (progress: WeworkUpdateDownloadProgress) => void
-): Promise<void> {
+export async function installDownloadedWeworkUpdate(): Promise<void> {
   if (!pendingUpdate) {
     throw new Error('No pending Wework update is available.')
   }
 
   try {
-    await pendingUpdate.download(onProgress)
     await pendingUpdate.install()
   } catch (error) {
     pendingUpdate = null

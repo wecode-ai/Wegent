@@ -19,8 +19,7 @@ export function reduceRuntimeTaskLifecycle(
         terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
-      const snapshotConfirmsAutonomousTurn =
-        isRuntimeTaskConfirmedActive(event.task) && state.turnOutcome === null
+      const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
       const snapshotRevivesSettledTaskWithoutIntent =
         Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
         isRuntimeTaskConfirmedActive(event.task) &&

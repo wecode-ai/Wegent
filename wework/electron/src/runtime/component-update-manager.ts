@@ -6,7 +6,14 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import * as tar from 'tar'
 
-export const MANAGED_COMPONENT_IDS = ['coreDsh', 'weworkCorePlugins', 'executor', 'codex'] as const
+export const MANAGED_COMPONENT_IDS = [
+  'coreDsh',
+  'weworkCorePlugins',
+  'bundledPlugins',
+  'executor',
+  'codex',
+  'dws',
+] as const
 
 export type ManagedComponentId = (typeof MANAGED_COMPONENT_IDS)[number]
 
@@ -57,8 +64,11 @@ interface ComponentState {
 export interface ComponentPaths {
   coreDsh: string
   weworkCorePlugins: string
+  bundledPlugins: string
   executor: string
   codex: string
+  dws: string
+  contentSha256: Record<ManagedComponentId, string>
 }
 
 export interface ComponentUpdateManagerOptions {
@@ -216,24 +226,40 @@ export class ComponentUpdateManager {
     packaged: PackagedComponentManifest,
     current?: ComponentSet
   ): Promise<ComponentPaths> {
-    const entries = await Promise.all(
+    const resolved = await Promise.all(
       MANAGED_COMPONENT_IDS.map(async id => {
         const packagedComponent = packaged.components[id]
         const active = current?.components[id]
+        const contentSha256 = active?.contentSha256 ?? packagedComponent.sha256
+        let path: string
         if (!active || active.contentSha256 === packagedComponent.sha256) {
-          const path = join(this.resourcesRoot, packagedComponent.path)
+          path = join(this.resourcesRoot, packagedComponent.path)
           await stat(path)
-          return [id, path] as const
+        } else {
+          const root = this.componentRoot(id, active.archiveSha256)
+          path = active.entryPath === '.' ? root : join(root, active.entryPath)
+          if (!(await componentMatches(path, active.contentSha256))) {
+            throw new Error(`Managed component checksum mismatch: ${id}`)
+          }
         }
-        const root = this.componentRoot(id, active.archiveSha256)
-        const path = active.entryPath === '.' ? root : join(root, active.entryPath)
-        if (!(await componentMatches(path, active.contentSha256))) {
-          throw new Error(`Managed component checksum mismatch: ${id}`)
-        }
-        return [id, path] as const
+        return { id, path, contentSha256 }
       })
     )
-    return Object.fromEntries(entries) as unknown as ComponentPaths
+    const paths = {} as Record<ManagedComponentId, string>
+    const fingerprints = {} as Record<ManagedComponentId, string>
+    for (const entry of resolved) {
+      paths[entry.id] = entry.path
+      fingerprints[entry.id] = entry.contentSha256
+    }
+    return {
+      coreDsh: paths.coreDsh,
+      weworkCorePlugins: paths.weworkCorePlugins,
+      bundledPlugins: paths.bundledPlugins,
+      executor: paths.executor,
+      codex: paths.codex,
+      dws: paths.dws,
+      contentSha256: fingerprints,
+    }
   }
 
   private async ensureComponent(id: ManagedComponentId, component: RemoteComponent): Promise<void> {
@@ -241,7 +267,6 @@ export class ComponentUpdateManager {
     const componentPath = component.entryPath === '.' ? target : join(target, component.entryPath)
     if (await componentMatches(componentPath, component.contentSha256)) return
 
-    validateDownloadUrl(component.downloadUrl, this.updateBaseUrl)
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })
     const archive = `${target}.${process.pid}.tar.gz`
     const temporary = `${target}.${process.pid}.tmp`
@@ -379,23 +404,6 @@ function validateState(input: unknown): ComponentState {
     return { schemaVersion: 1 }
   }
   return input as unknown as ComponentState
-}
-
-function validateDownloadUrl(downloadUrl: string, updateBaseUrl: string): void {
-  const download = new URL(downloadUrl)
-  const base = new URL(`${updateBaseUrl}/`)
-  const loopbackBase =
-    base.protocol === 'http:' && (base.hostname === '127.0.0.1' || base.hostname === 'localhost')
-  if (
-    download.protocol !== base.protocol ||
-    (!loopbackBase && download.protocol !== 'https:') ||
-    download.origin !== base.origin
-  ) {
-    throw new Error('Component download URL is outside the configured updater origin')
-  }
-  if (!download.pathname.startsWith(base.pathname)) {
-    throw new Error('Component download URL is outside the configured updater path')
-  }
 }
 
 async function componentMatches(path: string, expectedSha256: string): Promise<boolean> {

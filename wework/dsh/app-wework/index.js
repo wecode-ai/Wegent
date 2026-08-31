@@ -38,28 +38,8 @@ const MIME_TYPES = {
 
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
-  const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
-  const developmentReload = injectDevelopmentReload('', process.env, fileBuildId(indexPath))
   ctx.on('webserver/index-inject', table => {
-    table.push(
-      {
-        kind: 'html',
-        placement: 'head',
-        html: assets.head,
-      },
-      {
-        kind: 'html',
-        placement: 'body',
-        html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
-      }
-    )
-    if (developmentReload) {
-      table.push({
-        kind: 'html',
-        placement: 'body',
-        html: developmentReload,
-      })
-    }
+    table.push(...weworkIndexInjection(process.env, indexPath))
   })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   if (!backendUrl) return
@@ -177,6 +157,31 @@ export function injectDevelopmentReload(html, environment, buildId) {
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
 }
 
+export function weworkIndexInjection(environment = process.env, appIndexPath = indexPath) {
+  const assets = weworkIndexAssets(readFileSync(appIndexPath, 'utf8'))
+  const developmentReload = injectDevelopmentReload('', environment, fileBuildId(appIndexPath))
+  const injection = [
+    {
+      kind: 'html',
+      placement: 'head',
+      html: assets.head,
+    },
+    {
+      kind: 'html',
+      placement: 'body',
+      html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
+    },
+  ]
+  if (developmentReload) {
+    injection.push({
+      kind: 'html',
+      placement: 'body',
+      html: developmentReload,
+    })
+  }
+  return injection
+}
+
 function fileBuildId(path) {
   const metadata = statSync(path, { bigint: true })
   return `${metadata.mtimeNs}:${metadata.size}`
@@ -189,12 +194,13 @@ export function injectRuntimeConfig(html, environment = process.env, windowLabel
 
 export function runtimeConfigScript(environment = process.env, windowLabel = 'main') {
   const backendUrl = resolveBackendUrl(environment)
+  const socketUrl = resolveSocketUrl(environment)
   const runtimeConfig = {
     appBasePath: APP_BASE_PATH,
     desktopHost: 'electron',
     desktopWindowLabel: windowLabel,
     apiBaseUrl: backendUrl ? API_PROXY_PATH : `${APP_BASE_PATH}/api`,
-    socketBaseUrl: '',
+    socketBaseUrl: socketUrl ?? '',
     socketPath: SOCKET_PROXY_PATH,
     wegentBackendUrl: backendUrl ?? '',
     runtimeMode: 'local-first',
@@ -311,6 +317,22 @@ export function resolveBackendUrl(environment) {
   const segments = url.pathname.split('/').filter(Boolean)
   const apiIndex = segments.indexOf('api')
   url.pathname = apiIndex >= 0 ? `/${segments.slice(0, apiIndex).join('/')}` : url.pathname
+  url.search = ''
+  url.hash = ''
+  return url.toString().replace(/\/+$/, '')
+}
+
+export function resolveSocketUrl(environment) {
+  const value = [
+    environment.WEWORK_SOCKET_URL,
+    environment.WEGENT_SOCKET_URL,
+    environment.VITE_WEGENT_SOCKET_URL,
+  ].find(candidate => typeof candidate === 'string' && candidate.trim())
+  if (!value) return null
+  const url = new URL(value.trim())
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)) {
+    throw new Error(`Unsupported Wework socket URL protocol: ${url.protocol}`)
+  }
   url.search = ''
   url.hash = ''
   return url.toString().replace(/\/+$/, '')

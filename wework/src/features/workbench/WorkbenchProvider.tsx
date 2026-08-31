@@ -31,12 +31,10 @@ import {
 } from '@/desktop/runtimeWorkSync'
 import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import { createLocalCodexPluginApi, peekLocalCodexPluginsReadState } from '@/api/local/codexPlugins'
-import type { TaskExecutionStatus } from '@/api/deliveries'
 import { createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import { listWegentInstalledConnectorApps } from '@/api/cloud/connectorApps'
 import { startLocalRobotQueueDispatcher } from '@/features/todo/localRobotQueueDispatcher'
-import { publishProjectSpaceTaskContextChanged } from '@/features/todo/projectSpaceSelection'
 import {
   getComposerApps,
   publishComposerApps,
@@ -84,6 +82,7 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { useRuntimeTaskReminders } from './runtimeTaskReminders'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
 import { WorkbenchContext, WorkbenchPaneContext } from './useWorkbench'
+import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   buildTrialTemplatePrompt,
   consumePluginTrial,
@@ -151,7 +150,6 @@ import {
   createDefaultWorkbenchServices,
   createExecutorClientForWorkbenchServices,
 } from './workbenchServices'
-import { projectTaskTrackingApi } from './projectTaskTracking'
 import {
   consumeWorkspaceTabTransfer,
   publishWorkspaceTabTransferState,
@@ -259,7 +257,6 @@ export function WorkbenchProvider({
     [canSyncRuntimeTaskLifecycle, sharedLifecycleStore]
   )
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot(sharedLifecycleStore)
-  const trackingStatusSignaturesRef = useRef(new Map<string, string>())
   const trackingTitleSignaturesRef = useRef(new Map<string, string>())
   const runtimeTaskSettleSyncGenerationRef = useRef(new Map<string, number>())
   const runtimeTaskSettleSyncGenerationCounterRef = useRef(0)
@@ -902,6 +899,7 @@ export function WorkbenchProvider({
     persistSelection: !state.currentRuntimeTask && !usesLocalProjectScopedSelection,
     selectionConfig: modelSelectionConfig,
     defaultSelectionConfig: defaultModelSelectionConfig,
+    fallbackWhenConfiguredModelUnavailable: !state.currentRuntimeTask,
     selectionReady: !state.isBootstrapping,
     onSelectionChange: persistNewChatModelSelection,
     onSelectionBlocked: handleBlockedModelSelection,
@@ -1904,37 +1902,6 @@ export function WorkbenchProvider({
         })
       })
   })
-  const syncProjectTaskExecutionStatus = useStableEvent(
-    (address: RuntimeTaskAddress, executionStatus: TaskExecutionStatus) => {
-      const trackedAddress = lifecycleStore.getTask(address)?.address ?? address
-      const trackingApi = projectTaskTrackingApi(resolvedServices, trackedAddress)
-      if (!trackingApi) return
-      const key = runtimeConversationKey(trackedAddress)
-      if (trackingStatusSignaturesRef.current.get(key) === executionStatus) return
-      trackingStatusSignaturesRef.current.set(key, executionStatus)
-      void trackingApi
-        .updateTaskTrackingStatus(trackedAddress, executionStatus)
-        .then(result => {
-          if (result === null) {
-            if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
-              trackingStatusSignaturesRef.current.delete(key)
-            }
-            return
-          }
-          publishProjectSpaceTaskContextChanged(trackedAddress)
-        })
-        .catch(error => {
-          if (trackingStatusSignaturesRef.current.get(key) === executionStatus) {
-            trackingStatusSignaturesRef.current.delete(key)
-          }
-          console.warn('[Wework] Failed to synchronize project task execution status', {
-            address: trackedAddress,
-            executionStatus,
-            error,
-          })
-        })
-    }
-  )
   const updateCanonicalRuntimeContextUsage = useStableEvent(
     (address: RuntimeTaskAddress, usage: RuntimeContextUsage) => {
       const currentAddress =
@@ -1960,7 +1927,6 @@ export function WorkbenchProvider({
           onAssistantStart: (address, turnId) => {
             settleRuntimeConversationAcceptedMessage(address)
             markRuntimeConversationAssistantStarted(address)
-            syncProjectTaskExecutionStatus(address, 'running')
             aiGenerationTelemetry.onAssistantStart(address, turnId)
           },
           onAssistantFirstToken: (address, turnId) => {
@@ -1971,7 +1937,6 @@ export function WorkbenchProvider({
           },
           onAssistantSettled: (address, turnId, outcome) => {
             settleRuntimeConversationSubagents(address)
-            syncProjectTaskExecutionStatus(address, outcome)
             aiGenerationTelemetry.onAssistantSettled(
               address,
               turnId,
@@ -2020,7 +1985,6 @@ export function WorkbenchProvider({
       lifecycleStore,
       resolvedServices.chatStream,
       settleCanonicalRuntimeGuidance,
-      syncProjectTaskExecutionStatus,
       syncRuntimeGoalSnapshot,
       syncRuntimeTaskSnapshot,
       syncRuntimeTaskUntilExecutorSettles,

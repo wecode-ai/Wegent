@@ -14,6 +14,7 @@ export interface CreateTeamRequest {
   bots?: TeamBot[]
   workflow?: Record<string, unknown>
   bind_mode?: TaskType[]
+  mode_spec?: Team['mode_spec']
   is_active?: boolean
   namespace?: string // Group namespace, defaults to 'default' for personal teams
   icon?: string // Icon ID from preset icon library

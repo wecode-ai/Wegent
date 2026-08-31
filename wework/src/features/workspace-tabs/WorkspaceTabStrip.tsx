@@ -1,22 +1,11 @@
-import {
-  AlarmClock,
-  Bot,
-  Boxes,
-  CheckSquare2,
-  Cloud,
-  CloudOff,
-  Columns3,
-  Pin,
-  Plug,
-  Plus,
-  X,
-} from 'lucide-react'
+import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type DragEvent,
   type RefObject,
 } from 'react'
@@ -30,13 +19,14 @@ import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
-import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
+import { defaultContentRoute, type WorkspaceTab, type WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
 import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
-interface MenuPosition {
+type MenuPosition = CSSProperties & {
   left: number
   top: number
 }
@@ -54,17 +44,11 @@ interface WorkspaceTabStripProps {
 function tabKindIcon(tab: WorkspaceTab, unavailable = false) {
   const pathname = tab.contentRoute.split('?', 1)[0]
   const routeIcon = resolveDshRoute(pathname)?.icon
-  if (routeIcon === 'applications' || pathname.startsWith('/app/harness-')) {
+  if (pathname.startsWith('/app/harness-')) {
     return <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
-  if (routeIcon === 'alarm-clock') {
-    return <AlarmClock aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
-  }
-  if (routeIcon === 'cloud') {
-    return <Cloud aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
-  }
-  if (routeIcon === 'plug') {
-    return <Plug aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
+  if (routeIcon !== undefined) {
+    return <DshIcon name={routeIcon} aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
   }
   if (tab.kind === 'board') {
     return <Columns3 aria-hidden="true" className="h-4 w-4 shrink-0 opacity-75" />
@@ -182,7 +166,15 @@ function WorkspaceTabButton({
             onUnavailableAgent()
             return
           }
-          selectTab(tab.id)
+          selectTab(
+            tab.id,
+            !active && tab.fixed && tab.kind === 'board'
+              ? {
+                  title: t('workbench.workspace_tab_board', '工作空间'),
+                  contentRoute: defaultContentRoute('board'),
+                }
+              : undefined
+          )
         }}
         onContextMenu={event => {
           event.preventDefault()

@@ -158,24 +158,53 @@ describe('bundled plugin resources', () => {
       resolve(process.cwd(), 'electron/electron-builder.config.cjs'),
       'utf8'
     )
+    const packageAssetsScript = readFileSync(
+      resolve(process.cwd(), 'electron/scripts/prepare-package-assets.mjs'),
+      'utf8'
+    )
 
     expect(workflow).toContain('pnpm --filter wework build:release')
     expect(packageManifest.scripts['build:release']).toContain('pnpm --dir electron build:release')
-    expect(builderConfig).toContain("appId: 'io.wecode.wework'")
-    expect(builderConfig).toContain("productName: 'WeWork'")
-    expect(builderConfig).toContain("executableName: 'wework'")
+    expect(packageAssetsScript).toMatch(
+      /WEWORK_SOURCE_SHA\?\.trim\(\)\s*\|\|\s*process\.env\.GITHUB_SHA\?\.trim\(\)/
+    )
+    expect(builderConfig).toContain('appId: identity.identifier')
+    expect(builderConfig).toContain('productName: identity.productName')
+    expect(builderConfig).toContain('executableName: identity.executableName')
+    expect(builderConfig).toContain('weworkAppId: identity.identifier')
     expect(workflow).toMatch(
       /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )
     expect(workflow).toContain('security list-keychains -d user -s')
     expect(workflow).toContain('generate-desktop-update-manifests.mjs')
+    expect(workflow).toContain('plan-desktop-release.mjs')
+    expect(workflow).not.toContain('prepare-rolling-desktop-installers.mjs')
+    expect(workflow).toContain('CURRENT_SOURCE_REF')
+    expect(workflow).toContain('RELEASE_KIND')
     expect(workflow).toContain('TAURI_SIGNING_PRIVATE_KEY')
     expect(workflow).toContain('release-manifests/*')
-    expect(workflow).toContain("! -name 'WeworkComponent_*.tar.gz'")
+    expect(workflow).toContain("! -name 'WeworkComponent_coreDsh_*.tar.gz'")
+    expect(workflow).toContain("! -name 'WeworkComponent_codex_*.tar.gz'")
+    expect(workflow).toContain("! -name 'WeworkComponent_dws_*.tar.gz'")
     expect(workflow).toContain('Reusing immutable component asset')
     expect(workflow).toContain('components-${channel}-linux-x64.json')
+    expect(
+      readFileSync(
+        resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
+        'utf8'
+      )
+    ).toContain("'bundledPlugins'")
+    expect(
+      readFileSync(
+        resolve(process.cwd(), 'electron/src/runtime/component-update-manager.ts'),
+        'utf8'
+      )
+    ).toContain("'dws'")
     expect(workflow).toMatch(
       /gh release upload wework-updater "\$component_asset"\s+echo "\$component_name"/
+    )
+    expect(workflow).toMatch(
+      /if \[\[ "\$RELEASE_KIND" == "component" \]\]; then[\s\S]*release-manifests\/components-\$\{channel\}-macos-arm64\.json/
     )
     expect(workflow).toMatch(
       /- name: Commit Wework version files[\s\S]*?GH_TOKEN: \$\{\{ steps\.release-app-token\.outputs\.token \}\}/
@@ -186,11 +215,23 @@ describe('bundled plugin resources', () => {
     expect(workflow).toMatch(
       /- name: Resolve previous Wework release[\s\S]*?resolve-previous-release-tag\.mjs/
     )
-    expect(workflow).toContain('PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}')
+    expect(workflow).toContain(
+      "PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}"
+    )
+    expect(workflow).toMatch(
+      /- name: Upload formal release assets\s+env:[\s\S]*find release-assets/
+    )
+    expect(workflow.indexOf('- name: Publish version release')).toBeLessThan(
+      workflow.indexOf('- name: Publish rolling update channels')
+    )
+    expect(workflow.indexOf('- name: Publish rolling update channels')).toBeLessThan(
+      workflow.indexOf('- name: Promote stable release to latest')
+    )
     expect(workflow).toMatch(/gh release edit "\$RELEASE_TAG"[\s\S]*--target "\$RELEASE_SHA"/)
     expect(installerHooks).toContain('Software\\you\\WeWork')
     expect(installerHooks).toContain('InstallLocation')
     expect(installerHooks).toContain('${GetOptions} $R0 "/P"')
+    expect(installerHooks).toContain('$R0\\${APP_EXECUTABLE_FILENAME}')
   })
 
   test('publishes packaged Electron artifacts for all desktop platforms', () => {

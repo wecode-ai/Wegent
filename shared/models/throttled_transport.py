@@ -151,10 +151,28 @@ class ThrottledTransport(EventTransport):
         self._transport = transport
         self._config = config or ThrottleConfig()
 
-        # Buffer: grouped by (task_id, subtask_id, event_type)
+        # Buffer: grouped by task, event type, and optional logical stream ID.
         self._buffers: Dict[tuple, List[dict]] = {}
         self._last_send_times: Dict[tuple, float] = {}
         self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _buffer_key(event: dict) -> tuple:
+        """Build a buffer key without mixing parallel tool argument streams."""
+        event_type = event["event_type"]
+        stream_id = None
+        if event_type in {
+            "response.function_call_arguments.delta",
+            "response.mcp_call_arguments.delta",
+        }:
+            data = event.get("data", {})
+            stream_id = data.get("call_id") or data.get("item_id")
+        return (
+            event["task_id"],
+            event["subtask_id"],
+            event_type,
+            stream_id,
+        )
 
     async def send(
         self,
@@ -219,13 +237,13 @@ class ThrottledTransport(EventTransport):
         Returns:
             Transport-specific result or buffered status
         """
-        key = (event["task_id"], event["subtask_id"], event["event_type"])
+        key = self._buffer_key(event)
 
         async with self._lock:
             await self._flush_task_buffers(
                 event["task_id"],
                 event["subtask_id"],
-                exclude_event_type=event["event_type"],
+                exclude_key=key,
             )
 
             interval = self._config.get_interval(event["event_type"])
@@ -234,7 +252,7 @@ class ThrottledTransport(EventTransport):
             if key not in self._buffers:
                 self._buffers[key] = []
                 self._last_send_times[key] = 0
-                logger.info(
+                logger.debug(
                     f"[ThrottledTransport] Initialized buffer for key={key}, "
                     f"interval={interval}s"
                 )
@@ -249,7 +267,7 @@ class ThrottledTransport(EventTransport):
             current_time = time.time()
             time_since_last = current_time - self._last_send_times[key]
 
-            logger.info(
+            logger.debug(
                 f"[ThrottledTransport] Event added to buffer: key={key}, "
                 f"buffer_count={buffer_count}, buffer_size={buffer_size}, "
                 f"time_since_last={time_since_last:.3f}s, interval={interval}s"
@@ -262,11 +280,6 @@ class ThrottledTransport(EventTransport):
             )
 
             if should_send_now:
-                logger.info(
-                    f"[ThrottledTransport] Flushing buffer: key={key}, "
-                    f"reason={'buffer_size_exceeded' if buffer_size >= self._config.max_buffer_size else 'interval_exceeded'}, "
-                    f"buffer_count={buffer_count}"
-                )
                 result = await self._flush_buffer(key)
                 # Also flush any other expired buffers while we have the lock
                 # This ensures streaming works even when asyncio tasks can't run
@@ -295,7 +308,7 @@ class ThrottledTransport(EventTransport):
                 continue
 
             # Get interval for this event type
-            event_type = buffer_key[2]  # key is (task_id, subtask_id, event_type)
+            event_type = buffer_key[2]
             interval = self._config.get_interval(event_type)
 
             # Check if this buffer has expired
@@ -307,19 +320,20 @@ class ThrottledTransport(EventTransport):
         self,
         task_id: int,
         subtask_id: int,
-        exclude_event_type: Optional[str] = None,
+        exclude_key: Optional[tuple] = None,
     ) -> None:
         """Flush pending buffers for a response before a different event type.
 
         Per-event-type throttling must not reorder semantically adjacent stream
         segments. For example, reasoning deltas buffered just before output text
-        must reach the frontend before that output text.
+        must reach the frontend before that output text. Parallel tool argument
+        streams use distinct keys so their deltas are never merged together.
         """
         for buffer_key in list(self._buffers.keys()):
-            buffer_task_id, buffer_subtask_id, buffer_event_type = buffer_key
+            buffer_task_id, buffer_subtask_id = buffer_key[:2]
             if buffer_task_id != task_id or buffer_subtask_id != subtask_id:
                 continue
-            if exclude_event_type and buffer_event_type == exclude_event_type:
+            if exclude_key is not None and buffer_key == exclude_key:
                 continue
             if self._buffers[buffer_key]:
                 await self._flush_buffer(buffer_key)
@@ -360,24 +374,19 @@ class ThrottledTransport(EventTransport):
 
         events = self._buffers[key]
         event_count = len(events)
-        self._buffers[key] = []
-        self._last_send_times[key] = time.time()
-
-        logger.info(
-            f"[ThrottledTransport] _flush_buffer: flushing {event_count} events for key={key}"
-        )
 
         # Aggregate events
         aggregated = self._aggregate_events(events)
 
-        logger.info(
-            f"[ThrottledTransport] _flush_buffer: aggregated data keys={list(aggregated.get('data', {}).keys())}, "
+        logger.debug(
+            f"[ThrottledTransport] Flushing aggregated events: key={key}, "
+            f"event_count={event_count}, "
             f"delta_len={len(aggregated.get('data', {}).get('delta', ''))}, "
             f"text_len={len(aggregated.get('data', {}).get('text', ''))}"
         )
 
         # Send via underlying transport
-        return await self._transport.send(
+        result = await self._transport.send(
             aggregated["event_type"],
             aggregated["task_id"],
             aggregated["subtask_id"],
@@ -386,6 +395,9 @@ class ThrottledTransport(EventTransport):
             aggregated.get("executor_name"),
             aggregated.get("executor_namespace"),
         )
+        self._buffers[key] = []
+        self._last_send_times[key] = time.time()
+        return result
 
     def _aggregate_events(self, events: List[dict]) -> dict:
         """Aggregate multiple events into one.
@@ -397,12 +409,12 @@ class ThrottledTransport(EventTransport):
             Aggregated event dictionary
         """
         event_count = len(events)
-        logger.info(
+        logger.debug(
             f"[ThrottledTransport] _aggregate_events: aggregating {event_count} events"
         )
 
         if len(events) == 1:
-            logger.info(
+            logger.debug(
                 f"[ThrottledTransport] _aggregate_events: single event, returning as-is, "
                 f"data_keys={list(events[0].get('data', {}).keys())}"
             )
@@ -415,10 +427,11 @@ class ThrottledTransport(EventTransport):
         if "delta" in base["data"]:
             deltas = [e.get("data", {}).get("delta", "") for e in events]
             aggregated_delta = "".join(deltas)
-            logger.info(
-                f"[ThrottledTransport] _aggregate_events: aggregating delta field, "
-                f"individual_lengths={[len(d) for d in deltas]}, "
-                f"total_length={len(aggregated_delta)}"
+            logger.debug(
+                "[ThrottledTransport] Aggregated delta field: "
+                "event_count=%d, total_length=%d",
+                event_count,
+                len(aggregated_delta),
             )
             base["data"]["delta"] = aggregated_delta
 
@@ -426,10 +439,11 @@ class ThrottledTransport(EventTransport):
         if "text" in base["data"]:
             texts = [e.get("data", {}).get("text", "") for e in events]
             aggregated_text = "".join(texts)
-            logger.info(
-                f"[ThrottledTransport] _aggregate_events: aggregating text field, "
-                f"individual_lengths={[len(t) for t in texts]}, "
-                f"total_length={len(aggregated_text)}"
+            logger.debug(
+                "[ThrottledTransport] Aggregated text field: "
+                "event_count=%d, total_length=%d",
+                event_count,
+                len(aggregated_text),
             )
             base["data"]["text"] = aggregated_text
 
@@ -440,12 +454,19 @@ class ThrottledTransport(EventTransport):
                 e.get("data", {}).get("part", {}).get("content", "") for e in events
             ]
             aggregated_content = "".join(contents)
-            logger.info(
-                f"[ThrottledTransport] _aggregate_events: aggregating part.content field, "
-                f"individual_lengths={[len(c) for c in contents]}, "
-                f"total_length={len(aggregated_content)}"
+            logger.debug(
+                "[ThrottledTransport] Aggregated part content: "
+                "event_count=%d, total_length=%d",
+                event_count,
+                len(aggregated_content),
             )
             base["data"]["part"]["content"] = aggregated_content
+
+        # Snapshot-style fields are not deltas. Keep the newest snapshot so
+        # consumers see the latest safe tool input after coalescing.
+        latest_data = events[-1].get("data", {})
+        if "arguments_summary" in latest_data:
+            base["data"]["arguments_summary"] = latest_data["arguments_summary"]
 
         return base
 

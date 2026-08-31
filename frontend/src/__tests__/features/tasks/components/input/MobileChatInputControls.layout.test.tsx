@@ -10,12 +10,41 @@ import type { MobileChatInputControlsProps } from '@/features/tasks/components/i
 import { MobileChatInputControls } from '@/features/tasks/components/input/MobileChatInputControls'
 import type { Team } from '@/types/api'
 
-jest.mock('@/features/tasks/components/selector/MobileModelSelector', () => ({
-  __esModule: true,
-  default: () => (
-    <button type="button" data-testid="mobile-model-selector">
+const mockMobileModelSelector = jest.fn(
+  ({
+    selectedTeam: modelTeam,
+    modelCategoryType,
+  }: {
+    selectedTeam?: Team | null
+    modelCategoryType?: 'llm' | 'image' | 'video'
+  }) => (
+    <button
+      type="button"
+      data-testid={
+        modelCategoryType === 'video' ? 'mobile-video-model-selector' : 'mobile-model-selector'
+      }
+      data-team-id={modelTeam?.id}
+      data-model-category={modelCategoryType ?? 'llm'}
+    >
       官网:kimi-k2.5-preview-with-a-very-long-model-name
     </button>
+  )
+)
+
+jest.mock('@/features/tasks/components/selector/MobileModelSelector', () => ({
+  __esModule: true,
+  default: (props: { selectedTeam?: Team | null; modelCategoryType?: 'llm' | 'image' | 'video' }) =>
+    mockMobileModelSelector(props),
+}))
+
+jest.mock('@/features/tasks/components/selector/VideoSettingsPopover', () => ({
+  __esModule: true,
+  default: ({ showDuration }: { showDuration?: boolean }) => (
+    <button
+      type="button"
+      data-testid="mobile-video-settings"
+      data-show-duration={showDuration === false ? 'false' : 'true'}
+    />
   ),
 }))
 
@@ -41,19 +70,44 @@ jest.mock('@/features/tasks/components/MobileCorrectionModeToggle', () => ({
 
 jest.mock('@/features/tasks/components/chat/ChatContextInput', () => ({
   __esModule: true,
-  default: () => (
-    <>
-      <button type="button" aria-controls="context-selector-popover">
-        Context
-      </button>
-      {createPortal(
-        <div id="context-selector-popover" role="dialog" data-testid="owned-context-popover">
-          Context selector
-        </div>,
-        document.body
-      )}
-    </>
-  ),
+  default: function MockChatContextInput({
+    onSelectorOpenChange,
+  }: {
+    onSelectorOpenChange?: (open: boolean) => void
+  }) {
+    const [open, setOpen] = React.useState(false)
+    return (
+      <>
+        <button
+          type="button"
+          aria-controls="context-selector-popover"
+          onClick={() => {
+            setOpen(true)
+            onSelectorOpenChange?.(true)
+          }}
+        >
+          Context
+        </button>
+        {open
+          ? createPortal(
+              <div id="context-selector-popover" role="dialog" data-testid="owned-context-popover">
+                Context selector
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    onSelectorOpenChange?.(false)
+                  }}
+                >
+                  Close context
+                </button>
+              </div>,
+              document.body
+            )
+          : null}
+      </>
+    )
+  },
 }))
 
 jest.mock('@/features/tasks/components/AttachmentButton', () => ({
@@ -160,6 +214,50 @@ const buildProps = (): MobileChatInputControlsProps => ({
 })
 
 describe('MobileChatInputControls layout', () => {
+  it('shows only video controls for workflow-managed video chat', async () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        selectedTeam={{
+          ...selectedTeam,
+          mode_spec: {
+            allowedModelCategories: ['video'],
+            hiddenVideoParams: ['duration'],
+          },
+        }}
+        showVideoControlsInChat
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mobile-video-model-selector')).toBeInTheDocument()
+      expect(screen.queryByTestId('mobile-model-selector')).not.toBeInTheDocument()
+    })
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-team-id',
+      String(selectedTeam.id)
+    )
+    expect(screen.getByTestId('mobile-video-model-selector')).toHaveAttribute(
+      'data-model-category',
+      'video'
+    )
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    expect(screen.getByTestId('mobile-video-settings')).toHaveAttribute(
+      'data-show-duration',
+      'false'
+    )
+  })
+
   it('keeps long selector labels clipped without clipping the overflow menu', async () => {
     render(<MobileChatInputControls {...buildProps()} />)
 
@@ -240,15 +338,22 @@ describe('MobileChatInputControls layout', () => {
     expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
   })
 
-  it('keeps the menu open while interacting with a popover opened by the menu', () => {
+  it('hides the more actions menu while keeping its context selector mounted', () => {
     render(<MobileChatInputControls {...buildProps()} />)
 
     fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
-    const ownedPopover = screen.getByTestId('owned-context-popover')
-    fireEvent.pointerDown(ownedPopover)
-    fireEvent.keyDown(ownedPopover, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Context' }))
 
-    expect(screen.getByTestId('mobile-input-more-actions-menu')).toBeInTheDocument()
+    const menu = screen.getByTestId('mobile-input-more-actions-menu')
+    expect(menu).toHaveClass('invisible')
+    expect(menu).toHaveClass('pointer-events-none')
+    expect(screen.getByTestId('owned-context-popover')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close context' }))
+
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('owned-context-popover')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mobile-input-more-actions-button')).toHaveFocus()
   })
 
   it('closes the menu when interacting with an unrelated dialog', () => {
