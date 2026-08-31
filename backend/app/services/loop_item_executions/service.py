@@ -2364,6 +2364,10 @@ class LoopItemExecutionService:
             approved_by_user_id=previous.approved_by_user_id,
             approved_at=previous.approved_at,
             execution_note=previous.execution_note,
+            execution_payload=LoopItemExecutionService._serialize_execution_intent(
+                runtime_selection=dict(previous.runtime_selection),
+                origin_context=dict(previous.runtime_origin_context),
+            ),
         )
 
     def mark_dispatch_unknown(

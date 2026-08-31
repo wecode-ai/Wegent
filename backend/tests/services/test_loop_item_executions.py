@@ -1068,6 +1068,21 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     original = _make_execution(
         test_db, _make_item(test_db, project, test_user), bot, test_user
     )
+    original.execution_payload = (
+        loop_item_execution_service._serialize_execution_intent(
+            runtime_selection={
+                "model": "public-model",
+                "model_type": "public",
+                "model_options": {"reasoningEffort": "high"},
+            },
+            origin_context={
+                "runtime_source": "issue_snapshot",
+                "workspace_binding": {"type": "standalone"},
+            },
+            runtime_request={"taskId": original.runtime_task_id},
+        )
+    )
+    test_db.commit()
     claimed = loop_item_execution_service.claim(
         test_db,
         agent_id=bot.id,
@@ -1103,6 +1118,16 @@ def test_runtime_retry_uses_a_new_execution_attempt(
     assert retry.attempt_no == 2
     assert retry.previous_execution_id == original.id
     assert retry.runtime_task_id != claimed.runtime_task_id
+    assert retry.runtime_selection == {
+        "model": "public-model",
+        "model_type": "public",
+        "model_options": {"reasoningEffort": "high"},
+    }
+    assert retry.runtime_origin_context == {
+        "runtime_source": "issue_snapshot",
+        "workspace_binding": {"type": "standalone"},
+    }
+    assert retry.runtime_request == {}
     test_db.refresh(original)
     assert original.status == "failed"
     assert original.last_event_seq == 2

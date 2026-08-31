@@ -1598,6 +1598,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       value: '根据 Issue 修改代码并运行相关测试。',
     })
     const automationExecutionEnvironment = '[data-testid^="execution-node-environment-"]'
+    await control.command('waitFor', automationExecutionEnvironment, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
     await control.command('click', automationExecutionEnvironment, { visible: true })
     await control.command(
       'click',
@@ -3860,6 +3864,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         value: '完成代码实现和测试。',
       })
       const executionEnvironment = '[data-testid^="execution-node-environment-"]'
+      await control.command('waitFor', executionEnvironment, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('click', executionEnvironment, { visible: true })
       await control.command(
         'click',
