@@ -15919,6 +15919,7 @@ describe('WorkbenchProvider runtime tasks', () => {
 
   test('starts a queued Goal turn after the active response settles', async () => {
     let streamHandlers: ChatStreamHandlers = {}
+    const goalLoad = deferred<RuntimeGoalGetResponse>()
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
       if (hasRuntimeStreamHandler(handlers)) streamHandlers = handlers
       return vi.fn()
@@ -15979,6 +15980,7 @@ describe('WorkbenchProvider runtime tasks', () => {
           },
         ],
       }),
+      getRuntimeGoal: vi.fn().mockReturnValue(goalLoad.promise),
       sendRuntimeMessage,
       setRuntimeGoal,
     })
@@ -16019,6 +16021,19 @@ describe('WorkbenchProvider runtime tasks', () => {
     expect(sendRuntimeMessage).not.toHaveBeenCalled()
     expect(setRuntimeGoal).not.toHaveBeenCalled()
     expect(screen.getByTestId('follow-up-pane-busy')).toHaveTextContent('busy')
+    expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('继续修')
+
+    await act(async () => {
+      goalLoad.resolve({
+        accepted: true,
+        taskId: 'runtime-a',
+        workspacePath: '/workspace/project-alpha',
+        runtime: 'codex',
+        goal: null,
+      })
+      await goalLoad.promise
+    })
+    expect(screen.getByTestId('runtime-goal-objective')).toHaveTextContent('继续修')
 
     await act(async () => {
       streamHandlers.onChatDone?.({

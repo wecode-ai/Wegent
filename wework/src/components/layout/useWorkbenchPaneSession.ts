@@ -617,7 +617,11 @@ export function useWorkbenchPaneSession({
       .then(response => {
         if (!cancelled) {
           const loadedGoal = response.accepted ? response.goal : null
-          const resolvedGoal = loadedGoal ?? seededGoal?.goal ?? null
+          const resolvedGoal = resolveHydratedRuntimeGoal(
+            runtimeTaskLoadTarget.address,
+            loadedGoal,
+            seededGoal?.goal ?? null
+          )
           if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
             console.info('[Wework] Runtime goal hydration resolved', {
               address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
@@ -3070,6 +3074,27 @@ function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoal
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
   runtimePaneGoalSeeds.delete(runtimeTranscriptPaneIdentityKey(address))
+}
+
+function resolveHydratedRuntimeGoal(
+  address: RuntimeTaskAddress,
+  loadedGoal: RuntimeGoal | null,
+  seededGoal: RuntimeGoal | null
+): RuntimeGoal | null {
+  if (loadedGoal) return loadedGoal
+
+  const hasQueuedGoal = getRuntimeConversationQueuedMessagesByKey(
+    runtimeConversationKey(address)
+  ).some(
+    message =>
+      Boolean(message.initialGoal) && (message.status === 'queued' || message.status === 'sending')
+  )
+  if (hasQueuedGoal) {
+    const optimisticGoal = getRuntimeConversationMetadata(address).goal
+    if (optimisticGoal) return optimisticGoal
+  }
+
+  return seededGoal
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
