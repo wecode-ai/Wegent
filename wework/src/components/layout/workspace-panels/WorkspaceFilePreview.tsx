@@ -5,13 +5,27 @@ import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  Profiler,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ProfilerOnRenderCallback,
+} from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
+import {
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
 import { installCodeViewTextDrag } from './codeViewTextDrag'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
@@ -96,6 +110,7 @@ interface WorkspaceFilePreviewProps {
     name: string
     size: number
     file: File
+    traceId?: string
   } | null
   loading: boolean
   loadingProgress?: { loadedBytes: number; totalBytes: number | null } | null
@@ -171,6 +186,33 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     [themeType]
   )
 
+  useLayoutEffect(() => {
+    if (!file.traceId) return
+    logFilePreviewDiagnostic(file.traceId, 'binary_preview_committed', {
+      fileSize: file.size,
+      viewerType: viewerType ?? null,
+    })
+    scheduleFilePreviewMainThreadProbe(file.traceId, 'binary_preview_committed')
+    return () => {
+      logFilePreviewDiagnostic(file.traceId, 'binary_preview_unmounted')
+    }
+  }, [file.size, file.traceId, viewerType])
+
+  const handleFileViewerRender = useCallback<ProfilerOnRenderCallback>(
+    (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+      if (!file.traceId) return
+      logFilePreviewDiagnostic(file.traceId, 'file_viewer_react_commit', {
+        phase,
+        actualDurationMs: Math.round(actualDuration * 10) / 10,
+        baseDurationMs: Math.round(baseDuration * 10) / 10,
+        startTimeMs: Math.round(startTime * 10) / 10,
+        commitTimeMs: Math.round(commitTime * 10) / 10,
+        viewerType: viewerType ?? null,
+      })
+    },
+    [file.traceId, viewerType]
+  )
+
   if (/\.xmind$/i.test(file.name)) {
     return (
       <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
@@ -183,16 +225,18 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       ref={containerRef}
       className="wework-diagram-preview relative min-w-0 flex-1 overflow-hidden bg-background"
     >
-      <FileViewer
-        key={`${file.path}:${file.size}`}
-        file={file.file}
-        filename={file.name}
-        type={viewerType}
-        size={file.size}
-        data-viewer-theme={themeType}
-        className="wework-workspace-file-viewer h-full w-full"
-        options={viewerOptions}
-      />
+      <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
+        <FileViewer
+          key={`${file.path}:${file.size}`}
+          file={file.file}
+          filename={file.name}
+          type={viewerType}
+          size={file.size}
+          data-viewer-theme={themeType}
+          className="wework-workspace-file-viewer h-full w-full"
+          options={viewerOptions}
+        />
+      </Profiler>
       {isDiagram ? (
         <DiagramImageActions
           containerRef={containerRef}
