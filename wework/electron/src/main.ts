@@ -90,6 +90,7 @@ import {
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
+import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -163,6 +164,18 @@ const pendingEmbeddedBrowserAttachments = new Map<
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+const executorHome =
+  process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const logRetention = new LogRetentionService({
+  directories: [
+    app.getPath('logs'),
+    join(executorHome, 'logs'),
+    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+      : []),
+  ],
+  onResult: reportLogCleanup,
+})
 autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
@@ -956,6 +969,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await logRetention.stop()
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -1236,6 +1250,7 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    await logRetention.start()
     if (keepE2EWindowInBackground) {
       app.hide()
       app.dock?.hide()
@@ -1277,6 +1292,22 @@ if (hasSingleInstanceLock) {
     )
     void startDesktopRuntime()
   })
+}
+
+function reportLogCleanup(result: LogCleanupResult): void {
+  if (result.removedFiles > 0) {
+    console.info('[logs] retention cleanup completed', {
+      remainingBytes: result.remainingBytes,
+      removedBytes: result.removedBytes,
+      removedFiles: result.removedFiles,
+      scannedFiles: result.scannedFiles,
+    })
+  }
+  if (result.failures.length > 0) {
+    console.warn('[logs] retention cleanup had failures', {
+      failureCount: result.failures.length,
+    })
+  }
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
