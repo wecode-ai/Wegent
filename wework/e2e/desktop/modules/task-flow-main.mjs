@@ -37,6 +37,7 @@ import {
   verifyTurnNavigationTracksVisibleTurnMessages,
   verifyUserMessageNavigation,
   verifyVisionSidecar,
+  waitForComposerFocus,
 } from './conversation-navigation.mjs'
 
 import {
@@ -3517,6 +3518,11 @@ last_updated = "2026-07-30T00:00:00Z"`
           activeTaskWorkbenchSelector
         )
       }
+      await waitForComposerFocus(
+        control,
+        DEFAULT_STEP_TIMEOUT_MS,
+        'Restoring a task with an open terminal did not leave keyboard focus in the composer'
+      )
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-tree"]`,

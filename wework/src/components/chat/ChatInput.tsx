@@ -640,6 +640,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
   useImperativeHandle(
     ref,
     () => ({
+      get element() {
+        return composerRef.current?.element ?? null
+      },
       focus: () => composerRef.current?.focus(),
       getValue: () => composerRef.current?.getValue() ?? value,
       setValue: (nextValue, selectionOffset) =>
