@@ -230,6 +230,7 @@ def test_plan_only_review_publishes_after_a_matching_passed_plan(
 ):
     generation = _generation(test_db, knowledge_base.id)
     generation.ext = {
+        "content_write": {"summary": {"structure_order": ["index"]}},
         "qualityReview": {
             "required": True,
             "policy": "plan_only",
@@ -241,7 +242,7 @@ def test_plan_only_review_publishes_after_a_matching_passed_plan(
                     "focusPaths": ["index"],
                 }
             ],
-        }
+        },
     }
     _page(test_db, generation, "index", "overview")
 
@@ -629,6 +630,34 @@ def test_the_agents_declared_order_is_what_gets_recorded(
         "architecture",
         "api",
     ]
+
+
+def test_plan_only_rejects_a_csv_string_as_one_page_order_path(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    """A malformed order must not fall back to concurrent writer completion order."""
+    generation = _generation(test_db, knowledge_base.id)
+    for path in ("index", "quickstart", "architecture"):
+        _page(test_db, generation, path, "body")
+    generation.ext = {
+        "content_write": {
+            "summary": {"structure_order": ["index,quickstart,architecture"]}
+        },
+        "qualityReview": {"policy": "plan_only"},
+    }
+    test_db.flush()
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert result.published is False
+    assert "page order lists paths not written" in result.reason
+    assert PAGE_ORDER_KEY not in (knowledge_base.json or {})["spec"]
 
 
 def test_pages_the_agent_did_not_rank_follow_the_ones_it_did(

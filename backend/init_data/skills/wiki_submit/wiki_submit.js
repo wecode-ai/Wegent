@@ -878,10 +878,16 @@ function parseArgs(argv) {
         args.ext = argv[++i]
         break
       case '--structure-order':
-        // Collect all following non-flag arguments
+        // Collect all following non-flag arguments. Documentation examples use a
+        // comma-separated list, while a shell may also pass paths separately. Keep
+        // both forms equivalent so an otherwise valid page order cannot collapse
+        // into one nonexistent path at publication time.
         i++
         while (i < argv.length && !argv[i].startsWith('-')) {
-          args.structureOrder.push(argv[i])
+          for (const path of argv[i].split(',')) {
+            const normalized = path.trim()
+            if (normalized) args.structureOrder.push(normalized)
+          }
           i++
         }
         i-- // Back up one since the loop will increment
@@ -972,7 +978,7 @@ Review Options:
 
 Complete Options:
   --head-commit        Commit that was documented, from \`git rev-parse HEAD\`
-  --structure-order    Ordered list of section identifiers
+  --structure-order    Ordered paths, comma- or whitespace-separated
   --model              Model name used for generation
   --tokens-used        Number of tokens used
 
@@ -1056,4 +1062,8 @@ async function main() {
   process.exit(exitCode)
 }
 
-main()
+if (require.main === module) {
+  main()
+}
+
+module.exports = { parseArgs }

@@ -73,7 +73,8 @@ Remove an accidental page before completing the run.
    subgraph/node layout cycle, and gives a block line number plus an actionable
    correction error.
 3. Run `complete` with the documented commit and an order that starts with `index` and
-   follows the planned reading route.
+   follows the planned reading route. For a plan-only full rebuild, list every planned
+   page in that order.
 4. Read the response. If publication is refused, restore the missing coverage — in
    particular, create every named section overview page — and run `complete` again.
    For every Mermaid diagram, keep node IDs distinct from subgraph IDs (for example
@@ -165,7 +166,10 @@ node wiki_submit.js complete \
 ```
 
 `--structure-order` controls the order readers see. Put `index` first and arrange the
-remaining paths so the wiki reads from overview to detail. Unlisted paths are appended.
+remaining paths so the wiki reads from overview to detail. It accepts either one
+comma-separated value (as shown above) or separate whitespace-delimited paths, for
+example `--structure-order index quickstart architecture modules`. For a plan-only full
+rebuild, list every planned path; unlisted paths are only appended for legacy runs.
 
 The response says whether the version was published. A completed version can still be
 refused when it is unexpectedly smaller than the published wiki. If publication is
