@@ -107,6 +107,7 @@ let editorDesignOpen = false
 let editorDesignValues: Record<string, string> = {}
 let editorNeedsFocus = false
 let suppressPageClickUntil = 0
+let submittedDraftIdentity: string | null = null
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
   string,
@@ -692,11 +693,40 @@ function editorButton(label: string, testId: string) {
   return button
 }
 
+function bindButtonActivation(button: HTMLButtonElement, action: () => void) {
+  let activated = false
+  const activate = (event: MouseEvent | PointerEvent) => {
+    if (event.type !== 'click' && event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (activated || button.disabled) return
+    activated = true
+    action()
+  }
+  button.addEventListener('pointerdown', activate)
+  button.addEventListener('mousedown', activate)
+  button.addEventListener('click', activate)
+}
+
 function editorPanel(draft: RuntimeDraft) {
   const width = editorDesignOpen ? 376 : 326
   const height = editorDesignOpen ? Math.min(540, innerHeight - 32) : 220
   const position = editorPosition(draft.anchor, width, height)
   let submit: HTMLButtonElement | null = null
+  let submitted = false
+  const submitDraft = () => {
+    if (submitted) return
+    const nextDesignChanges = editorDesignChanges(draft)
+    if (editorComment.trim().length === 0 && nextDesignChanges.length === 0) return
+    submitted = true
+    submittedDraftIdentity = editorIdentity(draft)
+    emit('save-draft', {
+      comment: editorComment,
+      designChanges: nextDesignChanges,
+      textChange: draft.textChange,
+    })
+    closeDraftLocally()
+  }
   const updateSubmitAvailability = () => {
     if (!submit) return
     submit.disabled = editorComment.trim().length === 0 && editorDesignChanges(draft).length === 0
@@ -741,7 +771,7 @@ function editorPanel(draft: RuntimeDraft) {
   designButton.style.padding = '0'
   if (editorDesignOpen)
     designButton.style.background = 'color-mix(in srgb, CanvasText 10%, transparent)'
-  designButton.addEventListener('click', () => {
+  bindButtonActivation(designButton, () => {
     editorDesignOpen = !editorDesignOpen
     renderImmediately()
   })
@@ -781,7 +811,7 @@ function editorPanel(draft: RuntimeDraft) {
   remove.style.fontSize = '20px'
   remove.style.padding = '0'
   remove.style.width = '24px'
-  remove.addEventListener('click', () => emit('close-draft'))
+  bindButtonActivation(remove, () => emit('close-draft'))
   chip.append(tag, label, remove)
   header.append(chip)
   surface.append(header)
@@ -836,7 +866,7 @@ function editorPanel(draft: RuntimeDraft) {
   if (draft.commentId) {
     const deleteButton = editorButton('删除批注', 'browser-annotation-delete-button')
     deleteButton.textContent = '⌫'
-    deleteButton.addEventListener('click', () => emit('delete-draft'))
+    bindButtonActivation(deleteButton, () => emit('delete-draft'))
     footer.append(deleteButton)
   }
   const actions = styleElement(document.createElement('div'), {
@@ -847,7 +877,7 @@ function editorPanel(draft: RuntimeDraft) {
     const cancel = editorButton('取消', 'browser-annotation-cancel-button')
     cancel.textContent = '取消'
     cancel.style.border = '1px solid color-mix(in srgb, CanvasText 16%, transparent)'
-    cancel.addEventListener('click', () => emit('close-draft'))
+    bindButtonActivation(cancel, () => emit('close-draft'))
     actions.append(cancel)
   }
   submit = editorButton(
@@ -860,6 +890,7 @@ function editorPanel(draft: RuntimeDraft) {
   submit.style.color = 'Canvas'
   submit.style.minWidth = draft.commentId || editorDesignOpen ? '56px' : '28px'
   updateSubmitAvailability()
+  bindButtonActivation(submit, submitDraft)
   actions.append(submit)
   footer.append(actions)
   surface.append(footer)
@@ -877,14 +908,7 @@ function editorPanel(draft: RuntimeDraft) {
 
   surface.addEventListener('submit', event => {
     event.preventDefault()
-    const nextDesignChanges = editorDesignChanges(draft)
-    if (editorComment.trim().length === 0 && nextDesignChanges.length === 0) return
-    emit('save-draft', {
-      comment: editorComment,
-      designChanges: nextDesignChanges,
-      textChange: draft.textChange,
-    })
-    closeDraftLocally()
+    submitDraft()
   })
   queueMicrotask(() => {
     if (!editorNeedsFocus || !textarea.isConnected) return
@@ -943,7 +967,7 @@ function editorDesignEditor(draft: RuntimeDraft, updateSubmitAvailability: () =>
     const reset = editorButton(`重置 ${property}`, `browser-annotation-reset-${property}`)
     reset.textContent = '↶'
     reset.style.padding = '0'
-    reset.addEventListener('click', () => {
+    bindButtonActivation(reset, () => {
       delete editorDesignValues[property]
       renderImmediately()
     })
@@ -1135,7 +1159,13 @@ globalThis.visualViewport?.addEventListener('scroll', scheduleRender)
 globalThis.visualViewport?.addEventListener('resize', scheduleRender)
 ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: RuntimeCommand) => {
   if (command.type === 'sync' && command.state) {
-    state = command.state
+    const incomingDraftIdentity = command.state.draft ? editorIdentity(command.state.draft) : null
+    if (submittedDraftIdentity && incomingDraftIdentity === submittedDraftIdentity) {
+      state = { ...command.state, draft: null }
+    } else {
+      submittedDraftIdentity = null
+      state = command.state
+    }
     draftAnchor = state.draft?.anchor ?? null
     if (state.mode === 'off') {
       hoveredElement = null

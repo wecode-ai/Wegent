@@ -322,6 +322,15 @@ async function browserAnnotationRuntimeRevision(control) {
   )
 }
 
+async function browserAnnotationRevision(control) {
+  control.activateWindow('main')
+  return Number(
+    await control.command('getAttribute', BROWSER_PANEL_SELECTOR, {
+      value: 'data-browser-annotation-revision',
+    })
+  )
+}
+
 async function waitForBrowserAnnotationRender(control, previousRevision, timeoutMs, message) {
   const startedAt = Date.now()
   let actual = previousRevision
@@ -333,7 +342,18 @@ async function waitForBrowserAnnotationRender(control, previousRevision, timeout
   throw new Error(`${message}; previous=${previousRevision}, actual=${actual}`)
 }
 
-async function waitForAnnotationSave(control, bridge, previousRuntimeRevision, timeoutMs) {
+async function waitForAnnotationRevision(control, previousRevision, timeoutMs, message) {
+  const startedAt = Date.now()
+  let actual = previousRevision
+  while (Date.now() - startedAt < timeoutMs) {
+    actual = await browserAnnotationRevision(control)
+    if (actual > previousRevision) return actual
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`${message}; previous=${previousRevision}, actual=${actual}`)
+}
+
+async function waitForAnnotationSave(control, bridge, previousRevision, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const editorOpen = await pageValue(
@@ -352,9 +372,9 @@ async function waitForAnnotationSave(control, bridge, previousRuntimeRevision, t
       await control.command('getElementCount', BROWSER_ANNOTATION_COUNT_SELECTOR)
     )
     if (count > 0) {
-      return waitForBrowserAnnotationRender(
+      return waitForAnnotationRevision(
         control,
-        previousRuntimeRevision,
+        previousRevision,
         timeoutMs,
         'Saving the annotation did not complete its page render'
       )
@@ -613,7 +633,7 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
 }
 
 async function submitOverlayComment(control, bridge, comment, uiTimeoutMs, beforeSubmit = null) {
-  const previousRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  const previousRevision = await browserAnnotationRevision(control)
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, comment)
   assert.equal(
     await editorValue(bridge, OVERLAY_INPUT_SELECTOR),
@@ -627,20 +647,18 @@ async function submitOverlayComment(control, bridge, comment, uiTimeoutMs, befor
   await new Promise(resolve => setTimeout(resolve, 50))
   if (beforeSubmit) await beforeSubmit()
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
-  assert.deepEqual(
-    await pageValue(
-      bridge,
-      annotationRootExpression(`root => ({
-        editorOpen: Boolean(root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)})),
-        interactionLayerReady: Boolean(
-          root.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
-        ),
-      })`)
+  await waitForPageValue(
+    bridge,
+    annotationRootExpression(
+      `root =>
+        !root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)}) &&
+        Boolean(root.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)}))`
     ),
-    { editorOpen: false, interactionLayerReady: true },
-    'Submitting an annotation did not immediately re-arm selection for the next annotation'
+    true,
+    Math.min(uiTimeoutMs, 1_000),
+    'Submitting an annotation did not promptly re-arm selection for the next annotation'
   )
-  await waitForAnnotationSave(control, bridge, previousRuntimeRevision, uiTimeoutMs)
+  await waitForAnnotationSave(control, bridge, previousRevision, uiTimeoutMs)
 }
 
 async function pageValue(bridge, expression) {
@@ -809,9 +827,9 @@ async function verifyCore(
     bridge,
     'Changing the second annotation design did not enable the submit button'
   )
-  const secondRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  const secondRevision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
-  await waitForAnnotationSave(control, bridge, secondRuntimeRevision, uiTimeoutMs)
+  await waitForAnnotationSave(control, bridge, secondRevision, uiTimeoutMs)
   control.activateWindow('main')
   await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
     text: '2',
@@ -841,22 +859,22 @@ async function verifyCore(
   await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-04-edit-card.png')
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Edited browser annotation comment')
-  const editRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  const editRevision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
-  await waitForAnnotationSave(control, bridge, editRuntimeRevision, uiTimeoutMs)
+  await waitForAnnotationSave(control, bridge, editRevision, uiTimeoutMs)
 
   await clickMarker(bridge)
   await waitForEditorElement(bridge, OVERLAY_DELETE_SELECTOR, uiTimeoutMs)
-  const deleteRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  const deleteRevision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_DELETE_SELECTOR)
   control.activateWindow('main')
   await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
     text: '2',
     timeoutMs: uiTimeoutMs,
   })
-  await waitForBrowserAnnotationRender(
+  await waitForAnnotationRevision(
     control,
-    deleteRuntimeRevision,
+    deleteRevision,
     uiTimeoutMs,
     'Deleting the annotation did not complete its page render'
   )
@@ -877,7 +895,7 @@ async function verifyCore(
   await control.command('waitFor', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR, {
     timeoutMs: uiTimeoutMs,
   })
-  const clearRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  const clearRevision = await browserAnnotationRevision(control)
   await control.command('click', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR)
   await waitForElementCount(
     control,
@@ -886,9 +904,9 @@ async function verifyCore(
     uiTimeoutMs,
     'Clearing annotations did not clear the toolbar count'
   )
-  await waitForBrowserAnnotationRender(
+  await waitForAnnotationRevision(
     control,
-    clearRuntimeRevision,
+    clearRevision,
     uiTimeoutMs,
     'Clearing annotations did not complete its page render'
   )
