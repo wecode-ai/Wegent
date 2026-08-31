@@ -3723,6 +3723,54 @@ def test_runtime_reconciliation_uses_terminal_turn_status(
     push_message.assert_called_once()
 
 
+def test_runtime_reconciliation_prefers_failure_over_stale_completed_turn(
+    test_db: Session, test_user: User
+) -> None:
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    execution = _make_execution(
+        test_db, _make_item(test_db, project, test_user), bot, test_user
+    )
+    claimed = loop_item_execution_service.claim_batch_for_device(
+        test_db,
+        execution_device_id="cloud-device-1",
+        environment="cloud",
+        owner_user_id=test_user.id,
+        runtime_instance_id="runtime-1",
+        device_capacity=1,
+        runtime_active=0,
+        runtime_active_task_ids=set(),
+    )[0]
+    loop_item_execution_service.request_runtime_start(
+        test_db,
+        execution_id=claimed.id,
+        runtime_device_id=claimed.runtime_device_id,
+        runtime_task_id=claimed.runtime_task_id,
+    )
+
+    with patch(
+        "app.services.project_chat.push.push_project_chat_message"
+    ) as push_message:
+        retry = loop_item_execution_service.reconcile_runtime_snapshot(
+            test_db,
+            execution_id=claimed.id,
+            runtime_status="failed",
+            running=False,
+            turn_status="completed",
+        )
+
+    assert retry is not None
+    assert retry.id != claimed.id
+    assert retry.status == "queued"
+    assert retry.previous_execution_id == claimed.id
+    failed = test_db.get(LoopItemExecution, claimed.id)
+    assert failed is not None
+    assert failed.status == "failed"
+    assert failed.observed_state == "failed"
+    assert failed.termination_reason == "runtime_reconciled_failed"
+    push_message.assert_called_once()
+
+
 def test_runtime_reconciliation_restores_missing_running_activity(
     test_db: Session, test_user: User
 ) -> None:
