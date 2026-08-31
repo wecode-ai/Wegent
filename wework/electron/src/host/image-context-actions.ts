@@ -22,7 +22,6 @@ export function createNativeContextMenuActions(
     getState: () => ({
       canGoBack: !contents.isDestroyed() && contents.canGoBack(),
       canGoForward: !contents.isDestroyed() && contents.canGoForward(),
-      url: contents.isDestroyed() ? null : contents.getURL() || null,
     }),
     goBack: () => {
       if (!contents.isDestroyed() && contents.canGoBack()) contents.goBack()
