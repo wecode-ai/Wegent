@@ -950,6 +950,7 @@ function ProcessTextBlockItem({
     <div
       className="min-w-0 overflow-x-hidden text-chat text-text-secondary"
       data-processing-block-id={block.id}
+      data-message-selectable-text
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}

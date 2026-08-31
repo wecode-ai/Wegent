@@ -18,6 +18,8 @@ import {
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -268,6 +270,15 @@ export function LocalRuntimeInitializer({
       console.error('[Wework] Failed to apply cloud connection to local executor:', error)
     })
   }, [enabled, state.phase])
+
+  useEffect(() => {
+    if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the local runtime error', error)
+    })
+  }, [state.phase])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

@@ -83,6 +83,8 @@ import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -153,6 +155,7 @@ import {
   projectSpaceRef,
   projectSupportsRobotAutomation,
   sameProjectSpace,
+  subscribeProjectSpaceTaskBindingChanged,
   subscribeProjectSpaceTaskContextChanged,
 } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
@@ -540,6 +543,7 @@ interface CloudTodoWorkspaceProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
+  startupActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1087,6 +1091,7 @@ export function CloudTodoWorkspace({
   runtimeTaskLifecycle,
   services,
   embedded = false,
+  startupActive = false,
   activeProjectRef,
   defaultProjectRequested = false,
   focusedItemId,
@@ -2084,6 +2089,34 @@ export function CloudTodoWorkspace({
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
+  const startupProjectsLoading =
+    (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
+    (Boolean(projectSpaceApis.cloud) && cloudProjectsLoading)
+  const startupProjectRouteReady =
+    !activeProjectRef ||
+    Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
+  const focusedStartupItem = focusedItemId
+    ? items.find(item => item.id === focusedItemId)
+    : undefined
+  const startupFocusedItemReady =
+    !focusedItemId ||
+    selectedItem?.id === focusedItemId ||
+    (!boardItemsLoading && (!focusedStartupItem || focusedStartupItem.can_view_detail === false))
+  const startupBoardReady =
+    startupActive &&
+    Boolean(workbench?.isStartupReady) &&
+    !startupProjectsLoading &&
+    startupProjectRouteReady &&
+    !boardItemsLoading &&
+    startupFocusedItemReady
+  useEffect(() => {
+    if (!startupBoardReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready project space', error)
+    })
+  }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
   useEffect(() => {
@@ -2712,13 +2745,17 @@ export function CloudTodoWorkspace({
     services.aitableApi,
     services.dwsApi,
   ])
-  useEffect(
-    () =>
-      subscribeProjectSpaceTaskContextChanged(() => {
-        setBoardRefreshNonce(value => value + 1)
-      }),
-    []
-  )
+  useEffect(() => {
+    const refreshBoard = () => {
+      setBoardRefreshNonce(value => value + 1)
+    }
+    const unsubscribeContextChanged = subscribeProjectSpaceTaskContextChanged(refreshBoard)
+    const unsubscribeBindingChanged = subscribeProjectSpaceTaskBindingChanged(refreshBoard)
+    return () => {
+      unsubscribeContextChanged()
+      unsubscribeBindingChanged()
+    }
+  }, [])
   useEffect(() => {
     const subscribe = selectedProjectChatClient?.subscribeLoopItemChanges
     boardLiveSubscriptionActiveRef.current = false

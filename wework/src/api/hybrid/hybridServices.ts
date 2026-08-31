@@ -99,7 +99,7 @@ export interface HybridWorkbenchServicesOptions {
   socketBaseUrl: string
   socketPath: string
   token: string
-  user?: User
+  user: User
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {
@@ -459,6 +459,7 @@ export function createHybridWorkbenchServices(
       {
         resolveDeviceId: async data => cloudDeviceIdFromData(data) ?? logicalDeviceId,
         cloudModelGateway,
+        user: options.user,
         transportLabel: 'Cloud',
         syncConfiguredModelCatalog: true,
         requestModelCatalogSync: requestCloudModelCatalogSync,
