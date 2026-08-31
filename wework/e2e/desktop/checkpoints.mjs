@@ -5,6 +5,7 @@ export const DESKTOP_CHECKPOINTS = [
   'cloud-space-mention',
   'priority-filter',
   'telemetry-consent',
+  'external-content-import',
   'automation-lifecycle',
   'project-automation',
   'project-assignment-notification',

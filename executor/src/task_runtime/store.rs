@@ -55,12 +55,16 @@ pub struct LocalTaskStore {
 }
 
 impl LocalTaskStore {
+    pub(crate) fn default_path() -> PathBuf {
+        local_database_path()
+    }
+
     pub fn from_env() -> Result<Self, TaskRuntimeError> {
-        Self::open(local_database_path())
+        Self::open(Self::default_path())
     }
 
     pub fn from_env_if_exists() -> Result<Option<Self>, TaskRuntimeError> {
-        let path = local_database_path();
+        let path = Self::default_path();
         if !path.exists() {
             return Ok(None);
         }
@@ -2104,6 +2108,85 @@ impl LocalTaskStore {
         transaction.commit()?;
         drop(connection);
         self.get_binding(&id)
+    }
+
+    pub fn ensure_default_work_item_binding(
+        &self,
+        device_id: &str,
+        task_id: &str,
+        task_title: &str,
+        description: &str,
+    ) -> Result<TaskBinding, TaskRuntimeError> {
+        validate_name(device_id, "device id")?;
+        validate_name(task_id, "task id")?;
+        validate_name(task_title, "task title")?;
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(active) = get_binding_by_kind(&transaction, device_id, task_id, true)? {
+            transaction.execute(
+                "UPDATE loop_items SET task_title = ?1, updated_at = ?2 WHERE id = ?3",
+                params![task_title, now(), active.id],
+            )?;
+            transaction.commit()?;
+            drop(connection);
+            return self.get_binding(&active.id);
+        }
+
+        let project = get_item_from(&transaction, DEFAULT_WORK_ITEM_PROJECT_ID, "project")?
+            .ok_or(TaskRuntimeError::ProjectNotFound)?;
+        let sequence = project.next_item_number.unwrap_or(1);
+        let item_id = format!("{DEFAULT_WORK_ITEM_PROJECT_KEY}-{sequence}");
+        let timestamp = now();
+        transaction.execute(
+            "UPDATE loop_items SET next_item_number = ?1, version = version + 1,
+                    updated_at = ?2 WHERE id = ?3",
+            params![sequence + 1, timestamp, DEFAULT_WORK_ITEM_PROJECT_ID],
+        )?;
+        transaction.execute(
+            "INSERT INTO loop_items (
+                id, resource_type, project_space, cloud_project_id, title, description,
+                sequence_number, status, priority, sort_order, metadata, version,
+                created_at, updated_at
+             ) VALUES (?1, 'task', 'default', ?2, ?3, ?4, ?5, 'inbox', 'none',
+                       0, ?6, 1, ?7, ?7)",
+            params![
+                item_id,
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                task_title,
+                description,
+                sequence,
+                json!({"tags": []}).to_string(),
+                timestamp,
+            ],
+        )?;
+        let binding_id = numeric_id();
+        let metadata = json!({
+            "external_item_id": Value::Null,
+            "project_id": DEFAULT_WORK_ITEM_PROJECT_ID,
+            "workflow_node_id": Value::Null,
+            "workflow_stage_input": Value::Null,
+        });
+        transaction.execute(
+            "INSERT INTO loop_items (
+                id, resource_type, project_space, cloud_project_id, loop_item_id,
+                task_user_id, device_id, task_id, task_title, linked_by_user_id,
+                linked_at, metadata, version, created_at, updated_at
+             ) VALUES (?1, 'execution', 'default', ?2, ?3, 0, ?4, ?5, ?6, 0,
+                       ?7, ?8, 1, ?7, ?7)",
+            params![
+                binding_id,
+                DEFAULT_WORK_ITEM_PROJECT_ID,
+                item_id,
+                device_id,
+                task_id,
+                task_title,
+                timestamp,
+                metadata.to_string(),
+            ],
+        )?;
+        transaction.commit()?;
+        drop(connection);
+        self.get_binding(&binding_id)
     }
 
     pub fn list_task_bindings(&self, item_id: &str) -> Result<Vec<TaskBinding>, TaskRuntimeError> {
@@ -6237,6 +6320,36 @@ mod tests {
                 .as_deref(),
             Some("completed")
         );
+    }
+
+    #[test]
+    fn creates_and_reuses_default_work_item_binding_atomically() {
+        let (_directory, store) = store();
+
+        let first = store
+            .ensure_default_work_item_binding(
+                "local-device",
+                "runtime-default-1",
+                "Create from executor",
+                "Track after runtime creation",
+            )
+            .unwrap();
+        let second = store
+            .ensure_default_work_item_binding(
+                "local-device",
+                "runtime-default-1",
+                "Updated runtime title",
+                "Ignored duplicate description",
+            )
+            .unwrap();
+
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.loop_item_id, first.loop_item_id);
+        assert_eq!(second.task_title.as_deref(), Some("Updated runtime title"));
+        let items = store.list_tasks(DEFAULT_WORK_ITEM_PROJECT_ID).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title.as_deref(), Some("Create from executor"));
+        assert_eq!(items[0].description, "Track after runtime creation");
     }
 
     #[test]

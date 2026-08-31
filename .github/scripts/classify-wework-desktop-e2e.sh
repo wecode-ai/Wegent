@@ -7,6 +7,7 @@ core_segments=(
   workspace-tabs
   cloud-space-mention
   priority-filter
+  external-content-import
   automation-lifecycle
   project-automation
   project-assignment-notification
@@ -131,7 +132,7 @@ core_shards=(
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
   model-routing,computer-use
@@ -295,6 +296,14 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # External content import crosses the settings UI and local Executor IPC.
+    wework/src/api/local/codexPlugins.ts | \
+      wework/src/components/settings/ExternalContentImportDialog.tsx | \
+      wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
+      select_target "core:external-content-import"
       return
       ;;
 
@@ -658,6 +667,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    executor/src/local/app_ipc.rs | \
+      executor/src/local/codex_home.rs | \
+      executor/tests/local_app_ipc_contract.rs)
+      select_target "core:external-content-import"
+      ;;
     backend/app/api/endpoints/runtime_work.py | \
       backend/app/api/ws/device_namespace.py | \
       backend/app/api/ws/wework_runtime_namespace.py | \

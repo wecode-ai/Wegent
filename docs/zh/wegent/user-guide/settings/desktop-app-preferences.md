@@ -67,9 +67,11 @@ Wework 启动后会在后台预热弹出窗口，因此首次显示和后续重�
 “设置 → 通用 → 从其他 AI 应用导入工作内容”可以把本机其他编码应用中的兼容内容导入 Wework 独立的 Codex 目录。导入会覆盖目标目录中的同名文件，但不会删除来源应用中的内容。
 
 - **Codex**：导入范围与 Wework 首次启动时的 Codex 迁移一致，包括配置、登录信息、全局指令、插件、Skills 和相关缓存。
-- **Claude Code**：将 `~/.claude/CLAUDE.md` 作为 Codex 全局 `AGENTS.md` 导入，并导入 `~/.claude/skills/`。
+- **Claude Code**：将 `~/.claude/CLAUDE.md` 作为 Codex 全局 `AGENTS.md` 导入，并导入设置、插件和 Skills。
 
-第一期不导入项目列表、Claude Code 插件或历史会话。导入功能只在 Wework 桌面版中可用；如果来源目录不存在或没有可兼容内容，Wework 会保留弹窗并显示错误，可以修复来源内容后重试。
+导入由 Wework 管理的本地 Executor 执行，Renderer 不会直接访问用户目录。Executor 只接受桌面协议中显式声明的导入方法。若 Wework 的 `auth.json` 已经链接到来源 Codex 的同一登录文件，导入会保留该链接并继续复制其他兼容内容，不会重复覆盖同一个凭据文件。
+
+第一期不导入项目列表或历史会话。导入功能只在 Wework 桌面版中可用；如果来源目录不存在或没有可兼容内容，Wework 会保留弹窗并显示错误，可以修复来源内容后重试。
 
 ## 关闭窗口后后台运行
 

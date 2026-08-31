@@ -33,6 +33,14 @@ Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制
 
 `localTaskId` 是 Wegent 侧本地任务身份，不等同于底层 runtime 的 provider 会话 id。前端、Backend 和 executor 需要传递 provider 会话定位信息时必须使用 opaque `runtimeHandle`，例如 Codex `threadId`、Claude Code `sessionId` 或 OpenCode `sessionId`，也可以使用明确的 `providerSessionId`。`runtime.tasks.transcript` 不能在缺少 LocalTask 索引映射或 `runtimeHandle` 时把 `localTaskId` 当成 provider 会话 id 读取；这种仍在创建中的 optimistic 任务应先返回空本地 transcript，等待 create/link 完成后再读取真实运行时会话。
 
+### “我的任务”关联与生命周期
+
+非临时 LocalTask 成功创建并进入 executor 调度后，executor 会在后台把它关联到本地系统项目“我的任务”。`runtime.tasks.create` 不等待这次关联：运行任务先返回并开始执行，随后 executor 在单个 SQLite `IMMEDIATE` 事务中幂等创建 Issue 和系统 binding。重复执行关联任务只能复用同一个 binding，不能创建重复 Issue。
+
+默认“我的任务”关联由 executor 独占写入。Wework 前端只读取 executor 已创建的 binding，不得再为默认项目调用 `todos.create`、`todos.bind` 或实现另一套自动关联逻辑。用户明确选择其他项目或已有 Issue 时，仍可建立独立的用户 binding；系统 binding 与用户 binding 使用不同类型，可以同时存在。
+
+Issue 生命周期状态同样只由 executor 投影。后台关联完成后，executor 重新读取 LocalTask 此刻的实际状态，再复用统一的运行状态投影，把 `queued`、`running`、终态和 `archived` 分别映射到看板状态。绑定期间任务可能已经完成，因此不能缓存任务创建时的状态，也不能由前端补写“进行中”或“待确认”。临时 `ephemeral` 任务不创建“我的任务”Issue。
+
 ## 列表刷新
 
 任务列表由 Wework 在启动、显式刷新或设备状态变化时请求，不再由固定 interval 轮询触发。
