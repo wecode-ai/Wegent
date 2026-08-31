@@ -23,6 +23,7 @@ import type { CloudLoopItem } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { AssistantThinkingIndicator } from '@/components/chat/AssistantThinkingIndicator'
+import { ChatInput, type ProjectChatControls } from '@/components/chat/ChatInput'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import { ToolBlocksDisplay } from '@/components/chat/blocks/ToolBlocksDisplay'
 import {
@@ -36,9 +37,11 @@ import { HoverCard } from '@/components/ui/hover-card'
 import {
   getRuntimeConversationLiveActivitySnapshot,
   getRuntimeConversationMessages,
+  reconcileRuntimeConversationSnapshot,
   subscribeRuntimeConversation,
 } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import {
   runtimeLiveActivityFromSnapshot,
   type RuntimeLiveActivity,
@@ -64,6 +67,7 @@ import {
 import { priorityBadgeClasses } from './todoShared'
 import { itemNeedsExecutionConfiguration } from './workflowExecutionConfig'
 import { getCurrentWorkflowNode, workflowNodeStatusLabel } from './workflowStagePresentation'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export interface BoardCardDisplaySettings {
   showAssignee: boolean
@@ -316,6 +320,7 @@ interface CloudTodoBoardCardProps {
     binding: CloudTodoBoardTaskBinding,
     snapshot: TaskChangeRequestSnapshot
   ) => Promise<void>
+  onSendMessage?: (binding: CloudTodoBoardTaskBinding, message: string) => Promise<boolean>
 }
 
 export function CloudTodoBoardCard({
@@ -333,9 +338,11 @@ export function CloudTodoBoardCard({
   archiveDisabled = false,
   changeRequestMonitor = null,
   onContinueChangeRequestRepair,
+  onSendMessage,
 }: CloudTodoBoardCardProps) {
   const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [hoveredTaskBindingId, setHoveredTaskBindingId] = useState<number | null>(null)
   const currentWorkflowNode = item.workflow ? getCurrentWorkflowNode(item.workflow.nodes) : null
   const needsExecutionConfiguration =
     processingStatus && itemNeedsExecutionConfiguration(item) && Boolean(onConfigureExecution)
@@ -515,14 +522,22 @@ export function CloudTodoBoardCard({
   return (
     <HoverCard
       testId={`cloud-todo-card-progress-popup-${item.id}`}
-      estimatedWidth={400}
-      estimatedHeight={360}
-      cardClassName="max-h-[min(50vh,24rem)] w-[400px] max-w-[calc(100vw-1rem)] overflow-hidden shadow-lg"
+      interactive
+      openOnFocus
+      pinOnInteraction
+      pinOnInteractionSelector="[data-hover-card-pin-region]"
+      closeLabel={t('common.close', '关闭')}
+      estimatedWidth={480}
+      estimatedHeight={620}
+      cardClassName="w-[480px] max-w-[calc(100vw-1rem)]"
       content={
         <RuntimeTaskProgressPopup
           item={item}
           bindings={progressTaskBindings}
           activeBindingId={hasActiveTask ? (currentTaskBinding?.id ?? null) : null}
+          focusedBindingId={hoveredTaskBindingId}
+          onFocusBinding={setHoveredTaskBindingId}
+          onSendMessage={onSendMessage}
         />
       }
     >
@@ -664,6 +679,8 @@ function RuntimeTaskConversationPreview({
   initialMessages,
   fallbackMessages,
   initialTranscriptLoaded,
+  initialHasMoreBefore,
+  initialBeforeCursor,
   active,
 }: {
   itemId: string
@@ -671,35 +688,101 @@ function RuntimeTaskConversationPreview({
   initialMessages: WorkbenchMessage[]
   fallbackMessages: WorkbenchMessage[]
   initialTranscriptLoaded: boolean
+  initialHasMoreBefore: boolean
+  initialBeforeCursor: string | null
   active: boolean
 }) {
   const workbench = useContext(WorkbenchContext)
   const runtimeMessages = useRuntimeTaskMessages(address)
+  const [historyExpanded, setHistoryExpanded] = useState(false)
+  const [loadingMoreBefore, setLoadingMoreBefore] = useState(false)
+  const [pagination, setPagination] = useState<{
+    hasMoreBefore: boolean
+    beforeCursor: string | null
+  } | null>(null)
   const messages = useMemo(() => {
     const loadedMessages = mergeConversationMessages(initialMessages, runtimeMessages)
     return loadedMessages.length > 0 ? loadedMessages : fallbackMessages
   }, [fallbackMessages, initialMessages, runtimeMessages])
-  const visibleMessages = useMemo(() => latestConversationRound(messages), [messages])
+  const latestRoundMessages = useMemo(() => latestConversationRound(messages), [messages])
+  const hasHiddenMessages = !historyExpanded && latestRoundMessages.length < messages.length
+  const visibleMessages = historyExpanded ? messages : latestRoundMessages
+  const hasMoreBefore = pagination?.hasMoreBefore ?? initialHasMoreBefore
+  const beforeCursor = pagination?.beforeCursor ?? initialBeforeCursor
+  const awaitingInitialTranscript = !initialTranscriptLoaded
+  const canLoadMoreBefore =
+    awaitingInitialTranscript || hasHiddenMessages || (hasMoreBefore && Boolean(beforeCursor))
+
+  const loadMoreBefore = useCallback(async () => {
+    if (awaitingInitialTranscript) return
+    if (hasHiddenMessages) {
+      setHistoryExpanded(true)
+      return
+    }
+    if (!workbench || !beforeCursor || loadingMoreBefore) return
+
+    setLoadingMoreBefore(true)
+    try {
+      const transcript = await workbench.loadRuntimeTranscriptForPane(address, {
+        limit: 50,
+        beforeCursor,
+      })
+      reconcileRuntimeConversationSnapshot(address, transcript.turns)
+      setPagination({
+        hasMoreBefore: Boolean(transcript.hasMoreBefore),
+        beforeCursor: transcript.beforeCursor ?? null,
+      })
+      setHistoryExpanded(true)
+    } catch (error) {
+      console.warn('[Wework project board] failed to load older task conversation', {
+        address,
+        beforeCursor,
+        error,
+      })
+    } finally {
+      setLoadingMoreBefore(false)
+    }
+  }, [
+    address,
+    awaitingInitialTranscript,
+    beforeCursor,
+    hasHiddenMessages,
+    loadingMoreBefore,
+    workbench,
+  ])
 
   if (visibleMessages.length === 0 && initialTranscriptLoaded) return null
 
   return (
     <div
       data-testid={`cloud-todo-card-popup-conversation-${itemId}`}
-      className="mt-2 min-h-0 max-h-72 min-w-0 overflow-hidden"
+      className="mt-2 min-h-0 max-h-[min(68vh,42rem)] min-w-0 overflow-hidden"
     >
       <ScrollableMessageArea
         messages={visibleMessages}
         loading={visibleMessages.length === 0}
-        hasMoreBefore={false}
-        loadingMoreBefore={!initialTranscriptLoaded}
+        hasMoreBefore={canLoadMoreBefore}
+        loadingMoreBefore={awaitingInitialTranscript || loadingMoreBefore}
+        onLoadMoreBefore={loadMoreBefore}
         conversationKey={`cloud-todo-card:${address.deviceId}:${address.taskId}`}
         scrollTestId={`cloud-todo-card-popup-scroll-${itemId}`}
-        className="max-h-72 [&_[data-testid=message-turn-navigation]]:!hidden"
-        scrollerClassName="scrollbar-none max-h-72"
+        className="max-h-[min(68vh,42rem)] [&_[data-testid=message-turn-navigation]]:!hidden"
+        scrollerClassName="scrollbar-soft max-h-[min(68vh,42rem)]"
         messageListClassName="w-full gap-4 p-0"
         isWaitingForAssistant={active}
         devices={workbench?.state.devices}
+        onLoadFileChangesDiff={
+          workbench
+            ? (subtaskId, fileChanges) =>
+                workbench.loadTurnFileChangesDiff(subtaskId, visibleMessages, fileChanges, address)
+            : undefined
+        }
+        onRevertFileChanges={
+          workbench
+            ? (subtaskId, fileChanges) =>
+                workbench.revertTurnFileChanges(subtaskId, visibleMessages, fileChanges, address)
+            : undefined
+        }
       />
     </div>
   )
@@ -713,6 +796,7 @@ function RuntimeTaskProgressSummary({
   changeRequestSnapshot,
   repairingChangeRequest,
   onContinueChangeRequestRepair,
+  onSendMessage,
 }: {
   item: CloudLoopItem
   binding: CloudTodoBoardTaskBinding
@@ -721,6 +805,7 @@ function RuntimeTaskProgressSummary({
   changeRequestSnapshot: TaskChangeRequestSnapshot | null
   repairingChangeRequest: boolean
   onContinueChangeRequestRepair?: () => Promise<void>
+  onSendMessage?: (message: string) => Promise<boolean>
 }) {
   const activityAddress = useMemo<RuntimeTaskAddress | null>(
     () =>
@@ -842,6 +927,8 @@ function RuntimeTaskProgressSummary({
           initialMessages={binding.conversationMessages ?? []}
           fallbackMessages={fallbackConversationMessages}
           initialTranscriptLoaded={binding.conversationLoaded === true}
+          initialHasMoreBefore={binding.conversationHasMoreBefore === true}
+          initialBeforeCursor={binding.conversationBeforeCursor ?? null}
           active={activity.active}
         />
       ) : responsePreview ? (
@@ -858,20 +945,167 @@ function RuntimeTaskProgressSummary({
       ) : activity.active ? (
         <RuntimeTaskLiveActivity itemId={item.id} activity={activity} />
       ) : null}
+      {!compact && onSendMessage ? (
+        <RuntimeTaskCompactComposer
+          itemId={item.id}
+          bindingId={binding.id}
+          address={taskAddress}
+          onSendMessage={onSendMessage}
+        />
+      ) : null}
     </div>
   )
+}
+
+function RuntimeTaskCompactComposer({
+  itemId,
+  bindingId,
+  address,
+  onSendMessage,
+}: {
+  itemId: string
+  bindingId: number
+  address: RuntimeTaskAddress
+  onSendMessage: (message: string) => Promise<boolean>
+}) {
+  const { t } = useTranslation('common')
+  const composerContext = useRuntimeTaskComposerContext(address)
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (submittedValue?: string) => {
+    const message = (submittedValue ?? draft).trim()
+    if (!message || sending) return false
+
+    setSending(true)
+    setError(null)
+    try {
+      const accepted = await onSendMessage(message)
+      if (accepted) {
+        setDraft('')
+      } else {
+        setError(t('workbench.project_chat_send_failed'))
+      }
+      return accepted
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('workbench.project_chat_send_failed'))
+      return false
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div
+      data-testid={`cloud-todo-card-popup-composer-${itemId}-${bindingId}`}
+      data-hover-card-pin-region
+      className="task-detail-comment-chat-input mt-2"
+    >
+      <ChatInput
+        value={draft}
+        onChange={setDraft}
+        onSubmit={submit}
+        disabled={sending}
+        error={error}
+        placeholder={t('workbench.task_activity_inline_placeholder')}
+        inputTestId={`cloud-todo-card-popup-input-${itemId}-${bindingId}`}
+        submitButtonTestId={`cloud-todo-card-popup-send-${itemId}-${bindingId}`}
+        variant="desktop"
+        collapseWhenIdle
+        projectChat={composerContext.projectChat}
+        projectPhrases={composerContext.projectPhrases}
+        showProjectWorkBar={false}
+      />
+    </div>
+  )
+}
+
+function useRuntimeTaskComposerContext(address: RuntimeTaskAddress): {
+  projectChat?: ProjectChatControls
+  projectPhrases: QuickPhrase[]
+} {
+  const workbench = useContext(WorkbenchContext)
+
+  return useMemo(() => {
+    if (!workbench) return { projectPhrases: [] }
+
+    const scopeKey = getRuntimeTaskChatScopeKey(address)
+    const controls = workbench.projectChat
+    const attachmentState = controls.attachmentStateByScope[scopeKey] ?? {
+      attachments: [],
+      uploadingFiles: new Map(),
+      errors: new Map(),
+    }
+    const runtimeProject = workbench.state.runtimeWork?.projects.find(project =>
+      project.deviceWorkspaces.some(
+        workspace =>
+          (workspace.deviceId === address.deviceId ||
+            workspace.remoteHostId === address.deviceId) &&
+          workspace.tasks.some(task => task.taskId === address.taskId)
+      )
+    )?.project
+
+    return {
+      projectChat: {
+        scopeKey,
+        models: controls.models,
+        skills: controls.skills,
+        selectedModel: controls.selectedModel,
+        activeModel: controls.activeModel,
+        selectedModelOptions: controls.selectedModelOptions,
+        isModelSelectionReady: controls.isModelSelectionReady,
+        trialTemplates: controls.trialTemplates,
+        trialPluginName: controls.trialPluginName,
+        trialPluginApp: controls.trialPluginApp,
+        hasConversationContext: controls.hasConversationContext,
+        dismissTrialGuide: controls.dismissTrialGuide,
+        applyTrialTemplate: controls.applyTrialTemplate,
+        selectedSkills: controls.selectedSkills,
+        attachments: attachmentState.attachments,
+        uploadingFiles: attachmentState.uploadingFiles,
+        errors: attachmentState.errors,
+        contextUsage: controls.contextUsage,
+        isOptionsLocked: controls.isOptionsLocked,
+        setSelectedModel: controls.setSelectedModel,
+        setSelectedModelAndOptions: controls.setSelectedModelAndOptions,
+        setSelectedModelOption: controls.setSelectedModelOption,
+        getSelectedModel: controls.getSelectedModel,
+        getSelectedModelOptions: controls.getSelectedModelOptions,
+        onBlockedModelSelect: controls.onBlockedModelSelect,
+        toggleSkill: controls.toggleSkill,
+        handleFileSelect: files => controls.handleFileSelectForScope(scopeKey, files),
+        removeAttachment: attachmentId => controls.removeAttachmentForScope(scopeKey, attachmentId),
+        listLocalSkills: controls.listLocalSkills,
+        listLocalApps: controls.listLocalApps,
+      },
+      projectPhrases:
+        runtimeProject?.source === 'local_project'
+          ? (runtimeProject.aiSettings?.quickPhrases ?? [])
+          : [],
+    }
+  }, [address, workbench])
 }
 
 function RuntimeTaskProgressPopup({
   item,
   bindings,
   activeBindingId,
+  focusedBindingId,
+  onFocusBinding,
+  onSendMessage,
 }: {
   item: CloudLoopItem
   bindings: CloudTodoBoardTaskBinding[]
   activeBindingId: number | null
+  focusedBindingId: number | null
+  onFocusBinding: (bindingId: number | null) => void
+  onSendMessage?: (binding: CloudTodoBoardTaskBinding, message: string) => Promise<boolean>
 }) {
   const { t } = useTranslation('common')
+  const visibleBindings = focusedBindingId
+    ? bindings.filter(binding => binding.id === focusedBindingId)
+    : bindings
 
   return (
     <div
@@ -882,18 +1116,22 @@ function RuntimeTaskProgressPopup({
         <div className="text-sm font-medium leading-5 text-text-primary">
           {t('todo.task_progress_details', '当前任务进展')}
         </div>
-        {bindings.length > 1 ? (
+        {!focusedBindingId && bindings.length > 1 ? (
           <div className="mt-0.5 text-xs leading-5 text-text-secondary">
             {t('todo.task_progress_count', '{{count}} 个任务', { count: bindings.length })}
           </div>
         ) : null}
       </div>
-      {bindings.length > 0 ? (
+      {visibleBindings.length > 0 ? (
         <div data-testid={`cloud-todo-card-progress-list-${item.id}`} className="space-y-1">
-          {bindings.map(binding => (
+          {visibleBindings.map(binding => (
             <div
               key={binding.id}
               data-testid={`cloud-todo-card-progress-task-${item.id}-${binding.id}`}
+              onMouseEnter={() => onFocusBinding(binding.id)}
+              onMouseLeave={() => onFocusBinding(null)}
+              onFocus={() => onFocusBinding(binding.id)}
+              onBlur={() => onFocusBinding(null)}
               className="p-1"
             >
               <RuntimeTaskProgressSummary
@@ -903,6 +1141,9 @@ function RuntimeTaskProgressPopup({
                 active={binding.running || binding.id === activeBindingId}
                 changeRequestSnapshot={null}
                 repairingChangeRequest={false}
+                onSendMessage={
+                  onSendMessage ? message => onSendMessage(binding, message) : undefined
+                }
               />
             </div>
           ))}

@@ -6,8 +6,16 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
-const [assetsDirectory, outputDirectory, version, channel, repository, releaseTag, notesPath] =
-  process.argv.slice(2)
+const [
+  assetsDirectory,
+  outputDirectory,
+  version,
+  channel,
+  repository,
+  releaseTag,
+  notesPath,
+  sourceSha,
+] = process.argv.slice(2)
 
 if (
   !assetsDirectory ||
@@ -16,14 +24,18 @@ if (
   !channel ||
   !repository ||
   !releaseTag ||
-  !notesPath
+  !notesPath ||
+  !sourceSha
 ) {
   throw new Error(
-    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file>'
+    'Usage: generate-desktop-update-manifests.mjs <assets> <output> <version> <stable|beta> <repository> <release-tag> <notes-file> <source-sha>'
   )
 }
 if (channel !== 'stable' && channel !== 'beta') {
   throw new Error(`Unsupported Wework update channel: ${channel}`)
+}
+if (!/^[0-9a-f]{40,64}$/.test(sourceSha)) {
+  throw new Error(`Invalid Wework source SHA: ${sourceSha}`)
 }
 
 const assets = resolve(assetsDirectory)
@@ -31,12 +43,14 @@ const output = resolve(outputDirectory)
 const notes = await readFile(resolve(notesPath), 'utf8')
 const releaseDate = new Date().toISOString()
 const releaseBaseUrl = `https://github.com/${repository}/releases/download/${releaseTag}`
-const componentBaseUrl = `https://github.com/${repository}/releases/download/wework-updater`
+const sharedComponentBaseUrl = `https://github.com/${repository}/releases/download/wework-updater`
+const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
 await mkdir(output, { recursive: true })
 
 const macArm = await asset(`WeWork_${version}_macos_arm64.zip`)
 const macX64 = await asset(`WeWork_${version}_macos_x64.zip`)
 const windows = await asset(`WeWork_${version}_windows_x64-setup.exe`)
+await Promise.all([macArm, macX64, windows].map(file => requireAsset(`${file.name}.blockmap`)))
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -113,7 +127,7 @@ for (const [platform, architecture] of [
       contentSha256: component.contentSha256,
       archiveSha256,
       archiveBytes: archive.size,
-      downloadUrl: `${componentBaseUrl}/${encodeURIComponent(component.assetName)}`,
+      downloadUrl: `${sharedComponentIds.has(id) ? sharedComponentBaseUrl : releaseBaseUrl}/${encodeURIComponent(component.assetName)}`,
       entryPath: component.entryPath,
     }
   }
@@ -124,6 +138,7 @@ for (const [platform, architecture] of [
         {
           schemaVersion: 1,
           appVersion: version,
+          sourceSha,
           channel: targetChannel,
           platform,
           arch: architecture,
@@ -155,6 +170,12 @@ async function localAsset(name) {
     size: file.size,
     sha512: await sha512(path),
   }
+}
+
+async function requireAsset(name) {
+  const path = resolve(assets, name)
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
 }
 
 async function tauriEntry(name) {

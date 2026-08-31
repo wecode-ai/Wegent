@@ -219,20 +219,6 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
-async function writeStaleBridgeRuntime(identity) {
-  await writeFile(
-    identity.runtimePath,
-    `${JSON.stringify({
-      schemaVersion: 1,
-      pid: process.pid,
-      address: '127.0.0.1:9',
-      token: 'stale-upgrade-token',
-      startedAtUnixMs: Date.now() - 60_000,
-    })}\n`,
-    'utf8'
-  )
-}
-
 async function callBridge(identity, payload, label = BROWSER_LABEL) {
   const body = await callBridgeResponse(identity, payload, label)
   assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
@@ -367,8 +353,6 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
       WEWORK_EMBEDDED_BROWSER_LABEL: label,
     },
@@ -1037,6 +1021,39 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `Annotation target click failed: ${JSON.stringify(createAnnotation)}`
       )
       assert.equal(createAnnotation.value, true, 'Annotation target click did not open the editor')
+      const draftAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `(() => {
+          const draft = document.querySelector('[data-wework-annotation="draft-marker"]')
+          return {
+            exists: Boolean(draft),
+            text: draft?.textContent ?? null,
+            fill: draft?.querySelector('path')?.getAttribute('fill') ?? null,
+            transform: draft?.style.transform ?? null,
+            savedCount: document.querySelectorAll('[data-wework-annotation="marker"]').length,
+            annotationCount:
+              window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.().annotations.length ?? null,
+          }
+        })()`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        draftAnnotationMarker.ok,
+        true,
+        `Draft annotation marker evaluation failed: ${JSON.stringify(draftAnnotationMarker)}`
+      )
+      assert.deepEqual(
+        draftAnnotationMarker.value,
+        {
+          exists: true,
+          text: '',
+          fill: '#0069FB',
+          transform: 'translate(-15.689%, -89.696%)',
+          savedCount: 0,
+          annotationCount: 0,
+        },
+        'The first annotation did not show the unnumbered draft marker'
+      )
       const fillAnnotationComment = await bridgeCall({
         action: 'fill',
         selector: '[data-wework-annotation="comment-input"]',
@@ -1062,6 +1079,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: '1',
         timeoutMs: uiTimeoutMs,
       })
+      const publishedAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `({
+          draftExists: Boolean(
+            document.querySelector('[data-wework-annotation="draft-marker"]')
+          ),
+          savedText:
+            document.querySelector('[data-wework-annotation="marker"]')?.textContent ?? null,
+        })`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(publishedAnnotationMarker.ok, true)
+      assert.deepEqual(
+        publishedAnnotationMarker.value,
+        { draftExists: false, savedText: '1' },
+        'Publishing did not replace the draft marker with numbered marker 1'
+      )
 
       const annotationMarker = await bridgeCall({
         action: 'click',
@@ -1138,6 +1172,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Annotation adjustment did not update the target'
       )
       await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
       const originalViewPressedBefore = await control.command(
@@ -1346,7 +1381,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `The embedded browser fixture did not reload after annotation checks: ${JSON.stringify(restoredFixtureReady)}`
       )
 
-      await writeStaleBridgeRuntime(bridgeIdentity)
       const mcpResult = await withBrowserMcp(bridgeIdentity, browserLabel, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,

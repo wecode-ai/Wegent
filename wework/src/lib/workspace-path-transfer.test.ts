@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  hasWorkspacePathDragData,
   inspectNativeWorkspacePaths,
+  fileUrlToPath,
   readClipboardFileUriPaths,
   readNativeClipboardWorkspacePaths,
   readNativeDroppedWorkspacePaths,
+  readWorkspacePathDragData,
   resolveDataTransferWorkspacePaths,
   resolveStoredWorkspacePaths,
+  WORKSPACE_PATH_DRAG_TYPE,
+  writeWorkspacePathDragData,
 } from './workspace-path-transfer'
 
 const mocks = vi.hoisted(() => ({
@@ -40,6 +45,46 @@ describe('workspace path transfer', () => {
     mocks.readDroppedFiles.mockResolvedValue([])
   })
 
+  test('round trips internal workspace file tree drags', () => {
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      types: [] as string[],
+      getData: (type: string) => values.get(type) ?? '',
+      setData: (type: string, value: string) => {
+        values.set(type, value)
+        if (!dataTransfer.types.includes(type)) dataTransfer.types.push(type)
+      },
+    } as unknown as DataTransfer
+
+    writeWorkspacePathDragData(dataTransfer, [
+      { path: '/workspace/project/notes.md', isDirectory: false },
+    ])
+
+    expect(dataTransfer.types).toContain(WORKSPACE_PATH_DRAG_TYPE)
+    expect(hasWorkspacePathDragData(dataTransfer)).toBe(true)
+    expect(readWorkspacePathDragData(dataTransfer)).toEqual([
+      { path: '/workspace/project/notes.md', isDirectory: false },
+    ])
+  })
+
+  test('resolves internal workspace file tree drags as path references', async () => {
+    const dataTransfer = {
+      types: [WORKSPACE_PATH_DRAG_TYPE],
+      files: [] as unknown as FileList,
+      getData: (type: string) =>
+        type === WORKSPACE_PATH_DRAG_TYPE
+          ? JSON.stringify([{ path: '/workspace/project/docs', isDirectory: true }])
+          : '',
+    } as unknown as DataTransfer
+
+    await expect(resolveDataTransferWorkspacePaths(dataTransfer, 'drop', 'local')).resolves.toEqual(
+      {
+        attachmentFiles: [],
+        referenceEntries: [{ path: '/workspace/project/docs', isDirectory: true }],
+      }
+    )
+  })
+
   test('parses file URI clipboard formats and ignores comments and duplicates', () => {
     const data = clipboardData({
       'text/uri-list': [
@@ -54,6 +99,12 @@ describe('workspace path transfer', () => {
       '/Users/alice/project/frontend',
       '/Users/alice/project/large file.bin',
     ])
+  })
+
+  test('converts Windows file URIs to drive paths without a leading slash', () => {
+    expect(fileUrlToPath('file:///D:/a/Wegent/dsh-e2e-smoke.zip')).toBe(
+      'D:/a/Wegent/dsh-e2e-smoke.zip'
+    )
   })
 
   test('asks Electron to inspect native clipboard paths with URI fallbacks', async () => {
@@ -145,7 +196,7 @@ describe('workspace path transfer', () => {
       { path: '/Users/alice/project/context.md', isDirectory: false },
     ])
 
-    await expect(resolveDataTransferWorkspacePaths(data, 'drop', 'local')).resolves.toEqual({
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
       attachmentFiles: [],
       referenceEntries: [{ path: '/Users/alice/project/context.md', isDirectory: false }],
     })
@@ -154,17 +205,51 @@ describe('workspace path transfer', () => {
     })
   })
 
+  test('keeps dropped images as attachments', async () => {
+    const file = new File(['image'], 'preview.png', { type: 'image/png' })
+    const data = clipboardData({}, [file])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
+  test('keeps pathless pasted images as attachments', async () => {
+    const file = new File(['image'], 'clipboard.png', { type: 'image/png' })
+    const data = clipboardData({}, [file])
+    mocks.desktopHost.mockResolvedValue([])
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
+    })
+    expect(mocks.desktopHost).not.toHaveBeenCalled()
+  })
+
   test('keeps pasted files as attachments when no native path can be resolved', async () => {
     const file = new File(['archive'], 'feedback.zip', { type: 'application/zip' })
     const data = clipboardData({}, [file])
     mocks.desktopHost.mockResolvedValue([])
 
-    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard', 'local')).resolves.toEqual({
+    await expect(resolveDataTransferWorkspacePaths(data, 'clipboard')).resolves.toEqual({
       attachmentFiles: [file],
       referenceEntries: [],
     })
     expect(mocks.desktopHost).toHaveBeenCalledWith('clipboard.readWorkspacePaths', {
       fallbackPaths: [],
+    })
+  })
+
+  test('keeps ordinary dropped files as attachments when native path inspection fails', async () => {
+    const file = new File(['archive'], 'feedback.zip', { type: 'application/zip' })
+    const data = clipboardData({}, [file])
+    mocks.desktopHost.mockRejectedValue(new Error('native inspection failed'))
+
+    await expect(resolveDataTransferWorkspacePaths(data, 'drop')).resolves.toEqual({
+      attachmentFiles: [file],
+      referenceEntries: [],
     })
   })
 

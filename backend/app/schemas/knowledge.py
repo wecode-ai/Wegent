@@ -9,9 +9,16 @@ Pydantic schemas for knowledge base and document management.
 import logging
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, PositiveInt, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    PositiveInt,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from app.models.knowledge import ContentOrigin
 from app.schemas.base_role import BaseRole
@@ -59,10 +66,13 @@ class DocumentSourceType(str, Enum):
     # Source file indexed for retrieval rather than a browsable document. Declared so
     # ensure_source_type_enum does not silently coerce it to FILE.
     CODE = "code"
+    # Document imported from an external provider (e.g. DingTalk) through the
+    # external import path, not the regular upload API.
+    EXTERNAL = "external"
 
 
-def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
-    """Refuse ``code`` on a public document create.
+def reject_internal_source_type(value: "DocumentSourceType") -> "DocumentSourceType":
+    """Refuse source types owned by dedicated ingestion paths.
 
     A code target is an indexed source file rather than a browsable page, so every
     reader-facing scope filters it out -- but the document count does not, which makes
@@ -74,6 +84,10 @@ def reject_code_source_type(value: "DocumentSourceType") -> "DocumentSourceType"
     if value == DocumentSourceType.CODE:
         raise ValueError(
             "'code' documents are written by the indexer, not through this API"
+        )
+    if value == DocumentSourceType.EXTERNAL:
+        raise ValueError(
+            "'external' documents are written through the external import API"
         )
     return value
 
@@ -995,11 +1009,65 @@ class KnowledgeDocumentCreate(MultimodalDocumentPromptMixin):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = Field(default=DocumentSourceType.FILE)
 
-    _no_code_source = field_validator("source_type")(reject_code_source_type)
+    _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     source_config: dict = Field(
         default_factory=dict,
         description="Source configuration (e.g., {'url': '...'} for table)",
     )
+
+
+class ExternalDocumentImportRequest(BaseModel):
+    """Request schema for importing one external provider document."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="External provider ID (e.g. 'dingtalk')",
+    )
+    external_resource_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Provider-scoped external document ID",
+    )
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID in this knowledge base (0 = root level)",
+    )
+
+
+class ExternalDocumentBatchImportRequest(BaseModel):
+    """Request schema for importing several external provider documents."""
+
+    provider: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="External provider ID (e.g. 'dingtalk')",
+    )
+    external_resource_ids: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    ] = Field(
+        ...,
+        min_length=1,
+        description="Provider-scoped external document IDs to import",
+    )
+    folder_id: int = Field(
+        default=0,
+        ge=0,
+        description="Target folder ID in this knowledge base (0 = root level)",
+    )
+
+
+class ExternalDocumentStatusRequest(BaseModel):
+    """Bounded lookup of existing copies, independent of listing pagination."""
+
+    provider: str = Field(..., min_length=1, max_length=32)
+    external_resource_ids: list[
+        Annotated[str, StringConstraints(min_length=1, max_length=255)]
+    ] = Field(..., min_length=1, max_length=500)
 
 
 class KnowledgeDocumentUpdate(BaseModel):
@@ -1031,6 +1099,12 @@ class KnowledgeDocumentResponse(BaseModel):
     splitter_config: Optional[SplitterConfig] = None
     source_type: DocumentSourceType = DocumentSourceType.FILE
     source_config: Optional[dict] = None
+    external_provider: Optional[str] = Field(
+        None, description="External provider ID when the document was imported"
+    )
+    external_resource_id: Optional[str] = Field(
+        None, description="Provider-scoped external document ID when imported"
+    )
     origin: ContentOrigin = ContentOrigin.USER
     folder_id: int = Field(default=0, ge=0, description="Folder ID (0 = root level)")
     doc_ref: Optional[str] = Field(
@@ -1100,6 +1174,17 @@ class KnowledgeDocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ExternalDocumentBatchImportResponse(BaseModel):
+    """Response schema for a batch external document import."""
+
+    created: list[KnowledgeDocumentResponse]
+    updated: list[KnowledgeDocumentResponse]
+    processing: list[KnowledgeDocumentResponse]
+    requested_count: int = Field(
+        description="Number of distinct external resources in the request"
+    )
 
 
 class KnowledgeDocumentListResponse(BaseModel):
@@ -1699,7 +1784,7 @@ class KnowledgeDocumentCreateV1(BaseModel):
         ),
     )
 
-    _no_code_source = field_validator("source_type")(reject_code_source_type)
+    _no_internal_source = field_validator("source_type")(reject_internal_source_type)
     # source_type=text
     content: Optional[str] = Field(
         None,

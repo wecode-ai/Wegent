@@ -17,6 +17,7 @@ export interface DingtalkDocNode {
   node_type: 'folder' | 'doc' | 'file'
   workspace_id: string
   content_type: string
+  extension?: string
   content_updated_at: string
   source: DingtalkNodeSource
   is_active: boolean
@@ -35,6 +36,8 @@ export interface DingtalkSyncStatus {
   last_synced_at: string | null
   total_nodes: number
   is_configured: boolean
+  ai_table_configured?: boolean
+  table_configured?: boolean
 }
 
 export interface DingtalkSyncResult {

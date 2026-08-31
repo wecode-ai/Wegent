@@ -4,36 +4,33 @@
 
 'use client'
 
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRef, useCallback, useState, useEffect, type ReactNode } from 'react'
 import {
   Upload,
-  X,
-  FileText,
   AlertCircle,
-  CheckCircle2,
   Loader2,
-  RefreshCw,
   Trash2,
   ClipboardPaste,
-  ArrowLeft,
-  Pencil,
-  Link,
-  Check,
   Globe,
+  BookOpen,
+  X,
 } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Accordion,
   AccordionContent,
@@ -41,17 +38,15 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  useBatchAttachment,
-  MAX_BATCH_FILES,
-  type FileUploadStatus,
-} from '@/hooks/useBatchAttachment'
+import { useBatchAttachment, MAX_BATCH_FILES } from '@/hooks/useBatchAttachment'
 import { MAX_FILE_SIZE } from '@/apis/attachments'
 import { SplitterSettingsSection, type SplitterConfig } from './SplitterSettingsSection'
 import { MULTIMODAL_EXTENSIONS } from '@/features/knowledge/multimodal/constants'
 import type { Attachment } from '@/types/api'
 import { cn } from '@/lib/utils'
-import { validateTableUrl } from '@/apis/knowledge'
+import { DingtalkDocumentImport, type DingtalkBatchImportSummary } from './DingtalkDocumentImport'
+import { DocumentUploadFooter } from './DocumentUploadFooter'
+import { UploadFileList } from './UploadFileList'
 import { DEFAULT_FLAT_CHUNK_CONFIG, DEFAULT_SPLITTER_CONFIG } from '@/types/knowledge'
 import { mapKnowledgeDocumentErrorMessage } from '../utils/error-messages'
 import {
@@ -64,76 +59,72 @@ import {
   isVideoModelBlock,
 } from '@/features/knowledge/multimodal/utils/upload-validation'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
+import { useTextDocumentUpload } from '../hooks/useTextDocumentUpload'
 import type { DocumentCreationResult } from '../utils/document-creation'
 
 function buildDefaultSplitterConfig(): Partial<SplitterConfig> {
   return {
     ...DEFAULT_SPLITTER_CONFIG,
-    flat_config: {
-      ...DEFAULT_FLAT_CHUNK_CONFIG,
-    },
+    flat_config: { ...DEFAULT_FLAT_CHUNK_CONFIG },
     markdown_enhancement: {
       enabled: DEFAULT_SPLITTER_CONFIG.markdown_enhancement?.enabled ?? true,
     },
   }
 }
 
-// Upload mode type
-type UploadMode = 'file' | 'text' | 'table' | 'web'
+type UploadMode = 'file' | 'text' | 'web' | 'dingtalk'
 
-// Table document data
-export interface TableDocument {
-  name: string
-  source_config: { url: string }
+const SOURCE_HEIGHT: Record<UploadMode, string> = {
+  file: 'h-[540px] md:h-[480px]',
+  web: 'h-[440px] md:h-[344px]',
+  text: 'h-[580px]',
+  dingtalk: 'h-[720px]',
 }
 
+const WEB_ERROR_KEYS = {
+  FETCH_FAILED: 'document.upload.web.fetchFailed',
+  FETCH_TIMEOUT: 'document.upload.web.fetchTimeout',
+  PARSE_FAILED: 'document.upload.web.parseFailed',
+  EMPTY_CONTENT: 'document.upload.web.emptyContent',
+  AUTH_REQUIRED: 'document.upload.web.authRequired',
+} as const
+
 interface DocumentUploadProps {
+  knowledgeBaseId: number
   open: boolean
   onOpenChange: (open: boolean) => void
   onUploadComplete: (
     attachments: { attachment: Attachment; file: File }[],
     splitterConfig?: Partial<SplitterConfig>,
-    multimodalAnalysisPrompts?: {
-      video?: string | null
-      image?: string | null
-    }
+    multimodalAnalysisPrompts?: { video?: string | null; image?: string | null }
   ) => Promise<DocumentCreationResult[]>
-  onTableAdd?: (data: TableDocument) => Promise<void>
-  /** Callback to add a web page document. Backend handles scraping and document creation. */
   onWebAdd?: (url: string, name?: string) => Promise<void>
-  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
+  onDingtalkImport?: (resourceIds: string[]) => Promise<DingtalkBatchImportSummary>
+  canManageDocuments?: boolean
+  /** Deprecated compatibility props. kb_type no longer limits uploads. */
   kbType?: string
-  /** Deprecated compatibility prop. kb_type no longer limits uploads. */
   currentDocumentCount?: number
-  /** Currently selected folder ID for upload destination (0 = root) */
   folderId?: number
-  /** Flat list of folder names with IDs for the selector */
   folderOptions?: Array<{ id: number; name: string; depth: number }>
-  /** Callback when folder selection changes */
   onFolderChange?: (folderId: number) => void
-  /** Whether multimodal (video/image) analysis is enabled for this KB — gates video/image file selection */
   multimodalAnalysisEnabled?: boolean
-  /**
-   * Whether the KB's currently selected multimodal analysis model declares
-   * supportsVideo. When false, video uploads are blocked at the picker with a
-   * friendly message (the backend remains the correctness boundary; this is a
-   * UX early-rejection so users don't waste an upload only to fail at convert
-   * time). Images are unaffected — image-only models are a legitimate choice
-   * for image-only KBs.
-   */
   multimodalModelSupportsVideo?: boolean
-  /** KB-level video prompt (used to resolve the inherited effective value shown to the user) */
   multimodalVideoPrompt?: string | null
-  /** KB-level image prompt (used to resolve the inherited effective value shown to the user) */
   multimodalImagePrompt?: string | null
 }
 
-export function DocumentUpload({
-  open,
+/** Each opening owns a fresh session; source switches preserve that session. */
+export function DocumentUpload(props: DocumentUploadProps) {
+  return props.open ? <DocumentUploadSession {...props} /> : null
+}
+
+function DocumentUploadSession({
+  knowledgeBaseId,
   onOpenChange,
   onUploadComplete,
-  onTableAdd,
   onWebAdd,
+  onDingtalkImport,
+  canManageDocuments = true,
   folderId = 0,
   folderOptions = [],
   onFolderChange,
@@ -144,1322 +135,648 @@ export function DocumentUpload({
 }: DocumentUploadProps) {
   const { t } = useTranslation('knowledge')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const submissionLock = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+  const batch = useBatchAttachment()
   const {
     state,
     addFiles,
-    removeFile,
     clearFiles,
     startUpload,
     retryFile,
-    renameFile,
     reset,
     applyDocumentCreationResults,
-  } = useBatchAttachment()
+  } = batch
+  const textUpload = useTextDocumentUpload()
   const [splitterConfig, setSplitterConfig] = useState<Partial<SplitterConfig>>(
     buildDefaultSplitterConfig
   )
-  // Gate the KB's multimodal flag by the global pipeline switch: when the
-  // switch is off, an already-enabled KB must still behave as non-multimodal
-  // (reject video/image uploads, hide prompt settings) so users cannot trigger
-  // a disabled pipeline.
   const multimodalFeatureEnabled = useMultimodalFeatureEnabled()
   const multimodalAnalysisEnabled = multimodalAnalysisEnabledProp && multimodalFeatureEnabled
+  const [multimodalPrompts, setMultimodalPrompts] = useState<UploadMultimodalPrompts | null>(null)
+  const [uploadMode, setUploadMode] = useState<UploadMode>('file')
+  const [dingtalkVisited, setDingtalkVisited] = useState(false)
+  const [dingtalkHasDraft, setDingtalkHasDraft] = useState(false)
   const [isDragOver, setIsDragOver] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
-  const [isConfirming, setIsConfirming] = useState(false)
-
-  // Upload mode state
-  const [uploadMode, setUploadMode] = useState<UploadMode>('file')
-
-  // Text input state
+  const [submitting, setSubmitting] = useState<UploadMode | null>(null)
   const [textContent, setTextContent] = useState('')
   const [textFileName, setTextFileName] = useState('')
   const [textError, setTextError] = useState<string | null>(null)
-
-  // Table input state
-  const [tableUrl, setTableUrl] = useState('')
-  const [tableName, setTableName] = useState('')
-  const [tableError, setTableError] = useState<string | null>(null)
-  const [tableSubmitting, setTableSubmitting] = useState(false)
-
-  // Table URL validation state
-  const [tableUrlValidating, setTableUrlValidating] = useState(false)
-  const [tableUrlValid, setTableUrlValid] = useState<boolean | null>(null)
-  const [tableUrlProvider, setTableUrlProvider] = useState<string | null>(null)
-
-  // Web page input state
   const [webUrl, setWebUrl] = useState('')
-  const [webName, setWebName] = useState('')
   const [webError, setWebError] = useState<string | null>(null)
-  const [webSubmitting, setWebSubmitting] = useState(false)
-  const [webFetching, setWebFetching] = useState(false)
+  const [webTouched, setWebTouched] = useState(false)
+  const [showDiscard, setShowDiscard] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const filesBusy =
+    state.isUploading || state.files.some(f => f.status === 'pending' || f.status === 'uploading')
+  const busy = filesBusy || submitting !== null
+  const drafts: Record<UploadMode, boolean> = {
+    file: state.files.length > 0,
+    text: Boolean(textContent.trim() || textFileName.trim()),
+    web: Boolean(webUrl.trim()),
+    dingtalk: dingtalkHasDraft,
+  }
+  const sources = [
+    { id: 'file' as const, label: t('document.upload.sources.file'), icon: Upload },
+    ...(onWebAdd
+      ? [{ id: 'web' as const, label: t('document.upload.sources.web'), icon: Globe }]
+      : []),
+    { id: 'text' as const, label: t('document.upload.sources.text'), icon: ClipboardPaste },
+    ...(onDingtalkImport
+      ? [{ id: 'dingtalk' as const, label: t('document.upload.dingtalk.entry'), icon: BookOpen }]
+      : []),
+  ]
 
-  // File rename editing state
-  const [editingFileId, setEditingFileId] = useState<string | null>(null)
-  const [editingFileName, setEditingFileName] = useState('')
-
-  // Per-upload multimodal prompt overrides (reported by the
-  // UploadMultimodalPromptSettings child component via onChange). null when the
-  // queue has no multimodal files. Forwarded per-media-type at submit time.
-  const [multimodalPrompts, setMultimodalPrompts] = useState<UploadMultimodalPrompts | null>(null)
-
-  // Track pending files count to auto-start upload
+  // Retain the existing eager binary upload, but never start another upload during a retry.
   const pendingCount = state.files.filter(f => f.status === 'pending').length
-
-  // Auto-start upload when there are pending files and not currently uploading
   useEffect(() => {
-    if (pendingCount > 0 && !state.isUploading) {
-      startUpload()
+    if (pendingCount > 0 && !state.isUploading && !submitting && !submissionLock.current) {
+      void startUpload()
     }
-  }, [pendingCount, state.isUploading, startUpload])
+  }, [pendingCount, state.isUploading, submitting, startUpload])
 
-  // Handle files added - just add them, upload will auto-start via useEffect
   const handleFilesAdded = useCallback(
     (files: File[]) => {
-      if (files.length === 0) return
-
-      // Filter out unsupported files (images when multimodal disabled; videos
-      // when the selected model is image-only) with a friendly error message.
-      const unsupportedFiles = files.filter(f =>
+      if (submissionLock.current || filesBusy || !canManageDocuments) return
+      const unsupported = files.filter(f =>
         isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
       )
-      const supportedFiles = files.filter(
+      const supported = files.filter(
         f =>
           !isKBUnsupportedExtension(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
       )
-
-      // Show friendly error if any unsupported files were selected. Video
-      // blocked by an image-only model gets a distinct, actionable message.
-      if (unsupportedFiles.length > 0) {
-        const blockedByVideoModel = unsupportedFiles.some(f =>
-          isVideoModelBlock(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
-        )
+      setValidationError(null)
+      setNotice(null)
+      if (unsupported.length) {
         setValidationError(
-          blockedByVideoModel
-            ? t('document.upload.videoModelNotSupported')
-            : t('document.upload.unsupportedFileType')
+          t(
+            unsupported.some(f =>
+              isVideoModelBlock(f.name, multimodalAnalysisEnabled, multimodalModelSupportsVideo)
+            )
+              ? 'document.upload.videoModelNotSupported'
+              : 'document.upload.unsupportedFileType'
+          )
         )
-        setTimeout(() => setValidationError(null), 5000)
       }
-
-      // Only add supported files
-      if (supportedFiles.length === 0) return
-
-      const result = addFiles(supportedFiles)
-      if (result.rejected > 0 && result.reason) {
-        setValidationError(result.reason)
-        setTimeout(() => setValidationError(null), 5000)
+      if (supported.length) {
+        const result = addFiles(supported)
+        if (result.rejected > 0 && result.reason) setValidationError(result.reason)
       }
     },
-    [addFiles, t, multimodalAnalysisEnabled, multimodalModelSupportsVideo]
+    [
+      filesBusy,
+      canManageDocuments,
+      addFiles,
+      t,
+      multimodalAnalysisEnabled,
+      multimodalModelSupportsVideo,
+    ]
   )
 
-  const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files || [])
-      handleFilesAdded(files)
-      // Reset input value to allow selecting the same files again
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    },
-    [handleFilesAdded]
-  )
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      setIsDragOver(false)
-      const files = Array.from(e.dataTransfer.files || [])
-      handleFilesAdded(files)
-    },
-    [handleFilesAdded]
-  )
-
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    setIsDragOver(true)
+  const close = () => {
+    reset()
+    textUpload.reset()
+    setTextContent('')
+    setTextFileName('')
+    setWebUrl('')
+    setDingtalkVisited(false)
+    setDingtalkHasDraft(false)
+    setShowDiscard(false)
+    onOpenChange(false)
   }
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    setIsDragOver(false)
+  const requestClose = () => {
+    if (busy || submissionLock.current) return
+    if (Object.values(drafts).some(Boolean)) setShowDiscard(true)
+    else close()
   }
 
-  // Confirm and create documents
+  const sourceCompleted = (source: UploadMode, hasRemaining = false) => {
+    if (!mounted.current) return
+    const hasOtherDrafts = Object.entries(drafts).some(([key, value]) => key !== source && value)
+    if (!hasOtherDrafts && !hasRemaining) close()
+    else setNotice(t('document.upload.sourceAdded'))
+  }
+
+  const beginSubmit = (source: UploadMode) => {
+    if (busy || submissionLock.current || !canManageDocuments) return false
+    submissionLock.current = true
+    setSubmitting(source)
+    setNotice(null)
+    return true
+  }
+  const endSubmit = () => {
+    submissionLock.current = false
+    if (mounted.current) setSubmitting(null)
+  }
+
   const handleConfirm = async (fileIds?: string[]) => {
-    const targetFileIds = fileIds ? new Set(fileIds) : null
-
-    // If there's an active edit, apply it first
-    if (editingFileId && editingFileName.trim()) {
-      const currentItem = state.files.find(f => f.id === editingFileId)
-      const currentDisplayName = currentItem?.attachment?.filename || currentItem?.file.name
-      if (editingFileName !== currentDisplayName) {
-        renameFile(editingFileId, editingFileName.trim())
-      }
-      setEditingFileId(null)
-      setEditingFileName('')
-    }
-
-    // Build attachments list directly from state, applying any pending rename
-    const successfulAttachments = state.files
+    const target = fileIds ? new Set(fileIds) : null
+    const attachments = state.files
       .filter(
         f =>
-          (!targetFileIds || targetFileIds.has(f.id)) &&
+          (!target || target.has(f.id)) &&
           f.attachment &&
           (f.status === 'success' || f.status === 'error')
       )
-      .map(f => {
-        // If this file was being edited, use the editing name
-        const finalFilename =
-          f.id === editingFileId && editingFileName.trim()
-            ? editingFileName.trim()
-            : f.attachment!.filename
-        return {
-          attachment: { ...f.attachment!, filename: finalFilename },
-          file: f.file,
-        }
-      })
-
-    if (successfulAttachments.length === 0) return
-
-    setIsConfirming(true)
+      .map(f => ({ attachment: f.attachment!, file: f.file }))
+    if (!attachments.length || !beginSubmit('file')) return
     try {
       const results = await onUploadComplete(
-        successfulAttachments,
+        attachments,
         splitterConfig,
-        // Per-media-type prompt overrides collected by the
-        // UploadMultimodalPromptSettings child; null when the queue has no
-        // multimodal files → each document inherits the KB default.
         multimodalPrompts ?? undefined
       )
+      if (!mounted.current) return
       applyDocumentCreationResults(results)
-
-      const createdAttachmentIds = new Set(
-        results.filter(result => result.documentId !== undefined).map(result => result.attachmentId)
+      const created = new Set(
+        results.filter(r => r.documentId !== undefined).map(r => r.attachmentId)
       )
-      const targetedFiles = state.files.filter(file => !targetFileIds || targetFileIds.has(file.id))
-      const hasRemainingTargetFiles = targetedFiles.some(
-        file => !file.attachment || !createdAttachmentIds.has(file.attachment.id)
+      const remaining = state.files.some(f => !f.attachment || !created.has(f.attachment.id))
+      if (created.size) sourceCompleted('file', remaining)
+    } catch (error) {
+      setValidationError(
+        mapKnowledgeDocumentErrorMessage(error, t, 'document.document.createFailed')
       )
-      if (results.every(result => result.documentId !== undefined) && !hasRemainingTargetFiles) {
-        handleClose()
-      }
-    } catch {
-      // Error handled by parent
     } finally {
-      setIsConfirming(false)
+      endSubmit()
     }
   }
 
   const handleRetryFile = async (id: string) => {
-    const file = state.files.find(item => item.id === id)
-    if (file?.attachment) {
-      await handleConfirm([id])
-      return
-    }
-    await retryFile(id)
-  }
-
-  const handleClose = () => {
-    reset()
-    setSplitterConfig(buildDefaultSplitterConfig())
-    setMultimodalPrompts(null)
-    setValidationError(null)
-    setUploadMode('file')
-    setTextContent('')
-    setTextFileName('')
-    setTextError(null)
-    setTableUrl('')
-    setTableName('')
-    setTableError(null)
-    setTableUrlValid(null)
-    setTableUrlProvider(null)
-    setTableUrlValidating(false)
-    setWebUrl('')
-    setWebName('')
-    setWebError(null)
-    setWebSubmitting(false)
-    setWebFetching(false)
-    onOpenChange(false)
-  }
-
-  // Handle text content submission - convert to file and upload
-  const handleTextSubmit = useCallback(() => {
-    // Validate text content
-    if (!textContent.trim()) {
-      setTextError(t('document.upload.textRequired'))
-      return
-    }
-
-    // Generate filename if not provided
-    const fileName = textFileName.trim() || `document_${Date.now()}.txt`
-    const finalFileName = fileName.endsWith('.txt') ? fileName : `${fileName}.txt`
-
-    // Create a File object from text content
-    const blob = new Blob([textContent], { type: 'text/plain' })
-    const file = new File([blob], finalFileName, { type: 'text/plain' })
-
-    // Add file to upload queue
-    handleFilesAdded([file])
-
-    // Reset text input state and switch back to file mode
-    setTextContent('')
-    setTextFileName('')
-    setTextError(null)
-    setUploadMode('file')
-  }, [textContent, textFileName, handleFilesAdded, t])
-
-  // Handle back from text mode
-  const handleBackFromTextMode = () => {
-    setUploadMode('file')
-    setTextContent('')
-    setTextFileName('')
-    setTextError(null)
-  }
-
-  // Validate table URL
-  const handleValidateTableUrl = useCallback(
-    async (url: string) => {
-      if (!url.trim()) {
-        setTableUrlValid(null)
-        setTableUrlProvider(null)
-        setTableError(null)
-        return
-      }
-
-      setTableUrlValidating(true)
-      setTableError(null)
-      setTableUrlValid(null)
-      setTableUrlProvider(null)
-
-      try {
-        const result = await validateTableUrl(url)
-        if (result.valid) {
-          setTableUrlValid(true)
-          setTableUrlProvider(result.provider || null)
-          setTableError(null)
-        } else {
-          setTableUrlValid(false)
-          setTableUrlProvider(null)
-          // Map error codes to i18n messages
-          switch (result.error_code) {
-            case 'INVALID_URL_FORMAT':
-              setTableError(t('document.upload.validation.invalidUrlFormat'))
-              break
-            case 'UNSUPPORTED_PROVIDER':
-              setTableError(t('document.upload.validation.unsupportedProvider'))
-              break
-            case 'PARSE_FAILED':
-              setTableError(t('document.upload.validation.parseFailed'))
-              break
-            case 'MISSING_DINGTALK_ID':
-              setTableError(t('document.upload.validation.missingDingtalkId'))
-              break
-            case 'TABLE_ACCESS_FAILED_LINKED_TABLE':
-              setTableError(t('document.upload.validation.tableAccessFailedLinkedTable'))
-              break
-            case 'TABLE_ACCESS_FAILED':
-              setTableError(t('document.upload.validation.tableAccessFailed'))
-              break
-            default:
-              setTableError(result.error_message || t('document.upload.validation.unknownError'))
-          }
-        }
-      } catch {
-        setTableUrlValid(false)
-        setTableError(t('document.upload.validation.networkError'))
-      } finally {
-        setTableUrlValidating(false)
-      }
-    },
-    [t]
-  )
-
-  // Debounced URL validation on blur
-  const handleTableUrlBlur = useCallback(() => {
-    if (tableUrl.trim()) {
-      handleValidateTableUrl(tableUrl.trim())
-    }
-  }, [tableUrl, handleValidateTableUrl])
-
-  // Handle table submission
-  const handleTableSubmit = useCallback(async () => {
-    // Validate URL
-    if (!tableUrl.trim()) {
-      setTableError(t('document.upload.tableUrlRequired'))
-      return
-    }
-
-    // Validate name
-    if (!tableName.trim()) {
-      setTableError(t('document.upload.tableNameRequired'))
-      return
-    }
-
-    if (!onTableAdd) {
-      setTableError('Table add handler not configured')
-      return
-    }
-
-    // If URL hasn't been validated yet, validate first
-    if (tableUrlValid === null) {
-      setTableSubmitting(true)
-      try {
-        const result = await validateTableUrl(tableUrl.trim())
-        if (!result.valid) {
-          switch (result.error_code) {
-            case 'INVALID_URL_FORMAT':
-              setTableError(t('document.upload.validation.invalidUrlFormat'))
-              break
-            case 'UNSUPPORTED_PROVIDER':
-              setTableError(t('document.upload.validation.unsupportedProvider'))
-              break
-            case 'PARSE_FAILED':
-              setTableError(t('document.upload.validation.parseFailed'))
-              break
-            default:
-              setTableError(result.error_message || t('document.upload.validation.unknownError'))
-          }
-          setTableUrlValid(false)
-          setTableSubmitting(false)
-          return
-        }
-        setTableUrlValid(true)
-        setTableUrlProvider(result.provider || null)
-      } catch {
-        setTableError(t('document.upload.validation.networkError'))
-        setTableUrlValid(false)
-        setTableSubmitting(false)
-        return
-      }
-    }
-
-    // Block submission if URL is invalid
-    if (tableUrlValid === false) {
-      setTableError(t('document.upload.validation.pleaseFixUrl'))
-      return
-    }
-
-    setTableSubmitting(true)
-    setTableError(null)
-
+    if (state.files.find(f => f.id === id)?.attachment) return handleConfirm([id])
+    if (!beginSubmit('file')) return
     try {
-      await onTableAdd({
-        name: tableName.trim(),
-        source_config: { url: tableUrl.trim() },
-      })
-
-      // Reset and close on success
-      setTableUrl('')
-      setTableName('')
-      setTableUrlValid(null)
-      setTableUrlProvider(null)
-      setUploadMode('file')
-      handleClose()
-    } catch (err) {
-      setTableError(mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.tableAddFailed'))
+      await retryFile(id)
     } finally {
-      setTableSubmitting(false)
+      endSubmit()
     }
-  }, [tableUrl, tableName, onTableAdd, t, handleClose, tableUrlValid])
-
-  // Handle back from table mode
-  const handleBackFromTableMode = () => {
-    setUploadMode('file')
-    setTableUrl('')
-    setTableName('')
-    setTableError(null)
-    setTableUrlValid(null)
-    setTableUrlProvider(null)
-    setTableUrlValidating(false)
   }
 
-  // Handle web page submission
-  const handleWebSubmit = useCallback(async () => {
-    // Validate URL
-    if (!webUrl.trim()) {
-      setWebError(t('document.upload.web.urlRequired'))
-      return
-    }
-
-    // Basic URL validation
+  const handleTextSubmit = async () => {
+    if (!textContent.trim() || !beginSubmit('text')) return
+    setTextError(null)
     try {
-      new URL(webUrl.trim())
+      const attachment = await textUpload.upload(textContent, textFileName)
+      if (!mounted.current) return
+      const results = await onUploadComplete([attachment], buildDefaultSplitterConfig())
+      const result = results.find(r => r.attachmentId === attachment.attachment.id)
+      if (result?.documentId === undefined) {
+        setTextError(result?.error || t('document.document.createFailed'))
+        return
+      }
+      setTextContent('')
+      setTextFileName('')
+      textUpload.reset()
+      sourceCompleted('text')
+    } catch (error) {
+      setTextError(mapKnowledgeDocumentErrorMessage(error, t, 'document.document.createFailed'))
+    } finally {
+      endSubmit()
+    }
+  }
+
+  const isWebUrlValid = (() => {
+    if (!/^https?:\/\//i.test(webUrl.trim())) return false
+    try {
+      return ['http:', 'https:'].includes(new URL(webUrl.trim()).protocol)
     } catch {
-      setWebError(t('document.upload.validation.invalidUrlFormat'))
-      return
+      return false
     }
-
-    if (!onWebAdd) {
-      setWebError('Web add handler not configured')
-      return
-    }
-
-    setWebSubmitting(true)
-    setWebFetching(true)
+  })()
+  const webValidationError =
+    webTouched && webUrl.trim() && !isWebUrlValid ? t('document.upload.web.invalidUrl') : null
+  const handleWebSubmit = async () => {
+    if (!onWebAdd || !isWebUrlValid || !beginSubmit('web')) return
     setWebError(null)
-
     try {
-      // Call the parent handler - backend handles scraping and document creation
-      await onWebAdd(webUrl.trim(), webName.trim() || undefined)
-
-      // Reset and close on success
+      await onWebAdd(webUrl.trim())
       setWebUrl('')
-      setWebName('')
-      setUploadMode('file')
-      handleClose()
-    } catch (err) {
-      // Map error messages from backend
-      const errorMessage = mapKnowledgeDocumentErrorMessage(err, t, 'document.upload.web.addFailed')
-      // Check for specific error codes in the message
-      if (errorMessage.includes('FETCH_FAILED')) {
-        setWebError(t('document.upload.web.fetchFailed'))
-      } else if (errorMessage.includes('FETCH_TIMEOUT')) {
-        setWebError(t('document.upload.web.fetchTimeout'))
-      } else if (errorMessage.includes('PARSE_FAILED')) {
-        setWebError(t('document.upload.web.parseFailed'))
-      } else if (errorMessage.includes('EMPTY_CONTENT')) {
-        setWebError(t('document.upload.web.emptyContent'))
-      } else if (errorMessage.includes('AUTH_REQUIRED')) {
-        setWebError(t('document.upload.web.authRequired'))
-      } else {
-        setWebError(errorMessage)
-      }
+      sourceCompleted('web')
+    } catch (error) {
+      const message = mapKnowledgeDocumentErrorMessage(error, t, 'document.upload.web.addFailed')
+      const entry = Object.entries(WEB_ERROR_KEYS).find(([code]) => message.includes(code))
+      setWebError(entry ? t(entry[1]) : message)
     } finally {
-      setWebSubmitting(false)
-      setWebFetching(false)
-    }
-  }, [webUrl, webName, onWebAdd, t, handleClose])
-
-  // Handle back from web mode
-  const handleBackFromWebMode = () => {
-    setUploadMode('file')
-    setWebUrl('')
-    setWebName('')
-    setWebError(null)
-    setWebSubmitting(false)
-    setWebFetching(false)
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  const getStatusIcon = (status: FileUploadStatus) => {
-    switch (status) {
-      case 'pending':
-      case 'uploading':
-        return <Loader2 className="w-4 h-4 text-primary animate-spin" />
-      case 'success':
-        return <CheckCircle2 className="w-4 h-4 text-success" />
-      case 'error':
-        return <AlertCircle className="w-4 h-4 text-error" />
+      endSubmit()
     }
   }
 
-  const getStatusText = (status: FileUploadStatus) => {
-    switch (status) {
-      case 'pending':
-        return t('knowledge:document.upload.status.pending')
-      case 'uploading':
-        return t('knowledge:document.upload.status.uploading')
-      case 'success':
-        return t('knowledge:document.upload.status.success')
-      case 'error':
-        return t('knowledge:document.upload.status.error')
+  const handleDingtalkImport = async (ids: string[]) => {
+    if (!onDingtalkImport || !beginSubmit('dingtalk'))
+      throw new Error(t('document.upload.dingtalk.noPermission'))
+    try {
+      return await onDingtalkImport(ids)
+    } finally {
+      endSubmit()
     }
   }
 
-  const successCount = state.files.filter(f => f.status === 'success').length
-  const errorCount = state.files.filter(f => f.status === 'error').length
+  const selectSource = (value: string) => {
+    if (busy || submissionLock.current) return
+    const next = sources.find(s => s.id === value)
+    if (!next) return
+    setUploadMode(next.id)
+    if (next.id === 'dingtalk') setDingtalkVisited(true)
+  }
+
+  const footer = (source: UploadMode, action: ReactNode, status?: ReactNode) =>
+    source === uploadMode ? (
+      <DocumentUploadFooter
+        folderId={folderId}
+        folderOptions={folderOptions}
+        onFolderChange={onFolderChange}
+        onCancel={requestClose}
+        disabled={busy}
+        dingtalk={source === 'dingtalk'}
+        status={status}
+      >
+        {action}
+      </DocumentUploadFooter>
+    ) : null
+  const errorMessage = (error: string | null) =>
+    error && (
+      <div
+        role="alert"
+        className="flex items-start gap-2 rounded-lg bg-error/10 p-3 text-sm text-error"
+      >
+        <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+        <span>{error}</span>
+      </div>
+    )
   const confirmableCount = state.files.filter(
     f => f.attachment && (f.status === 'success' || f.status === 'error')
   ).length
-  const hasFiles = state.files.length > 0
-  // Can confirm when all uploads are done (no pending/uploading) and at least one success
-  const allUploadsComplete =
-    !state.isUploading && state.files.every(f => f.status === 'success' || f.status === 'error')
-  const canConfirm = confirmableCount > 0 && allUploadsComplete && !isConfirming
-
-  // Reset state when dialog opens
-  useEffect(() => {
-    if (open) {
-      reset()
-      setSplitterConfig(buildDefaultSplitterConfig())
-      setValidationError(null)
-    }
-  }, [open, reset])
-
-  // Render text input mode
-  const renderTextMode = () => (
-    <>
-      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          onClick={handleBackFromTextMode}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
-        <DialogTitle>{t('document.upload.pasteText')}</DialogTitle>
-      </DialogHeader>
-
-      <div className="py-4 space-y-4">
-        <p className="text-sm text-text-secondary">{t('document.upload.pasteTextHint')}</p>
-
-        {/* File name input */}
-        <div className="space-y-2">
-          <Label htmlFor="text-filename" className="text-sm font-medium">
-            {t('document.upload.fileName')}
-          </Label>
-          <Input
-            id="text-filename"
-            placeholder={t('document.upload.fileNamePlaceholder')}
-            value={textFileName}
-            onChange={e => setTextFileName(e.target.value)}
-            className="h-9"
-          />
-        </div>
-
-        {/* Text content input */}
-        <div className="space-y-2">
-          <Label htmlFor="text-content" className="text-sm font-medium">
-            {t('document.upload.textContent')}
-          </Label>
-          <Textarea
-            id="text-content"
-            placeholder={t('document.upload.textPlaceholder')}
-            value={textContent}
-            onChange={e => {
-              setTextContent(e.target.value)
-              if (textError) setTextError(null)
-            }}
-            className="min-h-[200px] resize-y"
-          />
-        </div>
-
-        {/* Text error */}
-        {textError && (
-          <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{textError}</span>
-          </div>
-        )}
-
-        {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={handleBackFromTextMode}>
-          {t('common:actions.cancel')}
-        </Button>
-        <Button variant="primary" onClick={handleTextSubmit} disabled={!textContent.trim()}>
-          {t('document.upload.insert')}
-        </Button>
-      </div>
-    </>
+  const actionButton = (
+    onClick: () => Promise<void>,
+    disabled: boolean,
+    label: string,
+    testId: string
+  ) => (
+    <Button
+      variant="primary"
+      className="min-h-11"
+      onClick={() => void onClick()}
+      disabled={busy || disabled || !canManageDocuments}
+      data-testid={testId}
+    >
+      {submitting === uploadMode && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+      {submitting === uploadMode ? t('document.upload.adding') : label}
+    </Button>
   )
 
-  // Render file upload mode
-  const renderFileMode = () => (
-    <>
-      <DialogHeader>
-        <DialogTitle>{t('document.document.upload')}</DialogTitle>
-      </DialogHeader>
-
-      <div className="py-4 overflow-hidden">
-        {/* Dropzone */}
-        <div
-          className={cn(
-            'border-2 border-dashed rounded-lg p-6 text-center transition-colors',
-            isDragOver ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50',
-            state.isUploading && 'pointer-events-none opacity-50'
-          )}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-        >
-          <p className="text-text-primary font-medium text-sm mb-4">
-            {t('document.document.dropzone')}
-          </p>
-
-          {/* Action buttons - similar to NotebookLM */}
-          <div className="flex flex-wrap justify-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 px-4"
-              onClick={() => !state.isUploading && fileInputRef.current?.click()}
-              disabled={state.isUploading}
-            >
-              <Upload className="w-4 h-4 mr-2" />
-              {t('document.upload.uploadFile')}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 px-4"
-              onClick={() => setUploadMode('text')}
-              disabled={state.isUploading}
-            >
-              <ClipboardPaste className="w-4 h-4 mr-2" />
-              {t('document.upload.pasteText')}
-            </Button>
-            {/* Table add button hidden - deprecated in favor of DingTalk document sync */}
-            {/* {onTableAdd && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 px-4"
-                onClick={() => setUploadMode('table')}
-                disabled={state.isUploading}
-              >
-                <Link className="w-4 h-4 mr-2" />
-                {t('document.upload.addTable')}
-              </Button>
-            )} */}
-          </div>
-
-          <p className="text-xs text-text-muted mt-4">
-            {t('document.upload.dropzoneHint', { max: MAX_BATCH_FILES })}
-          </p>
-          <p className="text-xs text-text-muted mt-1">
-            {t('document.document.supportedTypes', {
-              // Show the conservative document/image limit (100 MB). Videos are
-              // validated separately up to 1 GB via isValidFileSizeForFile, but
-              // the generic hint shows the lower limit that applies to most files.
-              maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
-            })}
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            multiple
-            accept={
-              multimodalAnalysisEnabled
-                ? `${KB_DOCUMENT_ACCEPT},${MULTIMODAL_EXTENSIONS.join(',')}`
-                : KB_DOCUMENT_ACCEPT
-            }
-            onChange={handleFileChange}
-            disabled={state.isUploading}
-          />
-        </div>
-
-        {/* Folder selection - show when there are folders */}
-        {folderOptions.length > 0 && (
-          <div className="mt-4 space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+  return (
+    <Dialog
+      open
+      onOpenChange={open => {
+        if (!open) requestClose()
+      }}
+    >
+      <DialogContent
+        className={cn(
+          'top-[5dvh] flex max-h-[90dvh] w-[calc(100%-2rem)] translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl',
+          SOURCE_HEIGHT[uploadMode]
         )}
-
-        {/* Web URL Input Section - inline style like the reference image */}
-        {onWebAdd && (
-          <div className="mt-4 border border-dashed border-border rounded-lg bg-surface/50">
-            <div className="p-6 flex flex-col items-center justify-center min-h-[120px]">
-              <p className="text-text-primary font-medium text-sm mb-4">
-                {t('document.upload.web.orAddWebPage')}
-              </p>
-              <div className="flex items-center gap-2 w-full max-w-xl">
-                <div className="relative flex-1">
-                  <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+        data-testid="document-upload-dialog"
+        hideCloseButton
+        preventEscapeClose={busy || showDiscard}
+        preventOutsideClick={busy || showDiscard}
+        aria-describedby={undefined}
+      >
+        <DialogHeader className="shrink-0 flex-row items-center justify-between space-y-0 px-5 py-4 text-left">
+          <DialogTitle>{t('document.document.upload')}</DialogTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-11 w-11"
+            onClick={requestClose}
+            disabled={busy}
+            aria-label={t('common:actions.close')}
+            data-testid="document-upload-close"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </DialogHeader>
+        <Tabs
+          value={uploadMode}
+          onValueChange={selectSource}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <TabsList className="mx-5 mb-4 grid h-auto shrink-0 auto-cols-fr grid-flow-col gap-2 rounded-none bg-transparent p-0">
+            {sources.map(source => (
+              <TabsTrigger
+                key={source.id}
+                value={source.id}
+                onClick={() => selectSource(source.id)}
+                disabled={busy}
+                data-testid={
+                  source.id === 'dingtalk'
+                    ? 'dingtalk-source-button'
+                    : `document-source-${source.id}`
+                }
+                className="relative min-h-11 min-w-0 flex-1 flex-col gap-1 border border-border px-1 py-3 text-xs data-[state=active]:border-primary data-[state=active]:bg-primary/5 data-[state=active]:text-primary data-[state=active]:shadow-none md:flex-row md:gap-2 md:text-sm"
+              >
+                <source.icon className="h-4 w-4 shrink-0" />
+                <span className="max-w-full truncate" title={source.label}>
+                  {source.label}
+                </span>
+                {drafts[source.id] && (
+                  <span
+                    className="absolute right-1.5 top-1.5 h-1 w-1 rounded-full bg-primary"
+                    aria-label={t('document.upload.unsavedDraft')}
+                  />
+                )}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {notice && (
+            <div
+              role="status"
+              data-testid="document-upload-notice"
+              className="mx-5 mb-3 rounded-lg bg-primary/5 p-3 text-sm text-text-primary"
+            >
+              {notice}
+            </div>
+          )}
+          <TabsContent
+            value="file"
+            forceMount
+            className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
+            hidden={uploadMode !== 'file'}
+          >
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div
+                className={cn(
+                  'rounded-lg border-2 border-dashed p-6 text-center',
+                  isDragOver ? 'border-primary bg-primary/5' : 'border-border',
+                  busy && 'pointer-events-none opacity-50'
+                )}
+                data-testid="document-upload-dropzone"
+                onDragOver={e => {
+                  e.preventDefault()
+                  if (!busy) setIsDragOver(true)
+                }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={e => {
+                  e.preventDefault()
+                  setIsDragOver(false)
+                  handleFilesAdded(Array.from(e.dataTransfer.files))
+                }}
+              >
+                <Upload className="mx-auto mb-3 h-7 w-7 text-primary" />
+                <p className="mb-4 text-sm font-medium">{t('document.document.dropzone')}</p>
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy || !canManageDocuments}
+                  data-testid="document-upload-browse"
+                >
+                  {t('document.upload.uploadFile')}
+                </Button>
+                <p className="mt-4 text-xs text-text-muted">
+                  {t('document.upload.dropzoneHint', { max: MAX_BATCH_FILES })}
+                </p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {t('document.document.supportedTypes', {
+                    maxSize: Math.round(MAX_FILE_SIZE / (1024 * 1024)),
+                  })}
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  disabled={busy || !canManageDocuments}
+                  data-testid="document-upload-file-input"
+                  accept={
+                    multimodalAnalysisEnabled
+                      ? `${KB_DOCUMENT_ACCEPT},${MULTIMODAL_EXTENSIONS.join(',')}`
+                      : KB_DOCUMENT_ACCEPT
+                  }
+                  onChange={e => {
+                    handleFilesAdded(Array.from(e.target.files || []))
+                    e.target.value = ''
+                  }}
+                />
+              </div>
+              {validationError && <div className="mt-3">{errorMessage(validationError)}</div>}
+              {state.files.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium">
+                      {t('document.upload.fileList', { count: state.files.length })}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      className="min-h-11 text-text-muted"
+                      onClick={clearFiles}
+                      disabled={busy}
+                      data-testid="document-upload-clear"
+                    >
+                      <Trash2 className="mr-1 h-4 w-4" />
+                      {t('document.upload.clearAll')}
+                    </Button>
+                  </div>
+                  <UploadFileList
+                    batch={batch}
+                    isConfirming={submitting !== null}
+                    onRetry={handleRetryFile}
+                  />
+                  {!filesBusy && (
+                    <p className="rounded-lg bg-surface p-3 text-sm">
+                      {t('document.upload.summary', {
+                        total: state.files.length,
+                        success: state.files.filter(f => f.status === 'success').length,
+                        failed: state.files.filter(f => f.status === 'error').length,
+                      })}
+                    </p>
+                  )}
+                  {confirmableCount > 0 && !filesBusy && (
+                    <Accordion type="single" collapsible>
+                      <AccordionItem value="advanced" className="border-none">
+                        <AccordionTrigger
+                          className="min-h-11 text-sm"
+                          data-testid="document-upload-advanced"
+                        >
+                          {t('document.advancedSettings.title')}
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <fieldset disabled={submitting !== null} className="space-y-4">
+                            <SplitterSettingsSection
+                              config={splitterConfig}
+                              onChange={setSplitterConfig}
+                            />
+                            <UploadMultimodalPromptSettings
+                              files={state.files}
+                              multimodalAnalysisEnabled={multimodalAnalysisEnabled}
+                              kbVideoPrompt={multimodalVideoPrompt}
+                              kbImagePrompt={multimodalImagePrompt}
+                              onChange={setMultimodalPrompts}
+                            />
+                          </fieldset>
+                        </AccordionContent>
+                      </AccordionItem>
+                    </Accordion>
+                  )}
+                </div>
+              )}
+            </div>
+            {footer(
+              'file',
+              actionButton(
+                () => handleConfirm(),
+                !confirmableCount,
+                t('document.upload.confirmUpload', { count: confirmableCount }),
+                'document-upload-submit'
+              )
+            )}
+          </TabsContent>
+          <TabsContent
+            value="text"
+            className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
+          >
+            <fieldset
+              disabled={busy}
+              className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-5"
+            >
+              <div className="space-y-2">
+                <Label htmlFor="text-filename">{t('document.upload.textTitle')}</Label>
+                <Input
+                  id="text-filename"
+                  data-testid="document-text-title"
+                  className="h-11"
+                  placeholder={t('document.upload.fileNamePlaceholder')}
+                  value={textFileName}
+                  onChange={e => {
+                    setTextFileName(e.target.value)
+                    setTextError(null)
+                  }}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="text-content">{t('document.upload.textContent')}</Label>
+                <Textarea
+                  id="text-content"
+                  data-testid="document-text-content"
+                  className="min-h-44"
+                  placeholder={t('document.upload.textPlaceholder')}
+                  value={textContent}
+                  onChange={e => {
+                    setTextContent(e.target.value)
+                    setTextError(null)
+                  }}
+                />
+              </div>
+              {errorMessage(textError)}
+            </fieldset>
+            {footer(
+              'text',
+              actionButton(
+                handleTextSubmit,
+                !textContent.trim(),
+                t('document.upload.addText'),
+                'document-text-submit'
+              )
+            )}
+          </TabsContent>
+          {onWebAdd && (
+            <TabsContent
+              value="web"
+              className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
+            >
+              <fieldset
+                disabled={busy}
+                className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-5"
+              >
+                <div className="space-y-2">
+                  <Label htmlFor="web-url">{t('document.upload.web.urlLabel')}</Label>
                   <Input
+                    id="web-url"
+                    type="url"
+                    data-testid="document-web-url"
+                    className={cn(
+                      'h-11',
+                      webValidationError && 'border-error focus-visible:ring-error'
+                    )}
+                    aria-invalid={Boolean(webValidationError)}
+                    aria-describedby={webValidationError ? 'web-url-error' : undefined}
+                    onBlur={() => setWebTouched(true)}
                     placeholder={t('document.upload.web.urlPlaceholder')}
                     value={webUrl}
                     onChange={e => {
                       setWebUrl(e.target.value)
-                      if (webError) setWebError(null)
+                      setWebError(null)
                     }}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && webUrl.trim()) {
-                        handleWebSubmit()
-                      }
-                    }}
-                    className="h-10 pl-9 pr-4"
-                    disabled={webSubmitting || state.isUploading}
                   />
-                </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-10 w-10 shrink-0"
-                  onClick={handleWebSubmit}
-                  disabled={!webUrl.trim() || webSubmitting || state.isUploading}
-                >
-                  {webSubmitting ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Link className="w-4 h-4" />
+                  {webValidationError && (
+                    <p id="web-url-error" role="alert" className="text-sm text-error">
+                      {webValidationError}
+                    </p>
                   )}
-                </Button>
-              </div>
-              {/* Web error message */}
-              {webError && (
-                <div className="flex items-center gap-2 mt-3 p-2 bg-error/10 text-error rounded-lg text-xs w-full max-w-xl">
-                  <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span>{webError}</span>
                 </div>
-              )}
-              {/* Fetching status */}
-              {webFetching && (
-                <div className="flex items-center gap-2 mt-3 p-2 bg-primary/10 text-primary rounded-lg text-xs w-full max-w-xl">
-                  <Loader2 className="w-3.5 h-3.5 flex-shrink-0 animate-spin" />
-                  <span>{t('document.upload.web.fetching')}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Validation Error */}
-        {validationError && (
-          <div className="flex items-center gap-2 mt-3 p-3 bg-error/10 text-error rounded-lg text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{validationError}</span>
-          </div>
-        )}
-
-        {/* File List */}
-        {hasFiles && (
-          <div className="mt-4 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-text-primary">
-                {t('document.upload.fileList', { count: state.files.length })}
-              </span>
-              {!state.isUploading && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-text-muted hover:text-error h-7 px-2"
-                  onClick={clearFiles}
-                >
-                  <Trash2 className="w-3.5 h-3.5 mr-1" />
-                  {t('document.upload.clearAll')}
-                </Button>
-              )}
-            </div>
-
-            <div className="border border-border rounded-lg divide-y divide-border max-h-[200px] overflow-y-auto">
-              {state.files.map(item => {
-                const displayName = item.attachment?.filename || item.file.name
-                const isEditing = editingFileId === item.id
-                const canEdit = item.status === 'success' && !state.isUploading
-                const isCreationFailure = item.status === 'error' && item.attachment !== null
-
-                return (
-                  <div key={item.id} className="p-3">
-                    <div className="flex items-start gap-3">
-                      <FileText className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {isEditing ? (
-                            <Input
-                              autoFocus
-                              value={editingFileName}
-                              onChange={e => setEditingFileName(e.target.value)}
-                              onBlur={() => {
-                                if (editingFileName.trim() && editingFileName !== displayName) {
-                                  renameFile(item.id, editingFileName.trim())
-                                }
-                                setEditingFileId(null)
-                                setEditingFileName('')
-                              }}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter') {
-                                  if (editingFileName.trim() && editingFileName !== displayName) {
-                                    renameFile(item.id, editingFileName.trim())
-                                  }
-                                  setEditingFileId(null)
-                                  setEditingFileName('')
-                                } else if (e.key === 'Escape') {
-                                  setEditingFileId(null)
-                                  setEditingFileName('')
-                                }
-                              }}
-                              className="h-7 text-sm font-medium flex-1 min-w-0"
-                            />
-                          ) : (
-                            <div className="flex items-center gap-1 flex-1 min-w-0 group">
-                              <p
-                                className="text-sm font-medium text-text-primary truncate flex-1 min-w-0"
-                                title={displayName}
-                              >
-                                {displayName}
-                              </p>
-                              {canEdit && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                                  onClick={() => {
-                                    setEditingFileId(item.id)
-                                    setEditingFileName(displayName)
-                                  }}
-                                  title={t('document.upload.clickToRename')}
-                                >
-                                  <Pencil className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </div>
-                          )}
-                          <span className="flex-shrink-0">
-                            {isCreationFailure ? (
-                              <AlertCircle className="w-4 h-4 text-error" />
-                            ) : (
-                              getStatusIcon(item.status)
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-xs text-text-muted">
-                            {formatFileSize(item.file.size)}
-                          </span>
-                          <span className="text-xs text-text-muted">•</span>
-                          <span
-                            className={cn(
-                              'text-xs',
-                              item.status === 'success' && 'text-success',
-                              item.status === 'error' && 'text-error',
-                              (item.status === 'uploading' || item.status === 'pending') &&
-                                'text-primary'
-                            )}
-                          >
-                            {isCreationFailure
-                              ? t('document.upload.status.createFailed')
-                              : getStatusText(item.status)}
-                          </span>
-                        </div>
-                        {(item.status === 'uploading' || item.status === 'pending') && (
-                          <Progress value={item.progress} className="mt-2 h-1.5" />
-                        )}
-                        {item.error && (
-                          <p className="text-xs text-error mt-1 line-clamp-2">{item.error}</p>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {item.status === 'error' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => handleRetryFile(item.id)}
-                            disabled={state.isUploading || isConfirming}
-                            data-testid={
-                              isCreationFailure
-                                ? `document-creation-retry-${item.id}`
-                                : `document-upload-retry-${item.id}`
-                            }
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                        {!state.isUploading && item.status !== 'uploading' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => removeFile(item.id)}
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
+                <p className="text-xs text-text-muted">{t('document.upload.web.hint')}</p>
+                {errorMessage(webError)}
+              </fieldset>
+              {footer(
+                'web',
+                actionButton(
+                  handleWebSubmit,
+                  !isWebUrlValid,
+                  t('document.upload.web.submitButton'),
+                  'document-web-submit'
                 )
-              })}
-            </div>
-
-            {/* Upload Summary - show when all uploads complete */}
-            {allUploadsComplete && hasFiles && (
-              <div className="flex items-center gap-3 p-3 bg-surface rounded-lg text-sm">
-                <span className="text-text-primary">
-                  {t('document.upload.summary', {
-                    total: state.files.length,
-                    success: successCount,
-                    failed: errorCount,
-                  })}
-                </span>
-              </div>
-            )}
-
-            {/* Advanced Settings - Splitter Configuration */}
-            {confirmableCount > 0 && allUploadsComplete && (
-              <Accordion type="single" collapsible className="border-none">
-                <AccordionItem value="advanced" className="border-none">
-                  <AccordionTrigger className="text-sm font-medium hover:no-underline">
-                    {t('document.advancedSettings.title')}
-                  </AccordionTrigger>
-                  <AccordionContent>
-                    <div className="space-y-4 pt-2">
-                      <SplitterSettingsSection
-                        config={splitterConfig}
-                        onChange={setSplitterConfig}
-                      />
-
-                      {/* Multimodal analysis prompt overrides — encapsulated in a
-                          dedicated component (media detection + per-type editors)
-                          so this shared file stays free of a large multimodal block. */}
-                      <UploadMultimodalPromptSettings
-                        files={state.files}
-                        multimodalAnalysisEnabled={multimodalAnalysisEnabled}
-                        kbVideoPrompt={multimodalVideoPrompt}
-                        kbImagePrompt={multimodalImagePrompt}
-                        onChange={setMultimodalPrompts}
-                      />
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button
-          variant="outline"
-          onClick={handleClose}
-          disabled={state.isUploading || isConfirming}
-        >
-          {t('common:actions.cancel')}
-        </Button>
-        <Button variant="primary" onClick={() => void handleConfirm()} disabled={!canConfirm}>
-          {isConfirming ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {t('document.upload.confirming')}
-            </>
-          ) : (
-            t('document.upload.confirmUpload', { count: confirmableCount })
+              )}
+            </TabsContent>
           )}
-        </Button>
-      </div>
-    </>
-  )
-
-  // Render table mode
-  const renderTableMode = () => (
-    <>
-      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          onClick={handleBackFromTableMode}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
-        <DialogTitle>{t('document.upload.addTable')}</DialogTitle>
-      </DialogHeader>
-
-      <div className="py-4 space-y-4">
-        {/* Hint text with validation requirements */}
-        <p className="text-sm text-text-secondary">{t('document.upload.tableUrlHint')}</p>
-
-        {/* Document name input */}
-        <div className="space-y-2">
-          <Label htmlFor="table-name" className="text-sm font-medium">
-            {t('document.upload.tableName')}
-          </Label>
-          <Input
-            id="table-name"
-            placeholder={t('document.upload.tableNamePlaceholder')}
-            value={tableName}
-            onChange={e => {
-              setTableName(e.target.value)
-              if (tableError) setTableError(null)
-            }}
-            className="h-9"
-          />
-        </div>
-
-        {/* URL input with validation status */}
-        <div className="space-y-2">
-          <Label htmlFor="table-url" className="text-sm font-medium">
-            {t('document.upload.tableUrl')}
-          </Label>
-          <div className="relative">
-            <Textarea
-              id="table-url"
-              placeholder={t('document.upload.tableUrlPlaceholder')}
-              value={tableUrl}
-              onChange={e => {
-                setTableUrl(e.target.value)
-                if (tableError) setTableError(null)
-                // Reset validation state when URL changes
-                setTableUrlValid(null)
-                setTableUrlProvider(null)
-              }}
-              onBlur={handleTableUrlBlur}
-              className={cn(
-                'min-h-[80px] resize-none pr-10',
-                tableUrlValid === true && 'border-success focus-visible:ring-success',
-                tableUrlValid === false && 'border-error focus-visible:ring-error'
-              )}
-              rows={3}
-            />
-            {/* Validation status icon */}
-            <div className="absolute right-3 top-3">
-              {tableUrlValidating && <Loader2 className="w-4 h-4 text-primary animate-spin" />}
-              {!tableUrlValidating && tableUrlValid === true && (
-                <Check className="w-4 h-4 text-success" />
-              )}
-              {!tableUrlValidating && tableUrlValid === false && (
-                <AlertCircle className="w-4 h-4 text-error" />
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Validation status message */}
-        {tableUrlValidating && (
-          <div className="flex items-center gap-2 p-3 bg-primary/10 text-primary rounded-lg text-sm">
-            <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin" />
-            <span>{t('document.upload.validation.validating')}</span>
-          </div>
-        )}
-
-        {/* Success message with provider info */}
-        {!tableUrlValidating && tableUrlValid === true && (
-          <div className="flex items-center gap-2 p-3 bg-success/10 text-success rounded-lg text-sm">
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            <span>
-              {t('document.upload.validation.success')}
-              {tableUrlProvider && (
-                <span className="ml-1 text-text-secondary">
-                  ({t(`document.upload.validation.provider.${tableUrlProvider}`, tableUrlProvider)})
-                </span>
-              )}
-            </span>
-          </div>
-        )}
-
-        {/* Error message */}
-        {tableError && (
-          <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{tableError}</span>
-          </div>
-        )}
-
-        {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={handleBackFromTableMode}>
-          {t('common:actions.cancel')}
-        </Button>
-        <Button
-          variant="primary"
-          onClick={handleTableSubmit}
-          disabled={
-            !tableUrl.trim() ||
-            !tableName.trim() ||
-            tableSubmitting ||
-            tableUrlValidating ||
-            tableUrlValid === false
-          }
-        >
-          {tableSubmitting ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {t('document.upload.adding')}
-            </>
-          ) : (
-            t('document.upload.confirmAdd')
+          {onDingtalkImport && dingtalkVisited && (
+            <TabsContent
+              value="dingtalk"
+              forceMount
+              hidden={uploadMode !== 'dingtalk'}
+              className="mt-0 flex min-h-0 flex-1 flex-col border-t border-border"
+            >
+              <DingtalkDocumentImport
+                knowledgeBaseId={knowledgeBaseId}
+                onImport={handleDingtalkImport}
+                onDone={() => sourceCompleted('dingtalk')}
+                onDraftChange={setDingtalkHasDraft}
+                renderFooter={(action, status) => footer('dingtalk', action, status)}
+                canManageDocuments={canManageDocuments}
+              />
+            </TabsContent>
           )}
-        </Button>
-      </div>
-    </>
-  )
-
-  // Render web page mode
-  const renderWebMode = () => (
-    <>
-      <DialogHeader className="flex flex-row items-center gap-2 space-y-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 shrink-0"
-          onClick={handleBackFromWebMode}
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Button>
-        <DialogTitle>{t('document.upload.web.addWebPage')}</DialogTitle>
-      </DialogHeader>
-
-      <div className="py-4 space-y-4">
-        {/* Hint text */}
-        <p className="text-sm text-text-secondary">{t('document.upload.web.hint')}</p>
-
-        {/* URL input */}
-        <div className="space-y-2">
-          <Label htmlFor="web-url" className="text-sm font-medium">
-            {t('document.upload.web.urlLabel')}
-          </Label>
-          <Input
-            id="web-url"
-            placeholder={t('document.upload.web.urlPlaceholder')}
-            value={webUrl}
-            onChange={e => {
-              setWebUrl(e.target.value)
-              if (webError) setWebError(null)
-            }}
-            className="h-9"
-            disabled={webSubmitting}
-          />
-        </div>
-
-        {/* Document name input (optional) */}
-        <div className="space-y-2">
-          <Label htmlFor="web-name" className="text-sm font-medium">
-            {t('document.upload.web.nameLabel')}
-          </Label>
-          <Input
-            id="web-name"
-            placeholder={t('document.upload.web.namePlaceholder')}
-            value={webName}
-            onChange={e => setWebName(e.target.value)}
-            className="h-9"
-            disabled={webSubmitting}
-          />
-        </div>
-
-        {/* Fetching status */}
-        {webFetching && (
-          <div className="flex items-center gap-2 p-3 bg-primary/10 text-primary rounded-lg text-sm">
-            <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin" />
-            <span>{t('document.upload.web.fetching')}</span>
-          </div>
-        )}
-
-        {/* Error message */}
-        {webError && (
-          <div className="flex items-center gap-2 p-3 bg-error/10 text-error rounded-lg text-sm">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{webError}</span>
-          </div>
-        )}
-
-        {/* Folder selection */}
-        {folderOptions.length > 0 && (
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">{t('document.folder.selectFolder')}</Label>
-            <Select value={String(folderId)} onValueChange={val => onFolderChange?.(Number(val))}>
-              <SelectTrigger className="h-11 min-w-[44px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="0">{t('document.folder.rootLevel')}</SelectItem>
-                {folderOptions.map(folder => (
-                  <SelectItem key={folder.id} value={String(folder.id)}>
-                    {'\u00A0'.repeat(folder.depth * 2)}
-                    {folder.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={handleBackFromWebMode} disabled={webSubmitting}>
-          {t('common:actions.cancel')}
-        </Button>
-        <Button
-          variant="primary"
-          onClick={handleWebSubmit}
-          disabled={!webUrl.trim() || webSubmitting}
-        >
-          {webSubmitting ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              {webFetching ? t('document.upload.web.fetching') : t('document.upload.adding')}
-            </>
-          ) : (
-            t('document.upload.web.submitButton')
-          )}
-        </Button>
-      </div>
-    </>
-  )
-
-  // Render mode selector
-  const renderContent = () => {
-    switch (uploadMode) {
-      case 'text':
-        return renderTextMode()
-      case 'table':
-        return renderTableMode()
-      case 'web':
-        return renderWebMode()
-      default:
-        return renderFileMode()
-    }
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-        {renderContent()}
+        </Tabs>
+        <AlertDialog open={showDiscard} onOpenChange={setShowDiscard}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('document.upload.discardTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('document.upload.discardDescription')}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-11" data-testid="document-upload-keep">
+                {t('document.upload.keepEditing')}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="primary"
+                className="min-h-11"
+                onClick={close}
+                data-testid="document-upload-discard"
+              >
+                {t('document.upload.discard')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

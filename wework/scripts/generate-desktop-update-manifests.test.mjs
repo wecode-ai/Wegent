@@ -25,6 +25,9 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     `WeWork_${version}_macos_arm64.zip`,
     `WeWork_${version}_macos_x64.zip`,
     `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_macos_arm64.zip.blockmap`,
+    `WeWork_${version}_macos_x64.zip.blockmap`,
+    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
     `WeWork_${version}_macos_arm64.app.tar.gz`,
     `WeWork_${version}_macos_x64.app.tar.gz`,
   ]) {
@@ -36,10 +39,23 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     ['windows', 'x64'],
     ['linux', 'x64'],
   ]) {
-    const archive = `${platform}-${arch}-core-dsh`
-    const archiveSha256 = createHash('sha256').update(archive).digest('hex')
-    const assetName = `WeworkComponent_coreDsh_${archiveSha256}_${platform}_${arch}.tar.gz`
-    await writeFile(resolve(assets, assetName), archive)
+    const components = {}
+    for (const [id, componentVersion] of [
+      ['coreDsh', '0.1.1-rc.2'],
+      ['executor', 'wework-abc123'],
+    ]) {
+      const archive = `${platform}-${arch}-${id}`
+      const archiveSha256 = createHash('sha256').update(archive).digest('hex')
+      const assetName = `WeworkComponent_${id}_${archiveSha256}_${platform}_${arch}.tar.gz`
+      await writeFile(resolve(assets, assetName), archive)
+      components[id] = {
+        version: componentVersion,
+        contentSha256: 'a'.repeat(64),
+        archiveSha256,
+        assetName,
+        entryPath: '.',
+      }
+    }
     await writeFile(
       resolve(assets, `components-${platform}-${arch}.json`),
       JSON.stringify({
@@ -47,15 +63,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
         appVersion: version,
         platform,
         arch,
-        components: {
-          coreDsh: {
-            version: '0.1.1-rc.2',
-            contentSha256: 'a'.repeat(64),
-            archiveSha256,
-            assetName,
-            entryPath: '.',
-          },
-        },
+        components,
       })
     )
   }
@@ -77,6 +85,7 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     'wecode-ai/Wegent',
     'wework-v1.2.3',
     notes,
+    'a'.repeat(40),
   ])
 
   const electron = await readFile(resolve(output, 'latest-mac.yml'), 'utf8')
@@ -93,13 +102,72 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
   )
+  expect(components.sourceSha).toBe('a'.repeat(40))
   expect(components.components.coreDsh).toMatchObject({
     version: '0.1.1-rc.2',
     contentSha256: 'a'.repeat(64),
-    archiveBytes: 'macos-arm64-core-dsh'.length,
-    downloadUrl: `https://github.com/wecode-ai/Wegent/releases/download/wework-updater/WeworkComponent_coreDsh_${createHash('sha256').update('macos-arm64-core-dsh').digest('hex')}_macos_arm64.tar.gz`,
+    archiveBytes: 'macos-arm64-coreDsh'.length,
+    downloadUrl: `https://github.com/wecode-ai/Wegent/releases/download/wework-updater/WeworkComponent_coreDsh_${createHash('sha256').update('macos-arm64-coreDsh').digest('hex')}_macos_arm64.tar.gz`,
   })
   expect(components.components.coreDsh.archiveSha256).toMatch(/^[0-9a-f]{64}$/)
+  expect(components.components.executor.downloadUrl).toBe(
+    `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
+  )
+})
+
+test('rejects a release without every differential update blockmap', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-blockmaps-'))
+  temporaryDirectories.push(root)
+  const assets = resolve(root, 'assets')
+  const output = resolve(root, 'output')
+  const notes = resolve(root, 'notes.md')
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
+  const version = '1.2.3'
+  for (const name of [
+    `WeWork_${version}_macos_arm64.zip`,
+    `WeWork_${version}_macos_x64.zip`,
+    `WeWork_${version}_windows_x64-setup.exe`,
+    `WeWork_${version}_macos_arm64.zip.blockmap`,
+    `WeWork_${version}_windows_x64-setup.exe.blockmap`,
+  ]) {
+    await writeFile(resolve(assets, name), name)
+  }
+  await writeFile(notes, '## Changes\n')
+
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      assets,
+      output,
+      version,
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'a'.repeat(40),
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
+})
+
+test('rejects an invalid release source SHA', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-source-sha-'))
+  temporaryDirectories.push(root)
+  const notes = resolve(root, 'notes.md')
+  await writeFile(notes, '## Changes\n')
+
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      root,
+      resolve(root, 'output'),
+      '1.2.3',
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'not-a-source-sha',
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
 })
 
 function run(args) {

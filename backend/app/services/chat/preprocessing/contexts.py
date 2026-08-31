@@ -264,6 +264,26 @@ def _combine_text_contents(
     ]
 
 
+def _model_supports_image_input(
+    model_config: Optional[dict[str, Any]],
+) -> bool:
+    """Return whether the selected model accepts image input blocks."""
+    config = model_config or {}
+    if config.get("modelType") == "image":
+        image_config = config.get("imageConfig") or {}
+        capabilities = image_config.get("capabilities") or {}
+        max_reference_images = capabilities.get("max_reference_images")
+        if max_reference_images is None:
+            max_reference_images = image_config.get("max_reference_images")
+        return (
+            capabilities.get("supports_image_input") is not False
+            and max_reference_images != 0
+        )
+
+    model_capabilities = config.get("modelCapabilities") or {}
+    return model_capabilities.get("supportsImage") is True
+
+
 def _process_attachment_context(
     context: SubtaskContext,
     idx: int,
@@ -271,6 +291,7 @@ def _process_attachment_context(
     image_contents: List[dict],
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    model_config: Optional[dict[str, Any]] = None,
     inline_attachment_content: bool = True,
 ) -> None:
     """
@@ -283,6 +304,7 @@ def _process_attachment_context(
         image_contents: List to append image content to
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        model_config: Optional model config for capability checks
         inline_attachment_content: Whether to include parsed text/image content.
     """
     if not inline_attachment_content:
@@ -297,6 +319,7 @@ def _process_attachment_context(
 
     # Check if it's an image attachment
     if context_service.is_image_context(context) and context.image_base64:
+        supports_image = _model_supports_image_input(model_config)
         # Build image attachment metadata
         attachment_id = context.id
         filename = context.original_filename
@@ -315,6 +338,15 @@ def _process_attachment_context(
             is_image=True,
         )
 
+        if not supports_image:
+            text_contents.append(f"[Attachment {idx}]\n{image_header}")
+            logger.info(
+                "Added metadata-only image context: id=%s supports_image=%s",
+                context.id,
+                supports_image,
+            )
+            return
+
         image_contents.append(
             {
                 "image_base64": context.image_base64,
@@ -324,6 +356,13 @@ def _process_attachment_context(
                 "url": url,
                 "image_header": image_header,
             }
+        )
+        type_data = context.type_data if isinstance(context.type_data, dict) else {}
+        logger.info(
+            "Added image input context: id=%s filename=%s source=%s",
+            attachment_id,
+            filename,
+            type_data.get("source") or "user_upload",
         )
     else:
         # Text document - get formatted content with attachment index
@@ -477,23 +516,7 @@ def _validate_attachment_ownership(
             detail=f"Invalid or unauthorized attachment IDs: {sorted(invalid_ids)}",
         )
 
-    ordinary_attachment_ids = [
-        context.id
-        for context in valid_contexts
-        if not _is_quick_launch_preset_attachment(context)
-    ]
-    if ordinary_attachment_ids and len(ordinary_attachment_ids) < len(valid_ids):
-        return _order_attachment_ids(attachment_ids, set(ordinary_attachment_ids))
-
     return _order_attachment_ids(attachment_ids, set(valid_ids))
-
-
-def _is_quick_launch_preset_attachment(context: SubtaskContext) -> bool:
-    """Return whether an attachment was copied from a quick launch preset."""
-    return (
-        isinstance(context.type_data, dict)
-        and context.type_data.get("source") == "quick_launch_preset"
-    )
 
 
 def _order_attachment_ids(
@@ -1324,6 +1347,7 @@ async def prepare_contexts_for_chat(
         message,
         task_id=task_id,
         subtask_id=user_subtask_id,
+        model_config=model_config,
         inline_attachment_content=inline_attachment_content,
     )
 
@@ -1499,6 +1523,7 @@ async def _process_attachment_contexts_for_message(
     message: str,
     task_id: Optional[int] = None,
     subtask_id: Optional[int] = None,
+    model_config: Optional[dict[str, Any]] = None,
     inline_attachment_content: bool = True,
 ) -> str | list[dict[str, Any]]:
     """
@@ -1509,6 +1534,7 @@ async def _process_attachment_contexts_for_message(
         message: Original user message
         task_id: Optional task ID for building sandbox path
         subtask_id: Optional subtask ID for building sandbox path
+        model_config: Optional model config for capability checks
         inline_attachment_content: Whether parsed attachment content should be
             injected. When False, only attachment metadata is included.
     Returns:
@@ -1530,6 +1556,7 @@ async def _process_attachment_contexts_for_message(
                 image_contents,
                 task_id=task_id,
                 subtask_id=subtask_id,
+                model_config=model_config,
                 inline_attachment_content=inline_attachment_content,
             )
         except Exception as e:

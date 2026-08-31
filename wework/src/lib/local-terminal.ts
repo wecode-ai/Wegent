@@ -295,20 +295,6 @@ export async function resolveLocalHarnessPluginRoots(
   )
 }
 
-export async function updateLocalHarnessSessionTitle(
-  sessionId: string,
-  title: string
-): Promise<void> {
-  if (!isLocalHarnessAvailable()) return
-  const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-  if (!normalized) return
-  updateElectronHarnessSessions(sessions =>
-    sessions.map(session =>
-      session.session_id === sessionId ? { ...session, title: normalized } : session
-    )
-  )
-}
-
 export async function getLocalTerminalSnapshot(sessionId: string): Promise<LocalTerminalSnapshot> {
   return requestDshTerminal<LocalTerminalSnapshot>('terminal.snapshot', {
     session_id: sessionId,
@@ -378,7 +364,6 @@ export async function startLocalHarness({
   const nativeSessionId =
     harnessId === 'claude_code' ? persisted?.native_session_id || crypto.randomUUID() : null
   let launchArgs = [...payload.args]
-  let initialInput: string | undefined
   if (persisted) {
     if (harnessId === 'claude_code' && nativeSessionId) {
       launchArgs.push('--resume', nativeSessionId)
@@ -393,8 +378,8 @@ export async function startLocalHarness({
       launchArgs.push('--prompt', payload.prompt.trim())
     } else if (harnessId === 'claude_code') {
       launchArgs.push(payload.prompt.trim())
-    } else {
-      initialInput = `\u001b[200~${payload.prompt.trim()}\u001b[201~\r`
+    } else if (harnessId === 'kimi_code') {
+      launchArgs.push('--prompt', payload.prompt.trim())
     }
   }
   const prepared = await requestLocalExecutor<PreparedLocalHarnessLaunch>(
@@ -424,8 +409,6 @@ export async function startLocalHarness({
     rows: payload.rows,
     cols: payload.cols,
     env: launchEnv,
-    initial_input: initialInput,
-    initial_input_readiness_marker: harnessId === 'kimi_code' ? 'No session yet' : undefined,
   })
   const descriptor: PersistedLocalHarnessSession = {
     session_id: sessionId,

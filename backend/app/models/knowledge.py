@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     TypeDecorator,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm.attributes import flag_modified
@@ -48,6 +49,7 @@ class DocumentSourceType(str, PyEnum):
     TABLE = "table"  # External table (DingTalk, Feishu, etc.)
     WEB = "web"  # Web page (scraped URL)
     CODE = "code"  # Source file indexed for retrieval, not a browsable document
+    EXTERNAL = "external"  # Document imported from an external provider
 
 
 class ContentOrigin(str, PyEnum):
@@ -99,6 +101,55 @@ class DocumentIndexStatusType(TypeDecorator):
             return DocumentIndexStatus(value)
         except ValueError:
             return value
+
+
+class KnowledgeDocumentExternalSource(Base):
+    """One external identity per document and per knowledge base.
+
+    References are maintained in the document transaction, without database FKs.
+    This table owns identity only; content and processing state belong to the document.
+    """
+
+    __tablename__ = "knowledge_document_external_sources"
+
+    document_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=False,
+        comment="知识文档ID，关联knowledge_documents.id",
+    )
+    kind_id = Column(
+        Integer,
+        nullable=False,
+        server_default="0",
+        comment="所属知识库ID，与知识文档的kind_id一致",
+    )
+    external_provider = Column(
+        String(32),
+        nullable=False,
+        server_default="",
+        comment="外部文档来源标识，如dingtalk；业务写入时不能为空",
+    )
+    external_resource_id = Column(
+        String(255),
+        nullable=False,
+        server_default="",
+        comment="外部来源中的文档资源ID；业务写入时不能为空",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "kind_id",
+            "external_provider",
+            "external_resource_id",
+            name="uniq_knowledge_documents_external",
+        ),
+        {
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "comment": "知识文档外部身份表，仅外部导入文档有记录",
+        },
+    )
 
 
 class KnowledgeDocument(Base):
@@ -155,8 +206,57 @@ class KnowledgeDocument(Base):
         default=ContentOrigin.USER.value,
         server_default=ContentOrigin.USER.value,
     )
+    # Batch-load identities for document lists; ORM deletion removes the owned row.
+    external_source = relationship(
+        "KnowledgeDocumentExternalSource",
+        primaryjoin="KnowledgeDocument.id == foreign(KnowledgeDocumentExternalSource.document_id)",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+        lazy="selectin",
+    )
+
+    @property
+    def external_provider(self) -> str | None:
+        """Expose the provider from the single identity source to API consumers."""
+        return self.external_source.external_provider if self.external_source else None
+
+    @property
+    def external_resource_id(self) -> str | None:
+        """Expose the resource ID without duplicating its persisted value."""
+        return (
+            self.external_source.external_resource_id if self.external_source else None
+        )
 
     # --- Helper properties for converted attachment reference ---
+
+    @property
+    def has_external_identity(self) -> bool:
+        """Whether this document owns an external provider identity."""
+        return self.external_source is not None
+
+    @property
+    def external_source_config(self) -> dict:
+        """Return the external source metadata stored in source_config.
+
+        Holds the provider identity, source title / URL, import health
+        (``status``, ``last_success_at``, ``last_error``). Always returns a
+        dict; missing metadata reads as empty.
+        """
+        value = (self.source_config or {}).get("external")
+        return dict(value) if isinstance(value, dict) else {}
+
+    def update_external_source_config(self, **updates: object) -> None:
+        """Merge keys into source_config["external"], preserving the rest."""
+        source_config = dict(self.source_config or {})
+        external = dict(source_config.get("external") or {})
+        for key, value in updates.items():
+            if value is None:
+                external.pop(key, None)
+            else:
+                external[key] = value
+        source_config["external"] = external
+        self.source_config = source_config
 
     @property
     def converted_attachment_id(self) -> int | None:

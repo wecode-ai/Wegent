@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { WorkbenchContextValue } from '@/features/workbench/WorkbenchProvider'
@@ -136,11 +136,11 @@ const desktopHostMocks = vi.hoisted(() => {
           Object.assign(preferences, params.patch)
           return { ...preferences }
         }
-        if (capability === 'browser.events') return { events: [], nextCursor: 0 }
         if (capability === 'plugins.list') return []
         if (capability === 'smartApps.list') return []
         if (capability === 'executor.plugins.personal.list') return { items: [] }
         if (capability === 'runtime.listCoreDshPlugins') return []
+        if (capability === 'systemDrag.takePending') return []
         return {}
       }
     ),
@@ -149,6 +149,7 @@ const desktopHostMocks = vi.hoisted(() => {
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 const localCodexPluginMocks = vi.hoisted(() => ({
@@ -156,7 +157,11 @@ const localCodexPluginMocks = vi.hoisted(() => ({
   listSkills: vi.fn(),
 }))
 const workbenchProviderMocks = vi.hoisted(() => ({
+  autoReady: true,
   mounts: vi.fn(),
+}))
+const idleTaskCoordinatorMocks = vi.hoisted(() => ({
+  active: vi.fn(),
 }))
 
 const localPathMocks = vi.hoisted(() => ({
@@ -202,6 +207,17 @@ vi.mock('@/features/local-runtime/LocalRuntimeInitializer', () => ({
 
 vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
   CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}))
+
+vi.mock('@/features/idle-tasks/IdleTaskCoordinator', () => ({
+  IdleTaskCoordinator: ({ active }: { active: boolean }) => {
+    idleTaskCoordinatorMocks.active(active)
+    return null
+  },
+}))
+
+vi.mock('@/features/idle-tasks/WeworkIdleTasks', () => ({
+  WeworkIdleTasks: () => null,
 }))
 
 vi.mock('@/api/local/codexPlugins', async importOriginal => {
@@ -644,7 +660,9 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
     useEffect(() => {
       workbenchProviderMocks.mounts(prewarmComposerApps)
     }, [prewarmComposerApps])
-    queueMicrotask(() => onStartupReadyChange?.(true))
+    if (workbenchProviderMocks.autoReady) {
+      queueMicrotask(() => onStartupReadyChange?.(true))
+    }
     return <>{children}</>
   },
 }))
@@ -1008,6 +1026,7 @@ describe('App plugins route', () => {
     }
     localStorage.clear()
     sessionStorage.clear()
+    delete window.weworkElectronCloudCredentials
     vi.stubEnv('DEV', false)
     mockViewport.isMobile = false
     Object.defineProperty(navigator, 'userAgent', {
@@ -1038,7 +1057,9 @@ describe('App plugins route', () => {
     vi.mocked(workbenchValue.startNewSkillChat).mockReset().mockResolvedValue(false)
     localCodexPluginMocks.listInstalledPlugins.mockReset().mockResolvedValue([])
     localCodexPluginMocks.listSkills.mockReset().mockResolvedValue([])
+    workbenchProviderMocks.autoReady = true
     workbenchProviderMocks.mounts.mockClear()
+    idleTaskCoordinatorMocks.active.mockClear()
     localPathMocks.exists.mockReset().mockResolvedValue(false)
     mockSystemSkillsFetch()
   })
@@ -1046,6 +1067,7 @@ describe('App plugins route', () => {
   afterEach(() => {
     delete window.__WEWORK_DSH_UI__
     delete window.__WEWORK_DSH_UI_MODULES__
+    vi.useRealTimers()
     vi.unstubAllEnvs()
     vi.unstubAllGlobals()
   })
@@ -1058,6 +1080,33 @@ describe('App plugins route', () => {
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
+  })
+
+  test('closes the idle maintenance gate when the active app changes after startup timeout', async () => {
+    vi.useFakeTimers()
+    workbenchProviderMocks.autoReady = false
+    window.history.pushState({}, '', '/')
+
+    renderApp()
+    await act(async () => {
+      for (let index = 0; index < 10; index += 1) {
+        await Promise.resolve()
+      }
+    })
+    expect(screen.getByTestId('app-shell')).toBeInTheDocument()
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
+
+    await act(async () => {
+      vi.advanceTimersByTime(6000)
+    })
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(true)
+
+    await act(async () => {
+      window.history.pushState({}, '', '/todo')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(window.location.pathname).toBe('/todo')
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
   })
 
   test('opens the plugins page from the desktop sidebar', async () => {
@@ -1113,12 +1162,23 @@ describe('App plugins route', () => {
         apiBaseUrl: 'http://127.0.0.1:9100/api',
         socketBaseUrl: 'http://127.0.0.1:9100',
         socketPath: '/socket.io',
-        token: 'cloud-secret',
-        tokenExpiresAt: null,
         user: { id: 7, user_name: 'alice', email: 'alice@example.com' },
         connectedAt: '2026-07-15T00:00:00.000Z',
       })
     )
+    window.weworkElectronCloudCredentials = {
+      getDevicePublicKey: vi.fn(),
+      claimAuthorization: vi.fn(),
+      refreshAccessToken: vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          accessToken: 'cloud-secret',
+          tokenType: 'bearer',
+          expiresIn: 3600,
+        },
+      }),
+      clear: vi.fn(),
+    }
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/users/me')) {
@@ -2004,9 +2064,18 @@ describe('App plugins route', () => {
     await userEvent.click(await screen.findByTestId('applications-tab-smart-app'))
     await userEvent.click(await screen.findByTestId('smart-apps-section-owned'))
     expect(await screen.findByTestId('smart-apps-owned-page')).toBeInTheDocument()
+    const ownedSearch = new URLSearchParams(window.location.search)
+    const workspaceTabId = ownedSearch.get('workspaceTab')
+    expect(ownedSearch.get('app_type')).toBe('smart_app')
+    expect(ownedSearch.get('view')).toBe('owned')
+    expect(workspaceTabId).toBeTruthy()
+    expect(ownedSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-miniapp'))
-    expect(window.location.search).toBe('?app_type=miniapp')
+    const miniAppSearch = new URLSearchParams(window.location.search)
+    expect(miniAppSearch.get('app_type')).toBe('miniapp')
+    expect(miniAppSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(miniAppSearch.get('workspaceTabTitle')).toBe('应用')
 
     await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
 
@@ -2015,7 +2084,11 @@ describe('App plugins route', () => {
       'aria-current',
       'page'
     )
-    expect(window.location.search).toBe('?app_type=smart_app')
+    const marketplaceSearch = new URLSearchParams(window.location.search)
+    expect(marketplaceSearch.get('app_type')).toBe('smart_app')
+    expect(marketplaceSearch.has('view')).toBe(false)
+    expect(marketplaceSearch.get('workspaceTab')).toBe(workspaceTabId)
+    expect(marketplaceSearch.get('workspaceTabTitle')).toBe('应用')
   })
 
   test('hides Smart apps and exits its Applications view while experiments are disabled', async () => {

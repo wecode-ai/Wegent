@@ -285,6 +285,9 @@ function localProtocolPatch(model) {
 }
 
 function localModelSwitchCommand() {
+  if (process.platform === 'win32') {
+    return `Set-Content -LiteralPath '${LOCAL_MODEL_SWITCH_ARTIFACT}' -Value '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' -NoNewline`
+  }
   return `printf '%s' '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' > '${LOCAL_MODEL_SWITCH_ARTIFACT}'`
 }
 

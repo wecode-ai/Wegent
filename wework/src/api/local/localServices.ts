@@ -66,8 +66,6 @@ import type {
   RuntimeTaskQueueReorderRequest,
   RuntimeTaskQueueReorderResponse,
   RuntimeTaskRenameRequest,
-  RuntimeTaskStatusReplayRequest,
-  RuntimeTaskStatusReplayResponse,
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
@@ -2138,6 +2136,7 @@ function adaptRuntimeWorkListResponse(
       stringValue(workspace.projectKind) ?? stringValue(workspace.project_kind) ?? 'local'
     const projectSource =
       stringValue(workspace.projectSource) ?? stringValue(workspace.project_source) ?? 'legacy_root'
+    const projectSidebarOrder = workspace.projectSidebarOrder ?? workspace.project_sidebar_order
     const projectPinnedOrder = workspace.projectPinnedOrder ?? workspace.project_pinned_order
     const rawDefaultProjectSpace = recordValue(
       workspace.defaultProjectSpace ?? workspace.default_project_space
@@ -2216,6 +2215,10 @@ function adaptRuntimeWorkListResponse(
           .map(root => stringValue(root))
           .filter((root): root is string => Boolean(root))
           .map(path => ({ kind: 'local', path })),
+        sidebarOrder:
+          typeof projectSidebarOrder === 'number' && Number.isInteger(projectSidebarOrder)
+            ? projectSidebarOrder
+            : null,
         pinned: workspace.projectPinned === true || workspace.project_pinned === true,
         pinnedOrder:
           typeof projectPinnedOrder === 'number' && Number.isInteger(projectPinnedOrder)
@@ -2483,11 +2486,6 @@ export function createRuntimeWorkApiFromIpc(
 
   return {
     prepareRuntimeModel,
-    replayRuntimeTaskStatuses(
-      data: RuntimeTaskStatusReplayRequest
-    ): Promise<RuntimeTaskStatusReplayResponse> {
-      return requestWithLocalDevice('runtime.tasks.status.replay', data)
-    },
     async listRuntimeWork(): Promise<RuntimeWorkListResponse> {
       const localDeviceId = await getDefaultDeviceId()
       const startedAt = nowMs()
@@ -3347,6 +3345,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   }
 
   const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const getDeviceCommandLocalDeviceId = async () =>
+    localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
 
   const executeCommand = async (
     deviceId: string,
@@ -3363,7 +3363,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) =>
     request<DeviceCommandResponse>(
       'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getLocalDeviceId())
+      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
     )
 
   const deviceApi: WorkbenchServices['deviceApi'] = {

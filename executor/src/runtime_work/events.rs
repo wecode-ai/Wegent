@@ -9,6 +9,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -1248,6 +1249,7 @@ fn log_unhandled_codex_raw_message(
 ) {
     let raw = serde_json::to_string(message)
         .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
+    let raw_hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
     log_executor_event(
         "codex unhandled raw message",
         &[
@@ -1255,7 +1257,8 @@ fn log_unhandled_codex_raw_message(
             ("task_id", task_id.to_owned()),
             ("subtask_id", subtask_id.to_owned()),
             ("method", method.to_owned()),
-            ("raw", raw),
+            ("raw_len", raw.len().to_string()),
+            ("raw_sha256", raw_hash),
         ],
     );
 }

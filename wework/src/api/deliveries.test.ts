@@ -405,7 +405,7 @@ describe('createDeliveryApi task tracking', () => {
     })
   })
 
-  test('uses the atomic workflow status command for parallel runtime tasks', async () => {
+  test('leaves cloud workflow status projection to runtime events', async () => {
     const workflowItem: CloudLoopItem = {
       ...trackedItem,
       status: 'pending',
@@ -450,7 +450,7 @@ describe('createDeliveryApi task tracking', () => {
       }
       return currentItem
     })
-    const patch = vi.fn().mockResolvedValue({ ...workflowItem, status: 'in_progress', version: 2 })
+    const patch = vi.fn()
     const developApi = createDeliveryApi(clientWith({ get, patch }))
     const docsApi = createDeliveryApi(clientWith({ get, patch }))
 
@@ -463,16 +463,7 @@ describe('createDeliveryApi task tracking', () => {
       'running'
     )
     await Promise.all([develop, docs])
-    expect(patch).toHaveBeenNthCalledWith(1, '/v1/runtime-tasks/cloud-context/status', {
-      deviceId: 'local-device',
-      taskId: 'runtime-develop',
-      status: 'running',
-    })
-    expect(patch).toHaveBeenNthCalledWith(2, '/v1/runtime-tasks/cloud-context/status', {
-      deviceId: 'local-device',
-      taskId: 'runtime-docs',
-      status: 'running',
-    })
+    expect(patch).not.toHaveBeenCalled()
     expect(get).toHaveBeenCalledTimes(2)
   })
 

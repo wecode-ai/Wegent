@@ -11,7 +11,10 @@ export function rememberProjectTaskStore(
   address: RuntimeTaskAddress,
   projectStore: 'backend' | 'local'
 ) {
-  projectStoreByRuntimeTask.set(runtimeTaskKey(address), projectStore)
+  const key = runtimeTaskKey(address)
+  if (projectStoreByRuntimeTask.get(key) === projectStore) return false
+  projectStoreByRuntimeTask.set(key, projectStore)
+  return true
 }
 
 export function projectTaskTrackingApi(services: WorkbenchServices, address: RuntimeTaskAddress) {

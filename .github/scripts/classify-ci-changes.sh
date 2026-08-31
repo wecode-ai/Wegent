@@ -29,6 +29,7 @@ classify_path() {
     .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
       .github/workflows/ci-cache-warmup.yml | \
+      .github/workflows/publish-base-image.yml | \
       .github/workflows/publish-image.yml | \
       .github/workflows/snapshot-image.yml | \
       .github/workflows/wework-app.yml | \
@@ -46,6 +47,7 @@ classify_path() {
       .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
       .github/scripts/free-runner-disk-space-if-needed.sh | \
+      .github/scripts/resolve-executor-e2e-runtime.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/start-frontend-e2e-server.sh)

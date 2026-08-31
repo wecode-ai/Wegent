@@ -14,6 +14,7 @@ import { AuthProvider } from '@/features/auth/AuthProvider'
 import { useAuth } from '@/features/auth/useAuth'
 import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
 import {
+  registerRuntimeTaskLifecycleAutomation,
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStreamCoordinator,
 } from '@/features/workbench/runtimeTaskLifecycle'
@@ -49,6 +50,8 @@ import {
 import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
 import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
+import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
+import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
@@ -122,6 +125,7 @@ import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dsh
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 
 const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
@@ -188,7 +192,7 @@ function workspaceTabPath(tab: WorkspaceTab): string {
 function workspaceTabIframe(
   tab: WorkspaceTab,
   wegentUrl: string | null | undefined
-): { appKey: string; src: string; title: string } | null {
+): { appKey: string; embeddedBrowserLabel?: string; src: string; title: string } | null {
   const match = workspaceTabPath(tab).match(/^\/app\/([^/]+)/)
   if (!match) return null
   const app = resolveDshApp(match[1])
@@ -198,7 +202,12 @@ function workspaceTabIframe(
   }
   const harnessApp = resolveRunningHarnessApp(match[1])
   return harnessApp
-    ? { appKey: harnessApp.key, src: harnessApp.url, title: harnessApp.title }
+    ? {
+        appKey: harnessApp.key,
+        embeddedBrowserLabel: harnessApp.nativeLabel,
+        src: harnessApp.url,
+        title: harnessApp.title,
+      }
     : null
 }
 
@@ -283,9 +292,7 @@ export function WorkspaceTabSurface({
   const dshWorkspaceTabId = dshWorkspaceTabIdFromPath(tabPath)
   const dshWorkspaceTabActive = Boolean(dshWorkspaceTabId)
   const harnessAppInstallationId = harnessAppInstallationIdFromPath(tabPath)
-  const electronHarnessAppActive = Boolean(isElectronRuntime() && harnessAppInstallationId)
-  const iframe =
-    isElectronRuntime() && harnessAppInstallationId ? null : workspaceTabIframe(tab, cloudWebUrl)
+  const iframe = workspaceTabIframe(tab, cloudWebUrl)
   const auxiliaryRoute = resolveDshRoute(tabPath)
   const inferredNativeKind = inferWorkspaceTabKind(tabPath)
   const retainedNativeKind = nativeWorkbenchKind ?? inferredNativeKind
@@ -300,18 +307,33 @@ export function WorkspaceTabSurface({
   const auxiliaryActive = Boolean(auxiliaryRoute || surfaceDshApp) || dshWorkspaceTabActive
   const harnessAppLaunch = useHarnessAppLaunchState(harnessAppInstallationId)
   const harnessAppLaunchActive = Boolean(harnessAppLaunch)
+  const [harnessAppStartupOwner, setHarnessAppStartupOwner] = useState(() => ({
+    installationId: harnessAppInstallationId,
+    pending: Boolean(harnessAppInstallationId),
+  }))
+  if (harnessAppStartupOwner.installationId !== harnessAppInstallationId) {
+    setHarnessAppStartupOwner({
+      installationId: harnessAppInstallationId,
+      pending: Boolean(harnessAppInstallationId),
+    })
+  }
+  const settleHarnessAppStartup = useCallback((settledInstallationId: string) => {
+    setHarnessAppStartupOwner(current =>
+      current.installationId === settledInstallationId ? { ...current, pending: false } : current
+    )
+  }, [])
+  const harnessAppStartupPending =
+    smartAppsEnabled &&
+    harnessAppStartupOwner.installationId === harnessAppInstallationId &&
+    harnessAppStartupOwner.pending
   const nativeWorkbenchActive =
-    nativeWorkbenchRoute &&
-    !electronHarnessAppActive &&
-    !iframe &&
-    !auxiliaryActive &&
-    !harnessAppLaunchActive
+    nativeWorkbenchRoute && !iframe && !auxiliaryActive && !harnessAppLaunchActive
   const unavailableRouteActive =
     !nativeWorkbenchActive &&
-    !electronHarnessAppActive &&
     !iframe &&
     !auxiliaryActive &&
-    !harnessAppLaunchActive
+    !harnessAppLaunchActive &&
+    !harnessAppStartupPending
   const [surfaceHistory, setSurfaceHistory] = useState(() => ({
     iframe,
     hasMountedProvider: !iframe,
@@ -349,7 +371,7 @@ export function WorkspaceTabSurface({
   const keepIframeActive = Boolean(iframe)
   // Starting an Electron Smart app is an application lifecycle operation, not
   // a visible-tab effect. Keep its launcher connected until startup settles.
-  const keepHarnessAppLaunchActive = electronHarnessAppActive && harnessAppLaunchActive
+  const keepHarnessAppLaunchActive = Boolean(harnessAppInstallationId && harnessAppLaunchActive)
   const keepSurfaceActive =
     keepNativeWorkbenchActive || keepIframeActive || keepHarnessAppLaunchActive
 
@@ -364,14 +386,9 @@ export function WorkspaceTabSurface({
   const workbenchContent = (
     <>
       {harnessAppInstallationId && smartAppsEnabled ? (
-        <HarnessAppAutoLauncher installationId={harnessAppInstallationId} />
-      ) : null}
-      {electronHarnessAppActive && !harnessAppLaunchActive ? (
-        <div
-          className="absolute inset-0"
-          data-testid={`app-iframe-harness-${harnessAppInstallationId}`}
-          data-embedded-browser-label={`smart-app:${harnessAppInstallationId}`}
-          data-workspace-tab-id={tab.id}
+        <HarnessAppAutoLauncher
+          installationId={harnessAppInstallationId}
+          onStartupSettled={settleHarnessAppStartup}
         />
       ) : null}
       {onOpenWeworkForAppshot && active && !iframe ? (
@@ -390,7 +407,7 @@ export function WorkspaceTabSurface({
       ) : null}
       {auxiliaryRoute ? (
         <div data-testid="desktop-auxiliary-surface" className="h-full">
-          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} />
+          <DshRouteSurface route={auxiliaryRoute} search={tabSearch} workspaceTabId={tab.id} />
         </div>
       ) : null}
       {surfaceDshApp ? <DshAppSurface active={active} app={surfaceDshApp} tab={tab} /> : null}
@@ -451,6 +468,7 @@ export function WorkspaceTabSurface({
                 active={active && Boolean(iframe)}
                 appKey={renderedIframe.appKey}
                 edgeToEdge={Boolean(harnessAppInstallationId)}
+                embeddedBrowserLabel={renderedIframe.embeddedBrowserLabel}
                 onReady={
                   harnessAppInstallationId
                     ? () => clearHarnessAppLaunch(harnessAppInstallationId)
@@ -488,6 +506,7 @@ function AppRoutes({ onWorkbenchStartupReadyChange, onOpenWeworkForAppshot }: Ap
   }))
   const telemetryEnabled = useTelemetryEnabled()
   const lifecycleStore = useMemo(() => new RuntimeTaskLifecycleStore(user?.id), [user?.id])
+  useEffect(() => registerRuntimeTaskLifecycleAutomation(lifecycleStore), [lifecycleStore])
   const usesFallbackCloudConnection = cloudConnection.serviceKey.startsWith('fallback:')
   const workbenchIdentity = usesFallbackCloudConnection ? user : (cloudConnection.user ?? user)
   const workbenchIdentityId = workbenchIdentity?.id
@@ -663,6 +682,7 @@ export default function App() {
     <>
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
+      <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <DshSlotSurface
         className="pointer-events-none fixed inset-0 z-system-popover"
@@ -796,7 +816,10 @@ function AppShell() {
       : fixedWorkspaceTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
-  const [workbenchStartupRevealTimedOut, setWorkbenchStartupRevealTimedOut] = useState(false)
+  const [workbenchStartupRevealAppKey, setWorkbenchStartupRevealAppKey] = useState<string | null>(
+    null
+  )
+  const workbenchStartupRevealTimedOut = workbenchStartupRevealAppKey === activeAppKey
   const updateImNotificationPresence = useMemo(() => {
     if (!cloudApiBaseUrl || !cloudToken) return undefined
     return createRuntimeWorkApi(
@@ -961,7 +984,7 @@ function AppShell() {
       console.warn(
         `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
       )
-      setWorkbenchStartupRevealTimedOut(true)
+      setWorkbenchStartupRevealAppKey(activeAppKey)
     }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
 
     return () => window.clearTimeout(timer)
@@ -1030,6 +1053,12 @@ function AppShell() {
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
           />
+        ) : null}
+        {isMainWindow && isElectron ? (
+          <>
+            <IdleTaskCoordinator active={workbenchStartupReady || workbenchStartupRevealTimedOut} />
+            <WeworkIdleTasks />
+          </>
         ) : null}
         {isMainWindow && isElectron ? <PluginAutoUpdateCoordinator /> : null}
         <CloudModelCatalogSyncDialogHost />

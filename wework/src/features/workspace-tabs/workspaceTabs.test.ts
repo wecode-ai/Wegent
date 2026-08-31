@@ -32,7 +32,7 @@ describe('workspaceTabs', () => {
     expect(createWorkspaceTab('board', labels)).toMatchObject({
       kind: 'board',
       title: '项目空间',
-      contentRoute: '/todo',
+      contentRoute: '/todo?projectId=default-work-items',
     })
     expect(
       createWorkspaceTab('board', labels, {

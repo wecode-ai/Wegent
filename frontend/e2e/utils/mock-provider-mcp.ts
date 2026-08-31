@@ -9,10 +9,55 @@ interface McpToolCall {
 }
 
 const toolCalls: McpToolCall[] = []
+const contentGates = new Map<
+  string,
+  { waiting: boolean; promise: Promise<void>; release: () => void }
+>()
+
+function setPausedContentNodes(nodeIds: string[]): void {
+  for (const [nodeId, gate] of contentGates) {
+    if (!nodeIds.includes(nodeId)) {
+      contentGates.delete(nodeId)
+      gate.release()
+    }
+  }
+  for (const nodeId of nodeIds) {
+    if (contentGates.has(nodeId)) continue
+    let release!: () => void
+    const promise = new Promise<void>(resolve => (release = resolve))
+    contentGates.set(nodeId, { waiting: false, promise, release })
+  }
+}
+
 const state = {
   deniedNodeIds: new Set<string>(),
   documentNames: { 'doc-d1': 'Doc-D1_新设计' } as Record<string, string>,
+  // Import-scenario controls: content overrides, injected get_document_content
+  // failures, and nodes hidden from list_nodes.
+  documentContents: {} as Record<string, string>,
+  nodeFailures: {} as Record<string, string>,
+  hiddenNodeIds: new Set<string>(),
 }
+
+export const EXTERNAL_IMPORT_NODES = {
+  folderRoot: 'imp-root',
+  formatsRoot: 'imp-formats',
+  subFolder: 'imp-sub',
+  product: 'imp-product',
+  api: 'imp-api',
+  archive: 'imp-archive',
+  sheet: 'imp-sheet',
+  table: 'imp-table',
+  pdf: 'imp-pdf',
+} as const
+
+export const EXTERNAL_IMPORT_MARKERS = {
+  productV1: 'DINGTALK-PRODUCT-V1',
+  productV2: 'DINGTALK-PRODUCT-V2',
+  api: 'DINGTALK-API-V1',
+  apiV2: 'DINGTALK-API-V2',
+  archive: 'DINGTALK-ARCHIVE-V1',
+} as const
 
 const documents: Record<string, { name: string; content: string }> = {
   'doc-d1': {
@@ -31,6 +76,18 @@ const documents: Record<string, { name: string; content: string }> = {
     name: 'Doc-M1_个人记录',
     content:
       '# 个人记录\n\n唯一断言标记：`DING-M1-PERSONAL-ALPHA`\n\n私有提示：`PERSONAL-CODE-7429`',
+  },
+  [EXTERNAL_IMPORT_NODES.product]: {
+    name: 'E2E_产品说明',
+    content: `# 产品说明\n\n唯一断言标记：\`${EXTERNAL_IMPORT_MARKERS.productV1}\``,
+  },
+  [EXTERNAL_IMPORT_NODES.api]: {
+    name: 'E2E_接口规范',
+    content: `# 接口规范\n\n唯一断言标记：\`${EXTERNAL_IMPORT_MARKERS.api}\``,
+  },
+  [EXTERNAL_IMPORT_NODES.archive]: {
+    name: 'E2E_归档说明',
+    content: `# 归档说明\n\n唯一断言标记：\`${EXTERNAL_IMPORT_MARKERS.archive}\``,
   },
 }
 
@@ -72,9 +129,13 @@ export function handleProviderMcpHttpRequest(
     return true
   }
   if (url.pathname === '/mcp-control/reset' && req.method === 'POST') {
+    setPausedContentNodes([])
     toolCalls.length = 0
     state.deniedNodeIds.clear()
     state.documentNames = { 'doc-d1': 'Doc-D1_新设计' }
+    state.documentContents = {}
+    state.nodeFailures = {}
+    state.hiddenNodeIds.clear()
     writeJson(res, 200, { status: 'reset' })
     return true
   }
@@ -82,15 +143,42 @@ export function handleProviderMcpHttpRequest(
     const config = parseJsonBody<{
       deniedNodeIds?: string[]
       documentNames?: Record<string, string>
+      documentContents?: Record<string, string>
+      nodeFailures?: Record<string, string>
+      hiddenNodeIds?: string[]
+      pausedContentNodeIds?: string[]
     }>(body)
-    state.deniedNodeIds = new Set(config?.deniedNodeIds || [])
-    state.documentNames = {
-      ...state.documentNames,
-      ...(config?.documentNames || {}),
+    // Each field present in the request replaces the whole field, so passing
+    // an empty object clears that control. documentNames merges instead: it
+    // layers display-name overrides on top of the defaults.
+    if (config?.deniedNodeIds) {
+      state.deniedNodeIds = new Set(config.deniedNodeIds)
+    }
+    if (config?.documentNames) {
+      state.documentNames = { ...state.documentNames, ...config.documentNames }
+    }
+    if (config?.documentContents) {
+      state.documentContents = config.documentContents
+    }
+    if (config?.nodeFailures) {
+      state.nodeFailures = config.nodeFailures
+    }
+    if (config?.hiddenNodeIds) {
+      state.hiddenNodeIds = new Set(config.hiddenNodeIds)
+    }
+    if (config?.pausedContentNodeIds) {
+      setPausedContentNodes(config.pausedContentNodeIds)
     }
     writeJson(res, 200, {
       deniedNodeIds: [...state.deniedNodeIds],
       documentNames: state.documentNames,
+      documentContents: state.documentContents,
+      nodeFailures: state.nodeFailures,
+      hiddenNodeIds: [...state.hiddenNodeIds],
+      pausedContentNodeIds: [...contentGates.keys()],
+      waitingContentNodeIds: [...contentGates]
+        .filter(([, gate]) => gate.waiting)
+        .map(([nodeId]) => nodeId),
     })
     return true
   }
@@ -107,6 +195,15 @@ function handleMcpRequest(
   body: string,
   port: number
 ): void {
+  void handleMcpRequestAsync(req, res, body, port)
+}
+
+async function handleMcpRequestAsync(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  body: string,
+  port: number
+): Promise<void> {
   const message = parseJsonBody<{
     id?: string | number
     method?: string
@@ -123,6 +220,7 @@ function handleMcpRequest(
   }
 
   let result: unknown
+  let completedToolCall: McpToolCall | null = null
   if (message.method === 'initialize') {
     result = {
       protocolVersion: '2025-03-26',
@@ -138,14 +236,20 @@ function handleMcpRequest(
       params.arguments && typeof params.arguments === 'object'
         ? (params.arguments as Record<string, unknown>)
         : {}
-    const outcome = callTool(name, args)
-    toolCalls.push({
+    const nodeId = String(args.nodeId || args.node_id || '')
+    const gate = name === 'get_document_content' ? contentGates.get(nodeId) : undefined
+    if (gate) {
+      gate.waiting = true
+      await gate.promise
+    }
+    const outcome = await callTool(name, args)
+    completedToolCall = {
       timestamp: new Date().toISOString(),
       name,
       arguments: args,
       result: outcome.result,
       isError: outcome.isError,
-    })
+    }
     result = {
       content: [{ type: 'text', text: JSON.stringify(outcome.result) }],
       isError: outcome.isError,
@@ -159,7 +263,12 @@ function handleMcpRequest(
     'Content-Type': 'application/json',
     'Mcp-Session-Id': 'mock-mcp-session',
   })
-  res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }))
+  res.end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }), () => {
+    // Expose a tool call only after its MCP response has been fully flushed.
+    // Deletion E2E scenarios use this as the provider-fetch completion signal
+    // before observing the backend's guarded attachment-write stability window.
+    if (completedToolCall) toolCalls.push(completedToolCall)
+  })
 }
 
 function toolsForRequest(req: http.IncomingMessage, port: number): typeof tools {
@@ -173,10 +282,10 @@ function toolsForRequest(req: http.IncomingMessage, port: number): typeof tools 
   )
 }
 
-function callTool(
+async function callTool(
   name: string,
   args: Record<string, unknown>
-): { result: unknown; isError: boolean } {
+): Promise<{ result: unknown; isError: boolean }> {
   const nodeId = String(args.nodeId || args.node_id || '')
   if (nodeId && state.deniedNodeIds.has(nodeId)) {
     return {
@@ -218,12 +327,22 @@ function callTool(
   }
 }
 
+function visibleNodes(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  return items.filter(item => !state.hiddenNodeIds.has(String(item.nodeId || '')))
+}
+
 function listNodes(args: Record<string, unknown>): Record<string, unknown> {
   const folderId = String(args.folderId || '')
   const workspaceId = String(args.workspaceId || '')
   const pageToken = String(args.pageToken || '')
   if (!folderId && !workspaceId) {
-    return { items: [node('doc-m1', 'Doc-M1_个人记录', 'doc', '', '')] }
+    return {
+      items: visibleNodes([
+        node('doc-m1', 'Doc-M1_个人记录', 'doc', '', ''),
+        node(EXTERNAL_IMPORT_NODES.folderRoot, 'E2E_项目资料', 'folder', '', ''),
+        node(EXTERNAL_IMPORT_NODES.formatsRoot, 'E2E_格式展示', 'folder', '', ''),
+      ]),
+    }
   }
   if (workspaceId === 'space-d' && !folderId && !pageToken) {
     return {
@@ -248,6 +367,64 @@ function listNodes(args: Record<string, unknown>): Record<string, unknown> {
   }
   if (folderId === 'folder-d1') {
     return { items: [node('doc-d2', 'Doc-D2_旧设计', 'doc', 'folder-d1', 'space-d')] }
+  }
+  if (folderId === EXTERNAL_IMPORT_NODES.formatsRoot) {
+    return {
+      items: visibleNodes(
+        [
+          [EXTERNAL_IMPORT_NODES.sheet, 'E2E_在线表格', 'axls', 'ALIDOC'],
+          [EXTERNAL_IMPORT_NODES.table, 'E2E_AI表格', 'able', 'ALIDOC'],
+          [EXTERNAL_IMPORT_NODES.pdf, 'E2E_文件.pdf', 'pdf', 'FILE'],
+        ].map(([nodeId, name, extension, contentType]) => ({
+          nodeId,
+          name,
+          nodeType: 'file',
+          contentType,
+          extension,
+          parentId: EXTERNAL_IMPORT_NODES.formatsRoot,
+        }))
+      ),
+    }
+  }
+  if (folderId === EXTERNAL_IMPORT_NODES.folderRoot) {
+    return {
+      items: visibleNodes([
+        node(
+          EXTERNAL_IMPORT_NODES.subFolder,
+          'E2E_归档',
+          'folder',
+          EXTERNAL_IMPORT_NODES.folderRoot,
+          ''
+        ),
+        node(
+          EXTERNAL_IMPORT_NODES.product,
+          'E2E_产品说明',
+          'doc',
+          EXTERNAL_IMPORT_NODES.folderRoot,
+          ''
+        ),
+        node(
+          EXTERNAL_IMPORT_NODES.api,
+          'E2E_接口规范',
+          'doc',
+          EXTERNAL_IMPORT_NODES.folderRoot,
+          ''
+        ),
+      ]),
+    }
+  }
+  if (folderId === EXTERNAL_IMPORT_NODES.subFolder) {
+    return {
+      items: visibleNodes([
+        node(
+          EXTERNAL_IMPORT_NODES.archive,
+          'E2E_归档说明',
+          'doc',
+          EXTERNAL_IMPORT_NODES.subFolder,
+          ''
+        ),
+      ]),
+    }
   }
   return { items: [] }
 }
@@ -281,9 +458,12 @@ function documentInfo(nodeId: string) {
   return document
     ? {
         result: {
+          success: true,
           nodeId,
           name: state.documentNames[nodeId] || document.name,
+          nodeType: 'file',
           contentType: 'ALIDOC',
+          extension: 'adoc',
           url: `https://alidocs.dingtalk.com/i/nodes/${nodeId}`,
         },
         isError: false,
@@ -292,10 +472,19 @@ function documentInfo(nodeId: string) {
 }
 
 function documentContent(nodeId: string) {
+  const failureCode = state.nodeFailures[nodeId]
+  if (failureCode) {
+    return {
+      result: { code: failureCode, message: `Injected failure for ${nodeId}` },
+      isError: true,
+    }
+  }
   const document = documents[nodeId]
-  return document
-    ? { result: { nodeId, content: document.content }, isError: false }
-    : { result: { code: 'not_found', message: `Unknown document ${nodeId}` }, isError: true }
+  if (!document) {
+    return { result: { code: 'not_found', message: `Unknown document ${nodeId}` }, isError: true }
+  }
+  const content = state.documentContents[nodeId] ?? document.content
+  return { result: { success: true, nodeId, markdown: content }, isError: false }
 }
 
 function renameDocument(nodeId: string, args: Record<string, unknown>) {
@@ -320,10 +509,11 @@ function node(
   return {
     nodeId,
     name: state.documentNames[nodeId] || name,
-    nodeType,
+    nodeType: nodeType === 'doc' ? 'file' : 'folder',
     parentId,
     workspaceId,
     contentType: nodeType === 'doc' ? 'ALIDOC' : '',
+    extension: nodeType === 'doc' ? 'adoc' : null,
     url: `https://alidocs.dingtalk.com/i/nodes/${nodeId}`,
     updateTime: '2026-08-11T00:00:00Z',
   }

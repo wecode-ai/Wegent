@@ -4,6 +4,7 @@ import {
   clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
+  listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPageStateChanges,
@@ -15,10 +16,12 @@ import {
 
 const desktopHostMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  subscribe: vi.fn(),
 }))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: desktopHostMocks.subscribe,
 }))
 
 vi.mock('./runtime-environment', () => ({
@@ -29,6 +32,8 @@ describe('embedded-browser', () => {
   beforeEach(() => {
     vi.useRealTimers()
     desktopHostMocks.invoke.mockReset()
+    desktopHostMocks.subscribe.mockReset()
+    desktopHostMocks.subscribe.mockReturnValue(() => {})
     desktopHostMocks.invoke.mockResolvedValue({
       events: [],
       latestSequence: 0,
@@ -123,9 +128,7 @@ describe('embedded-browser', () => {
     const handler = vi.fn()
 
     const unlisten = await listenEmbeddedBrowserAgentState(handler)
-    await vi.waitFor(() =>
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.events', { after: 0 })
-    )
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
     unlisten?.()
   })
 
@@ -133,9 +136,7 @@ describe('embedded-browser', () => {
     const handler = vi.fn()
 
     const unlisten = await listenEmbeddedBrowserPageStateChanges(handler)
-    await vi.waitFor(() =>
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.events', { after: 0 })
-    )
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
     unlisten?.()
   })
 
@@ -192,10 +193,12 @@ describe('embedded-browser', () => {
   })
 
   test('dispatches Electron open request events', async () => {
-    desktopHostMocks.invoke.mockResolvedValue({
-      events: [
-        {
-          sequence: 1,
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      handler({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 7,
           type: 'open-request',
           payload: {
             id: 'agent-open-42',
@@ -207,9 +210,8 @@ describe('embedded-browser', () => {
             url: 'https://example.test/',
           },
         },
-      ],
-      latestSequence: 1,
-      historyLost: false,
+      })
+      return () => {}
     })
     const handler = vi.fn()
 
@@ -226,8 +228,44 @@ describe('embedded-browser', () => {
         url: 'https://example.test/',
       })
     })
-    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.events', { after: 0 })
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
 
+    const release = await unlisten
+    release?.()
+  })
+
+  test('dispatches embedded browser annotation requests', async () => {
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      handler({
+        sequence: 2,
+        type: 'browser.event',
+        payload: {
+          sequence: 2,
+          type: 'annotation-request',
+          payload: {
+            label: 'workspace-browser',
+            nativeLabel: 'workspace-browser-native-1',
+            mode: 'quick',
+            x: 20,
+            y: 30,
+          },
+        },
+      })
+      return () => {}
+    })
+    const handler = vi.fn()
+
+    const unlisten = listenEmbeddedBrowserAnnotationRequests(handler)
+
+    await vi.waitFor(() => {
+      expect(handler).toHaveBeenCalledWith({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        mode: 'quick',
+        x: 20,
+        y: 30,
+      })
+    })
     const release = await unlisten
     release?.()
   })

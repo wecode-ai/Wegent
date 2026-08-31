@@ -431,6 +431,64 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
 }
 
 #[tokio::test]
+async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let reconciliations = Arc::new(Mutex::new(0));
+    let server = AppIpcServer::new().with_runtime_work_handler(ProjectionRuntimeHandler {
+        reconciliations: Arc::clone(&reconciliations),
+    });
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Runtime",
+                "project_key": "BOUND",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Track running task"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "device_id": "local-device",
+                    "task_id": "runtime-running-1",
+                    "task_title": "Track running task"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch("todos.list", json!({"project_id": project["id"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(*reconciliations.lock().unwrap(), 2);
+}
+
+#[tokio::test]
 async fn app_ipc_stores_project_files_attachments_and_deliveries_locally() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();
@@ -1150,6 +1208,12 @@ async fn app_ipc_lists_codex_skills_from_runtime_directories() {
 
 #[tokio::test]
 async fn app_ipc_resolves_review_and_git_device_commands() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
     let command_handler = CaptureCommandHandler::default();
     let seen_request = Arc::clone(&command_handler.seen_request);
     let server = AppIpcServer::new().with_command_handler(command_handler);
@@ -1162,7 +1226,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
                 "method": "device.execute_command",
                 "params": {
                     "command_key": "git_diff",
-                    "path": "/tmp/project"
+                    "path": workspace.path().display().to_string()
                 }
             })
             .to_string(),
@@ -1394,6 +1458,72 @@ impl DeviceCommandHandler for JsonCaptureCommandHandler {
             CommandResult::ok(json!({"ok": true}).to_string())
         })
     }
+}
+
+#[tokio::test]
+async fn app_ipc_does_not_spawn_git_for_plain_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-plain-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], false);
+    assert_eq!(
+        response["result"]["error"],
+        "Workspace is not a Git repository"
+    );
+    assert!(seen_request.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn app_ipc_routes_git_inspection_for_repository_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-repository-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv, ["git", "branch", "--show-current"]);
 }
 
 #[tokio::test]
@@ -1807,6 +1937,27 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct ProjectionRuntimeHandler {
+    reconciliations: Arc<Mutex<usize>>,
+}
+
+impl RuntimeWorkHandler for ProjectionRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async { Ok(json!({})) })
+    }
+
+    fn reconcile_bound_task_statuses<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            *self.reconciliations.lock().unwrap() += 1;
         })
     }
 }
