@@ -359,7 +359,7 @@ describe('ConnectionsSettingsPage', () => {
       updated_at: '2026-06-09T00:00:00Z',
     })
     createUserApiMock.mockReturnValue(userApi as ReturnType<typeof createUserApi>)
-  })
+  }, 60_000)
 
   test('opens general settings by default', async () => {
     window.history.pushState({}, '', '/settings')

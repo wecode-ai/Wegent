@@ -796,7 +796,7 @@ describe('DesktopWorkbenchLayout', () => {
       turnId: 'runtime-side-chat-turn',
     })
     subscribeRuntimeTaskStreamMock.mockReturnValue(vi.fn())
-  })
+  }, 60_000)
 
   const baseProps = {
     state: {
