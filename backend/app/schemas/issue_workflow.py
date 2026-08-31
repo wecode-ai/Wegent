@@ -430,12 +430,13 @@ class IssueWorkflowInstance(BaseModel):
     def node_needs_execution_config(self, node: WorkflowNodeDefinition) -> bool:
         if node.execution_mode != "robot":
             return False
-        return bool(
-            not (
-                self.execution_config_for(node)
-                and self.execution_config_for(node).is_complete()
-            )
-        )
+        config = self.execution_config_for(node)
+        if config is None or not config.is_complete():
+            return True
+        if node.workspace_policy == "composer":
+            binding = config.workspace_binding
+            return binding is None or binding.type == "standalone"
+        return False
 
 
 def instantiate_workflow(

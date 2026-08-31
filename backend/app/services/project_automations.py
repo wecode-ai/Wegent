@@ -690,7 +690,7 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",
@@ -839,7 +839,7 @@ class ProjectAutomationService:
         workflow_snapshot = IssueWorkflowInstance.model_validate(workflow)
         node_snapshot = WorkflowNodeInstance.model_validate(node)
         execution_config = workflow_snapshot.execution_config_for(node_snapshot)
-        if execution_config is None or not execution_config.is_complete():
+        if workflow_snapshot.node_needs_execution_config(node_snapshot):
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 "Workflow execution configuration is incomplete",

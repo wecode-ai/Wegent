@@ -24,6 +24,7 @@ from app.models.delivery import (
     ProjectAutomationRule,
     ProjectAutomationRun,
     ProjectChatAgent,
+    ProjectIncomingHook,
     ProjectWorkflowPlanItem,
     ProjectWorkflowRun,
     loop_datetime_is_unset,
@@ -39,9 +40,14 @@ from app.schemas.issue_workflow import (
     instantiate_workflow,
 )
 from app.schemas.project_chat import LoopItemAssign
-from app.schemas.runtime_work import RuntimeSendRequest, RuntimeTaskAddress
+from app.schemas.runtime_work import (
+    RuntimeModelSelection,
+    RuntimeSendRequest,
+    RuntimeTaskAddress,
+)
 from app.services import runtime_work_service
 from app.services.cloud_projects.service import cloud_project_service
+from app.services.connector_connections import connector_connection_service
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.loop_item_status_history import project_status_transition
 from app.services.loop_items.external_provider import external_loop_item_provider
@@ -73,6 +79,11 @@ from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 MISSING_MANAGER_PLAN_ERROR = "AI manager finished without submitting a workflow plan."
+SELF_AUTHORED_EVENT_TYPES = {
+    "change_request.comment_created",
+    "change_request.review_submitted",
+    "change_request.approved",
+}
 
 if TYPE_CHECKING:
     from app.schemas.issue_workflow import WorkflowPlanSubmit, WorkflowPlanView
@@ -1563,6 +1574,11 @@ class ProjectAutomationProcessor:
                 for rule in candidate_rules
             ],
         )
+        self_accounts = (
+            self._self_accounts(db, event)
+            if event.event_type in SELF_AUTHORED_EVENT_TYPES
+            else set()
+        )
         matches: list[ProjectAutomationRule] = []
         for rule in candidate_rules:
             if deferred_automation_id and str(rule.id) == deferred_automation_id:
@@ -1576,6 +1592,23 @@ class ProjectAutomationProcessor:
                 (rule_metadata.get("event_config") or {}).get("subscription_id") or ""
             )
             if subscription_id and subscription_id != str(event.subscription_id or ""):
+                continue
+            event_config = rule_metadata.get("event_config")
+            event_config = event_config if isinstance(event_config, dict) else {}
+            if (
+                self_accounts
+                and not bool(event_config.get("include_self_comments"))
+                and self._event_author_login(event) in self_accounts
+            ):
+                logger.info(
+                    "[ProjectAutomation] Ignoring self-authored event project=%s "
+                    "subject=%s event=%s rule=%s author=%s",
+                    event.project_id,
+                    event.subject_id,
+                    event.event_type,
+                    rule.id,
+                    self._event_author_login(event),
+                )
                 continue
             if self._matches(rule_metadata.get("event_config"), event, project):
                 matches.append(rule)
@@ -2045,6 +2078,9 @@ class ProjectAutomationProcessor:
             if part
         )
         try:
+            model_selection = self._bound_runtime_model_selection(db, binding)
+            if model_selection is None:
+                model_selection = self._rule_runtime_model_selection(rule)
             result = await runtime_work_service.send_runtime_message(
                 db=db,
                 user_id=int(binding.task_user_id),
@@ -2054,6 +2090,7 @@ class ProjectAutomationProcessor:
                         taskId=binding.task_id,
                     ),
                     message=prompt,
+                    modelSelection=model_selection,
                 ),
             )
             if not result.accepted:
@@ -2073,6 +2110,59 @@ class ProjectAutomationProcessor:
         db.commit()
 
     @staticmethod
+    def _bound_runtime_model_selection(
+        db: Session,
+        binding: LoopItemTaskBinding,
+    ) -> RuntimeModelSelection | None:
+        """Preserve the model the bound Runtime task was created with."""
+
+        execution = (
+            db.query(LoopItemExecution)
+            .filter(
+                LoopItemExecution.loop_item_id == binding.loop_item_id,
+                LoopItemExecution.runtime_device_id == binding.device_id,
+                LoopItemExecution.runtime_task_id == binding.task_id,
+            )
+            .order_by(LoopItemExecution.id.desc())
+            .first()
+        )
+        intent = execution.execution_intent if execution is not None else {}
+        selection = intent.get("runtime_selection")
+        selection = selection if isinstance(selection, dict) else {}
+        model = str(selection.get("model") or "").strip()
+        if not model:
+            return None
+        return RuntimeModelSelection(
+            model_name=model,
+            model_type=(
+                str(selection["model_type"])
+                if selection.get("model_type") is not None
+                else None
+            ),
+            options=dict(selection.get("model_options") or {}),
+        )
+
+    @staticmethod
+    def _rule_runtime_model_selection(
+        rule: ProjectAutomationRule,
+    ) -> RuntimeModelSelection | None:
+        """Fall back to the model configured on the automation workflow node."""
+
+        definition = ProjectAutomationExecution._workflow_definition(rule)
+        if definition is None:
+            return None
+        for node in definition.nodes:
+            config = node.execution_config
+            if config is None or not config.model:
+                continue
+            return RuntimeModelSelection(
+                model_name=config.model,
+                model_type=config.model_type,
+                options=dict(config.model_options or {}),
+            )
+        return None
+
+    @staticmethod
     def _event_run_public_id(
         event: ProjectAutomationEvent,
         rule: ProjectAutomationRule,
@@ -2082,6 +2172,46 @@ class ProjectAutomationProcessor:
         return hashlib.sha256(
             f"automation-event:{event.event_id}:{rule.id}".encode()
         ).hexdigest()[:36]
+
+    @staticmethod
+    def _event_author_login(event: ProjectAutomationEvent) -> str:
+        author = event.payload.get("author")
+        if not isinstance(author, dict):
+            return ""
+        return str(author.get("login") or author.get("username") or "").strip().lower()
+
+    @staticmethod
+    def _self_accounts(db: Session, event: ProjectAutomationEvent) -> set[str]:
+        """Resolve external accounts that belong to the automation itself."""
+
+        if not event.subscription_id:
+            return set()
+        hook = db.get(ProjectIncomingHook, event.subscription_id)
+        if hook is None:
+            return set()
+        user_id = int(hook.created_by_user_id or 0)
+        hook_metadata = metadata(hook)
+        accounts: set[str] = set()
+        credential_ref = text(hook_metadata.get("credential_ref"))
+        if credential_ref and credential_ref != "project-provider":
+            connection = connector_connection_service.get(
+                db,
+                slug=credential_ref,
+                user_id=user_id,
+            )
+            if connection and connection.external_account_name:
+                accounts.add(connection.external_account_name.strip().lower())
+        if not accounts:
+            source_type = text(hook_metadata.get("source_type") or hook.source)
+            if source_type in {"github", "gitlab"}:
+                connection = connector_connection_service.get(
+                    db,
+                    slug=source_type,
+                    user_id=user_id,
+                )
+                if connection and connection.external_account_name:
+                    accounts.add(connection.external_account_name.strip().lower())
+        return accounts
 
     @staticmethod
     def _matches(

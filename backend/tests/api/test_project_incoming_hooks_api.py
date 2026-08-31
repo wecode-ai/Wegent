@@ -7,18 +7,23 @@ import asyncio
 import hashlib
 import hmac
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.delivery import (
     LoopItem,
+    LoopItemTaskBinding,
     ProjectAutomationRun,
     ProjectIncomingEvent,
     ProjectIncomingHook,
 )
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.services import runtime_work_service
 from app.services.connector_connections import connector_connection_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_event_polling import PolledInput, PollPage
@@ -489,6 +494,384 @@ def test_hybrid_webhook_and_poll_inputs_share_one_automation_run(
     )
     assert test_db.query(ProjectAutomationRun).count() == 1
     assert test_db.query(LoopItem).count() == 1
+
+
+def test_webhook_continue_binding_succeeds_with_preexisting_binding(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A continue_binding rule succeeds immediately when the change request is
+    already bound to an active task when the webhook event arrives."""
+
+    project = _project(test_client, test_token)
+    hook = _github_subscription(test_client, test_token, str(project["id"]))
+
+    item = LoopItem(
+        cloud_project_id=str(project["id"]),
+        title="Bound implementation task",
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(item)
+    test_db.flush()
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project["id"]),
+        loop_item_id=item.id,
+        task_user_id=test_user.id,
+        device_id="desktop-1",
+        task_id="runtime-task-1",
+        task_title="Bound implementation task",
+        linked_by_user_id=test_user.id,
+        metadata_json={
+            "change_requests": [
+                {
+                    "provider": "github",
+                    "instance_url": "https://github.example",
+                    "repository": "acme/app",
+                    "number": 7,
+                    "url": "https://github.example/acme/app/pull/7",
+                    "head_branch": "fix/checks",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                    "source": "delivery",
+                    "bound_at": "2026-08-01T00:00:00",
+                    "last_confirmed_at": "2026-08-01T00:00:00",
+                }
+            ]
+        },
+    )
+    test_db.add(binding)
+    test_db.commit()
+
+    rule_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Resume bound task",
+            "prompt": "Fix the failing checks in the bound task.",
+            "triggerType": "event",
+            "eventType": "change_request.checks_failed",
+            "eventConfig": {
+                "subscription_id": hook["id"],
+                "execution_target": "continue_binding",
+                "target_branches": ["main"],
+            },
+            "assignmentMode": "manual",
+            "roleSource": "generic",
+            "runtimeSource": "runtime_user",
+            "runtimeUserId": test_user.id,
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+    send_runtime_message = AsyncMock(
+        return_value=SimpleNamespace(accepted=True, error=None)
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        send_runtime_message,
+    )
+
+    payload = _failed_check_payload()
+    body = json.dumps(payload, separators=(",", ":"))
+    response = test_client.post(
+        str(hook["webhookUrl"]),
+        headers=_github_headers(
+            payload,
+            str(hook["webhookSecret"]),
+            delivery_id="delivery-continue",
+        ),
+        content=body,
+    )
+    assert response.status_code == 202
+
+    asyncio.run(
+        project_incoming_hook_service.process_event(
+            test_db,
+            response.json()["eventId"],
+        )
+    )
+
+    run = test_db.query(ProjectAutomationRun).one()
+    test_db.refresh(run)
+    assert run.status == "succeeded"
+    assert run.task_id == str(item.id)
+    send_runtime_message.assert_awaited_once()
+
+
+def test_webhook_continue_binding_preserves_bound_task_model(
+    test_client: TestClient,
+    test_db: Session,
+    test_user: User,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A continue_binding run sends the bound task's model with the message."""
+
+    project = _project(test_client, test_token)
+    hook = _github_subscription(test_client, test_token, str(project["id"]))
+
+    item = LoopItem(
+        cloud_project_id=str(project["id"]),
+        title="Bound implementation task",
+        status="pending",
+        created_by_user_id=test_user.id,
+    )
+    test_db.add(item)
+    test_db.flush()
+    binding = LoopItemTaskBinding(
+        cloud_project_id=str(project["id"]),
+        loop_item_id=item.id,
+        task_user_id=test_user.id,
+        device_id="desktop-1",
+        task_id="runtime-task-1",
+        task_title="Bound implementation task",
+        linked_by_user_id=test_user.id,
+        metadata_json={
+            "change_requests": [
+                {
+                    "provider": "github",
+                    "instance_url": "https://github.example",
+                    "repository": "acme/app",
+                    "number": 7,
+                    "url": "https://github.example/acme/app/pull/7",
+                    "head_branch": "fix/checks",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                    "source": "delivery",
+                    "bound_at": "2026-08-01T00:00:00",
+                    "last_confirmed_at": "2026-08-01T00:00:00",
+                }
+            ]
+        },
+    )
+    test_db.add(binding)
+    test_db.flush()
+    execution = LoopItemExecution(
+        loop_item_id=item.id,
+        cloud_project_id=str(project["id"]),
+        status="completed",
+        execution_device_id="desktop-1",
+        runtime_device_id="desktop-1",
+        runtime_task_id="runtime-task-1",
+        assigner_user_id=test_user.id,
+        executor_owner_user_id=test_user.id,
+        execution_payload=json.dumps(
+            {
+                "runtime_selection": {
+                    "model": "dpskv4f",
+                    "model_type": "user",
+                    "model_options": {"protocol": "openai-responses"},
+                }
+            }
+        ),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    rule_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Resume bound task with model",
+            "prompt": "Fix the failing checks in the bound task.",
+            "triggerType": "event",
+            "eventType": "change_request.checks_failed",
+            "eventConfig": {
+                "subscription_id": hook["id"],
+                "execution_target": "continue_binding",
+                "target_branches": ["main"],
+            },
+            "assignmentMode": "manual",
+            "roleSource": "generic",
+            "runtimeSource": "runtime_user",
+            "runtimeUserId": test_user.id,
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+    send_runtime_message = AsyncMock(
+        return_value=SimpleNamespace(accepted=True, error=None)
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        send_runtime_message,
+    )
+
+    payload = _failed_check_payload()
+    body = json.dumps(payload, separators=(",", ":"))
+    response = test_client.post(
+        str(hook["webhookUrl"]),
+        headers=_github_headers(
+            payload,
+            str(hook["webhookSecret"]),
+            delivery_id="delivery-continue-model",
+        ),
+        content=body,
+    )
+    assert response.status_code == 202
+
+    asyncio.run(
+        project_incoming_hook_service.process_event(
+            test_db,
+            response.json()["eventId"],
+        )
+    )
+
+    run = test_db.query(ProjectAutomationRun).one()
+    test_db.refresh(run)
+    assert run.status == "succeeded"
+    send_runtime_message.assert_awaited_once()
+    sent_request = send_runtime_message.await_args.kwargs["request"]
+    assert sent_request.model_selection is not None
+    assert sent_request.model_selection.model_name == "dpskv4f"
+    assert sent_request.model_selection.model_type == "user"
+
+
+def test_poll_only_subscription_matches_rule_and_dispatches_one_run(
+    test_client: TestClient,
+    test_db: Session,
+    test_token: str,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll-only subscription flows a fetched event all the way through rule
+    matching to a dispatched automation run."""
+
+    project = _project(test_client, test_token)
+    _connect_github(test_db, test_user)
+    created = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/incoming-hooks",
+        headers=_auth(test_token),
+        json={
+            "name": "GitHub polling",
+            "source_type": "github",
+            "collection_mode": "poll",
+            "credential_ref": "github",
+            "resource": {
+                "resource_type": "repository",
+                "url": "https://github.example/acme/app",
+            },
+            "poll_interval_seconds": 300,
+        },
+    )
+    assert created.status_code == 201, created.text
+    hook = created.json()
+    rule_response = test_client.post(
+        f"/api/v1/cloud-projects/{project['id']}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Track failed checks",
+            "prompt": "Investigate the failed checks.",
+            "triggerType": "event",
+            "eventType": "change_request.checks_failed",
+            "eventConfig": {
+                "subscription_id": hook["id"],
+                "execution_target": "create_issue",
+                "target_branches": ["main"],
+            },
+            "assignmentMode": "manual",
+            "roleSource": "generic",
+            "runtimeSource": "runtime_user",
+            "runtimeUserId": test_user.id,
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    dispatch = AsyncMock()
+    monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+
+    class FakePoller:
+        async def fetch_page(self, *, resource, credential, cursor):
+            assert resource["path"] == "acme/app"
+            assert credential == "github-token"
+            return PollPage(
+                inputs=(
+                    PolledInput(
+                        identity="check_run:7:failure:abc1234",
+                        title="github: check_run #7",
+                        payload={
+                            "action": "completed",
+                            "check_run": {
+                                "id": 7,
+                                "status": "completed",
+                                "conclusion": "failure",
+                                "head_sha": "abc1234",
+                                "pull_requests": [
+                                    {
+                                        "number": 7,
+                                        "html_url": (
+                                            "https://github.example/acme/app/pull/7"
+                                        ),
+                                        "head": {
+                                            "ref": "fix/checks",
+                                            "sha": "abc1234",
+                                        },
+                                        "base": {"ref": "main"},
+                                    }
+                                ],
+                            },
+                            "repository": {
+                                "id": 42,
+                                "full_name": "acme/app",
+                                "html_url": "https://github.example/acme/app",
+                            },
+                        },
+                        headers={"x-github-event": "check_run"},
+                    ),
+                ),
+                next_cursor={"watermark": "2026-01-01T00:00:00Z", "page": 1},
+                complete=True,
+            )
+
+    monkeypatch.setattr(
+        "app.services.project_event_polling_service.poller_for",
+        lambda _source_type: FakePoller(),
+    )
+
+    discovered = asyncio.run(
+        project_event_polling_service.poll_subscription(test_db, hook["id"])
+    )
+    assert discovered == 1
+    poll_events = [
+        row
+        for row in (
+            test_db.query(ProjectIncomingEvent)
+            .filter(ProjectIncomingEvent.parent_id == hook["id"])
+            .all()
+        )
+        if row.metadata_json.get("collection_mode") == "poll"
+    ]
+    assert len(poll_events) == 1
+    poll_event = poll_events[0]
+
+    asyncio.run(
+        project_incoming_hook_service.process_event(test_db, str(poll_event.id))
+    )
+
+    run = test_db.query(ProjectAutomationRun).one()
+    test_db.refresh(run)
+    assert run.status == "pending"
+    assert run.task_id
+    assert test_db.get(LoopItem, run.task_id) is not None
+    dispatch.assert_awaited_once()
 
 
 def test_list_survives_legacy_incoming_subscription(

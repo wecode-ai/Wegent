@@ -131,6 +131,40 @@ def runtime_task_id_for(execution_id: int) -> str:
     return f"{RUNTIME_TASK_ID_PREFIX}-{execution_id}"
 
 
+def runtime_device_identity_ids(db: Session, runtime_device_id: str) -> list[str]:
+    """Resolve every identity of the device that reported a Runtime event.
+
+    Queued executions persist the desktop app's device id, while Runtime
+    events are delivered under the executor's registered device id. Both are
+    stored on the same Device CRD, so a submitted id resolves to the device
+    and every one of its identities is accepted when matching executions.
+    """
+
+    submitted = runtime_device_id.strip()
+    if not submitted:
+        return []
+    identities = [submitted]
+    devices = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.is_active.is_(True),
+        )
+        .all()
+    )
+    for device in devices:
+        spec = device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+        candidates = {
+            str(device.name or ""),
+            str(spec.get("deviceId") or ""),
+            str(spec.get("appDeviceId") or ""),
+        }
+        if submitted in candidates:
+            identities.extend(candidate for candidate in candidates if candidate)
+    return list(dict.fromkeys(identities))
+
+
 def runtime_configuration_complete(
     *,
     execution_device_id: str | None,
@@ -1983,10 +2017,13 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Resolve the active execution owned by a Runtime task identity."""
 
+        device_ids = runtime_device_identity_ids(db, runtime_device_id)
+        if not device_ids:
+            return None
         return (
             db.query(LoopItemExecution)
             .filter(
-                LoopItemExecution.runtime_device_id == runtime_device_id,
+                LoopItemExecution.runtime_device_id.in_(device_ids),
                 LoopItemExecution.runtime_task_id == runtime_task_id,
                 LoopItemExecution.status.in_(CAPACITY_STATUSES),
             )

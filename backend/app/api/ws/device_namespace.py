@@ -794,11 +794,23 @@ def _project_bound_runtime_event_status(
     projected_status = _workflow_status_for_runtime_event(event_name, payload)
     if projected_status is None:
         return None
+    from app.services.loop_item_executions.service import runtime_device_identity_ids
+
+    device_ids = runtime_device_identity_ids(db, device_id)
+    if not device_ids:
+        logger.info(
+            "[IssueTaskRuntimeSync] binding_miss user=%s device=%s task=%s " "event=%s",
+            user_id,
+            device_id,
+            task_id,
+            event_name,
+        )
+        return None
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
+            LoopItemTaskBinding.device_id.in_(device_ids),
             LoopItemTaskBinding.task_id == task_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )

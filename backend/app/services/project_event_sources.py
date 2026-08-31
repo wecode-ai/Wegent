@@ -64,7 +64,7 @@ _SOURCES = {
         event_types=(
             "change_request.checks_failed",
             "change_request.merge_conflict",
-            "change_request.review_submitted",
+            "change_request.approved",
             "change_request.comment_created",
         ),
         execution_targets=("continue_binding", "create_issue"),
@@ -123,7 +123,10 @@ def normalize_observed_resource(
     resource: Mapping[str, Any],
 ) -> dict[str, Any]:
     definition = event_source(source_type)
-    resource_type = _text(resource.get("resource_type"))
+    # Each event source observes exactly one resource type, so it is written
+    # into the source definition and never chosen by the caller. A supplied
+    # value is still validated against the source to reject mismatches.
+    resource_type = _text(resource.get("resource_type")) or definition.resource_types[0]
     if resource_type not in definition.resource_types:
         raise ValueError(
             f"{source_type} does not support resource type {resource_type or 'unknown'}"
@@ -352,7 +355,11 @@ def _github_events(
             "github",
             resource,
             subject,
-            {"raw_event": event_name, "review": dict(review)},
+            {
+                "raw_event": event_name,
+                "review": dict(review),
+                "author": _github_user(review.get("user")),
+            },
         )
 
     if event_name == "pull_request_review_comment":
@@ -361,6 +368,7 @@ def _github_events(
         subject = _github_change_request(
             resource, _mapping(payload.get("pull_request"))
         )
+        comment = _mapping(payload.get("comment"))
         return _change_request_event(
             "change_request.comment_created",
             "github",
@@ -368,7 +376,8 @@ def _github_events(
             subject,
             {
                 "raw_event": event_name,
-                "comment": dict(_mapping(payload.get("comment"))),
+                "comment": dict(comment),
+                "author": _github_user(comment.get("user")),
             },
         )
 
@@ -379,6 +388,7 @@ def _github_events(
         ):
             return []
         subject = _github_change_request(resource, issue)
+        comment = _mapping(payload.get("comment"))
         return _change_request_event(
             "change_request.comment_created",
             "github",
@@ -386,7 +396,8 @@ def _github_events(
             subject,
             {
                 "raw_event": event_name,
-                "comment": dict(_mapping(payload.get("comment"))),
+                "comment": dict(comment),
+                "author": _github_user(comment.get("user")),
             },
         )
     return []
@@ -432,6 +443,20 @@ def _gitlab_events(
 
     if event_name in {"merge request hook", "merge_request"}:
         attributes = _mapping(payload.get("object_attributes"))
+        action = _text(attributes.get("action")).lower()
+        if action in {"approved", "approval"}:
+            subject = _gitlab_change_request(resource, attributes)
+            return _change_request_event(
+                "change_request.approved",
+                "gitlab",
+                resource,
+                subject,
+                {
+                    "raw_event": "approval",
+                    "action": action,
+                    "author": _gitlab_author(payload.get("user")),
+                },
+            )
         merge_status = (
             _text(attributes.get("detailed_merge_status"))
             or _text(attributes.get("merge_status"))
@@ -451,6 +476,12 @@ def _gitlab_events(
         merge_request = _mapping(payload.get("merge_request"))
         if not merge_request:
             return []
+        note = _mapping(payload.get("object_attributes"))
+        if note.get("system") is True:
+            return []
+        action = _text(note.get("action") or payload.get("action")).lower()
+        if action and action != "create":
+            return []
         subject = _gitlab_change_request(resource, merge_request)
         return _change_request_event(
             "change_request.comment_created",
@@ -459,7 +490,8 @@ def _gitlab_events(
             subject,
             {
                 "raw_event": event_name,
-                "note": dict(_mapping(payload.get("object_attributes"))),
+                "note": dict(note),
+                "author": _gitlab_author(payload.get("user") or note.get("author")),
             },
         )
 
@@ -470,11 +502,14 @@ def _gitlab_events(
             or _mapping(payload.get("merge_request")),
         )
         return _change_request_event(
-            "change_request.review_submitted",
+            "change_request.approved",
             "gitlab",
             resource,
             subject,
-            {"raw_event": event_name},
+            {
+                "raw_event": "approval",
+                "author": _gitlab_author(payload.get("user")),
+            },
         )
     return []
 
@@ -607,6 +642,26 @@ def _change_request_event(
             payload=payload,
         )
     ]
+
+
+def _github_user(value: object) -> dict[str, Any] | None:
+    user = _mapping(value)
+    login = _text(user.get("login"))
+    if not login:
+        return None
+    return {"id": user.get("id"), "login": login}
+
+
+def _gitlab_author(value: object) -> dict[str, Any] | None:
+    user = _mapping(value)
+    username = _text(user.get("username"))
+    if not username:
+        return None
+    return {
+        "id": user.get("id"),
+        "username": username,
+        "name": _text(user.get("name")) or None,
+    }
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

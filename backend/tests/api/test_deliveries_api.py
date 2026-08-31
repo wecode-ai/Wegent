@@ -4,6 +4,9 @@
 
 """End-to-end API tests for immutable TODO delivery snapshots."""
 
+import asyncio
+import hashlib
+import hmac
 import io
 import json
 import uuid
@@ -24,12 +27,14 @@ from app.models.delivery import (
     LoopItem,
     ProjectAutomationRule,
     ProjectAutomationRun,
+    ProjectIncomingEvent,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.share_link import ResourceType
 from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.issue_workflow import WorkflowPlanView
+from app.services import runtime_work_service
 from app.services.delivery import delivery_service
 from app.services.delivery.storage import (
     DeliveryObjectNotFoundError,
@@ -37,6 +42,7 @@ from app.services.delivery.storage import (
 )
 from app.services.issue_workflow_planning import issue_workflow_planning_service
 from app.services.project_automations import project_automation_execution
+from app.services.project_incoming_hooks import project_incoming_hook_service
 
 
 class FakeDeliveryStorage:
@@ -2156,3 +2162,227 @@ def test_mark_loop_item_read_repairs_legacy_metadata_without_read_revisions(
     test_db.refresh(item)
     assert item.metadata_json["legacy"] is True
     assert item.metadata_json["read_revisions"][str(item.created_by_user_id)] == 3
+
+
+def _github_webhook_headers(
+    payload: dict[str, object],
+    secret: str,
+    *,
+    delivery_id: str,
+) -> dict[str, str]:
+    body = json.dumps(payload, separators=(",", ":")).encode()
+    signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return {
+        "Content-Type": "application/json",
+        "X-GitHub-Event": "check_run",
+        "X-GitHub-Delivery": delivery_id,
+        "X-Hub-Signature-256": f"sha256={signature}",
+    }
+
+
+def _failed_check_payload() -> dict[str, object]:
+    return {
+        "action": "completed",
+        "check_run": {
+            "id": 100,
+            "status": "completed",
+            "conclusion": "failure",
+            "head_sha": "abc1234",
+            "pull_requests": [
+                {
+                    "number": 7,
+                    "html_url": "https://github.example/acme/app/pull/7",
+                    "head": {"ref": "fix/checks", "sha": "abc1234"},
+                    "base": {"ref": "main"},
+                }
+            ],
+        },
+        "repository": {
+            "id": 42,
+            "full_name": "acme/app",
+            "html_url": "https://github.example/acme/app",
+        },
+    }
+
+
+def test_pr_delivery_resolves_unresolved_external_event_and_binds_run(
+    test_client: TestClient,
+    test_token: str,
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    delivery_storage: FakeDeliveryStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An MR/PR delivery closes the loop for an event that arrived before its
+    change request was bound: the run starts skipped/unresolved, the delivery
+    binds the change request and requeues the event, and reprocessing succeeds
+    on the same task."""
+
+    delivery_project.metadata_json = {
+        **(delivery_project.metadata_json or {}),
+        "workflow_definition": {
+            "version": 1,
+            "stage_mode": "dag",
+            "advancement_policy": "manual",
+            "nodes": [
+                {
+                    "id": "implementation",
+                    "name": "Implementation",
+                    "kind": "my_task",
+                    "depends_on": [],
+                    "required": True,
+                    "workspace_policy": "composer",
+                    "required_deliverables": [
+                        {
+                            "id": "pull-request",
+                            "name": "Pull request",
+                            "description": "",
+                            "value_type": "pull_request",
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    test_db.commit()
+
+    subscription = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/incoming-hooks",
+        headers=_auth(test_token),
+        json={
+            "name": "GitHub repository",
+            "source_type": "github",
+            "collection_mode": "webhook",
+            "resource": {
+                "resource_type": "repository",
+                "url": "https://github.example/acme/app",
+            },
+        },
+    )
+    assert subscription.status_code == 201, subscription.text
+    hook = subscription.json()
+
+    rule_response = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/automations",
+        headers=_auth(test_token),
+        json={
+            "name": "Resume bound task",
+            "prompt": "Fix the failing checks in the bound task.",
+            "triggerType": "event",
+            "eventType": "change_request.checks_failed",
+            "eventConfig": {
+                "subscription_id": hook["id"],
+                "execution_target": "continue_binding",
+                "target_branches": ["main"],
+            },
+            "assignmentMode": "manual",
+            "roleSource": "generic",
+            "runtimeSource": "runtime_user",
+            "runtimeUserId": test_user.id,
+        },
+    )
+    assert rule_response.status_code == 201, rule_response.text
+
+    item = test_client.post(
+        f"/api/v1/cloud-projects/{delivery_project.id}/loop-items",
+        headers=_auth(test_token),
+        json={"title": "Feature implementation"},
+    ).json()
+    source_task = {
+        "deviceId": "local-device",
+        "taskId": "implementation-task",
+        "taskTitle": "Implement feature",
+        "workflowNodeId": "implementation",
+    }
+    binding_response = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/tasks",
+        headers=_auth(test_token),
+        json=source_task,
+    )
+    assert binding_response.status_code == 201, binding_response.text
+
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.consume_queues_background",
+        AsyncMock(),
+    )
+
+    payload = _failed_check_payload()
+    body = json.dumps(payload, separators=(",", ":"))
+    delivered = test_client.post(
+        str(hook["webhookUrl"]),
+        headers=_github_webhook_headers(
+            payload,
+            str(hook["webhookSecret"]),
+            delivery_id="delivery-unresolved",
+        ),
+        content=body,
+    )
+    assert delivered.status_code == 202
+    asyncio.run(
+        project_incoming_hook_service.process_event(
+            test_db,
+            delivered.json()["eventId"],
+        )
+    )
+
+    run = test_db.query(ProjectAutomationRun).one()
+    event = test_db.query(ProjectIncomingEvent).one()
+    test_db.refresh(run)
+    test_db.refresh(event)
+    assert run.status == "skipped"
+    assert "binding" in (run.description or "").lower()
+    assert event.status == "unresolved"
+
+    draft = test_client.post(
+        f"/api/v1/loop-items/{item['id']}/deliveries",
+        headers=_auth(test_token),
+        json={"markdown": "# Complete", "source_task": source_task},
+    )
+    assert draft.status_code == 201, draft.text
+    finalized = test_client.post(
+        f"/api/v1/deliveries/{draft.json()['id']}/finalize",
+        headers=_auth(test_token),
+        json={
+            "fulfillments": [
+                {
+                    "requirement_id": "pull-request",
+                    "kind": "pull_request",
+                    "provider": "github",
+                    "url": "https://github.example/acme/app/pull/7",
+                    "number": 7,
+                    "state": "draft",
+                    "head_branch": "feature/events",
+                    "base_branch": "main",
+                    "head_commit": "abc1234",
+                }
+            ]
+        },
+    )
+    assert finalized.status_code == 200, finalized.text
+
+    bound = test_db.get(LoopItemTaskBinding, binding_response.json()["id"])
+    assert bound is not None
+    assert len(bound.change_requests) == 1
+    assert bound.change_requests[0]["number"] == 7
+    assert bound.change_requests[0]["provider"] == "github"
+
+    test_db.refresh(event)
+    assert event.status == "received"
+
+    send_runtime_message = AsyncMock(
+        return_value=SimpleNamespace(accepted=True, error=None)
+    )
+    monkeypatch.setattr(
+        runtime_work_service,
+        "send_runtime_message",
+        send_runtime_message,
+    )
+    asyncio.run(project_incoming_hook_service.process_event(test_db, str(event.id)))
+
+    test_db.refresh(run)
+    test_db.refresh(event)
+    assert run.status == "succeeded"
+    assert run.task_id == str(item["id"])
+    assert event.status == "processed"
+    send_runtime_message.assert_awaited_once()

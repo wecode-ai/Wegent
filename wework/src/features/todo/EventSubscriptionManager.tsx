@@ -12,13 +12,13 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import { automationClass } from './automationStyles'
+import { eventTypeLabel } from './eventTypeLabel'
 
 type IncomingHookApi = ReturnType<typeof createProjectIncomingHookApi>
 
 interface SubscriptionDraft {
   name: string
   collectionMode: ProjectEventCollectionMode
-  resourceType: string
   resourceUrl: string
   pollIntervalSeconds: number
   credentialRef: string
@@ -28,7 +28,6 @@ function emptyDraft(catalog?: ProjectEventSourceCatalogItem): SubscriptionDraft 
   return {
     name: '',
     collectionMode: catalog?.collectionModes[0] ?? 'webhook',
-    resourceType: catalog?.resourceTypes[0] ?? 'endpoint',
     resourceUrl: '',
     pollIntervalSeconds: 300,
     credentialRef: '',
@@ -134,7 +133,6 @@ export function EventSubscriptionManager({
         sourceType,
         collectionMode: draft.collectionMode,
         resource: {
-          resourceType: draft.resourceType,
           url: draft.resourceUrl.trim(),
         },
         pollIntervalSeconds:
@@ -319,23 +317,6 @@ export function EventSubscriptionManager({
                 onChange={event => setDraft(current => ({ ...current, name: event.target.value }))}
                 className="h-9 w-full rounded-lg border border-border bg-background px-3"
               />
-            </label>
-            <label className="text-sm text-text-secondary">
-              <span className="mb-1 block">{t('todo.event_subscription_resource_type')}</span>
-              <select
-                data-testid="event-subscription-resource-type"
-                value={draft.resourceType}
-                onChange={event =>
-                  setDraft(current => ({ ...current, resourceType: event.target.value }))
-                }
-                className="h-9 w-full rounded-lg border border-border bg-background px-3"
-              >
-                {(catalog?.resourceTypes ?? []).map(resourceType => (
-                  <option key={resourceType} value={resourceType}>
-                    {resourceType}
-                  </option>
-                ))}
-              </select>
             </label>
             <label className="text-sm text-text-secondary">
               <span className="mb-1 block">{t('todo.event_subscription_resource_url')}</span>
@@ -544,7 +525,7 @@ export function EventSubscriptionManager({
                     >
                       <span>
                         {event.normalizedEvents
-                          .map(item => item.eventType)
+                          .map(item => item.eventType && eventTypeLabel(item.eventType, t))
                           .filter(Boolean)
                           .join(', ') || event.sourceType}
                       </span>

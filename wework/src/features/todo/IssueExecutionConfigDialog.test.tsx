@@ -215,7 +215,7 @@ describe('IssueExecutionConfigDialog', () => {
                   execution_mode: 'robot',
                   depends_on: [],
                   required: true,
-                  workspace_policy: 'composer',
+                  workspace_policy: 'none',
                   automation_rule_id: null,
                   status: 'ready',
                 },
@@ -258,6 +258,76 @@ describe('IssueExecutionConfigDialog', () => {
     expect(screen.getByTestId('issue-execution-config-confirm')).toBeEnabled()
   })
 
+  it('requires a bound workspace before confirming a composer robot stage', async () => {
+    render(
+      <IssueExecutionConfigDialog
+        item={
+          {
+            ...item,
+            assignee_agent_id: null,
+            workflow: {
+              version: 1,
+              definition_version: 1,
+              stage_mode: 'dag',
+              advancement_policy: 'manual',
+              execution_config: {
+                agent_id: null,
+                runtime_profile_id: null,
+                execution_device_id: 'device-online',
+                model: 'deepseek-v4-flash',
+                model_type: 'runtime',
+                model_options: {},
+                workspace_binding: { type: 'standalone' },
+              },
+              nodes: [
+                {
+                  id: 'pwd',
+                  name: 'pwd',
+                  execution_mode: 'robot',
+                  depends_on: [],
+                  required: true,
+                  workspace_policy: 'composer',
+                  automation_rule_id: null,
+                  status: 'ready',
+                },
+              ],
+            },
+          } as never
+        }
+        projectChatAgentApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        runtimeProfileApi={{ list: vi.fn().mockResolvedValue([]) } as never}
+        modelApi={
+          {
+            listModels: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  name: 'deepseek-v4-flash',
+                  type: 'runtime',
+                  displayName: 'deepseek-v4-flash',
+                },
+              ],
+            }),
+          } as never
+        }
+        deviceApi={
+          {
+            listDevices: vi
+              .fn()
+              .mockResolvedValue([{ device_id: 'device-online', status: 'online' }]),
+          } as never
+        }
+        localProjects={[]}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(await screen.findByTestId('issue-execution-config-default-project')).toHaveValue(
+      'standalone'
+    )
+    expect(screen.getByTestId('issue-execution-config-confirm')).toBeDisabled()
+  })
+
   it('promotes a legacy node runtime snapshot to the shared workflow configuration', async () => {
     const onConfirm = vi.fn().mockResolvedValue(undefined)
     render(
@@ -279,7 +349,7 @@ describe('IssueExecutionConfigDialog', () => {
                   execution_mode: 'robot',
                   depends_on: [],
                   required: true,
-                  workspace_policy: 'composer',
+                  workspace_policy: 'none',
                   automation_rule_id: null,
                   status: 'ready',
                   execution_config_override: false,
@@ -299,7 +369,7 @@ describe('IssueExecutionConfigDialog', () => {
                   execution_mode: 'robot',
                   depends_on: ['pwd'],
                   required: true,
-                  workspace_policy: 'composer',
+                  workspace_policy: 'none',
                   automation_rule_id: null,
                   status: 'blocked',
                   execution_config_override: false,

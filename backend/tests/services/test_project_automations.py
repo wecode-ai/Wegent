@@ -737,6 +737,7 @@ async def test_complete_flow_dispatch_uses_issue_workflow_engine_for_every_trigg
                             "name": "实现",
                             "prompt": "实现需求",
                             "execution_mode": "robot",
+                            "workspace_policy": "none",
                             "execution_config": {
                                 "execution_device_id": "local-device",
                                 "model": "gpt-5.6-codex",

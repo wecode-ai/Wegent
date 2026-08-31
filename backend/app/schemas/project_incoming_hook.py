@@ -16,7 +16,7 @@ EventCollectionMode = Literal["webhook", "poll", "internal", "hybrid"]
 
 
 class ObservedResource(ProjectChatSchema):
-    resource_type: str = Field(min_length=1, max_length=64)
+    resource_type: str | None = Field(default=None, max_length=64)
     instance_url: str | None = Field(default=None, max_length=500)
     external_id: str | None = Field(default=None, max_length=500)
     path: str | None = Field(default=None, max_length=1000)

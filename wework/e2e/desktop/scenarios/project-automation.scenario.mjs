@@ -835,7 +835,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
                 execution_mode: 'robot',
                 depends_on: [],
                 required: true,
-                workspace_policy: 'composer',
+                workspace_policy: 'none',
                 automation_rule_id: null,
                 execution_config_override: false,
                 execution_config: {
@@ -854,7 +854,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
                 execution_mode: 'robot',
                 depends_on: ['pwd'],
                 required: true,
-                workspace_policy: 'composer',
+                workspace_policy: 'none',
                 automation_rule_id: null,
                 execution_config_override: false,
                 execution_config: null,

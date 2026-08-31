@@ -44,6 +44,7 @@ from app.services.loop_item_executions.service import (
     WeworkRuntimeConfigurationError,
     execution_display_state,
     loop_item_execution_service,
+    runtime_task_id_for,
 )
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.project_automation_execution import project_automation_execution
@@ -466,6 +467,40 @@ def test_stop_execution_rejects_an_execution_from_another_project(
     assert error.value.status_code == 404
     test_db.refresh(target)
     assert target.status == "queued"
+
+
+def test_runtime_event_matches_execution_by_any_device_identity(
+    test_db: Session, test_user: User
+) -> None:
+    """Runtime events under the executor device name match an execution that
+    persists the desktop app device id on the same Device CRD."""
+
+    project = _make_project(test_db, test_user)
+    bot = _make_bot(test_db, project, test_user)
+    item = _make_item(test_db, project, test_user)
+    execution = _make_execution(test_db, item, bot, test_user)
+    execution.runtime_device_id = "electron-app-1"
+    execution.runtime_task_id = runtime_task_id_for(execution.id)
+    execution.status = "claimed"
+    test_db.commit()
+
+    device = _ensure_device(test_db, test_user, "local-executor", device_type="local")
+    spec = dict(device.json["spec"])
+    spec["deviceId"] = "local-executor"
+    spec["appDeviceId"] = "electron-app-1"
+    device.json = {"spec": spec}
+    test_db.commit()
+
+    running = loop_item_execution_service.handle_runtime_event(
+        db=test_db,
+        device_id="local-executor",
+        runtime_task_id=execution.runtime_task_id,
+        event_name="response.created",
+        payload={"eventSeq": 1, "data": {}},
+    )
+    assert running is not None
+    assert running.id == execution.id
+    assert running.status == "running"
 
 
 def test_claim_is_atomic_and_serial_per_robot(

@@ -581,7 +581,7 @@ class DeliveryService:
             node is None
             or workflow_node_execution_mode(node) != "robot"
             or node.get("status") != "awaiting_deliverables"
-            or missing_requirement_ids(db, node)
+            or missing_requirement_ids(db, node, loop_item_id=str(item.id))
         ):
             return
         node["status"] = "completed"

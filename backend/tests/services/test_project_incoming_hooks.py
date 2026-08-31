@@ -21,11 +21,14 @@ from app.models.delivery import (
 )
 from app.schemas.project_incoming_hook import ChangeRequestBindingInput
 from app.services import runtime_work_service
+from app.services.connector_connections import connector_connection_service
 from app.services.project_automation_domain import ProjectAutomationEvent
+from app.services.project_automation_execution import ProjectAutomationProcessor
 from app.services.project_change_request_bindings import (
     project_change_request_binding_service,
 )
 from app.services.project_event_sources import (
+    event_source_catalog,
     normalize_observed_resource,
     normalize_webhook_events,
     resource_matches,
@@ -99,6 +102,216 @@ def test_normalize_gitlab_merge_conflict() -> None:
     assert events[0].subject["repository"] == "acme/app"
 
 
+def test_normalize_github_review_submitted() -> None:
+    events = normalize_webhook_events(
+        "github",
+        {
+            "action": "submitted",
+            "review": {
+                "id": 9,
+                "state": "approved",
+                "user": {"id": 1, "login": "alice"},
+            },
+            "pull_request": {
+                "number": 12,
+                "html_url": "https://github.example/acme/app/pull/12",
+                "head": {"ref": "fix/review", "sha": "abc1234"},
+                "base": {"ref": "main"},
+            },
+            "repository": {
+                "id": 42,
+                "full_name": "acme/app",
+                "html_url": "https://github.example/acme/app",
+            },
+        },
+        {"x-github-event": "pull_request_review"},
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "change_request.review_submitted"
+    assert events[0].payload["author"] == {"id": 1, "login": "alice"}
+
+
+def test_normalize_github_review_comment_created() -> None:
+    events = normalize_webhook_events(
+        "github",
+        {
+            "action": "created",
+            "comment": {"id": 5, "user": {"id": 2, "login": "bob"}},
+            "pull_request": {
+                "number": 12,
+                "html_url": "https://github.example/acme/app/pull/12",
+                "head": {"ref": "fix/review", "sha": "abc1234"},
+                "base": {"ref": "main"},
+            },
+            "repository": {
+                "id": 42,
+                "full_name": "acme/app",
+                "html_url": "https://github.example/acme/app",
+            },
+        },
+        {"x-github-event": "pull_request_review_comment"},
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "change_request.comment_created"
+    assert events[0].payload["author"] == {"id": 2, "login": "bob"}
+
+
+def test_normalize_gitlab_approval_hook() -> None:
+    events = normalize_webhook_events(
+        "gitlab",
+        {
+            "object_kind": "approval",
+            "user": {"id": 3, "username": "carol", "name": "Carol"},
+            "object_attributes": {
+                "iid": 8,
+                "url": "https://gitlab.example/acme/app/-/merge_requests/8",
+                "source_branch": "fix/approve",
+                "target_branch": "main",
+                "last_commit": {"id": "def5678"},
+            },
+            "project": {
+                "id": 9,
+                "path_with_namespace": "acme/app",
+                "web_url": "https://gitlab.example/acme/app",
+            },
+        },
+        {"x-gitlab-event": "Approval Hook"},
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "change_request.approved"
+    assert events[0].payload["author"] == {
+        "id": 3,
+        "username": "carol",
+        "name": "Carol",
+    }
+
+
+def test_normalize_gitlab_merge_request_approved_action() -> None:
+    events = normalize_webhook_events(
+        "gitlab",
+        {
+            "object_kind": "merge_request",
+            "user": {"id": 3, "username": "carol"},
+            "object_attributes": {
+                "iid": 8,
+                "action": "approved",
+                "url": "https://gitlab.example/acme/app/-/merge_requests/8",
+                "source_branch": "fix/approve",
+                "target_branch": "main",
+                "last_commit": {"id": "def5678"},
+            },
+            "project": {
+                "id": 9,
+                "path_with_namespace": "acme/app",
+                "web_url": "https://gitlab.example/acme/app",
+            },
+        },
+        {"x-gitlab-event": "Merge Request Hook"},
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "change_request.approved"
+    assert events[0].payload["author"] == {"id": 3, "username": "carol", "name": None}
+
+
+def test_normalize_gitlab_user_note_created() -> None:
+    events = normalize_webhook_events(
+        "gitlab",
+        {
+            "object_kind": "note",
+            "user": {"id": 4, "username": "dave", "name": "Dave"},
+            "object_attributes": {
+                "id": 100,
+                "note": "Please fix this",
+                "system": False,
+                "action": "create",
+            },
+            "merge_request": {
+                "iid": 8,
+                "url": "https://gitlab.example/acme/app/-/merge_requests/8",
+                "source_branch": "fix/approve",
+                "target_branch": "main",
+                "last_commit": {"id": "def5678"},
+            },
+            "project": {
+                "id": 9,
+                "path_with_namespace": "acme/app",
+                "web_url": "https://gitlab.example/acme/app",
+            },
+        },
+        {"x-gitlab-event": "Note Hook"},
+    )
+
+    assert len(events) == 1
+    assert events[0].event_type == "change_request.comment_created"
+    assert events[0].payload["author"] == {
+        "id": 4,
+        "username": "dave",
+        "name": "Dave",
+    }
+
+
+def test_normalize_gitlab_system_note_ignored() -> None:
+    events = normalize_webhook_events(
+        "gitlab",
+        {
+            "object_kind": "note",
+            "object_attributes": {
+                "id": 101,
+                "note": "approved this merge request",
+                "system": True,
+                "action": "create",
+            },
+            "merge_request": {"iid": 8},
+            "project": {
+                "id": 9,
+                "path_with_namespace": "acme/app",
+                "web_url": "https://gitlab.example/acme/app",
+            },
+        },
+        {"x-gitlab-event": "Note Hook"},
+    )
+
+    assert events == []
+
+
+def test_normalize_gitlab_note_update_ignored() -> None:
+    events = normalize_webhook_events(
+        "gitlab",
+        {
+            "object_kind": "note",
+            "user": {"id": 4, "username": "dave"},
+            "object_attributes": {
+                "id": 100,
+                "note": "Please fix this",
+                "system": False,
+                "action": "update",
+            },
+            "merge_request": {"iid": 8},
+            "project": {
+                "id": 9,
+                "path_with_namespace": "acme/app",
+                "web_url": "https://gitlab.example/acme/app",
+            },
+        },
+        {"x-gitlab-event": "Note Hook"},
+    )
+
+    assert events == []
+
+
+def test_event_source_catalog_event_types_per_source() -> None:
+    catalog = {item["source_type"]: item for item in event_source_catalog()}
+
+    assert "change_request.review_submitted" in catalog["github"]["event_types"]
+    assert "change_request.approved" not in catalog["github"]["event_types"]
+    assert "change_request.approved" in catalog["gitlab"]["event_types"]
+    assert "change_request.review_submitted" not in catalog["gitlab"]["event_types"]
+
+
 def test_observed_resource_matches_vendor_numeric_identity_by_path() -> None:
     configured = normalize_observed_resource(
         "github",
@@ -134,6 +347,102 @@ def test_parse_json_object() -> None:
 def test_parse_rejects_invalid_payload(raw: bytes) -> None:
     with pytest.raises(ValueError):
         parse_incoming_body(raw, "application/json")
+
+
+def test_matching_ignores_self_authored_comments(
+    test_db,
+    test_user,
+) -> None:
+    project = CloudProject(
+        project_key="SELFCMT",
+        name="Self comment",
+        created_by_user_id=test_user.id,
+        storage_prefix="projects/self-comment",
+    )
+    test_db.add(project)
+    test_db.flush()
+    connector_connection_service.save_oauth_connection(
+        test_db,
+        slug="github",
+        user_id=test_user.id,
+        access_token="token",
+        refresh_token=None,
+        token_type="bearer",
+        granted_scopes=["repo"],
+        external_account_name="alice",
+        expires_at=None,
+    )
+    subscription = ProjectIncomingHook(
+        public_id="self-comment-subscription",
+        cloud_project_id=str(project.id),
+        name="GitHub",
+        source="github",
+        status="active",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "schema_version": 1,
+            "source_type": "github",
+            "collection_mode": "webhook",
+            "resource": normalize_observed_resource(
+                "github",
+                {
+                    "resource_type": "repository",
+                    "url": "https://github.example/acme/app",
+                },
+            ),
+        },
+    )
+    test_db.add(subscription)
+    test_db.flush()
+    rule = ProjectAutomationRule(
+        cloud_project_id=str(project.id),
+        title="Reply to comments",
+        description="Address new comments.",
+        status="enabled",
+        created_by_user_id=test_user.id,
+        metadata_json={
+            "trigger_type": "event",
+            "event_type": "change_request.comment_created",
+            "event_config": {
+                "subscription_id": str(subscription.id),
+                "execution_target": "continue_binding",
+            },
+        },
+    )
+    test_db.add(rule)
+    test_db.commit()
+
+    processor = ProjectAutomationProcessor()
+
+    def event(author_login: str) -> ProjectAutomationEvent:
+        return ProjectAutomationEvent(
+            event_type="change_request.comment_created",
+            project_id=str(project.id),
+            subject_id="subject-1",
+            subject_type="change_request",
+            source="github",
+            actor_user_id=test_user.id,
+            payload={
+                "subject": {"type": "change_request", "id": "subject-1"},
+                "author": {"id": 1, "login": author_login},
+            },
+            event_id="event-1",
+            subscription_id=str(subscription.id),
+        )
+
+    assert processor.matching_rules(test_db, event("alice")) == []
+    assert processor.matching_rules(test_db, event("ALICE")) == []
+    assert [row.id for row in processor.matching_rules(test_db, event("bob"))] == [
+        rule.id
+    ]
+
+    rule_metadata = dict(rule.metadata_json)
+    rule_metadata["event_config"]["include_self_comments"] = True
+    rule.metadata_json = rule_metadata
+    test_db.commit()
+    assert [row.id for row in processor.matching_rules(test_db, event("alice"))] == [
+        rule.id
+    ]
 
 
 @pytest.mark.asyncio

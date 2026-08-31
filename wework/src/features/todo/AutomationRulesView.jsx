@@ -34,6 +34,7 @@ import { PopupMenu } from '@/components/common/MenuSelect'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationWorkflowCanvas } from './AutomationWorkflowCanvas.jsx'
 import { automationClass } from './automationStyles'
+import { eventTypeLabel } from './eventTypeLabel'
 import { EventSubscriptionManager } from './EventSubscriptionManager'
 
 const ACTIVE_RUN_STATUSES = new Set([
@@ -463,7 +464,7 @@ const weekdayLabels = {
   sunday: '周日',
 }
 
-function triggerPresentation(trigger) {
+function triggerPresentation(trigger, t) {
   if (trigger.type === 'schedule') {
     const schedule = trigger.schedule
     const frequency =
@@ -478,7 +479,7 @@ function triggerPresentation(trigger) {
 
   if (trigger.source !== 'wework') {
     return {
-      label: trigger.event,
+      label: eventTypeLabel(trigger.event, t),
       detail: trigger.subscriptionId ? `事件订阅 ${trigger.subscriptionId}` : '选择事件订阅后运行',
     }
   }
@@ -616,6 +617,7 @@ export function AutomationRulesView({
   onDuplicateRule,
   onDeleteRule,
 }) {
+  const { t } = useTranslation('common')
   const [view, setView] = useState('home')
   const [homeTab, setHomeTab] = useState('rules')
   const [filter, setFilter] = useState('all')
@@ -660,13 +662,13 @@ export function AutomationRulesView({
     return rules.filter(rule => {
       const matchesStatus =
         filter === 'all' || (filter === 'enabled' ? rule.enabled : !rule.enabled)
-      const trigger = triggerPresentation(rule.trigger)
+      const trigger = triggerPresentation(rule.trigger, t)
       const matchesQuery =
         !normalized ||
         `${rule.name} ${rule.description} ${trigger.label}`.toLowerCase().includes(normalized)
       return matchesStatus && matchesQuery
     })
-  }, [filter, query, rules])
+  }, [filter, query, rules, t])
 
   const notify = message => {
     setToast(message)
@@ -1207,6 +1209,7 @@ export function AutomationRulesView({
 }
 
 function TemplateStore({ templates, onClose, onApply }) {
+  const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
   const [selectedId, setSelectedId] = useState(templates[0]?.id)
@@ -1369,7 +1372,7 @@ function TemplateStore({ templates, onClose, onApply }) {
                   </span>
                   <div>
                     <small>触发规则</small>
-                    <strong>{triggerPresentation(selectedTemplate.trigger).label}</strong>
+                    <strong>{triggerPresentation(selectedTemplate.trigger, t).label}</strong>
                   </div>
                 </div>
                 <div className={automationClass('template-preview-steps')}>
@@ -1403,7 +1406,8 @@ function TemplateStore({ templates, onClose, onApply }) {
 }
 
 function TemplateCard({ template, selected, onSelect, onApply }) {
-  const trigger = triggerPresentation(template.trigger)
+  const { t } = useTranslation('common')
+  const trigger = triggerPresentation(template.trigger, t)
   return (
     <article className={automationClass(`template-card ${selected ? 'selected' : ''}`)}>
       <button
@@ -1454,8 +1458,9 @@ function TemplateIcon({ type }) {
 }
 
 function AutomationCard({ rule, canManage, onOpen, onToggle, onDuplicate, onDelete }) {
+  const { t } = useTranslation('common')
   const [menuOpen, setMenuOpen] = useState(false)
-  const trigger = triggerPresentation(rule.trigger)
+  const trigger = triggerPresentation(rule.trigger, t)
   const TriggerIcon = rule.trigger.type === 'schedule' ? Clock3 : Webhook
 
   return (
@@ -1553,10 +1558,11 @@ function WorkflowEditor({
   onOpenPluginMenu,
   onEditorSectionChange,
 }) {
+  const { t } = useTranslation('common')
   const [runStatus, setRunStatus] = useState('all')
   const [selectedRunId, setSelectedRunId] = useState(runs[0]?.id ?? null)
   const needsSave = dirty || !draft.persisted
-  const trigger = triggerPresentation(draft.trigger)
+  const trigger = triggerPresentation(draft.trigger, t)
   const TriggerIcon = draft.trigger.type === 'schedule' ? Clock3 : Webhook
   const visibleRuns = runs.filter(run => runMatchesFilter(run.status, runStatus))
   const selectedRun = visibleRuns.find(run => run.id === selectedRunId) ?? visibleRuns[0] ?? null
@@ -2274,7 +2280,7 @@ function TriggerSettings({
 }) {
   const { t } = useTranslation('common')
   const trigger = draft.trigger
-  const presentation = triggerPresentation(trigger)
+  const presentation = triggerPresentation(trigger, t)
   const TriggerIcon = trigger.type === 'schedule' ? Clock3 : Webhook
   const startMode = trigger.startMode ?? 'immediate'
   const triggerKind = trigger.type === 'schedule' ? 'schedule' : trigger.source
@@ -2465,7 +2471,7 @@ function TriggerSettings({
             >
               {(selectedSource?.eventTypes ?? []).map(eventType => (
                 <option key={eventType} value={eventType}>
-                  {eventType}
+                  {eventTypeLabel(eventType, t)}
                 </option>
               ))}
             </select>

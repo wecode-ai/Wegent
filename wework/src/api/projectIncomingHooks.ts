@@ -8,7 +8,7 @@ export type ProjectAutomationExecutionTarget =
   | 'create_issue'
 
 export interface ProjectObservedResource {
-  resourceType: string
+  resourceType?: string
   instanceUrl?: string | null
   externalId?: string | null
   path?: string | null

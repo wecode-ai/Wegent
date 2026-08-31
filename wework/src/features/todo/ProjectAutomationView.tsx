@@ -19,6 +19,7 @@ import type {
   CreatedRuntimeProject,
   ProjectWithTasks,
   RuntimeWorkListResponse,
+  UnifiedModel,
 } from '@/types/api'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
@@ -235,17 +236,29 @@ async function fetchExecutionCatalog(
     }),
     models: modelResponse.data
       .filter(model => model.isActive !== false && !model.compatibilityDisabled)
-      .map(model => ({
-        name: model.name,
-        label: model.displayName || model.name,
-        type: model.type,
-        options: Object.fromEntries(
-          Object.entries(model.config ?? {}).flatMap(([key, value]) =>
-            typeof value === 'string' ? [[key, value]] : []
-          )
-        ),
-      })),
+      .map(model => modelCatalogEntry(model)),
     plugins: [],
+  }
+}
+
+function modelCatalogEntry(model: UnifiedModel) {
+  const options = Object.fromEntries(
+    Object.entries(model.config ?? {}).flatMap(([key, value]) =>
+      typeof value === 'string' ? [[key, value]] : []
+    )
+  )
+  // Cloud-backed models (user/public/group) require their namespace and owning
+  // user to build the runtime model identity; without them the backend rejects
+  // the execution as an incomplete cloud model.
+  if (model.namespace) options.weworkCloudModelNamespace = model.namespace
+  if (model.resourceUserId != null) {
+    options.weworkCloudModelResourceUserId = String(model.resourceUserId)
+  }
+  return {
+    name: model.name,
+    label: model.displayName || model.name,
+    type: model.type,
+    options,
   }
 }
 

@@ -901,9 +901,11 @@ def get_delivery_requirements(
             "required_deliverables": (node or {}).get("required_deliverables", []),
             "delivery_ids": (node or {}).get("delivery_ids", []),
             "fulfilled_requirement_ids": sorted(
-                fulfilled_requirement_ids(db, node or {})
+                fulfilled_requirement_ids(db, node or {}, loop_item_id=resolved_item_id)
             ),
-            "missing_requirement_ids": missing_requirement_ids(db, node or {}),
+            "missing_requirement_ids": missing_requirement_ids(
+                db, node or {}, loop_item_id=resolved_item_id
+            ),
         }
 
 

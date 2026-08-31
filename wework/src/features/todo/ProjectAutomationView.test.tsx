@@ -191,12 +191,14 @@ function renderView({
   listedRuns = [run],
   onProjectUpdated,
   incomingHookApi,
+  modelApi,
 }: {
   viewProject?: CloudProject
   listedRules?: ProjectAutomationRule[]
   listedRuns?: ProjectAutomationRun[]
   onProjectUpdated?: (project: CloudProject) => void
   incomingHookApi?: ReturnType<typeof createProjectIncomingHookApi>
+  modelApi?: WorkbenchServices['modelApi']
 } = {}) {
   const projectAutomationApi = {
     list: vi.fn().mockResolvedValue(listedRules),
@@ -234,18 +236,20 @@ function renderView({
       },
     ]),
   } as unknown as WorkbenchServices['deviceApi']
-  const modelApi = {
-    listModels: vi.fn().mockResolvedValue({
-      data: [
-        {
-          name: 'codex-runtime',
-          displayName: 'Codex Runtime',
-          type: 'runtime',
-          isActive: true,
-        },
-      ],
-    }),
-  } as unknown as WorkbenchServices['modelApi']
+  const modelApiOrDefault =
+    modelApi ??
+    ({
+      listModels: vi.fn().mockResolvedValue({
+        data: [
+          {
+            name: 'codex-runtime',
+            displayName: 'Codex Runtime',
+            type: 'runtime',
+            isActive: true,
+          },
+        ],
+      }),
+    } as unknown as WorkbenchServices['modelApi'])
   const pluginApi = {
     listPlugins: vi.fn().mockResolvedValue([
       {
@@ -263,14 +267,14 @@ function renderView({
       projectAutomationApi={projectAutomationApi}
       projectIncomingHookApi={incomingHookApi}
       deviceApi={deviceApi}
-      modelApi={modelApi}
+      modelApi={modelApiOrDefault}
       pluginApi={pluginApi}
       currentUserId={7}
       canManageAgents
       onProjectUpdated={onProjectUpdated}
     />
   )
-  return { projectAutomationApi, deviceApi, modelApi, pluginApi, view }
+  return { projectAutomationApi, deviceApi, modelApi: modelApiOrDefault, pluginApi, view }
 }
 
 async function openRuleEditor(ruleId = 'rule-1') {
@@ -569,6 +573,63 @@ describe('ProjectAutomationView', () => {
       model: null,
       model_type: null,
       model_options: {},
+    })
+  })
+
+  test('persists the cloud model identity in workflow model options', async () => {
+    const { projectAutomationApi } = renderView({
+      modelApi: {
+        listModels: vi.fn().mockResolvedValue({
+          data: [
+            {
+              name: 'dpskv4f',
+              displayName: 'deepseekv4flash',
+              type: 'user',
+              namespace: 'default',
+              resourceUserId: 1,
+              isActive: true,
+              config: {
+                protocol: 'openai-responses',
+                apiFormat: 'responses',
+              },
+            },
+          ],
+        }),
+      } as unknown as WorkbenchServices['modelApi'],
+    })
+    await openRuleEditor()
+
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+    await waitFor(() =>
+      expect(screen.getByRole('option', { name: 'deepseekv4flash' })).toBeInTheDocument()
+    )
+    fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
+      target: { value: 'dpskv4f' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    const storedNode = (
+      input.eventConfig?.wework_flow as {
+        graph: {
+          nodes: Array<{
+            model: string
+            modelType: string | null
+            modelOptions: Record<string, string>
+          }>
+        }
+      }
+    ).graph.nodes[0]
+    expect(storedNode).toMatchObject({
+      model: 'dpskv4f',
+      modelType: 'user',
+      modelOptions: {
+        protocol: 'openai-responses',
+        apiFormat: 'responses',
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '1',
+      },
     })
   })
 
@@ -1278,7 +1339,6 @@ describe('ProjectAutomationView', () => {
       sourceType: 'github',
       collectionMode: 'webhook',
       resource: {
-        resourceType: 'repository',
         url: 'https://github.com/acme/app',
       },
       pollIntervalSeconds: null,

@@ -119,6 +119,7 @@ def _project_task_status(
     *,
     task_statuses: dict[str, str],
     ordered_task_ids: list[str],
+    loop_item_id: str | None = None,
 ) -> str:
     if any(task_statuses.get(task_id) == "running" for task_id in ordered_task_ids):
         return "running"
@@ -130,7 +131,7 @@ def _project_task_status(
 
         return (
             "awaiting_deliverables"
-            if missing_requirement_ids(db, node)
+            if missing_requirement_ids(db, node, loop_item_id=loop_item_id)
             else "completed"
         )
     if latest_status in FAILED_TASK_STATUSES:
@@ -178,6 +179,7 @@ def reconcile_workflow_task_nodes(
             node,
             task_statuses=task_statuses,
             ordered_task_ids=ordered_task_ids,
+            loop_item_id=(str(bindings[0].loop_item_id) if bindings else None),
         )
         node["task_ids"] = ordered_task_ids
         reconciled.append(node)
@@ -199,11 +201,22 @@ def update_workflow_task_status(
         task_id,
         execution_status,
     )
+    from app.services.loop_item_executions.service import runtime_device_identity_ids
+
+    device_ids = runtime_device_identity_ids(db, device_id)
+    if not device_ids:
+        logger.warning(
+            "[IssueTaskStatusSync] binding missing user=%s device=%s task=%s",
+            user_id,
+            device_id,
+            task_id,
+        )
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cloud context not found")
     binding = (
         db.query(LoopItemTaskBinding)
         .filter(
             LoopItemTaskBinding.task_user_id == user_id,
-            LoopItemTaskBinding.device_id == device_id,
+            LoopItemTaskBinding.device_id.in_(device_ids),
             LoopItemTaskBinding.task_id == task_id,
             loop_datetime_is_unset(LoopItemTaskBinding.unlinked_at),
         )
@@ -258,7 +271,7 @@ def update_workflow_task_status(
         for candidate in bindings
         if candidate.workflow_node_id == binding.workflow_node_id
     ]
-    runtime_task_id = f"{device_id}:{task_id}"
+    runtime_task_id = f"{binding.device_id}:{task_id}"
     changed = False
     nodes: list[dict] = []
     for raw_node in raw_nodes:
@@ -287,6 +300,7 @@ def update_workflow_task_status(
                 node,
                 task_statuses=task_statuses,
                 ordered_task_ids=ordered_task_ids,
+                loop_item_id=str(item.id),
             )
             if (
                 node.get("status") != node_status
@@ -611,7 +625,7 @@ def sync_automation_workflow_node(
         if node is not None:
             from app.services.workflow_deliverables import missing_requirement_ids
 
-            if missing_requirement_ids(db, node):
+            if missing_requirement_ids(db, node, loop_item_id=str(run.task_id)):
                 node_status = "awaiting_deliverables"
     return update_workflow_node(
         db,

@@ -615,29 +615,56 @@ class DeviceService:
         user_id: int,
         device_id: str,
     ) -> Optional[Kind]:
-        """Get a device CRD by device_id.
+        """Get a device CRD by any of its identities.
 
-        Args:
-            db: Database session
-            user_id: Device owner user ID
-            device_id: Device unique identifier (stored in Kind.name)
+        A device registers under its logical name while queued executions and
+        deliveries persist the desktop app id. The ownership check therefore
+        resolves the submitted id against every identity stored on the Device
+        CRD (logical name, spec.deviceId, and spec.appDeviceId), mirroring the
+        runtime route resolver. Ambiguous app id matches return None.
 
         Returns:
             Kind model instance or None if not found
         """
-        return (
-            db.query(Kind)
-            .filter(
-                and_(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Device",
-                    Kind.namespace == "default",
-                    Kind.name == device_id,
-                    Kind.is_active == True,
-                )
-            )
-            .first()
+        base_filter = and_(
+            Kind.user_id == user_id,
+            Kind.kind == "Device",
+            Kind.namespace == "default",
+            Kind.is_active == True,
         )
+        logical = (
+            db.query(Kind).filter(and_(base_filter, Kind.name == device_id)).first()
+        )
+        if logical is not None:
+            return logical
+        devices = db.query(Kind).filter(base_filter).all()
+        app_matches = [
+            device
+            for device in devices
+            if str(
+                (
+                    device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+                ).get("appDeviceId")
+                or ""
+            ).strip()
+            == device_id
+        ]
+        if len(app_matches) == 1:
+            return app_matches[0]
+        runtime_matches = [
+            device
+            for device in devices
+            if str(
+                (
+                    device.json.get("spec", {}) if isinstance(device.json, dict) else {}
+                ).get("deviceId")
+                or ""
+            ).strip()
+            == device_id
+        ]
+        if len(runtime_matches) == 1:
+            return runtime_matches[0]
+        return None
 
     @staticmethod
     def get_default_device_for_type(
