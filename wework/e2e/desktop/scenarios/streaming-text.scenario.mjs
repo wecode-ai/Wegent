@@ -67,6 +67,7 @@ const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-wo
 const SCROLL_TO_BOTTOM_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const ASSISTANT_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
 const ASSISTANT_MARKDOWN_LINK_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-markdown-link"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const TOOL_THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-thinking-indicator"]`
@@ -880,7 +881,7 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+    await control.command('waitFor', ASSISTANT_MESSAGE_SELECTOR, {
       text: ORDER_STOP_PARTIAL,
       stableMs: 500,
       timeoutMs: uiTimeoutMs,
