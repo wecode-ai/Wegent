@@ -41,6 +41,7 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.chat.preprocessing.contexts import link_contexts_to_subtask
 from app.services.chat.trigger.lifecycle import (
     collect_completed_result,
+    finalize_prompt_protection_block,
     persist_completed_result,
 )
 from app.services.openapi.helpers import (
@@ -228,25 +229,6 @@ async def _persist_terminal_failure(
         status="FAILED",
         result=result,
         error=error_message,
-    )
-
-
-async def _finalize_prompt_protection_block(
-    *,
-    subtask_id: int,
-    task_id: int,
-) -> None:
-    """Complete a blocked assistant turn while leaving the Task reusable."""
-    result = await collect_completed_result(
-        subtask_id,
-        status="COMPLETED",
-        result={"value": ""},
-    )
-    await persist_completed_result(
-        subtask_id=subtask_id,
-        task_id=task_id,
-        status="COMPLETED",
-        result=result,
     )
 
 
@@ -671,7 +653,7 @@ async def _create_non_streaming_response_unified(
         )
     except PromptProtectionBlocked:
         _close_db()
-        await _finalize_prompt_protection_block(
+        await finalize_prompt_protection_block(
             subtask_id=assistant_subtask_id,
             task_id=task_kind_id,
         )
@@ -982,7 +964,7 @@ async def _create_streaming_response_unified(
                 previous_bot_id=None,
             )
         except PromptProtectionBlocked:
-            await _finalize_prompt_protection_block(
+            await finalize_prompt_protection_block(
                 subtask_id=assistant_subtask_id,
                 task_id=task_kind_id,
             )

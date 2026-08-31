@@ -58,7 +58,8 @@ uv run pytest \
   tests/services/test_prompt_protection_evaluation.py \
   tests/api/test_openapi_responses.py \
   tests/services/adapters/test_team_kinds_display_name.py \
-  tests/services/test_llm_proxy_service.py -q
+  tests/services/test_llm_proxy_service.py \
+  tests/services/chat/storage/test_task_manager.py::test_policy_blocked_pipeline_turn_completes_without_confirmation_or_advance -q
 ```
 
 简单与高级 Team 前端配置回归：
@@ -89,7 +90,7 @@ uv run pytest \
 | --- | --- |
 | Team 已开启但入口不受保护时不调用 gate，原 dispatch 继续 | `test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint[enabled-unprotected-entrypoint]` |
 | Device Chat 不选择 Web 受保护入口 | `test_device_chat_does_not_select_web_prompt_protection_entrypoint` |
-| Channel、Device Chat、Inbox、订阅、自动化和知识制品原路径仍可运行 | 上述六条非目标入口业务回归；它们不单独证明 gate 边界，gate 边界由共享 seam 用例证明 |
+| Channel、Device Chat、Inbox、订阅、自动化和知识制品原路径仍可运行 | 共享 seam 证明未显式接入时不调用 gate，Device Chat 用例证明不选择 Web 入口，上述六条业务回归证明原路径可运行；不为每个调用者复制同形 gate mock |
 | Web Chat、ClaudeCode、pipeline 和 Responses E2E 被现有 CI 调用 | `frontend/e2e/tests/tasks/agent-conversation-regression.spec.ts` 由 `.github/workflows/e2e-tests.yml` 的 `executor-chromium` project 调用，Playwright `retries=0` |
 
 ## Ticket 04 发布验收记录
@@ -100,13 +101,13 @@ uv run pytest \
 | 证据层 | 状态 | 证据或未运行说明 |
 | --- | --- | --- |
 | 确定性 mock 评估契约 | 已通过 | `6 passed`；仅证明评估基础设施与生产 gate 契约 |
-| Ticket 01–04 Backend 聚焦回归 | 已通过 | `141 passed`；覆盖 Team、gate、pipeline、Responses、拒绝生命周期和遥测 |
+| Ticket 01–04 Backend 聚焦回归 | 已通过 | `141 passed`；共享 lifecycle helper 合并了一条重复用例，并增加策略拒绝不触发 pipeline 推进的回归，覆盖 Team、gate、pipeline、Responses、拒绝生命周期和遥测 |
 | Ticket 01–03 Frontend 聚焦回归 | 已通过 | `13 passed`；覆盖简单/高级配置、切换和保存 |
-| 非目标入口聚焦回归 | 已通过 | `6 passed`；分别覆盖 Channel、Device Chat、Inbox、订阅、自动化和知识制品 |
-| 完整 Backend 测试 | 未运行 | 本次尚未执行 `backend/tests` 全量套件 |
-| 完整 Frontend 测试 | 未运行 | 本次尚未执行 Frontend 全量套件 |
+| 非目标入口聚焦回归 | 已通过 | 共享 seam 与 Device Chat 入口用例通过；另有 `6 passed` 覆盖 Channel、Device Chat、Inbox、订阅、自动化和知识制品原业务路径 |
+| 完整 Backend 测试 | 已通过 | `6193 passed`、`1 skipped`，退出码 `0` |
+| 完整 Frontend 测试 | 已通过 | 4 个 Node tests 与 337 个 Jest suites 通过，共 `2195 passed`、`1 todo` |
 | E2E | 未运行 | 现有 CI suite 已包含新增场景，但本次尚未执行 |
-| 远端 CI | 未运行 | 未提交、未推送，因此没有远端 CI 结果 |
+| 远端 CI | 未运行 | 已提交、未推送，因此没有远端 CI 结果 |
 | 真实模型效果评估 | 未运行 | 效果验收待完成，不宣称生产效果通过 |
 
 最终发布前还必须确认：Team 简单/高级配置、Web Chat、ClaudeCode、pipeline 首轮

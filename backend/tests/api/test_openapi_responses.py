@@ -21,7 +21,6 @@ from app.api.endpoints.openapi_responses import (
     _create_non_streaming_response_unified,
     _create_streaming_response_unified,
     _filter_current_assistant_turn,
-    _finalize_prompt_protection_block,
     _iter_callback_events,
     _task_to_response_object,
 )
@@ -58,33 +57,6 @@ async def test_callback_event_stream_waits_for_executor_terminal_event():
 
     assert [event.type for event in events] == ["block_created", "done"]
     assert pubsub.get_message.await_count == 4
-
-
-@pytest.mark.asyncio
-async def test_prompt_protection_block_completes_assistant_turn_for_follow_up():
-    with (
-        patch(
-            "app.api.endpoints.openapi_responses.collect_completed_result",
-            new=AsyncMock(return_value={"value": ""}),
-        ) as mock_collect,
-        patch(
-            "app.api.endpoints.openapi_responses.persist_completed_result",
-            new=AsyncMock(),
-        ) as mock_persist,
-    ):
-        await _finalize_prompt_protection_block(subtask_id=654, task_id=101)
-
-    mock_collect.assert_awaited_once_with(
-        654,
-        status="COMPLETED",
-        result={"value": ""},
-    )
-    mock_persist.assert_awaited_once_with(
-        subtask_id=654,
-        task_id=101,
-        status="COMPLETED",
-        result={"value": ""},
-    )
 
 
 @pytest.fixture
@@ -570,7 +542,7 @@ class TestOpenAPIResponsesCreate:
                 new=AsyncMock(),
             ) as mock_dispatch,
             patch(
-                "app.api.endpoints.openapi_responses._finalize_prompt_protection_block",
+                "app.api.endpoints.openapi_responses.finalize_prompt_protection_block",
                 new=AsyncMock(),
             ) as mock_finalize,
         ):
@@ -656,7 +628,7 @@ class TestOpenAPIResponsesCreate:
                 new=AsyncMock(),
             ) as mock_register_stream,
             patch(
-                "app.api.endpoints.openapi_responses._finalize_prompt_protection_block",
+                "app.api.endpoints.openapi_responses.finalize_prompt_protection_block",
                 new=AsyncMock(),
             ) as mock_finalize,
         ):

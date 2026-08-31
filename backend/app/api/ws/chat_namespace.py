@@ -85,6 +85,7 @@ from app.services.chat.trigger import (
     persist_completed_result,
     trigger_ai_response_unified,
 )
+from app.services.chat.trigger.lifecycle import finalize_prompt_protection_block
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
 from app.services.prompt_protection import (
     BLOCKED_ERROR_CODE,
@@ -193,25 +194,6 @@ async def _finalize_failed_ai_trigger(
         status="FAILED",
         result=final_result,
         error=error_message,
-    )
-
-
-async def _finalize_prompt_protection_block(
-    *,
-    task_id: int,
-    assistant_subtask_id: int,
-) -> None:
-    """Complete a blocked assistant turn while leaving the Task reusable."""
-    final_result = await collect_completed_result(
-        assistant_subtask_id,
-        status="COMPLETED",
-        result={"value": ""},
-    )
-    await persist_completed_result(
-        subtask_id=assistant_subtask_id,
-        task_id=task_id,
-        status="COMPLETED",
-        result=final_result,
     )
 
 
@@ -1169,9 +1151,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                             ).model_dump(),
                             room=task_room,
                         )
-                        await _finalize_prompt_protection_block(
+                        await finalize_prompt_protection_block(
                             task_id=task.id,
-                            assistant_subtask_id=assistant_subtask.id,
+                            subtask_id=assistant_subtask.id,
                         )
                     except Exception as e:
                         logger.exception(

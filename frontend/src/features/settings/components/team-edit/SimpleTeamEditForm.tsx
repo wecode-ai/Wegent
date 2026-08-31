@@ -410,13 +410,17 @@ export default function SimpleTeamEditForm({
             description={t('settings:team.simple.prompt_protection.description')}
             align="start"
           >
-            <div className="flex justify-end pt-1">
+            <label
+              htmlFor="simple-prompt-protection-enabled"
+              className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+            >
               <Switch
+                id="simple-prompt-protection-enabled"
                 checked={promptProtectionEnabled}
                 onCheckedChange={setPromptProtectionEnabled}
                 data-testid="prompt-protection-enabled-switch"
               />
-            </div>
+            </label>
           </SimpleConfigRow>
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

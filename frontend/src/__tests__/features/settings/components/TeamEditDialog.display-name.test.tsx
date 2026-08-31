@@ -325,9 +325,12 @@ describe('TeamEditDialog display name', () => {
 
     const toggle = await screen.findByTestId('advanced-prompt-protection-enabled-switch')
     expect(toggle).toBeChecked()
-    const label = screen.getByText('Prompt protection')
+    const hitTarget = toggle.parentElement
+    expect(hitTarget?.tagName).toBe('LABEL')
+    expect(hitTarget).toHaveClass('min-h-11', 'min-w-11')
+    expect(screen.getByText('Prompt protection')).toBeInTheDocument()
 
-    fireEvent.click(label)
+    fireEvent.click(hitTarget!)
     expect(toggle).not.toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 

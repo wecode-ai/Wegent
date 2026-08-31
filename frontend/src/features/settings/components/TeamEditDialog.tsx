@@ -1586,12 +1586,17 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                       {t('settings:team.simple.prompt_protection.description')}
                     </span>
                   </label>
-                  <Switch
-                    id="advanced-prompt-protection-enabled"
-                    checked={promptProtectionEnabled}
-                    onCheckedChange={setPromptProtectionEnabled}
-                    data-testid="advanced-prompt-protection-enabled-switch"
-                  />
+                  <label
+                    htmlFor="advanced-prompt-protection-enabled"
+                    className="flex min-h-11 min-w-11 cursor-pointer items-center justify-center"
+                  >
+                    <Switch
+                      id="advanced-prompt-protection-enabled"
+                      checked={promptProtectionEnabled}
+                      onCheckedChange={setPromptProtectionEnabled}
+                      data-testid="advanced-prompt-protection-enabled-switch"
+                    />
+                  </label>
                 </div>
                 {isEditing && technicalNameUnlocked && (
                   <div

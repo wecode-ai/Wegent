@@ -511,27 +511,29 @@ async def test_unified_trigger_skips_gate_outside_enabled_protected_entrypoint(
 @pytest.mark.asyncio
 async def test_blocked_turn_is_persisted_completed_for_follow_up(monkeypatch):
     from app.api.ws import chat_namespace
+    from app.services.chat.trigger import lifecycle
 
-    collect = AsyncMock(return_value={"value": ""})
+    blocked_result = {"value": "", "policy_blocked": True}
+    collect = AsyncMock(return_value=blocked_result)
     persist = AsyncMock()
-    monkeypatch.setattr(chat_namespace, "collect_completed_result", collect)
-    monkeypatch.setattr(chat_namespace, "persist_completed_result", persist)
+    monkeypatch.setattr(lifecycle, "collect_completed_result", collect)
+    monkeypatch.setattr(lifecycle, "persist_completed_result", persist)
 
-    await chat_namespace._finalize_prompt_protection_block(
+    await chat_namespace.finalize_prompt_protection_block(
         task_id=22,
-        assistant_subtask_id=33,
+        subtask_id=33,
     )
 
     collect.assert_awaited_once_with(
         33,
         status="COMPLETED",
-        result={"value": ""},
+        result=blocked_result,
     )
     persist.assert_awaited_once_with(
         subtask_id=33,
         task_id=22,
         status="COMPLETED",
-        result={"value": ""},
+        result=blocked_result,
     )
 
 

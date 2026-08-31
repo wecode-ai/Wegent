@@ -644,6 +644,25 @@ async def persist_completed_result(
         )
 
 
+async def finalize_prompt_protection_block(
+    *,
+    subtask_id: int,
+    task_id: int,
+) -> None:
+    """Complete a policy-blocked assistant turn while keeping its Task reusable."""
+    result = await collect_completed_result(
+        subtask_id,
+        status="COMPLETED",
+        result={"value": "", "policy_blocked": True},
+    )
+    await persist_completed_result(
+        subtask_id=subtask_id,
+        task_id=task_id,
+        status="COMPLETED",
+        result=result,
+    )
+
+
 async def _persist_standalone_workspace_path(
     task_id: int,
     result: Optional[Dict[str, Any]],
@@ -682,5 +701,6 @@ __all__ = [
     "ExecutionSessionSetup",
     "prepare_execution_session",
     "collect_completed_result",
+    "finalize_prompt_protection_block",
     "persist_completed_result",
 ]
