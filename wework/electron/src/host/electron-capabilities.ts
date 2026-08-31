@@ -26,6 +26,7 @@ import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
+import type { SystemRecordReplay } from './system-record-replay.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { getElectronProcessSnapshot } from './process-diagnostics.js'
@@ -57,6 +58,7 @@ export interface ElectronDesktopServices {
   plugins: WorkbenchPluginManager
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
+  systemRecordReplay: SystemRecordReplay
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
 }
 
@@ -311,6 +313,27 @@ export function createElectronCapabilityRouter(
     computerUse.openScreenRecordingSettings()
   )
   router.register('computerUse.stopCurrentAction', () => computerUse.stopCurrentAction())
+  router.register('systemRecordReplay.list', () => desktopServices.systemRecordReplay.list())
+  router.register('systemRecordReplay.status', () => desktopServices.systemRecordReplay.status())
+  router.register('systemRecordReplay.requestPermissions', () =>
+    desktopServices.systemRecordReplay.requestPermissions()
+  )
+  router.register('systemRecordReplay.openPermissionSettings', params => {
+    const permission = stringParam(params, 'permission')
+    const pane = permission === 'inputMonitoring' ? 'Privacy_ListenEvent' : 'Privacy_Accessibility'
+    return shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`)
+  })
+  router.register('systemRecordReplay.start', params =>
+    desktopServices.systemRecordReplay.start(stringParam(params, 'title'))
+  )
+  router.register('systemRecordReplay.stop', () => desktopServices.systemRecordReplay.stop())
+  router.register('systemRecordReplay.delete', params =>
+    desktopServices.systemRecordReplay.remove(stringParam(params, 'id'))
+  )
+  router.register('systemRecordReplay.replay', params =>
+    desktopServices.systemRecordReplay.replay(stringParam(params, 'id'))
+  )
+  router.register('systemRecordReplay.cancel', () => desktopServices.systemRecordReplay.cancel())
   registerDesktopServiceCapabilities(router, desktopServices, {
     openLogDirectory: async () => {
       const logDirectory = app.getPath('logs')
@@ -406,11 +429,9 @@ export function createElectronCapabilityRouter(
   })
   router.register('window.closeToTray', () => e2eHost.closeToTray())
   router.register('window.cancelCloseToTray', () => e2eHost.cancelCloseToTray())
-  router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
+  registerTrayE2ECapabilities(router, e2eHost)
   router.register('e2e.getStartupSplashSnapshot', () => e2eHost.startupSplashSnapshot())
-  router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
   router.register('e2e.hideMainWindow', () => e2eHost.hideMainWindow())
-  router.register('e2e.activateTray', params => e2eHost.trayActivate(trayActivationParam(params)))
   router.register('window.openWorkspace', params =>
     e2eHost.openWorkspace({
       label: stringParam(params, 'label'),
@@ -656,6 +677,27 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
   )
   return router
+}
+
+export function registerTrayE2ECapabilities(
+  router: HostCapabilityRouter,
+  e2eHost: ElectronE2EHost
+): void {
+  router.register('tray.setState', params => e2eHost.traySetState(trayMenuStateParam(params)))
+  router.register('e2e.getTraySnapshot', () => e2eHost.traySnapshot())
+  router.register('e2e.activateTray', (params, context) => {
+    const activation = trayActivationParam(params)
+    if (activation.type !== 'menu-item' || activation.menuItemId !== 'quit') {
+      return e2eHost.trayActivate(activation)
+    }
+    const quitAvailable =
+      e2eHost.traySnapshot()?.menu.some(item => item.id === activation.menuItemId) === true
+    if (!quitAvailable) return false
+    context.deferUntilResponseSent(() => {
+      e2eHost.trayActivate(activation)
+    })
+    return true
+  })
 }
 
 export function registerRendererStorageCapabilities(

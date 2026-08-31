@@ -46,6 +46,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { SystemRecordReplay } from './host/system-record-replay.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -126,6 +127,7 @@ let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let computerUse: ComputerUseService | null = null
+let systemRecordReplay: SystemRecordReplay | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
 let pendingSystemDragWindow: BrowserWindow | null = null
@@ -980,9 +982,12 @@ async function shutdown(): Promise<void> {
   embeddedBrowserBridge = null
   const computerUseService = computerUse
   computerUse = null
+  const recordReplay = systemRecordReplay
+  systemRecordReplay = null
   await Promise.allSettled([
     browserBridge?.stop(),
     computerUseService?.stop(),
+    recordReplay?.dispose(),
     plugins?.shutdown(),
     desktopRuntime?.stop(),
   ])
@@ -1034,6 +1039,17 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
+  const systemRecordReplayHelper = process.env.WEWORK_SYSTEM_RECORD_REPLAY_HELPER?.trim()
+  systemRecordReplay = new SystemRecordReplay(
+    app.getPath('userData'),
+    systemRecordReplayHelper ||
+      join(
+        app.isPackaged ? process.resourcesPath : developmentResourcesRoot,
+        'bin',
+        'wework-system-record-replay'
+      ),
+    systemRecordReplayHelper ? 'darwin' : process.platform
+  )
   const savedPreferences = await preferences.read()
   await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
@@ -1080,6 +1096,7 @@ async function configureDesktopRuntime(): Promise<void> {
           events: desktopHostEvents,
           feedback,
           plugins: workbenchPlugins,
+          systemRecordReplay,
           updatePreferences: updateDesktopPreferences,
         },
         {

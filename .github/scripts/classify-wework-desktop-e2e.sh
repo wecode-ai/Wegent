@@ -17,6 +17,7 @@ core_segments=(
   model-routing
   permission-modes
   computer-use
+  system-record-replay
   task-status-sync
   core-task-flow
   task-attachments
@@ -130,7 +131,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
-  model-routing,computer-use
+  model-routing,computer-use,system-record-replay
 )
 
 validate_core_shards() {
@@ -291,6 +292,22 @@ classify_wework_path() {
       ;;
     wework/e2e/utils/mcp-elicitation-server.mjs)
       select_target "core:permission-modes"
+      return
+      ;;
+
+    # System record and replay spans its DSH surface, Electron host service,
+    # native macOS helper, and independently bootstrapped desktop checkpoint.
+    wework/dsh/ui-record-replay/* | \
+      wework/electron/native/system-record-replay/* | \
+      wework/electron/scripts/build-system-record-replay-helper.mjs | \
+      wework/electron/scripts/system-record-replay-fixture.mjs | \
+      wework/electron/src/host/system-record-replay* | \
+      wework/src/lib/system-record-replay* | \
+      wework/e2e/desktop/scenarios/system-record-replay.scenario.mjs)
+      select_target "core:system-record-replay"
+      if [[ "$path" == wework/dsh/ui-record-replay/* ]]; then
+        select_target "plugins:core-dsh-ui-plugin-composition"
+      fi
       return
       ;;
 

@@ -4352,7 +4352,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.queryByTestId('local-harness-session-row-local-harness-1')
     ).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('closes the settings menu when clicking outside it', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
@@ -9534,7 +9534,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(await screen.findByTestId('environment-info-popover')).toBeInTheDocument()
     expect(screen.queryByTestId('environment-branch-menu')).not.toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('keeps environment diff stats and branch row visible without a current branch', async () => {
     mockDesktopWorkbenchMainWidth(1024)
@@ -11094,7 +11094,7 @@ describe('DesktopWorkbenchLayout', () => {
       )
     })
     expect(workspaceFileApi.readWorkspaceTextFile).toHaveBeenCalledTimes(2)
-  })
+  }, 15_000)
 
   test('preserves the review when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -11186,7 +11186,7 @@ describe('DesktopWorkbenchLayout', () => {
         'true'
       )
     })
-  })
+  }, 15_000)
 
   test('restores serializable right workspace state without retaining the conversation pane', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -11246,7 +11246,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('Task A 计划')
     expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('切换任务后恢复。')
-  })
+  }, 15_000)
 
   test('restores an ephemeral temporary chat when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()

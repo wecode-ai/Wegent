@@ -430,5 +430,8 @@ describe('buildSourceRuntimeEnvironment', () => {
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain('/electron/resources')
     expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain('/electron/resources/wework-core-plugins')
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
+    expect(environment.WEWORK_SYSTEM_RECORD_REPLAY_HELPER).toContain(
+      'system-record-replay-fixture.mjs'
+    )
   })
 })

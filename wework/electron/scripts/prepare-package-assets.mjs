@@ -50,6 +50,7 @@ const [executorPath] = await Promise.all([
 
 await rm(resourcesRoot, { recursive: true, force: true })
 await mkdir(join(resourcesRoot, 'bin'), { recursive: true, mode: 0o700 })
+await buildSystemRecordReplayHelper()
 const runtimeCatalog = JSON.parse(
   await readFile(join(sharedResourcesRoot, 'bundled-harness-runtime', 'runtimes.json'), 'utf8')
 )
@@ -169,6 +170,15 @@ function resolveExecutorProfile() {
   const configured = process.env.WEWORK_EXECUTOR_PROFILE?.trim() || 'release'
   if (configured === 'debug' || configured === 'release') return configured
   throw new Error(`Unsupported Wework executor profile: ${configured}`)
+}
+
+async function buildSystemRecordReplayHelper() {
+  if (process.platform !== 'darwin') return
+  await run(
+    process.execPath,
+    [join(electronRoot, 'scripts', 'build-system-record-replay-helper.mjs')],
+    electronRoot
+  )
 }
 
 async function buildDshApp() {

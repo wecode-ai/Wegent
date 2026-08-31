@@ -14,7 +14,9 @@ import {
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
   registerRendererStorageCapabilities,
+  registerTrayE2ECapabilities,
 } from './electron-capabilities.js'
+import type { ElectronE2EHost } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
@@ -242,6 +244,49 @@ describe('registerAppUpdateCapabilities', () => {
         { principal: 'test', deferUntilResponseSent: vi.fn() }
       )
     ).toThrow('App updates are unavailable')
+  })
+})
+
+describe('registerTrayE2ECapabilities', () => {
+  test('defers the quit action until after the host response is sent', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const trayActivate = vi.fn(() => true)
+    const e2eHost = {
+      trayActivate,
+      traySetState: vi.fn(),
+      traySnapshot: vi.fn(() => ({
+        created: true,
+        guid: null,
+        title: null,
+        titleSupported: true,
+        tooltip: 'WeWork',
+        menu: [{ id: 'quit', label: 'Quit App', type: 'normal' as const }],
+      })),
+    } as unknown as ElectronE2EHost
+    const completions: Array<() => void | Promise<void>> = []
+    const context = {
+      principal: 'test',
+      deferUntilResponseSent: (completion: () => void | Promise<void>) =>
+        completions.push(completion),
+    }
+
+    registerTrayE2ECapabilities(router, e2eHost)
+    expect(
+      await handlers.get('e2e.activateTray')?.(
+        { activation: { type: 'menu-item', menuItemId: 'quit' } },
+        context
+      )
+    ).toBe(true)
+    expect(trayActivate).not.toHaveBeenCalled()
+    expect(completions).toHaveLength(1)
+
+    await completions[0]()
+    expect(trayActivate).toHaveBeenCalledWith({ type: 'menu-item', menuItemId: 'quit' })
   })
 })
 

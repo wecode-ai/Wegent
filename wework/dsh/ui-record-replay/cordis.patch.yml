@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-ui-record-replay
+      name: '@wegent/dsh-ui-record-replay'
