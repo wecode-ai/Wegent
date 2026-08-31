@@ -437,9 +437,7 @@ function markerButton(comment: RuntimeComment, element: Element) {
     top: `${Math.max(4, rect.top - 12)}px`,
     width: '24px',
   })
-  marker.addEventListener('click', event => {
-    event.preventDefault()
-    event.stopPropagation()
+  bindButtonActivation(marker, () => {
     marker.setAttribute('aria-expanded', 'true')
     draftAnchor = anchorFor(element)
     scheduleRender()
