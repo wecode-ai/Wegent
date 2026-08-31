@@ -19,7 +19,8 @@ def test_request_context_fields_extract_object_identifiers() -> None:
 
 def test_oauth_token_endpoint_body_is_excluded_from_telemetry() -> None:
     assert _should_capture_http_body("/api/external/oauth/token") is False
-    assert _should_capture_http_body("/api/external/oauth/revoke") is True
+    assert _should_capture_http_body("/api/external/oauth/revoke") is False
+    assert _should_capture_http_body("/api/external/oauth/userinfo") is True
 
 
 def test_access_logs_include_forwarded_headers(test_client, caplog):
