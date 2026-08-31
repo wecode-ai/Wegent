@@ -248,6 +248,11 @@ Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构
 复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在
 `wework/test-results/desktop-e2e/`。
 
+本地 runner 会把前置 Electron 和 Executor 构建的完整 stdout、stderr 写入
+`wework/test-results/desktop-e2e/desktop-build-<pid>.log`，终端只显示构建阶段、
+每 30 秒一次的存活提示、耗时和日志路径，避免包安装、编译和签名输出淹没 checkpoint
+结果。构建失败时，终端还会打印日志末尾的有限摘要；场景启动后的测试输出仍实时显示。
+
 `ai:verify:electron:build` 会跨 worktree 复用不可变的 Harness Runtime 归档，macOS 默认缓存到 `~/Library/Caches/wegent/harness-runtime`，Linux 默认缓存到 `${XDG_CACHE_HOME:-~/.cache}/wegent/harness-runtime`，Windows 默认缓存到 `%LOCALAPPDATA%\wegent\harness-runtime`。解压后的开发 Runtime 仍保留在当前 worktree 的 `wework/node_modules/.cache/harness-runtime-dev`，避免不同源码树共享可变状态。可通过 `WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT` 覆盖归档缓存目录；若构建时只设置了旧的 `WEWORK_HARNESS_RUNTIME_CACHE_ROOT`，该值会被转换为仅用于归档的缓存目录，不会改变当前 worktree 的解压目录。
 
 桌面 E2E 启动 Electron 前会移除父进程中的任务、IPC、Node 和 Harness runtime 环境变量，避免从开发中的 Wework 或 Codex 会话继承个人运行时路径。需要为聚焦排查显式指定 Core DSH runtime 时，使用 `WEWORK_E2E_HARNESS_RUNTIME_ROOT`；runner 会校验该目录并将其作为测试应用的 `WEWORK_HARNESS_RUNTIME_ROOT`。不要直接向测试命令传递 `WEWORK_HARNESS_RUNTIME_ROOT`。

@@ -28,6 +28,7 @@ from app.services.device.runtime_task_create_protocol import (
     negotiate_runtime_task_create_payload,
 )
 from app.services.user_runtime_config import user_runtime_config_service
+from shared.telemetry.context import get_request_id
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -180,13 +181,32 @@ class RuntimeRpcService:
     ) -> dict[str, Any]:
         """Call `runtime:rpc` on an online local executor and return its result."""
 
+        request_id = get_request_id()
+        started_at = time.perf_counter()
         normalized_timeout = self._normalize_timeout(timeout_seconds)
+        logger.info(
+            "[RuntimeRpcService] Runtime RPC started: request_id=%s "
+            "user_id=%s submitted_device_id=%s method=%s",
+            request_id or "-",
+            user_id,
+            device_id,
+            method,
+        )
         try:
             route = await runtime_route_resolver.resolve(
                 user_id=user_id,
                 submitted_device_id=device_id,
             )
         except RuntimeRouteError as exc:
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC route failed: request_id=%s "
+                "user_id=%s submitted_device_id=%s method=%s code=%s",
+                request_id or "-",
+                user_id,
+                device_id,
+                method,
+                exc.code,
+            )
             raise RuntimeRpcError(
                 str(exc),
                 code=exc.code,
@@ -201,6 +221,16 @@ class RuntimeRpcService:
                     route.online_info.get("runtime_features"),
                 )
             except RuntimeTaskCreateProtocolError as exc:
+                logger.warning(
+                    "[RuntimeRpcService] Runtime RPC negotiation failed: "
+                    "request_id=%s user_id=%s logical_device_id=%s "
+                    "method=%s features=%s",
+                    request_id or "-",
+                    user_id,
+                    route.logical_device_id,
+                    method,
+                    sorted(exc.features),
+                )
                 raise RuntimeRpcError(
                     str(exc),
                     code="unsupported_runtime_task_create_features",
@@ -221,7 +251,8 @@ class RuntimeRpcService:
         except Exception as exc:
             logger.exception(
                 "[RuntimeRpcService] Failed to resolve account proxy policy: "
-                "user_id=%s logical_device_id=%s method=%s",
+                "request_id=%s user_id=%s logical_device_id=%s method=%s",
+                request_id or "-",
                 user_id,
                 route.logical_device_id,
                 method,
@@ -234,12 +265,17 @@ class RuntimeRpcService:
             ) from exc
 
         sio = get_sio()
-        request = {"method": method, "payload": payload}
-        started_at = time.perf_counter()
+        request = {
+            "method": method,
+            "payload": payload,
+        }
+        if request_id:
+            request["request_id"] = request_id
         logger.info(
-            "[RuntimeRpcService] Sending runtime RPC: user_id=%s "
+            "[RuntimeRpcService] Sending runtime RPC: request_id=%s user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
             "timeout_seconds=%s payload_keys=%s",
+            request_id or "-",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
@@ -258,9 +294,10 @@ class RuntimeRpcService:
         except Exception as exc:
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.warning(
-                "[RuntimeRpcService] Runtime RPC failed: user_id=%s "
+                "[RuntimeRpcService] Runtime RPC failed: request_id=%s user_id=%s "
                 "logical_device_id=%s runtime_device_id=%s method=%s "
                 "elapsed_ms=%s error_type=%s",
+                request_id or "-",
                 user_id,
                 route.logical_device_id,
                 route.runtime_device_id,
@@ -283,9 +320,28 @@ class RuntimeRpcService:
 
         try:
             result = self._decode_response(result, method=method)
-        except RuntimeRpcError:
+        except RuntimeRpcError as exc:
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC response decoding failed: "
+                "request_id=%s user_id=%s logical_device_id=%s method=%s code=%s",
+                request_id or "-",
+                user_id,
+                route.logical_device_id,
+                method,
+                exc.code,
+            )
             raise
         if not isinstance(result, dict):
+            logger.warning(
+                "[RuntimeRpcService] Runtime RPC returned invalid response: "
+                "request_id=%s user_id=%s logical_device_id=%s method=%s "
+                "response_type=%s",
+                request_id or "-",
+                user_id,
+                route.logical_device_id,
+                method,
+                type(result).__name__,
+            )
             raise RuntimeRpcError(
                 "Runtime RPC returned an invalid response",
                 code="runtime_rpc_invalid_response",
@@ -299,9 +355,10 @@ class RuntimeRpcService:
         )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
-            "[RuntimeRpcService] Runtime RPC completed: user_id=%s "
+            "[RuntimeRpcService] Runtime RPC completed: request_id=%s user_id=%s "
             "logical_device_id=%s runtime_device_id=%s method=%s "
             "elapsed_ms=%s result_keys=%s",
+            request_id or "-",
             user_id,
             route.logical_device_id,
             route.runtime_device_id,
