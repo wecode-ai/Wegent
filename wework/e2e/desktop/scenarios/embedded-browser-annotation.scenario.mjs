@@ -744,6 +744,11 @@ async function verifyDesign(
   await captureScreenshot(control, 'browser-annotation-05b-design-applied.png')
   runtimeRevision = await browserAnnotationRuntimeRevision(control)
   await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
+  await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+    attribute: 'aria-pressed',
+    value: 'true',
+    timeoutMs: uiTimeoutMs,
+  })
   runtimeRevision = await waitForBrowserAnnotationRender(
     control,
     runtimeRevision,

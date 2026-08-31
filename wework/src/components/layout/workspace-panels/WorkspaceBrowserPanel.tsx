@@ -922,7 +922,6 @@ export function WorkspaceBrowserTabPanel({
       setAnnotationMode(activeMode)
       setAnnotations(state.comments)
       setAnnotationRuntimeRevision(incomingRuntimeRevision)
-      setOriginalViewHeld(state.originalView)
       if (!state.scope) return true
       const scope = { ...state.scope, browserTabId }
       const normalizedState = { ...state, scope }

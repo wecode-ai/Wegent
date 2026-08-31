@@ -2491,16 +2491,20 @@ describe('WorkspaceBrowserPanel', () => {
 
   test('hold-to-view-original button is enabled for queued tweaks and toggles the original page runtime', async () => {
     mockBrowserHostRect()
-    embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue(
-      annotationState([
-        {
-          id: 'browser-annotation-1',
-          number: 1,
-          comment: 'Make the button blue',
-          designChanges: [{ property: 'color', previousValue: '#000000', value: '#1683ff' }],
-        },
-      ])
-    )
+    const state = annotationState([
+      {
+        id: 'browser-annotation-1',
+        number: 1,
+        comment: 'Make the button blue',
+        designChanges: [{ property: 'color', previousValue: '#000000', value: '#1683ff' }],
+      },
+    ])
+    let handleAnnotationState: ((state: BrowserAnnotationState) => void) | undefined
+    embeddedBrowserMocks.listenEmbeddedBrowserAnnotationState.mockImplementation(handler => {
+      handleAnnotationState = handler
+      return null
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue(state)
     render(<WorkspaceBrowserPanel active />)
 
     const input = screen.getByTestId('workspace-browser-url-input')
@@ -2538,6 +2542,9 @@ describe('WorkspaceBrowserPanel', () => {
       )
     })
     expect(screen.getByText('原网页 · example.com')).toBeInTheDocument()
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+
+    act(() => handleAnnotationState?.({ ...state, originalView: false }))
     expect(button).toHaveAttribute('aria-pressed', 'true')
 
     fireEvent.pointerUp(button)
