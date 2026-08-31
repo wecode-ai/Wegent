@@ -121,6 +121,32 @@ def test_the_generation_id_travels_with_the_run():
     assert "42" in build_full_prompt(_context())
 
 
+def test_a_full_rebuild_names_the_bounded_quality_loop():
+    prompt = build_full_prompt(_context())
+
+    assert "Writer/Reviewer" in prompt
+    assert "REVIEW_CONTRACT.md" in prompt
+    assert "Plan, QA" in prompt
+
+
+def test_full_prompt_names_executor_generated_reviewer_agent_type():
+    prompt = build_full_prompt(_context(reviewer_agent_type="reviewer-bot-106"))
+
+    assert "`reviewer-bot-106`" in prompt
+    assert "complete Plan handoff" in prompt
+    assert "`review-open`" in prompt
+    assert "synchronously" in prompt
+    assert "review-status" in prompt
+    assert "exactly once" in prompt
+    assert "`nextAction`" in prompt
+    assert "phase remains `ready`" in prompt
+    assert "exits 3" in prompt
+    assert "context compaction" in prompt
+    assert "sleep, poll" in prompt
+    assert "CODE_WIKI_REVIEW_PHASE" not in prompt
+    assert "wait-seconds" not in prompt
+
+
 def test_the_mode_selects_the_prompt():
     assert build_prompt(_context(), full=True) == build_full_prompt(_context())
     assert build_prompt(_context(), full=False) == build_incremental_prompt(_context())

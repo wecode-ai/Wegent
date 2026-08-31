@@ -284,6 +284,58 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
 
 
 @pytest.mark.asyncio
+async def test_chat_retry_rejects_a_code_wiki_task_before_resetting_it():
+    namespace = ChatNamespace()
+    namespace.get_session = AsyncMock(return_value={"user_id": 1})
+    namespace._check_token_expiry = AsyncMock(return_value=False)
+
+    task = SimpleNamespace(
+        id=100,
+        json={"metadata": {"labels": {"source": "code_wiki"}}},
+    )
+    failed_ai_subtask = SimpleNamespace(
+        id=42,
+        team_id=10,
+        message_id=7,
+        parent_id=41,
+        status=SimpleNamespace(value="FAILED"),
+    )
+    team = SimpleNamespace(id=10)
+    user_subtask = SimpleNamespace(id=41, prompt="Generate a wiki", contexts=[])
+
+    with (
+        patch("app.api.ws.chat_namespace.SessionLocal", return_value=Mock()),
+        patch(
+            "app.api.ws.chat_namespace.can_access_task", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.api.ws.chat_namespace.fetch_retry_context",
+            return_value=(failed_ai_subtask, task, team, user_subtask),
+        ),
+        patch("app.api.ws.chat_namespace.reset_subtask_for_retry") as reset,
+        patch(
+            "app.api.ws.chat_namespace.trigger_ai_response_unified", AsyncMock()
+        ) as trigger,
+    ):
+        result = await namespace.on_chat_retry(
+            "sid-123",
+            {
+                "task_id": 100,
+                "subtask_id": 42,
+                "force_override_bot_model": None,
+                "force_override_bot_model_type": None,
+                "use_model_override": False,
+            },
+        )
+
+    assert result == {
+        "error": "Code Wiki task retry is not supported. Start a new Code Wiki generation."
+    }
+    reset.assert_not_called()
+    trigger.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_chat_retry_restores_persisted_video_generation_params():
     namespace = ChatNamespace()
     namespace.get_session = AsyncMock(return_value={"user_id": 1})

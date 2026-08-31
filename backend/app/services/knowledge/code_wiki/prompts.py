@@ -37,6 +37,7 @@ class WikiRunContext:
     previous_commit: str = ""
     changed_paths: Sequence[str] = ()
     existing_pages: Sequence[str] = ()
+    reviewer_agent_type: str = ""
 
 
 def build_full_prompt(context: WikiRunContext) -> str:
@@ -53,7 +54,28 @@ Document the repository **{context.project_name}**, from scratch.
 
 Your version begins empty. A page you do not write is not in the wiki, so write every
 page the wiki should contain, including the ones an earlier run already covered.
-Declaring a removal does nothing here, because there is nothing to remove from.\
+Declaring a removal does nothing here, because there is nothing to remove from.
+
+## Required Writer/Reviewer quality loop
+
+Read the wiki_submit skill's `REVIEW_CONTRACT.md` completely and follow its persisted
+handoff protocol. Draft the complete Plan handoff and run `review-open` before using the
+Claude Code `Task` or `Agent` tool to delegate to
+`{context.reviewer_agent_type or "the configured reviewer agent"}`. Give that Reviewer
+only this generation ID and the phase; it recovers the authoritative handoff with
+`review-status`.
+
+Run every Reviewer synchronously, never in the background. After it returns, run
+`review-status` exactly once and follow its `nextAction`. If the phase remains `ready`,
+fail the generation because the Reviewer returned without submitting a verdict; do not
+sleep, poll, or delegate a replacement Reviewer. The persisted state is the recovery
+source after context compaction.
+If `review` or `review-status` exits 3, the generation has already ended: do not retry
+wiki_submit, delegate another Reviewer, write pages, or call `complete`; stop this run
+and return that terminal diagnostic immediately.
+The Writer opens handoffs but never submits Reviewer verdicts. Complete every Plan, QA,
+and optional Recheck transition required by the contract before publication.
+Incremental-only shortcuts do not apply to this run.\
 """
 
 

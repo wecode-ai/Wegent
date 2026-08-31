@@ -1,10 +1,14 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "1.5.0"
+version: "2.0.1"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
 ---
+
+For every coordinated full-rebuild review action, read
+[`REVIEW_CONTRACT.md`](REVIEW_CONTRACT.md) completely first. It defines the required
+handoffs, phase states, outputs, and completion criteria for both Writer and Reviewer.
 
 # Wiki Submit Skill
 
@@ -56,6 +60,9 @@ Remove an accidental page before completing the run.
    parent page as well.
 4. Before submitting a page that contains a Mermaid fence, run `validate-mermaid` on
    the same Markdown file. Correct every reported block before submitting it.
+5. In a full rebuild using the Writer/Reviewer Team, follow `REVIEW_CONTRACT.md`: open a
+   persisted Plan handoff, delegate the Reviewer synchronously, and obtain a `passed`
+   Plan verdict before submitting pages.
 
 ### Before ending the run
 
@@ -73,7 +80,9 @@ Remove an accidental page before completing the run.
    `rpc_service` inside `rpc_group`), and correct every named diagram error before
    running `complete` again. The publish gate is authoritative: do not mark the run
    failed merely because it asks for a diagram correction.
-
+5. In a coordinated full rebuild, follow each returned `nextAction`. The only successful
+   publication paths are passed Plan plus passed QA, or passed Plan plus QA changes and
+   passed Recheck. A page change after the latest passed verdict invalidates it.
 Do not report the generation as complete until the response says it was published, or
 use `fail` with an accurate error when the run cannot continue.
 
@@ -164,6 +173,45 @@ refused, write the missing pages and run `complete` again.
 The response refuses publication when it finds a Mermaid diagram that cannot render.
 Rewrite the named pages at the same paths and run `complete` again; readers continue
 to see the prior published version until the corrected one passes.
+
+### Record a full-rebuild review checkpoint
+
+The Writer opens each attempt with `review-open` and a contract-formatted Markdown
+handoff. The Reviewer reads it with `review-status`, then runs `review`. A
+`changes_requested` verdict requires a contract-formatted `--findings-file`. Command
+output is the complete persisted state, including `generationId`, `phase`, `state`,
+`attempt`, `nextAction`, and the current handoff or verdict.
+
+See `REVIEW_CONTRACT.md` for the phase-specific commands and templates.
+
+```bash
+node wiki_submit.js review \
+  --generation-id 123 \
+  --phase plan \
+  --review-status passed \
+  --path index \
+  --path architecture \
+  --focus-path architecture \
+  --summary "Plan covers entry points, workflows, and the architecture diagram"
+```
+
+### Open a review handoff
+
+```bash
+node wiki_submit.js review-open \
+  --generation-id 123 \
+  --phase plan \
+  --path index \
+  --path architecture \
+  --summary "Proposed wiki plan" \
+  --handoff-file /tmp/code-wiki-plan-handoff.md
+```
+
+### Read a review state
+
+```bash
+node wiki_submit.js review-status --generation-id 123 --phase plan
+```
 
 ### Mark generation as failed
 

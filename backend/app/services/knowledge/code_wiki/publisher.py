@@ -63,6 +63,7 @@ from app.services.knowledge.code_wiki.publish_gate import (
     PublishPolicy,
     evaluate_publish_gate,
 )
+from app.services.knowledge.code_wiki.quality_gate import quality_gate_reason
 from app.services.knowledge.code_wiki.version_store import page_path_of
 from app.services.knowledge.content_scope import generated_wiki_pages
 
@@ -252,6 +253,18 @@ def publish_generation(
 
     desired = read_version_pages(db, generation.id)
     existing = read_projected_pages(db, knowledge_base.id)
+
+    quality_reason = quality_gate_reason(generation, desired)
+    if quality_reason:
+        verdict = GateVerdict(passed=False, reason=quality_reason)
+        logger.warning(
+            "[code_wiki] generation %s rejected for missing quality evidence: %s",
+            generation.id,
+            quality_reason,
+        )
+        _record_verdict(generation, verdict)
+        db.commit()
+        return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     # The gate is asked what readers would lose, so it is given what readers can see
     # now — the projected pages — rather than the published version's own page list.

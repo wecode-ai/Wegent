@@ -95,6 +95,7 @@ def tasks(monkeypatch, test_db: Session, test_user: User) -> FakeTasks:
     test_db.flush()
 
     fake = FakeTasks()
+    fake.team = team
     monkeypatch.setattr(
         team_kinds.team_kinds_service,
         "get_team_by_name_and_namespace",
@@ -270,6 +271,44 @@ def test_a_first_run_gets_the_full_rebuild_instructions(
 
     assert "begins empty" in tasks.prompt
     assert "copy of the published" not in tasks.prompt
+
+
+def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
+    test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
+):
+    reviewer = Kind(
+        kind="Bot",
+        name="code-wiki-reviewer",
+        namespace="default",
+        user_id=test_user.id,
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add(reviewer)
+    test_db.flush()
+    tasks.team.json = {
+        "spec": {
+            "collaborationModel": "coordinate",
+            "members": [
+                {
+                    "role": "reviewer",
+                    "botRef": {
+                        "name": "code-wiki-reviewer",
+                        "namespace": "default",
+                    },
+                }
+            ],
+        }
+    }
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.generation.ext["qualityReview"] == {
+        "required": True,
+        "handoffs": [],
+        "checkpoints": [],
+    }
 
 
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(

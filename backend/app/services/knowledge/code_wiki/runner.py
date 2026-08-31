@@ -54,10 +54,12 @@ from app.services.knowledge.code_wiki.publisher import (
     published_generation_id,
     read_version_pages,
 )
+from app.services.knowledge.code_wiki.quality_gate import require_quality_review
 from app.services.knowledge.code_wiki.repo_state import read_repository_state
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
 from app.services.knowledge.code_wiki.source import SourceRepository
+from app.services.readers import KindType, kindReader
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +220,10 @@ def start_run(
 
     generation = started.generation
     full = RunMode(started.decision.mode) is RunMode.FULL
+    reviewer_agent_type = ""
+    if full and _uses_coordinate_quality_loop(team):
+        reviewer_agent_type = _reviewer_agent_type(db, team)
+        require_quality_review(generation)
     prompt = build_prompt(
         WikiRunContext(
             project_name=source.project_name,
@@ -232,6 +238,7 @@ def start_run(
             existing_pages=[
                 page.path for page in read_version_pages(db, generation.id)
             ],
+            reviewer_agent_type=reviewer_agent_type,
         ),
         full=full,
     )
@@ -389,6 +396,46 @@ def _resolve_execution_context(
             "Check WIKI_CODE_WIKI_TEAM_NAME and that the default resources are loaded."
         )
     return team, task_user
+
+
+def _uses_coordinate_quality_loop(team: Kind) -> bool:
+    """Whether this Team has opted its full rebuilds into reviewer evidence."""
+    spec = (team.json or {}).get("spec", {})
+    return spec.get("collaborationModel") == "coordinate"
+
+
+def _reviewer_agent_type(db: Session, team: Kind) -> str:
+    """Resolve the exact Claude Code subagent type written by the Executor."""
+    members = ((team.json or {}).get("spec") or {}).get("members") or []
+    reviewer = next(
+        (member for member in members if member.get("role") == "reviewer"),
+        None,
+    )
+    if reviewer is None:
+        raise CodeWikiRunError("Coordinate Code Wiki Team has no Reviewer Bot")
+    reviewer_ref = reviewer.get("botRef") or {}
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        reviewer_ref.get("namespace", "default"),
+        reviewer_ref.get("name", ""),
+    )
+    if bot is None:
+        raise CodeWikiRunError("Coordinate Code Wiki Reviewer Bot was not found")
+    return _claude_subagent_type(bot.name, bot.id)
+
+
+def _claude_subagent_type(name: str, bot_id: int) -> str:
+    normalized = "".join(
+        (
+            character.lower()
+            if character.isascii() and (character.isalnum() or character == "-")
+            else "-" if character == "_" or character.isspace() else ""
+        )
+        for character in name.strip()
+    ).strip("-")
+    return f"{normalized or 'unnamed'}-{bot_id}"
 
 
 SHOW_GENERATION_TASK_KEY = "showGenerationTask"
