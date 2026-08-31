@@ -22,6 +22,9 @@ const externalSourceOpeners = new Map<string, ExternalSourceOpener>()
 const externalSourceOpenerListeners = new Set<() => void>()
 let externalSourceOpenerVersion = 0
 
+const VIDEO_SEGMENT_SOURCE_TYPE = 'wegent_video_segment'
+const VIDEO_CHAPTERS_SOURCE_TYPE = 'wegent_video_chapters'
+
 export function registerExternalSourceOpener(
   sourceType: string,
   opener: ExternalSourceOpener
@@ -60,6 +63,22 @@ function getSourceReferenceKey(source: SourceReference, position: number): strin
     source.title ?? '',
     position,
   ].join(':')
+}
+
+function isVideoSegmentSource(source: SourceReference): boolean {
+  return source.source_type === VIDEO_SEGMENT_SOURCE_TYPE
+}
+
+function isVideoChaptersSource(source: SourceReference): boolean {
+  return source.source_type === VIDEO_CHAPTERS_SOURCE_TYPE
+}
+
+function isVideoSource(source: SourceReference): boolean {
+  return isVideoSegmentSource(source) || isVideoChaptersSource(source)
+}
+
+function videoSegmentCount(source: SourceReference): number {
+  return source.segments?.length ?? 0
 }
 
 function isHttpUrl(sourceUri?: string): boolean {
@@ -206,6 +225,33 @@ export function SourceReferences({
     return null
   }
 
+  const indexedSources = sources.map((source, position) => ({ source, position }))
+  const segmentSources = indexedSources
+    .filter(({ source }) => isVideoSegmentSource(source))
+    .sort(
+      (left, right) =>
+        videoSegmentCount(right.source) - videoSegmentCount(left.source) ||
+        left.position - right.position
+    )
+  const chapterSources = indexedSources.filter(({ source }) => isVideoChaptersSource(source))
+  const otherSources = indexedSources.filter(({ source }) => !isVideoSource(source))
+  const renderSource = ({ source, position }: (typeof indexedSources)[number]) => {
+    const videoSource = isVideoSource(source)
+    return (
+      <div
+        key={getSourceReferenceKey(source, position)}
+        className={videoSource ? 'w-full min-w-0 pb-1' : 'flex min-w-0 items-baseline gap-1'}
+      >
+        {!videoSource && <span className="font-mono text-primary">[{source.index}]</span>}
+        <SourceReferenceItem
+          source={source}
+          openLabel={t('sourceReferences.openSource')}
+          unavailableLabel={t('sourceReferences.unavailableSource')}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className={`mt-3 pt-3 border-t border-border ${className}`}>
       <div className="flex items-start gap-2 text-xs text-text-muted">
@@ -214,26 +260,17 @@ export function SourceReferences({
           {hasSources && (
             <>
               <div className="font-medium mb-1.5">{t('sourceReferences.title')}:</div>
-              <div className="flex flex-wrap gap-x-3 gap-y-1">
-                {sources.map((source, position) => (
-                  <div
-                    key={getSourceReferenceKey(source, position)}
-                    className={
-                      source.source_type === 'wegent_video_segment'
-                        ? 'w-full min-w-0'
-                        : 'flex min-w-0 items-baseline gap-1'
-                    }
-                  >
-                    {source.source_type !== 'wegent_video_segment' && (
-                      <span className="font-mono text-primary">[{source.index}]</span>
-                    )}
-                    <SourceReferenceItem
-                      source={source}
-                      openLabel={t('sourceReferences.openSource')}
-                      unavailableLabel={t('sourceReferences.unavailableSource')}
-                    />
+              <div className="flex flex-wrap gap-x-3 gap-y-3">
+                {segmentSources.map(renderSource)}
+                {otherSources.map(renderSource)}
+                {chapterSources.length > 0 && (
+                  <div className="w-full space-y-2 border-t border-border pt-3">
+                    <p className="text-xs font-medium text-text-secondary">
+                      {t('sourceReferences.allVideoChapters')}
+                    </p>
+                    <div className="flex flex-col gap-2">{chapterSources.map(renderSource)}</div>
                   </div>
-                ))}
+                )}
               </div>
             </>
           )}

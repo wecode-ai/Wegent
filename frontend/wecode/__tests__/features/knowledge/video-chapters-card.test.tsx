@@ -9,25 +9,28 @@ import { VideoSegmentSource } from '@wecode/features/knowledge/video-segment-sou
 import { activatePlayer } from '@wecode/features/knowledge/active-video-store'
 
 const mockRetry = jest.fn()
+const mockUseVideoPlayUrl = jest.fn((_documentId: number, _enabled: boolean) => ({
+  playUrl: 'https://cdn.example.com/video.mp4',
+  mimeType: 'video/mp4',
+  isLoading: false,
+  notReady: false,
+  hasError: false,
+  retry: mockRetry,
+}))
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
 jest.mock('@wecode/features/knowledge/document-video-preview', () => ({
-  useVideoPlayUrl: () => ({
-    playUrl: 'https://cdn.example.com/video.mp4',
-    mimeType: 'video/mp4',
-    isLoading: false,
-    notReady: false,
-    hasError: false,
-    retry: mockRetry,
-  }),
+  useVideoPlayUrl: (documentId: number, enabled: boolean) =>
+    mockUseVideoPlayUrl(documentId, enabled),
 }))
 
 describe('VideoChaptersCard', () => {
   beforeEach(() => {
     mockRetry.mockClear()
+    mockUseVideoPlayUrl.mockClear()
     jest
       .spyOn(HTMLMediaElement.prototype, 'play')
       .mockImplementation(() => new Promise<void>(() => {}))
@@ -162,6 +165,30 @@ describe('VideoChaptersCard', () => {
 
     expect(video.currentTime).toBe(20)
     expect(playMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses a custom trigger label without exposing the source filename', () => {
+    render(
+      <VideoChaptersCard
+        triggerLabel="More chapters (1)"
+        source={{
+          index: 1,
+          title: 'video.mp4',
+          kb_id: 211,
+          document_id: 811,
+          segments: [{ start_sec: 0, end_sec: 10, title: 'First' }],
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('video-chapters-toggle-1')).toHaveTextContent('More chapters (1)')
+    expect(screen.queryByText('video.mp4')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('video-chapters-toggle-1'))
+
+    expect(screen.getByTestId('video-chapters-player-1')).toBeInTheDocument()
+    expect(screen.getByTestId('video-chapters-card-1')).toHaveClass('max-w-md')
+    expect(mockUseVideoPlayUrl).toHaveBeenLastCalledWith(811, true)
   })
 
   it('keeps a single player across chapters cards and segment sources', () => {

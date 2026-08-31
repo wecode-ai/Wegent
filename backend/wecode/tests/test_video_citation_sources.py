@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from shared.knowledge.video_segments import extract_all_video_segments
 from shared.knowledge.video_sources import (
@@ -313,7 +313,7 @@ def test_collect_and_log_content_fallback_when_label_missing() -> None:
     assert "content_fallback" in logger.info.call_args[0]
 
 
-def test_collect_and_log_reports_replace_when_segment_count_shrinks() -> None:
+def test_collect_and_log_reports_segment_preferred_over_chapters() -> None:
     logger = Mock()
     collected = {}
     collect_knowledge_mcp_video_sources(
@@ -328,20 +328,25 @@ def test_collect_and_log_reports_replace_when_segment_count_shrinks() -> None:
         },
     )
 
-    # The complete snapshot (2 chapters) replaces 3 partial hits, so the
-    # segment delta is negative; the replacement must still be logged.
-    added = collect_and_log_knowledge_mcp_video_sources(
-        collected,
-        json.dumps(_document_content_payload()),
-        logger=logger,
-        context="test",
-    )
+    # The complete chapter snapshot is suppressed because RAG evidence already
+    # exists. Segment count does not change, so the decision must still log.
+    with patch(
+        "wecode.service.knowledge.video_citation_sources.extract_all_video_segments",
+        wraps=extract_all_video_segments,
+    ) as extract_segments:
+        added = collect_and_log_knowledge_mcp_video_sources(
+            collected,
+            json.dumps(_document_content_payload()),
+            logger=logger,
+            context="test",
+        )
 
-    assert added == -1
+    assert added == 0
     log_message = logger.info.call_args[0][0]
     log_args = logger.info.call_args[0]
     assert "coverage_action=%s" in log_message
-    assert "replace" in log_args
+    assert "segment_preferred_over_chapters" in log_args
+    assert extract_segments.call_count == 1
 
 
 def test_collect_document_content_builds_chapters_source() -> None:
@@ -400,7 +405,7 @@ def _rag_chunk(start: int, end: int, document_id: int = 825) -> dict:
     }
 
 
-def test_collect_document_content_replaces_overlapping_rag_segments() -> None:
+def test_collect_document_content_does_not_replace_rag_segments() -> None:
     collected = {}
     collect_knowledge_mcp_video_sources(
         collected,
@@ -413,12 +418,14 @@ def test_collect_document_content_replaces_overlapping_rag_segments() -> None:
     collect_knowledge_mcp_video_sources(collected, _document_content_payload())
 
     source = collected[(212, 825)]
-    assert source.coverage == "complete"
-    # Partial RAG segments are replaced by the complete chapter list.
-    assert _segment_ranges(source) == [(0, 48), (48, 109)]
+    assert source.coverage == "retrieved"
+    assert _segment_ranges(source) == [(10, 30), (25, 50)]
+    assert [
+        (segment.start_sec, segment.end_sec) for segment in source.available_segments
+    ] == [(0, 48), (48, 109)]
 
 
-def test_collect_rag_segments_do_not_append_after_chapters() -> None:
+def test_collect_rag_segments_replace_chapters() -> None:
     collected = {}
     collect_knowledge_mcp_video_sources(collected, _document_content_payload())
 
@@ -428,11 +435,14 @@ def test_collect_rag_segments_do_not_append_after_chapters() -> None:
     )
 
     source = collected[(212, 825)]
-    assert source.coverage == "complete"
-    assert _segment_ranges(source) == [(0, 48), (48, 109)]
+    assert source.coverage == "retrieved"
+    assert _segment_ranges(source) == [(10, 30)]
+    assert [
+        (segment.start_sec, segment.end_sec) for segment in source.available_segments
+    ] == [(0, 48), (48, 109)]
 
 
-def test_merge_video_sources_chapters_replace_existing_partial_segments() -> None:
+def test_merge_video_sources_segments_are_not_replaced_by_chapters() -> None:
     existing = [
         {
             "index": 3,
@@ -452,13 +462,15 @@ def test_merge_video_sources_chapters_replace_existing_partial_segments() -> Non
 
     merged = merge_video_sources(existing, videos)
 
-    assert merged[0]["source_type"] == "wegent_video_chapters"
-    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(0, 48)]
-    # A complete, non-truncated parse clears the stale truncation flag.
-    assert "segments_truncated" not in merged[0]
+    assert merged[0]["source_type"] == "wegent_video_segment"
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(10, 30)]
+    assert merged[0]["segments_truncated"] is True
+    assert [
+        (s["start_sec"], s["end_sec"]) for s in merged[0]["available_segments"]
+    ] == [(0, 48)]
 
 
-def test_merge_video_sources_partial_hits_do_not_extend_chapters() -> None:
+def test_merge_video_sources_segments_replace_existing_chapters() -> None:
     existing = [
         {
             "index": 3,
@@ -473,5 +485,8 @@ def test_merge_video_sources_partial_hits_do_not_extend_chapters() -> None:
 
     merged = merge_video_sources(existing, videos)
 
-    assert merged[0]["source_type"] == "wegent_video_chapters"
-    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(0, 48)]
+    assert merged[0]["source_type"] == "wegent_video_segment"
+    assert [(s["start_sec"], s["end_sec"]) for s in merged[0]["segments"]] == [(10, 30)]
+    assert [
+        (s["start_sec"], s["end_sec"]) for s in merged[0]["available_segments"]
+    ] == [(0, 48)]

@@ -420,6 +420,12 @@ class SourceReference(BaseModel):
     segments_truncated: Optional[bool] = Field(
         None, description="Whether the video segment list was truncated"
     )
+    available_segments: Optional[List[VideoSegmentReference]] = Field(
+        None, description="Complete video chapter catalog available for playback"
+    )
+    available_segments_truncated: Optional[bool] = Field(
+        None, description="Whether the complete video chapter catalog was truncated"
+    )
 
 
 class RetrievalSummaryPayload(BaseModel):

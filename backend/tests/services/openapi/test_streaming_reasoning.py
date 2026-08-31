@@ -387,6 +387,34 @@ class TestStreamingServiceReasoning:
                     "output": [{"type": "text", "text": json.dumps(payload)}],
                 },
             )
+            yield StreamingChunk(
+                type="mcp_call_done",
+                data={
+                    "item_id": "mcp_read_video",
+                    "name": "wegent_kb_read_document_content",
+                    "server_label": "wegent-knowledge",
+                    "status": "completed",
+                    "output": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(
+                                {
+                                    "document_id": 825,
+                                    "knowledge_base_id": 212,
+                                    "name": "825.video.md",
+                                    "content": (
+                                        "### Chapter 1 ([00:00:00 - 00:00:48])\n"
+                                        "### Chapter 2 ([00:00:48 - 00:01:49])"
+                                    ),
+                                    "offset": 0,
+                                    "has_more": False,
+                                    "source_media_type": "video",
+                                }
+                            ),
+                        }
+                    ],
+                },
+            )
             yield StreamingChunk(type="text", content="answer")
 
         events = []
@@ -422,6 +450,22 @@ class TestStreamingServiceReasoning:
                         "score": 0.64,
                         "title": "Future roadmap",
                         "description": "Planned improvements",
+                    },
+                ],
+                "available_segments": [
+                    {
+                        "id": "segment_0_48",
+                        "start_sec": 0,
+                        "end_sec": 48,
+                        "title": "Chapter 1",
+                        "description": None,
+                    },
+                    {
+                        "id": "segment_48_109",
+                        "start_sec": 48,
+                        "end_sec": 109,
+                        "title": "Chapter 2",
+                        "description": None,
                     },
                 ],
             }
