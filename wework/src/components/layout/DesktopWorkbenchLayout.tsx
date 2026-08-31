@@ -122,6 +122,24 @@ function routePathname(route: string): string {
   return searchIndex >= 0 ? route.slice(0, searchIndex) : route
 }
 
+const SETTINGS_RETURN_PATH_KEY = 'wework.settingsReturnPath'
+
+function readSettingsReturnPath(): string | null {
+  try {
+    return window.sessionStorage.getItem(SETTINGS_RETURN_PATH_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeSettingsReturnPath(path: string): void {
+  try {
+    window.sessionStorage.setItem(SETTINGS_RETURN_PATH_KEY, path)
+  } catch {
+    // The in-memory ref remains the fallback when session storage is unavailable.
+  }
+}
+
 export function DesktopWorkbenchLayout({
   routeActive = true,
   surfaceKind,
@@ -529,6 +547,10 @@ export function DesktopWorkbenchLayout({
   const [sidebarResizing, setSidebarResizing] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => isSettingsRoute(initialPath))
   const settingsReturnPathRef = useRef(initialPath === '/todo' ? '/todo' : '/')
+  const activeTabRouteRef = useRef(
+    workspaceTabs?.activeTab?.contentRoute ??
+      `${stripAppBasePath(window.location.pathname)}${window.location.search}`
+  )
   const [autoOpenAddCloudDeviceDialog, setAutoOpenAddCloudDeviceDialog] = useState(false)
   const [blankProjectDialogOpen, setBlankProjectDialogOpen] = useState(false)
   const [standaloneWorkspaceDialogMode, setStandaloneWorkspaceDialogMode] =
@@ -561,15 +583,20 @@ export function DesktopWorkbenchLayout({
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
+    if (!workspaceTabs?.activeTab) return
+    activeTabRouteRef.current = workspaceTabs.activeTab.contentRoute
+  }, [workspaceTabs?.activeTab])
+
+  useEffect(() => {
     let previousPath = stripAppBasePath(window.location.pathname)
-    let previousRoute = `${previousPath}${window.location.search}`
     const handlePopState = () => {
       const path = stripAppBasePath(window.location.pathname)
-      if (isSettingsRoute(path) && !isSettingsRoute(previousPath)) {
-        settingsReturnPathRef.current = previousRoute
+      const enteringSettings = isSettingsRoute(path) && !isSettingsRoute(previousPath)
+      if (enteringSettings) {
+        settingsReturnPathRef.current = activeTabRouteRef.current
+        writeSettingsReturnPath(activeTabRouteRef.current)
       }
       previousPath = path
-      previousRoute = `${path}${window.location.search}`
       setCurrentPath(path)
       setSettingsOpen(isSettingsRoute(path))
     }
@@ -677,6 +704,8 @@ export function DesktopWorkbenchLayout({
   }, [])
 
   const openSettings = useCallback((options: DesktopSidebarAccountSettingsOptions | undefined) => {
+    settingsReturnPathRef.current = activeTabRouteRef.current
+    writeSettingsReturnPath(activeTabRouteRef.current)
     setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
     setSettingsOpen(true)
     navigateTo(
@@ -1053,7 +1082,7 @@ export function DesktopWorkbenchLayout({
             onOpenRuntimeTask={onOpenRuntimeTask}
             onRefreshWorkLists={refreshWorkLists}
             onBack={() => {
-              const returnPath = settingsReturnPathRef.current
+              const returnPath = readSettingsReturnPath() ?? settingsReturnPathRef.current
               setSettingsOpen(false)
               setAutoOpenAddCloudDeviceDialog(false)
               setCurrentPath(routePathname(returnPath))

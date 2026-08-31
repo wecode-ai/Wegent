@@ -1679,6 +1679,115 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
   })
 
+  test('returns to the active workspace tab when the URL is out of sync', async () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作空间',
+      contentRoute: '/todo',
+      fixed: true,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.history.pushState({}, '', '/')
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout
+          {...baseProps}
+          surfaceKind="board"
+          state={{
+            ...baseProps.state,
+            user: {
+              id: 1,
+              user_name: 'local',
+              email: 'local@example.com',
+            },
+          }}
+        />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('keeps the settings return path when the layout remounts at the settings route', async () => {
+    deliveryApiMock.available = true
+    const boardTab = {
+      id: 'board-existing',
+      kind: 'board' as const,
+      title: '工作空间',
+      contentRoute: '/todo',
+      fixed: true,
+    }
+    const workspaceTabs = {
+      tabs: [boardTab],
+      activeTabId: boardTab.id,
+      activeTab: boardTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } as unknown as WorkspaceTabsContextValue
+    window.sessionStorage.clear()
+    window.history.pushState({}, '', '/')
+
+    const renderLayout = () =>
+      render(
+        <WorkspaceTabsContext.Provider value={workspaceTabs}>
+          <DesktopWorkbenchLayout
+            {...baseProps}
+            surfaceKind="board"
+            state={{
+              ...baseProps.state,
+              user: {
+                id: 1,
+                user_name: 'local',
+                email: 'local@example.com',
+              },
+            }}
+          />
+        </WorkspaceTabsContext.Provider>
+      )
+
+    const first = renderLayout()
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    // The workspace tab mutation remounts the layout at the settings route.
+    first.unmount()
+    window.history.pushState({}, '', '/settings')
+    renderLayout()
+    expect(screen.getByTestId('wework-settings-page')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
   test('uses the independent board tab instead of a work-items sidebar destination', () => {
     const taskTab = {
       id: 'task-existing',
