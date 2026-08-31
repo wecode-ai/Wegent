@@ -25,12 +25,14 @@ export function unregisterHarnessAppTab(installationId: string): void {
 
 export function resolveRunningHarnessApp(
   key: string
-): { key: string; title: string; url: string } | null {
+): { key: string; nativeLabel: string; title: string; url: string } | null {
   if (!key.startsWith('harness-')) return null
-  const installation = runningApps.get(key.slice('harness-'.length))
+  const installationId = key.slice('harness-'.length)
+  const installation = runningApps.get(installationId)
   if (!installation?.webUrl) return null
   return {
     key,
+    nativeLabel: `smart-app:${installationId}`,
     title: installation.manifest.displayName,
     url: installation.webUrl,
   }

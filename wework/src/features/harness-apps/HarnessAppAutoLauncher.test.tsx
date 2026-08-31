@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   storeContext: vi.fn(),
   unregisterProxy: vi.fn(),
   unregisterContext: vi.fn(),
+  clearLaunch: vi.fn(),
 }))
 
 vi.mock('@/api/local/harnessApps', () => ({
@@ -33,8 +34,12 @@ vi.mock('@/features/harness-apps/harnessAppTabs', () => ({
 
 vi.mock('@/features/harness-apps/harnessAppLaunchState', () => ({
   beginHarnessAppLaunch: vi.fn(),
-  clearHarnessAppLaunch: vi.fn(),
+  clearHarnessAppLaunch: mocks.clearLaunch,
   failHarnessAppLaunch: vi.fn(),
+}))
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: () => true,
 }))
 
 vi.mock('@/features/local-harness/localHarnessModels', () => ({
@@ -99,6 +104,7 @@ describe('HarnessAppAutoLauncher', () => {
     expect(mocks.storeProxy).toHaveBeenCalledWith('app-1', 'proxy-token')
     expect(mocks.storeContext).toHaveBeenCalledWith('app-1', 'context-token')
     expect(mocks.register).toHaveBeenCalledWith(running)
+    expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
   })
 
   test('registers an already running Smart app without starting it again', async () => {
@@ -113,10 +119,13 @@ describe('HarnessAppAutoLauncher', () => {
 
     await waitFor(() => expect(mocks.register).toHaveBeenCalledWith(running))
     expect(mocks.start).not.toHaveBeenCalled()
+    expect(mocks.clearLaunch).toHaveBeenCalledWith('app-1')
   })
 
   test('starts an installation only once across concurrent mounts', async () => {
     let resolveInstallations: ((value: (typeof installation)[]) => void) | undefined
+    const firstSettled = vi.fn()
+    const secondSettled = vi.fn()
     mocks.list.mockImplementation(
       () =>
         new Promise(resolve => {
@@ -132,13 +141,17 @@ describe('HarnessAppAutoLauncher', () => {
 
     render(
       <>
-        <HarnessAppAutoLauncher installationId="app-1" />
-        <HarnessAppAutoLauncher installationId="app-1" />
+        <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={firstSettled} />
+        <HarnessAppAutoLauncher installationId="app-1" onStartupSettled={secondSettled} />
       </>
     )
 
     expect(mocks.list).toHaveBeenCalledTimes(1)
     resolveInstallations?.([installation])
     await waitFor(() => expect(mocks.start).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(firstSettled).toHaveBeenCalledWith('app-1')
+      expect(secondSettled).toHaveBeenCalledWith('app-1')
+    })
   })
 })

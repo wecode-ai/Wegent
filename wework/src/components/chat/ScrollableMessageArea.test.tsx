@@ -338,11 +338,84 @@ describe('ScrollableMessageArea', () => {
     expect(button).toBeInTheDocument()
 
     fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 600,
       behavior: 'smooth',
     })
+  })
+
+  test('keeps following the bottom after the scroll button is clicked during layout growth', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="scroll-button-layout-growth"
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '长内容',
+            status: 'done',
+            createdAt: '2026-08-31T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    let scrollHeight = 600
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top, behavior }: ScrollToOptions) => {
+      scroller.scrollTop = behavior === 'smooth' ? 80 : Number(top)
+      fireEvent.scroll(scroller)
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    fireEvent.scroll(scroller)
+    const button = screen.getByTestId('scroll-to-bottom-button')
+
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+
+    expect(scroller.scrollTop).toBe(600)
+
+    scrollHeight = 900
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(900)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
   })
 
   test('does not auto-scroll from content resize while auto-scroll is suspended', () => {

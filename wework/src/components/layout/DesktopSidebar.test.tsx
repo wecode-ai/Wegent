@@ -143,7 +143,6 @@ function renderSidebar(
       installedReleaseNotes: null,
       status: 'idle',
       downloadProgress: null,
-      message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
@@ -765,7 +764,13 @@ describe('DesktopSidebar', () => {
     renderSidebar({}, undefined, {
       availableUpdate: null,
       status: 'error',
-      error: 'updater does not have any endpoints set',
+      error: {
+        stage: 'check',
+        kind: 'unsupported',
+        code: 'APP_UPDATE_UNAVAILABLE',
+        occurredAt: 1,
+        detail: null,
+      },
     })
 
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()

@@ -88,6 +88,49 @@ describe('AppIframe', () => {
         true
       )
     )
+    await waitFor(() => expect(screen.queryByText('Loading 智能体...')).not.toBeInTheDocument())
+    boundsSpy.mockRestore()
+  })
+
+  test('uses the runtime label for an Electron workbench webview', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <AppIframe
+        appKey="harness-review"
+        embeddedBrowserLabel="smart-app:review"
+        src="http://localhost:4101"
+        title="Review"
+        workspaceTabId="auxiliary-1"
+      />
+    )
+
+    expect(screen.getByTestId('workspace-browser-electron-webview-placeholder')).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-wework-browser-webview-host-root] webview')
+    ).toHaveAttribute('data-wework-browser-label', 'smart-app:review')
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:4101',
+        { x: 10, y: 20, width: 800, height: 600 },
+        'smart-app:review',
+        false,
+        true
+      )
+    )
+    await waitFor(() => expect(screen.queryByText('Loading Review...')).not.toBeInTheDocument())
     boundsSpy.mockRestore()
   })
 
@@ -181,6 +224,42 @@ describe('AppIframe', () => {
         'app-wegent-fixed-agent',
         false,
         true
+      )
+    )
+    boundsSpy.mockRestore()
+  })
+
+  test('closes an unmounted Electron app only when its native identity still matches', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    const { unmount } = render(
+      <AppIframe
+        appKey="harness-app"
+        embeddedBrowserLabel="smart-app:test"
+        src="http://localhost:3000"
+        title="Harness app"
+      />
+    )
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce())
+
+    unmount()
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'smart-app:test',
+        'embedded-browser-native-1'
       )
     )
     boundsSpy.mockRestore()

@@ -15,6 +15,7 @@ interface AppIframeProps {
   active?: boolean
   appKey: string
   edgeToEdge?: boolean
+  embeddedBrowserLabel?: string
   onReady?: () => void
   src: string
   title: string
@@ -89,6 +90,7 @@ export function AppIframe({
   active = true,
   appKey,
   edgeToEdge = false,
+  embeddedBrowserLabel,
   onReady,
   src,
   title,
@@ -100,6 +102,7 @@ export function AppIframe({
   const hostRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onReady)
   const openedRef = useRef(false)
+  const openedNativeLabelRef = useRef<string | null>(null)
   const openPromiseRef = useRef<Promise<void> | null>(null)
   const loadedSrcRef = useRef<string | null>(null)
   const lifecycleGenerationRef = useRef(0)
@@ -108,7 +111,7 @@ export function AppIframe({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [retryGeneration, setRetryGeneration] = useState(0)
-  const label = nativeLabel(appKey, workspaceTabId)
+  const label = embeddedBrowserLabel ?? nativeLabel(appKey, workspaceTabId)
 
   useLayoutEffect(() => {
     activeRef.current = active
@@ -217,8 +220,9 @@ export function AppIframe({
         label,
         waitForContent,
         true
-      ).then(() => {
+      ).then(pageState => {
         openedRef.current = true
+        openedNativeLabelRef.current = pageState.nativeLabel
         loadedSrcRef.current = src
       })
       openPromiseRef.current = request
@@ -300,7 +304,9 @@ export function AppIframe({
           if (lifecycleGenerationRef.current !== generation) return
           openedRef.current = false
           loadedSrcRef.current = null
-          void closeEmbeddedBrowser(label).catch(() => undefined)
+          const expectedNativeLabel = openedNativeLabelRef.current
+          openedNativeLabelRef.current = null
+          void closeEmbeddedBrowser(label, expectedNativeLabel ?? undefined).catch(() => undefined)
         }
         const pendingOpen = openPromiseRef.current
         if (pendingOpen) {
