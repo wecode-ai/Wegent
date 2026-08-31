@@ -198,6 +198,7 @@ async def test_recover_with_archive_continues_when_restore_fails():
 
 @pytest.mark.asyncio
 async def test_recover_claude_continuation_rejects_missing_session_context():
+    """Recovery must fail when a known session cannot be restored."""
     service = ExecutorRecoveryService()
     db = MagicMock()
     subtask = SimpleNamespace(
@@ -217,6 +218,7 @@ async def test_recover_claude_continuation_rejects_missing_session_context():
                 "status": "PENDING",
                 "progress": 0,
                 "errorMessage": "",
+                "archive": {"sessionFileIncluded": True},
             }
         },
     )
@@ -252,6 +254,16 @@ async def test_recover_claude_continuation_rejects_missing_session_context():
                 }
             ),
         ),
+        patch.object(
+            recovery_module.subtask_store,
+            "list_assistant_by_task",
+            return_value=[],
+        ),
+        patch.object(
+            service,
+            "_delete_prepared_executor",
+            AsyncMock(),
+        ) as cleanup_mock,
     ):
         with pytest.raises(RuntimeError, match="session context.*not restored"):
             await service.recover(
@@ -265,6 +277,237 @@ async def test_recover_claude_continuation_rejects_missing_session_context():
     assert "Refusing to send the continuation" in subtask.error_message
     assert task.json["status"]["status"] == "FAILED"
     db.commit.assert_called()
+    cleanup_mock.assert_awaited_once_with(task_id=22)
+
+
+@pytest.mark.asyncio
+async def test_recover_claude_continuation_rejects_when_session_was_persisted():
+    """A persisted executor session proves the task had a Claude session."""
+    service = ExecutorRecoveryService()
+    db = MagicMock()
+    subtask = SimpleNamespace(
+        id=11,
+        executor_name="old",
+        executor_namespace="wb-plat-ide",
+        executor_deleted_at=True,
+        error_message="",
+        status="PENDING",
+        progress=0,
+    )
+    task = SimpleNamespace(
+        id=22,
+        json={
+            "status": {
+                "state": "Available",
+                "status": "PENDING",
+                "progress": 0,
+                "errorMessage": "",
+            }
+        },
+    )
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=11,
+        user_id=7,
+        bot=[{"id": 987, "shell_type": "ClaudeCode"}],
+    )
+    prepared_executor = SimpleNamespace(
+        container_name="new-executor",
+        executor_namespace="wegent-pod",
+    )
+    previous_subtask = SimpleNamespace(
+        result={
+            "executor_session": {
+                "agent": "ClaudeCode",
+                "botId": 987,
+                "sessionId": "claude-session-1",
+            }
+        }
+    )
+
+    with (
+        patch.object(
+            recovery_module.archive_service,
+            "check_archive_available",
+            return_value=(True, "workspace-archives/22/archive.tar.gz", None),
+        ),
+        patch.object(
+            service,
+            "_prepare_executor",
+            AsyncMock(return_value=(prepared_executor, None)),
+        ),
+        patch.object(
+            recovery_module.archive_service,
+            "restore_workspace",
+            AsyncMock(
+                return_value={
+                    "success": True,
+                    "session_restored": False,
+                    "git_restored": True,
+                }
+            ),
+        ),
+        patch.object(
+            recovery_module.subtask_store,
+            "list_assistant_by_task",
+            return_value=[previous_subtask],
+        ),
+        patch.object(
+            service,
+            "_delete_prepared_executor",
+            AsyncMock(),
+        ) as cleanup_mock,
+    ):
+        with pytest.raises(RuntimeError, match="session context.*not restored"):
+            await service.recover(
+                db=db,
+                subtask=subtask,
+                task=task,
+                request=request,
+            )
+
+    assert subtask.status == "FAILED"
+    cleanup_mock.assert_awaited_once_with(task_id=22)
+
+
+@pytest.mark.asyncio
+async def test_recover_legacy_claude_task_without_session_evidence_continues():
+    """Legacy tasks predate session persistence and must keep recovering."""
+    service = ExecutorRecoveryService()
+    db = MagicMock()
+    subtask = SimpleNamespace(
+        id=11,
+        executor_name="old",
+        executor_namespace="wb-plat-ide",
+        executor_deleted_at=True,
+        error_message="",
+        status="PENDING",
+        progress=0,
+    )
+    task = SimpleNamespace(
+        id=22,
+        json={
+            "status": {
+                "state": "Available",
+                "status": "PENDING",
+                "progress": 0,
+                "errorMessage": "",
+                "archive": {"sessionFileIncluded": False},
+            }
+        },
+    )
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=11,
+        user_id=7,
+        bot=[{"id": 987, "shell_type": "ClaudeCode"}],
+    )
+    prepared_executor = SimpleNamespace(
+        container_name="new-executor",
+        executor_namespace="wegent-pod",
+    )
+
+    with (
+        patch.object(
+            recovery_module.archive_service,
+            "check_archive_available",
+            return_value=(True, "workspace-archives/22/archive.tar.gz", None),
+        ),
+        patch.object(
+            service,
+            "_prepare_executor",
+            AsyncMock(return_value=(prepared_executor, None)),
+        ),
+        patch.object(
+            recovery_module.archive_service,
+            "restore_workspace",
+            AsyncMock(
+                return_value={
+                    "success": True,
+                    "session_restored": False,
+                    "git_restored": True,
+                }
+            ),
+        ),
+        patch.object(
+            recovery_module.subtask_store,
+            "list_assistant_by_task",
+            return_value=[],
+        ),
+        patch.object(
+            service,
+            "_delete_prepared_executor",
+            AsyncMock(),
+        ) as cleanup_mock,
+    ):
+        result = await service.recover(
+            db=db,
+            subtask=subtask,
+            task=task,
+            request=request,
+        )
+
+    assert result == {
+        "executor_name": "new-executor",
+        "executor_namespace": "wegent-pod",
+    }
+    cleanup_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recover_with_archive_cleans_up_prepared_executor_on_error():
+    """A pod created for recovery must be deleted when restore raises."""
+    service = ExecutorRecoveryService()
+    db = MagicMock()
+    subtask = SimpleNamespace(
+        id=11,
+        executor_name="old",
+        executor_namespace="wb-plat-ide",
+        executor_deleted_at=True,
+    )
+    task = SimpleNamespace(id=22)
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=11,
+        user_id=7,
+        bot=[{"id": 987, "shell_type": "Agno"}],
+    )
+    prepared_executor = SimpleNamespace(
+        container_name="new-executor",
+        executor_namespace="wegent-pod",
+    )
+
+    with (
+        patch.object(
+            recovery_module.archive_service,
+            "check_archive_available",
+            return_value=(True, "workspace-archives/22/archive.tar.gz", None),
+        ),
+        patch.object(
+            service,
+            "_prepare_executor",
+            AsyncMock(return_value=(prepared_executor, None)),
+        ),
+        patch.object(
+            recovery_module.archive_service,
+            "restore_workspace",
+            AsyncMock(side_effect=ValueError("restore exploded")),
+        ),
+        patch.object(
+            service,
+            "_delete_prepared_executor",
+            AsyncMock(),
+        ) as cleanup_mock,
+    ):
+        result = await service.recover(
+            db=db,
+            subtask=subtask,
+            task=task,
+            request=request,
+        )
+
+    assert result is None
+    cleanup_mock.assert_awaited_once_with(task_id=22)
 
 
 @pytest.mark.asyncio

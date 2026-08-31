@@ -25,6 +25,7 @@ from app.models.subtask import Subtask, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.task_status import mark_task_failed
 from app.services.workspace_archive import archive_service
+from app.stores.tasks import subtask_store
 from shared.models import ExecutionRequest
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,59 @@ class ExecutorRecoveryService:
             character.isascii() and (character.isalnum() or character in {"-", "_"})
             for character in value
         )
+
+    def _has_prior_claude_session_evidence(
+        self,
+        db: Session,
+        task: TaskResource,
+        request: ExecutionRequest,
+    ) -> bool:
+        """Return True when the task provably had a Claude session before.
+
+        Legacy tasks completed before session persistence shipped have neither
+        an archive session marker nor a persisted executor session. Those tasks
+        must be allowed to continue with a fresh session; the guard only
+        rejects recovery when a session existed and could not be restored.
+        """
+        task_json = getattr(task, "json", None)
+        if not isinstance(task_json, dict):
+            task_json = {}
+        status = task_json.get("status")
+        if not isinstance(status, dict):
+            status = {}
+        archive = status.get("archive") if isinstance(status, dict) else {}
+        if isinstance(archive, dict) and archive.get("sessionFileIncluded"):
+            return True
+
+        assistant_subtasks = subtask_store.list_assistant_by_task(
+            db,
+            task_id=task.id,
+            owner_user_id=request.user_id,
+        )
+        for assistant_subtask in assistant_subtasks:
+            result = getattr(assistant_subtask, "result", None)
+            if isinstance(result, dict) and result.get("executor_session"):
+                return True
+        return False
+
+    async def _delete_prepared_executor(self, *, task_id: int) -> None:
+        """Best-effort cleanup of a freshly prepared executor after failure."""
+        from app.services.execution import get_executor_runtime_client
+
+        try:
+            deleted, error = await get_executor_runtime_client().delete_sandbox(
+                str(task_id)
+            )
+            if not deleted:
+                logger.warning(
+                    f"[RecoveryService] Failed to delete recovered executor "
+                    f"for task {task_id}: {error}"
+                )
+        except Exception as exc:
+            logger.warning(
+                f"[RecoveryService] Error deleting recovered executor "
+                f"for task {task_id}: {exc}"
+            )
 
     async def recover(
         self,
@@ -239,6 +293,7 @@ class ExecutorRecoveryService:
         """
         task_id = task.id
 
+        prepared_executor_pending_cleanup = False
         try:
             request.skip_git_clone = True
             request.executor_name = None
@@ -259,6 +314,7 @@ class ExecutorRecoveryService:
                 sandbox=executor,
                 previous_namespace=subtask.executor_namespace,
             )
+            prepared_executor_pending_cleanup = True
 
             # Restore workspace from archive
             restore_result = await archive_service.restore_workspace(
@@ -273,13 +329,22 @@ class ExecutorRecoveryService:
                 or self._has_inherited_claude_session(request)
             )
             if self._requires_claude_session(request) and not session_available:
-                error = (
-                    f"Claude session context for task {task_id} was not restored. "
-                    "Refusing to send the continuation to a new session."
-                )
-                logger.error(f"[RecoveryService] {error}")
-                self._persist_recovery_failure(db, subtask, task, error)
-                raise RuntimeError(error)
+                if not self._has_prior_claude_session_evidence(db, task, request):
+                    # Legacy tasks predate session persistence: no archive marker
+                    # and no persisted executor session can exist. Continuing with
+                    # a new session preserves the pre-guard behavior for them.
+                    logger.warning(
+                        f"[RecoveryService] No prior Claude session evidence for "
+                        f"task {task_id}; continuing recovery with a new session"
+                    )
+                else:
+                    error = (
+                        f"Claude session context for task {task_id} was not restored. "
+                        "Refusing to send the continuation to a new session."
+                    )
+                    logger.error(f"[RecoveryService] {error}")
+                    self._persist_recovery_failure(db, subtask, task, error)
+                    raise RuntimeError(error)
 
             if not restore_result:
                 logger.warning(
@@ -301,8 +366,12 @@ class ExecutorRecoveryService:
             return True
 
         except RuntimeError:
+            if prepared_executor_pending_cleanup:
+                await self._delete_prepared_executor(task_id=task_id)
             raise
         except Exception as e:
+            if prepared_executor_pending_cleanup:
+                await self._delete_prepared_executor(task_id=task_id)
             logger.error(
                 f"[RecoveryService] Error recovering with archive for task {task_id}: {e}",
                 exc_info=True,
