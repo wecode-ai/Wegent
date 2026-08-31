@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   EMPTY_CLOUD_RUNTIME_STATE,
   filterDisconnectedRemoteRuntimeWork,
@@ -107,6 +108,41 @@ describe('mergeRuntimeWorkLists', () => {
         deviceWorkspace.tasks.map(task => task.taskId)
       )
     ).toEqual(['task-local', 'task-remote'])
+  })
+
+  test('keeps the persisted sidebar project order across runtime source merges', () => {
+    const localWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'project-b', name: 'Project B', sidebarOrder: 1 },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/workspace/b' }],
+        },
+        {
+          project: { key: 'project-a', name: 'Project A', sidebarOrder: 0 },
+          deviceWorkspaces: [{ ...workspace('local-device', []), workspacePath: '/workspace/a' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+    const cloudWork: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: { key: 'project-c', name: 'Project C', sidebarOrder: 2 },
+          deviceWorkspaces: [{ ...workspace('remote-device', []), workspacePath: '/workspace/c' }],
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    const merged = mergeRuntimeWorkLists(localWork, cloudWork)
+
+    expect(merged.projects.map(project => project.project.name)).toEqual([
+      'Project A',
+      'Project B',
+      'Project C',
+    ])
   })
 
   test('deduplicates one completed task projected through different workspace paths', () => {
@@ -920,6 +956,71 @@ describe('cloud runtime sync state', () => {
         tasks: [expect.objectContaining({ taskId: 'remote-task' })],
       }),
     ])
+  })
+
+  test('preserves a remote executor project UI id after its Codex sidebar descriptor appears', () => {
+    const workspacePath = '/srv/repo'
+    const remoteProject = {
+      project: {
+        key: workspacePath,
+        name: 'Remote executor project',
+        stateDeviceId: 'remote-device',
+      },
+      deviceWorkspaces: [
+        {
+          ...workspace('remote-device', []),
+          workspacePath,
+        },
+      ],
+      totalTasks: 0,
+    }
+    const remoteProjectId = runtimeProjectUiId(remoteProject.project)
+    const localDescriptor: RuntimeWorkListResponse = {
+      projects: [
+        {
+          project: {
+            key: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
+            sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
+            name: 'Remote',
+            kind: 'remote',
+            source: 'remote_project',
+            stateDeviceId: 'local-device',
+          },
+          deviceWorkspaces: [
+            {
+              ...remoteProject.deviceWorkspaces[0],
+              workspaceSource: 'remote',
+              remoteHostId: 'remote-device',
+            },
+          ],
+          totalTasks: 0,
+        },
+      ],
+      chats: [],
+      totalTasks: 0,
+    }
+
+    const merged = mergeRuntimeWorkLists(
+      localDescriptor,
+      {
+        projects: [remoteProject],
+        chats: [],
+        totalTasks: 0,
+      },
+      {
+        devices: [device({ device_id: 'remote-device', device_type: 'remote' })],
+      }
+    )
+
+    expect(merged.projects).toHaveLength(1)
+    expect(merged.projects[0].project.id).toBe(remoteProjectId)
+    expect(runtimeProjectUiId(merged.projects[0].project)).toBe(remoteProjectId)
+    expect(merged.projects[0].project).toMatchObject({
+      key: workspacePath,
+      sidebarStateKey: 'wegent-remote:remote-device:%2Fsrv%2Frepo',
+      stateDeviceId: 'local-device',
+      source: 'remote_project',
+    })
   })
 
   test('keeps the cached public IP when a disconnected remote descriptor reports loopback', () => {

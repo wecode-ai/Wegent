@@ -10,7 +10,7 @@ import type {
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
-import { getAppPreferences } from '@/tauri/appPreferences'
+import { getAppPreferences } from '@/desktop/appPreferences'
 import type { WorkspaceTarget } from '@/types/workspace-files'
 import {
   configuredWorkspacePath,
@@ -18,7 +18,7 @@ import {
   resolveProjectWorkspacePath,
 } from '@/lib/project-workspace'
 
-interface DeviceCommandApi {
+export interface DeviceCommandApi {
   executeCommand(deviceId: string, data: DeviceCommandRequest): Promise<DeviceCommandResponse>
 }
 
@@ -37,11 +37,18 @@ const EMPTY_ENVIRONMENT_INFO: EnvironmentInfo = {
 }
 const INVALID_BRANCH_CHARACTERS = new Set([' ', '~', '^', ':', '?', '*', '[', '\\', ']'])
 const ENVIRONMENT_INFO_CACHE_TTL_MS = 1500
+let environmentLoadSequence = 0
+
+interface EnvironmentLoadDiagnostics {
+  loadId: number
+  startedAt: number
+}
 
 export type EnvironmentDiffMode = 'branch' | 'unstaged' | 'staged' | 'commit'
 
 export interface EnvironmentInfoLoadOptions {
   force?: boolean
+  onPartialInfo?: (info: EnvironmentInfo) => void
 }
 
 const ENVIRONMENT_DIFF_COMMANDS: Record<EnvironmentDiffMode, string> = {
@@ -57,12 +64,56 @@ type EnvironmentInfoCacheEntry = {
   expiresAt: number
   promise: Promise<EnvironmentInfo>
   settled: boolean
+  value?: EnvironmentInfo
+  partialState: {
+    info?: EnvironmentInfo
+    listeners: Set<(info: EnvironmentInfo) => void>
+  }
 }
 
 const environmentInfoCaches = new WeakMap<
   DeviceCommandApi,
   Map<string, EnvironmentInfoCacheEntry>
 >()
+
+function environmentNow(): number {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now()
+}
+
+function logEnvironmentLoad(
+  diagnostics: EnvironmentLoadDiagnostics,
+  stage: string,
+  details: Record<string, unknown> = {}
+): void {
+  console.info('[Wework] Environment load', {
+    loadId: diagnostics.loadId,
+    stage,
+    elapsedMs: Math.round(environmentNow() - diagnostics.startedAt),
+    ...details,
+  })
+}
+
+async function traceEnvironmentOperation<T>(
+  diagnostics: EnvironmentLoadDiagnostics,
+  stage: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAt = environmentNow()
+  logEnvironmentLoad(diagnostics, `${stage}:started`)
+  try {
+    const result = await operation()
+    logEnvironmentLoad(diagnostics, `${stage}:completed`, {
+      durationMs: Math.round(environmentNow() - startedAt),
+    })
+    return result
+  } catch (error) {
+    logEnvironmentLoad(diagnostics, `${stage}:failed`, {
+      durationMs: Math.round(environmentNow() - startedAt),
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
+}
 
 function outputAsString(output: DeviceCommandResponse['stdout']): string {
   if (typeof output === 'string') {
@@ -74,7 +125,9 @@ function outputAsString(output: DeviceCommandResponse['stdout']): string {
   throw new Error('Expected text stdout from device command')
 }
 
-function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string, unknown> | null {
+export function outputAsRecord(
+  output: DeviceCommandResponse['stdout']
+): Record<string, unknown> | null {
   if (typeof output === 'string') {
     try {
       const parsed = JSON.parse(output)
@@ -90,7 +143,7 @@ function outputAsRecord(output: DeviceCommandResponse['stdout']): Record<string,
     : null
 }
 
-function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
+export function outputAsArray(output: DeviceCommandResponse['stdout']): unknown[] | null {
   if (typeof output === 'string') {
     try {
       const parsed = JSON.parse(output)
@@ -215,6 +268,9 @@ function normalizeMergeability(
 
 function githubCheckStatuses(record: Record<string, unknown>): string[] {
   const rollup = record.statusCheckRollup
+  if (rollup && typeof rollup === 'object' && !Array.isArray(rollup)) {
+    return [stringValue(rollup as Record<string, unknown>, 'state')].filter(Boolean)
+  }
   if (!Array.isArray(rollup)) return []
   const latestChecks = new Map<
     string,
@@ -225,8 +281,12 @@ function githubCheckStatuses(record: Record<string, unknown>): string[] {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return
     const check = item as Record<string, unknown>
     const name = stringValue(check, 'name', 'context')
-    const workflowName = stringValue(check, 'workflowName')
-    const startedAtValue = stringValue(check, 'startedAt', 'completedAt')
+    const workflow =
+      check.workflow && typeof check.workflow === 'object' && !Array.isArray(check.workflow)
+        ? (check.workflow as Record<string, unknown>)
+        : null
+    const workflowName = stringValue(check, 'workflowName') || (workflow?.name as string) || ''
+    const startedAtValue = stringValue(check, 'startedAt', 'completedAt', 'createdAt')
     const startedAt = Date.parse(startedAtValue)
     const canIdentifyRun = name && Number.isFinite(startedAt)
     const identity = canIdentifyRun ? `${workflowName}\0${name}` : `unidentified\0${index}`
@@ -271,25 +331,40 @@ function githubMergeQueueState(value: unknown): ChangeRequestMergeQueueState {
   return resource.mergeQueueEntry ? 'queued' : 'not_queued'
 }
 
-function parseChangeRequest(provider: ChangeRequestProvider, value: unknown): ChangeRequest | null {
+export function parseChangeRequest(
+  provider: ChangeRequestProvider,
+  value: unknown
+): ChangeRequest | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record = value as Record<string, unknown>
   const number = numberValue(record, 'number', 'iid')
-  const url = stringValue(record, 'url', 'web_url', 'webUrl')
+  const url = stringValue(record, 'url', 'html_url', 'web_url', 'webUrl')
   if (!number || !url) return null
+  const head =
+    record.head && typeof record.head === 'object' && !Array.isArray(record.head)
+      ? (record.head as Record<string, unknown>)
+      : null
+  const mergedAt = stringValue(record, 'mergedAt', 'merged_at')
+  const state = mergedAt ? 'merged' : normalizeChangeRequestState(stringValue(record, 'state'))
+  const headBranch =
+    stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
+    (head ? stringValue(head, 'ref') : '')
+  const updatedAt = stringValue(record, 'updatedAt', 'updated_at')
 
   return {
     provider,
     number,
     url,
     title: stringValue(record, 'title'),
-    state: normalizeChangeRequestState(stringValue(record, 'state')),
+    state,
     draft: booleanValue(record, 'isDraft', 'draft'),
     checks: normalizeChecksState(
       provider === 'github' ? githubCheckStatuses(record) : gitlabCheckStatuses(record)
     ),
     mergeability: normalizeMergeability(provider, record),
     mergeQueue: 'unknown',
+    ...(headBranch ? { headBranch } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
   }
 }
 
@@ -320,7 +395,9 @@ async function loadChangeRequest(
   deviceId: string,
   path: string,
   remoteUrl: string,
-  branchName: string
+  branchName: string,
+  diagnostics: EnvironmentLoadDiagnostics,
+  onInitialLookup?: (lookup: ChangeRequestLookup) => void
 ): Promise<ChangeRequestLookup | undefined> {
   const remote = parseGitRemote(remoteUrl)
   const branch = branchName.trim()
@@ -335,13 +412,16 @@ async function loadChangeRequest(
 
   let response: DeviceCommandResponse
   try {
-    response = await api.executeCommand(deviceId, {
-      command_key: provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
-      path,
-      args: [branch],
-      timeout_seconds: 20,
-      max_output_bytes: 256 * 1024,
-    })
+    response = await traceEnvironmentOperation(diagnostics, 'change_request', () =>
+      api.executeCommand(deviceId, {
+        command_key:
+          provider === 'github' ? 'git_github_pull_requests' : 'git_gitlab_merge_requests',
+        path,
+        args: [branch],
+        timeout_seconds: 20,
+        max_output_bytes: 256 * 1024,
+      })
+    )
   } catch {
     return { provider, state: 'error' }
   }
@@ -362,15 +442,23 @@ async function loadChangeRequest(
     return { provider, state: 'not_found' }
   }
 
+  onInitialLookup?.({
+    provider,
+    state: 'found',
+    changeRequest: { ...changeRequest },
+  })
+
   if (provider === 'github' && changeRequest.state === 'open') {
     try {
-      const queueResponse = await api.executeCommand(deviceId, {
-        command_key: 'git_github_pull_request_merge_queue',
-        path,
-        args: ['-F', `url=${changeRequest.url}`],
-        timeout_seconds: 20,
-        max_output_bytes: 64 * 1024,
-      })
+      const queueResponse = await traceEnvironmentOperation(diagnostics, 'merge_queue', () =>
+        api.executeCommand(deviceId, {
+          command_key: 'git_github_pull_request_merge_queue',
+          path,
+          args: ['-F', `url=${changeRequest.url}`],
+          timeout_seconds: 20,
+          max_output_bytes: 64 * 1024,
+        })
+      )
       if (queueResponse.success) {
         changeRequest.mergeQueue = githubMergeQueueState(outputAsRecord(queueResponse.stdout))
       }
@@ -489,7 +577,7 @@ export function parseGitShortStat(value: string): Pick<EnvironmentInfo, 'additio
   }
 }
 
-function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
+export function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
   const trimmed = remoteUrl.trim().replace(/\.git$/, '')
   if (!trimmed) {
     return null
@@ -505,8 +593,9 @@ function parseGitRemote(remoteUrl: string): GitRemoteParts | null {
 
   try {
     const url = new URL(trimmed)
+    const host = url.protocol === 'ssh:' || url.protocol === 'git+ssh:' ? url.hostname : url.host
     return {
-      host: url.host,
+      host,
       repoPath: url.pathname.replace(/^\/+/, ''),
     }
   } catch {
@@ -706,7 +795,12 @@ async function commandContext(
 async function loadProjectEnvironmentUncached(
   api: DeviceCommandApi,
   project: ProjectWithTasks | null,
-  target?: EnvironmentWorkspaceTarget | null
+  target?: EnvironmentWorkspaceTarget | null,
+  onPartialInfo?: (info: EnvironmentInfo) => void,
+  diagnostics: EnvironmentLoadDiagnostics = {
+    loadId: ++environmentLoadSequence,
+    startedAt: environmentNow(),
+  }
 ): Promise<EnvironmentInfo> {
   if (!project && !target) {
     return EMPTY_ENVIRONMENT_INFO
@@ -727,9 +821,12 @@ async function loadProjectEnvironmentUncached(
   let deviceId: string
   let path: string
   try {
-    const context = await commandContext(api, project, target)
+    const context = await traceEnvironmentOperation(diagnostics, 'workspace_context', () =>
+      commandContext(api, project, target)
+    )
     deviceId = context.deviceId
     path = context.path
+    logEnvironmentLoad(diagnostics, 'workspace_ready', { deviceId, path })
   } catch (error) {
     return {
       ...baseInfo,
@@ -744,16 +841,73 @@ async function loadProjectEnvironmentUncached(
   }
 
   try {
-    const [branchName, shortStat, porcelain] = await Promise.all([
-      runGitCommand(api, deviceId, 'git_branch', path),
-      loadBranchDiffShortStat(api, deviceId, path),
-      runGitCommand(api, deviceId, 'git_status_porcelain', path).catch(() => ''),
+    const branchNamePromise = traceEnvironmentOperation(diagnostics, 'git_branch', () =>
+      runGitCommand(api, deviceId, 'git_branch', path)
+    )
+    const shortStatPromise = traceEnvironmentOperation(diagnostics, 'git_diff', () =>
+      loadBranchDiffShortStat(api, deviceId, path)
+    )
+    const porcelainPromise = traceEnvironmentOperation(diagnostics, 'git_status', () =>
+      runGitCommand(api, deviceId, 'git_status_porcelain', path)
+    ).catch(() => '')
+    const remoteUrlPromise = traceEnvironmentOperation(diagnostics, 'git_remote', () =>
+      runGitCommand(api, deviceId, 'git_remote_url', path)
+    ).catch(() => '')
+    const changeRequestEnabledPromise = traceEnvironmentOperation(
+      diagnostics,
+      'change_request_preference',
+      () => getAppPreferences().then(preferences => preferences.changeRequestStatusEnabled)
+    )
+    const branchInfoPromise = Promise.all([branchNamePromise, remoteUrlPromise]).then(
+      ([branchName, remoteUrl]) => {
+        const branchInfo: EnvironmentInfo = {
+          ...environmentWorkspaceInfo,
+          additions: '',
+          deletions: '',
+          isGitRepository: true,
+          branchName,
+          createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
+        }
+        logEnvironmentLoad(diagnostics, 'branch_published', { branchName })
+        onPartialInfo?.(branchInfo)
+        return { branchInfo, branchName, remoteUrl }
+      }
+    )
+    const changeRequestPromise = Promise.all([branchInfoPromise, changeRequestEnabledPromise]).then(
+      async ([{ branchInfo, branchName, remoteUrl }, changeRequestStatusEnabled]) => {
+        const changeRequest = changeRequestStatusEnabled
+          ? await loadChangeRequest(
+              api,
+              deviceId,
+              path,
+              remoteUrl,
+              branchName,
+              diagnostics,
+              initialLookup => {
+                logEnvironmentLoad(diagnostics, 'change_request_published', {
+                  state: initialLookup.state,
+                  number: initialLookup.changeRequest?.number,
+                })
+                onPartialInfo?.({ ...branchInfo, changeRequest: initialLookup })
+              }
+            )
+          : undefined
+        if (changeRequest) {
+          logEnvironmentLoad(diagnostics, 'change_request_final_published', {
+            state: changeRequest.state,
+            number: changeRequest.changeRequest?.number,
+          })
+          onPartialInfo?.({ ...branchInfo, changeRequest })
+        }
+        return changeRequest
+      }
+    )
+    const [{ branchName, remoteUrl }, shortStat, porcelain, changeRequest] = await Promise.all([
+      branchInfoPromise,
+      shortStatPromise,
+      porcelainPromise,
+      changeRequestPromise,
     ])
-    const remoteUrl = await runGitCommand(api, deviceId, 'git_remote_url', path).catch(() => '')
-    const changeRequestStatusEnabled = (await getAppPreferences()).changeRequestStatusEnabled
-    const changeRequest = changeRequestStatusEnabled
-      ? await loadChangeRequest(api, deviceId, path, remoteUrl, branchName)
-      : undefined
     const diff = parseGitShortStat(shortStat)
 
     // Count pending files from porcelain (untracked, staged, modified).
@@ -774,7 +928,7 @@ async function loadProjectEnvironmentUncached(
       diff.additions = `+${porcelainLines.length}`
     }
 
-    return {
+    const result = {
       ...environmentWorkspaceInfo,
       ...diff,
       isGitRepository: true,
@@ -782,6 +936,12 @@ async function loadProjectEnvironmentUncached(
       createPullRequestUrl: buildPullRequestUrl(remoteUrl, branchName),
       ...(changeRequest ? { changeRequest } : {}),
     }
+    logEnvironmentLoad(diagnostics, 'completed', {
+      branchName,
+      changeRequestState: changeRequest?.state,
+      changeRequestNumber: changeRequest?.changeRequest?.number,
+    })
+    return result
   } catch (error) {
     const isGitRepository = await probeGitRepository(api, deviceId, path).catch(() => undefined)
     if (isGitRepository === false) {
@@ -804,13 +964,18 @@ export async function loadProjectEnvironment(
   target?: EnvironmentWorkspaceTarget | null,
   options: EnvironmentInfoLoadOptions = {}
 ): Promise<EnvironmentInfo> {
+  const diagnostics: EnvironmentLoadDiagnostics = {
+    loadId: ++environmentLoadSequence,
+    startedAt: environmentNow(),
+  }
   if (!project && !target) {
     return cloneEnvironmentInfo(EMPTY_ENVIRONMENT_INFO)
   }
 
   const cacheKey = environmentInfoCacheKey(project, target)
   if (!cacheKey) {
-    return loadProjectEnvironmentUncached(api, project, target)
+    logEnvironmentLoad(diagnostics, 'cache_bypassed')
+    return loadProjectEnvironmentUncached(api, project, target, options.onPartialInfo, diagnostics)
   }
 
   const now = Date.now()
@@ -819,18 +984,78 @@ export async function loadProjectEnvironment(
   // Forced polling must still share an in-flight load. Replacing a slow request
   // on every poll prevents any result from settling the environment loading state.
   if (cached && (!cached.settled || (!options.force && cached.expiresAt > now))) {
-    return cloneEnvironmentInfo(await cached.promise)
+    logEnvironmentLoad(diagnostics, cached.settled ? 'cache_hit' : 'cache_joined', {
+      force: Boolean(options.force),
+      expiresInMs: cached.expiresAt - now,
+    })
+    if (options.onPartialInfo) {
+      cached.partialState.listeners.add(options.onPartialInfo)
+      if (cached.partialState.info) {
+        options.onPartialInfo(cloneEnvironmentInfo(cached.partialState.info))
+      }
+    }
+    try {
+      const info = cloneEnvironmentInfo(await cached.promise)
+      logEnvironmentLoad(diagnostics, 'cache_result_returned')
+      return info
+    } finally {
+      if (options.onPartialInfo) {
+        cached.partialState.listeners.delete(options.onPartialInfo)
+      }
+    }
+  }
+  const staleInfo =
+    !options.force && cached?.settled && cached.value
+      ? cloneEnvironmentInfo(cached.value)
+      : undefined
+  if (staleInfo && options.onPartialInfo) {
+    logEnvironmentLoad(diagnostics, 'stale_cache_published', {
+      branchName: staleInfo.branchName,
+      changeRequestNumber: staleInfo.changeRequest?.changeRequest?.number,
+    })
+    options.onPartialInfo(cloneEnvironmentInfo(staleInfo))
   }
 
-  const promise = loadProjectEnvironmentUncached(api, project, target)
+  const partialState: EnvironmentInfoCacheEntry['partialState'] = {
+    info: staleInfo,
+    listeners: new Set(options.onPartialInfo ? [options.onPartialInfo] : []),
+  }
+  const promise = loadProjectEnvironmentUncached(
+    api,
+    project,
+    target,
+    partialInfo => {
+      const previousInfo = partialState.info
+      partialState.info =
+        previousInfo &&
+        previousInfo.workspacePath === partialInfo.workspacePath &&
+        previousInfo.deviceId === partialInfo.deviceId &&
+        !partialInfo.changeRequest
+          ? {
+              ...partialInfo,
+              ...(previousInfo.changeRequest ? { changeRequest: previousInfo.changeRequest } : {}),
+            }
+          : cloneEnvironmentInfo(partialInfo)
+      partialState.listeners.forEach(listener =>
+        listener(cloneEnvironmentInfo(partialState.info ?? partialInfo))
+      )
+    },
+    diagnostics
+  )
+  logEnvironmentLoad(diagnostics, 'cache_miss', {
+    force: Boolean(options.force),
+    revalidatingStale: Boolean(staleInfo),
+  })
   const entry: EnvironmentInfoCacheEntry = {
     expiresAt: now + ENVIRONMENT_INFO_CACHE_TTL_MS,
     promise,
     settled: false,
+    partialState,
   }
   environmentInfoCache.set(cacheKey, entry)
   void promise.then(
-    () => {
+    info => {
+      entry.value = cloneEnvironmentInfo(info)
       entry.settled = true
     },
     () => {
@@ -843,6 +1068,10 @@ export async function loadProjectEnvironment(
   } catch (error) {
     environmentInfoCache.delete(cacheKey)
     throw error
+  } finally {
+    if (options.onPartialInfo) {
+      entry.partialState.listeners.delete(options.onPartialInfo)
+    }
   }
 }
 

@@ -25,11 +25,13 @@ interface WorkbenchModelApi {
 interface UseWorkbenchModelsOptions {
   api: WorkbenchModelApi
   locked: boolean
+  enabled?: boolean
   filterModel?: (model: UnifiedModel) => boolean
   scopeKey?: string
   persistSelection?: boolean
   selectionConfig?: ModelSelectionConfig | null
   defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
+  fallbackWhenConfiguredModelUnavailable?: boolean
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
   onSelectionBlocked?: (
@@ -66,43 +68,25 @@ function areModelOptionsEqual(left: ModelOptions, right: ModelOptions): boolean 
   return leftKeys.every(key => left[key] === right[key])
 }
 
-function getSelectionKey(
-  models: UnifiedModel[],
-  selectionConfig?: ModelSelectionConfig | null
-): string {
-  const modelsKey = models
-    .map(model => {
-      const identity = modelSelectionIdentityOptions(model)
-      return [
-        model.type,
-        model.name,
-        identity.codexProviderId ?? '',
-        identity.weworkCloudModelNamespace ?? '',
-        identity.weworkCloudModelResourceUserId ?? '',
-      ].join(':')
-    })
-    .join('|')
+function getSelectionKey(selectionConfig?: ModelSelectionConfig | null): string {
   const options = selectionConfig?.options ?? {}
   const optionsKey = Object.keys(options)
     .sort()
     .map(key => `${key}:${options[key]}`)
     .join('|')
-  return [
-    modelsKey,
-    selectionConfig?.modelType ?? '',
-    selectionConfig?.modelName ?? '',
-    optionsKey,
-  ].join('::')
+  return [selectionConfig?.modelType ?? '', selectionConfig?.modelName ?? '', optionsKey].join('::')
 }
 
 export function useWorkbenchModels({
   api,
   locked,
+  enabled = true,
   filterModel,
   scopeKey = DEFAULT_MODEL_SCOPE_KEY,
   persistSelection = true,
   selectionConfig,
   defaultSelectionConfig,
+  fallbackWhenConfiguredModelUnavailable = true,
   selectionReady = true,
   onSelectionChange,
   onSelectionBlocked,
@@ -122,34 +106,61 @@ export function useWorkbenchModels({
   const selectedModelOptions = selectedModelOptionsByScope[scopeKey] ?? {}
   const selectedModelRef = useRef<Record<string, UnifiedModel | null>>({})
   const selectedModelOptionsRef = useRef<Record<string, ModelOptions>>({})
+  const modelLoadRevisionRef = useRef(0)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [restoredSelectionKeyByScope, setRestoredSelectionKeyByScope] = useState<
     Record<string, string | null>
   >({})
+  const [locallySelectedReplacementByScope, setLocallySelectedReplacementByScope] = useState<
+    Record<string, boolean>
+  >({})
   const effectiveSelectionConfig = useMemo(() => {
-    if (selectionConfig?.modelName && findModelForSelection(models, selectionConfig)) {
-      return selectionConfig
+    if (selectionConfig?.modelName) {
+      if (
+        findModelForSelection(models, selectionConfig) ||
+        !fallbackWhenConfiguredModelUnavailable
+      ) {
+        return selectionConfig
+      }
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
-  }, [defaultSelectionConfig, models, selectionConfig])
+  }, [defaultSelectionConfig, fallbackWhenConfiguredModelUnavailable, models, selectionConfig])
   const selectionKey = useMemo(
-    () => getSelectionKey(models, effectiveSelectionConfig),
-    [models, effectiveSelectionConfig]
+    () => getSelectionKey(effectiveSelectionConfig),
+    [effectiveSelectionConfig]
+  )
+  const configuredModelAvailable = Boolean(
+    effectiveSelectionConfig?.modelName && findModelForSelection(models, effectiveSelectionConfig)
+  )
+  const selectedModelAvailable = Boolean(
+    selectedModel && models.some(model => isSameModelSelection(model, selectedModel))
+  )
+  const hasLocallySelectedReplacement = Boolean(
+    !persistSelection &&
+    !configuredModelAvailable &&
+    locallySelectedReplacementByScope[scopeKey] &&
+    selectedModelAvailable
   )
   const selectionMatchesConfig = Boolean(
+    hasLocallySelectedReplacement ||
+    (selectedModel && findModelForSelection([selectedModel], effectiveSelectionConfig))
+  )
+  const configuredModelUnavailable = Boolean(
     effectiveSelectionConfig?.modelName &&
-    selectedModel &&
-    selectedModel.name === effectiveSelectionConfig.modelName &&
-    (!effectiveSelectionConfig.modelType ||
-      selectedModel.type === effectiveSelectionConfig.modelType)
+    !configuredModelAvailable &&
+    !hasLocallySelectedReplacement
   )
   const isSelectionReady = useMemo(
     () =>
-      selectionReady &&
-      !isLoading &&
-      (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig),
+      !enabled ||
+      (selectionReady &&
+        !isLoading &&
+        !configuredModelUnavailable &&
+        (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig)),
     [
+      configuredModelUnavailable,
+      enabled,
       isLoading,
       restoredSelectionKeyByScope,
       scopeKey,
@@ -175,6 +186,9 @@ export function useWorkbenchModels({
         if (areModelOptionsEqual(current[scopeKey] ?? {}, nextOptions)) return current
         return { ...current, [scopeKey]: nextOptions }
       })
+      setLocallySelectedReplacementByScope(current =>
+        current[scopeKey] ? { ...current, [scopeKey]: false } : current
+      )
     },
     [scopeKey]
   )
@@ -217,24 +231,27 @@ export function useWorkbenchModels({
   }, [])
 
   useEffect(() => {
+    if (!enabled) return
+
     let cancelled = false
 
     async function loadModels() {
+      const revision = ++modelLoadRevisionRef.current
       setIsLoading(true)
       setError(null)
       try {
         const response = await api.listModels()
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           const filtered = response.data.filter(isSupportedModelFamily)
           reconcileSelectedModels(filterModel ? filtered.filter(filterModel) : filtered)
           setAvailableModels(filtered)
         }
       } catch (nextError) {
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           setError(nextError instanceof Error ? nextError : new Error('Failed to load models'))
         }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && revision === modelLoadRevisionRef.current) {
           setIsLoading(false)
         }
       }
@@ -248,10 +265,10 @@ export function useWorkbenchModels({
       window.removeEventListener(LOCAL_MODEL_SETTINGS_CHANGED_EVENT, loadModels)
       window.removeEventListener(WORKBENCH_MODELS_CHANGED_EVENT, loadModels)
     }
-  }, [api, filterModel, reconcileSelectedModels])
+  }, [api, enabled, filterModel, reconcileSelectedModels])
 
   useEffect(() => {
-    if (!selectionReady) {
+    if (!enabled || !selectionReady) {
       return
     }
 
@@ -264,7 +281,15 @@ export function useWorkbenchModels({
           Object.prototype.hasOwnProperty.call(selectedModelRef.current, scopeKey) ||
           Object.prototype.hasOwnProperty.call(selectedModelOptionsRef.current, scopeKey)
         const scopeSelectionAlreadyRestored = restoredSelectionKeyByScope[scopeKey] === selectionKey
-        if (!hasScopeSelection || !scopeSelectionAlreadyRestored) {
+        const configuredModelAvailable = Boolean(
+          effectiveSelectionConfig?.modelName &&
+          findModelForSelection(models, effectiveSelectionConfig)
+        )
+        if (
+          !hasScopeSelection ||
+          !scopeSelectionAlreadyRestored ||
+          (configuredModelAvailable && !selectedModelRef.current[scopeKey])
+        ) {
           restoreSelection(models, effectiveSelectionConfig)
         }
         setRestoredSelectionKeyByScope(current =>
@@ -279,6 +304,7 @@ export function useWorkbenchModels({
     }
   }, [
     effectiveSelectionConfig,
+    enabled,
     models,
     restoreSelection,
     restoredSelectionKeyByScope,
@@ -311,6 +337,10 @@ export function useWorkbenchModels({
       selectedModelOptionsRef.current[scopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [scopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [scopeKey]: nextOptions }))
+      setLocallySelectedReplacementByScope(current => ({
+        ...current,
+        [scopeKey]: !persistSelection && Boolean(model),
+      }))
       if (model && persistSelection) {
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
@@ -381,13 +411,14 @@ export function useWorkbenchModels({
     selectedModel,
     selectedModelOptions,
     isSelectionReady,
+    isConfiguredModelUnavailable: configuredModelUnavailable,
     setSelectedModel,
     setSelectedModelAndOptions,
     setSelectedModelOption,
     setSelectionForScope,
     getSelectedModel,
     getSelectedModelOptions,
-    isLoading,
-    error,
+    isLoading: enabled && isLoading,
+    error: enabled ? error : null,
   }
 }

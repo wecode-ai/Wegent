@@ -63,6 +63,8 @@ interface WorkspacePanelActionsProps {
   onListEnvironmentBranches: () => Promise<string[]>
   onCheckoutEnvironmentBranch: (branchName: string) => Promise<void>
   onCreateEnvironmentBranch: (branchName: string) => Promise<void>
+  onGenerateEnvironmentBranch?: (sourceText: string) => Promise<string>
+  environmentBranchNameSource?: string
   onOpenEnvironmentChangesReview: () => void
   onDeliver?: () => void
   todoLabel?: string
@@ -98,6 +100,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   onListEnvironmentBranches,
   onCheckoutEnvironmentBranch,
   onCreateEnvironmentBranch,
+  onGenerateEnvironmentBranch,
+  environmentBranchNameSource,
   onOpenEnvironmentChangesReview,
   onDeliver,
   todoLabel,
@@ -172,6 +176,12 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       string,
       string | undefined
     >
+
+  const refreshLocalWorkspaceOpeners = async () => {
+    const availability = await listLocalWorkspaceOpeners()
+    setOpenerAvailability(buildAvailabilityMap(availability))
+    setOpenerLabels(buildLabelMap(availability))
+  }
 
   useEffect(() => {
     if (!localWorkspaceEnabled) return
@@ -304,6 +314,8 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
           onListBranches={onListEnvironmentBranches}
           onCheckoutBranch={onCheckoutEnvironmentBranch}
           onCreateBranch={onCreateEnvironmentBranch}
+          onGenerateBranchName={onGenerateEnvironmentBranch}
+          branchNameSource={environmentBranchNameSource}
           onOpenChangesReview={onOpenEnvironmentChangesReview}
           onDeliver={onDeliver}
           todoLabel={todoLabel}
@@ -359,6 +371,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             }
             labels={openerLabels}
             onChooseOther={handleChooseOther}
+            onOpen={refreshLocalWorkspaceOpeners}
             onSelect={handleOpenLocalWorkspace}
           />
         </div>

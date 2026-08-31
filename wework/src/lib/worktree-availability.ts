@@ -61,6 +61,11 @@ export interface ProbeProjectWorktreeAvailabilityInput extends Omit<
   ref?: string | null
 }
 
+const worktreeProbeInflight = new WeakMap<
+  ProjectWorktreeAvailabilityApi,
+  Map<string, Promise<ProjectWorktreeAvailability>>
+>()
+
 function unavailable(
   reason: Exclude<ProjectWorktreeAvailabilityReason, 'available'>,
   deviceId: string | null,
@@ -92,7 +97,7 @@ function projectedWorktreeCapability(
   device: Pick<DeviceInfo, 'runtime_features'>
 ): RuntimeWorktreeCapability | null {
   const runtimeFeatures = device.runtime_features
-  if (!runtimeFeatures || runtimeFeatures.schemaVersion !== 1) return null
+  if (!runtimeFeatures) return null
   return runtimeFeatures.worktrees ?? null
 }
 
@@ -282,7 +287,7 @@ function failedProbeAvailability(
   return unavailable('preflight_failed', structural.deviceId, structural.sourcePath)
 }
 
-export async function probeProjectWorktreeAvailability({
+async function probeProjectWorktreeAvailabilityUncached({
   api,
   project,
   workspace,
@@ -322,4 +327,34 @@ export async function probeProjectWorktreeAvailability({
     console.error('[Wework] Worktree availability probe failed', error)
     return failedProbeAvailability(input)
   }
+}
+
+export function probeProjectWorktreeAvailability(
+  input: ProbeProjectWorktreeAvailabilityInput
+): Promise<ProjectWorktreeAvailability> {
+  const structural = structuralAvailability(input)
+  if (structural.reason !== 'preflight_pending' || !structural.deviceId || !structural.sourcePath) {
+    return Promise.resolve(structural)
+  }
+
+  const key = JSON.stringify([
+    structural.deviceId,
+    structural.sourcePath,
+    input.ref?.trim() ?? '',
+    input.workspace?.repoRootFingerprint ?? '',
+    input.device?.device_id ?? '',
+    input.device?.device_type ?? '',
+    input.device?.status ?? '',
+    input.device?.runtime_routes ?? [],
+  ])
+  const probes = worktreeProbeInflight.get(input.api) ?? new Map()
+  worktreeProbeInflight.set(input.api, probes)
+  const existing = probes.get(key)
+  if (existing) return existing
+
+  const probe = probeProjectWorktreeAvailabilityUncached(input).finally(() => {
+    if (probes.get(key) === probe) probes.delete(key)
+  })
+  probes.set(key, probe)
+  return probe
 }

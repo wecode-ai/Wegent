@@ -47,6 +47,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
+  const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
@@ -62,11 +63,15 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
-      consumeWorkbenchComposerFocusRequest(scopeKey)
+      if (!consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
       focusComposer()
     }
     window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
-    if (!props.disabled && scopeKey && consumeWorkbenchComposerFocusRequest(scopeKey)) {
+    if (
+      !props.disabled &&
+      scopeKey &&
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
+    ) {
       focusComposer()
     }
     return () => {
@@ -110,13 +115,13 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   )
 
   const scheduleDraftFlush = useCallback(
-    (nextDraft: string) => {
+    (nextDraft: string, reason = 'debounce') => {
       cancelPendingFlush()
       pendingChangeRef.current = onChange
       flushTimeoutRef.current = window.setTimeout(() => {
         flushTimeoutRef.current = null
         recordComposerDiagnostic('draft-flush', {
-          reason: 'debounce',
+          reason,
           draftLength: nextDraft.length,
         })
         onChange(nextDraft)
@@ -206,9 +211,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   }, [cancelPendingFlush, cancelPendingFlushFrame, onParentCompositionStart])
   const handleCompositionEnd = useCallback(() => {
     isComposingRef.current = false
-    flushDraftNextFrame('composition-end')
+    cancelPendingFlushFrame()
+    scheduleDraftFlush(draftRef.current, 'composition-end-debounce')
     onParentCompositionEnd?.()
-  }, [flushDraftNextFrame, onParentCompositionEnd])
+  }, [cancelPendingFlushFrame, onParentCompositionEnd, scheduleDraftFlush])
 
   const handleSubmit = useCallback(
     (valueOverride?: string, options?: ChatSubmitOptions) => {

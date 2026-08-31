@@ -5,6 +5,7 @@
 use std::{
     collections::VecDeque,
     future::Future,
+    io::Read,
     pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
@@ -13,11 +14,14 @@ use std::{
 #[cfg(unix)]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use flate2::read::GzDecoder;
 use serde_json::{json, Value};
 use tokio::{sync::broadcast, time::timeout};
 use wegent_executor::{
     config::device::{DeviceConfig, UpdateConfig},
     emitter::ResponsesEventBuilder,
+    local::app_ipc::{AppIpcError, RuntimeWorkHandler},
     local::backend::{
         build_runtime_auth_file_report, is_usable_device_ip, CapabilityReportProvider,
         LocalBackendClient, LocalBackendConfig, LocalBackendEventSink, LocalBackendRunner,
@@ -56,7 +60,19 @@ async fn local_backend_registers_device_with_python_compatible_payload() {
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["client_ip"], "192.0.2.10");
     assert_eq!(calls[0].payload["runtime_transfer_host"], "192.0.2.10");
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 2);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["runtimeTaskCreate"]["schemaVersions"],
+        json!([1, 2])
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["runtimeTaskCreate"]["features"]["goal"],
+        true
+    );
+    assert_eq!(
+        calls[0].payload["runtime_features"]["runtimeTaskCreate"]["features"]["supervisor"],
+        true
+    );
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
@@ -121,7 +137,11 @@ async fn local_backend_heartbeat_reports_running_tasks_capabilities_and_auth_fil
     assert_eq!(calls[0].payload["executor_version"], "test-version");
     assert_eq!(calls[0].payload["capabilities"]["revision"], 0);
     assert_eq!(calls[0].payload["capabilities"]["skills"], json!([]));
-    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 1);
+    assert_eq!(calls[0].payload["runtime_features"]["schemaVersion"], 2);
+    assert_eq!(
+        calls[0].payload["runtime_features"]["runtimeTaskCreate"]["schemaVersions"],
+        json!([1, 2])
+    );
     assert_eq!(
         calls[0].payload["runtime_features"]["worktrees"]["version"],
         1
@@ -538,6 +558,110 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
 }
 
 #[tokio::test]
+async fn local_backend_runtime_rpc_handler_compresses_large_ack_payloads() {
+    let transport = RecordingTransport::default();
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let expected = json!({
+        "success": true,
+        "messages": [{
+            "id": "message-1",
+            "role": "assistant",
+            "content": "large transcript 中文🙂".repeat(80_000),
+        }],
+    });
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(expected.clone())),
+        event_rx,
+    );
+    drop(event_tx);
+    runner.register_handlers();
+
+    let handler = transport.handler("runtime:rpc").unwrap();
+    let ack = handler(json!({
+        "method": "runtime.tasks.transcript",
+        "payload": {"localTaskId": "large-1"}
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["__runtimeRpcEncoding"], "gzip+base64+json");
+    assert!(serde_json::to_vec(&ack).unwrap().len() < 1_000_000);
+    assert_eq!(decode_compressed_runtime_ack(&ack), expected);
+}
+
+#[tokio::test]
+async fn connected_executor_pulls_and_accepts_cloud_runtime_work() {
+    let task = json!({
+        "execution_id": 268,
+        "runtime_task_id": "codex-queue-268",
+        "prompt": "Build the calculator",
+        "payload": {
+            "taskId": "codex-queue-268",
+            "executionRequest": {
+                "task_id": "codex-queue-268",
+                "subtask_id": "codex-queue-268-assistant"
+            }
+        }
+    });
+    let transport = RecordingTransport::with_responses(vec![
+        json!([{"success": true}]),
+        json!([{"success": true, "task": task}]),
+        json!([{"success": true}]),
+        json!([{"success": true, "task": null}]),
+    ]);
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(json!({"success": true}))),
+        event_rx,
+    );
+    drop(event_tx);
+
+    runner.connect_and_register().await.unwrap();
+
+    let calls = transport.wait_for_calls(4).await;
+    assert_eq!(
+        calls
+            .iter()
+            .map(|call| call.event.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "device:register",
+            "runtime.tasks.pull",
+            "runtime.tasks.accept",
+            "runtime.tasks.pull",
+        ]
+    );
+    assert_eq!(calls[2].payload["execution_id"], 268);
+    assert_eq!(calls[2].payload["runtime_task_id"], "codex-queue-268");
+    assert_eq!(calls[2].payload["accepted"], true);
+    assert_eq!(transport.emits()[0].event, "device:heartbeat");
+}
+
+#[tokio::test]
+async fn runtime_polling_does_not_block_initial_liveness_heartbeat() {
+    let transport = RecordingTransport::with_responses(vec![json!({"success": true})]);
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(PendingRuntimeWorkHandler),
+        event_rx,
+    );
+    drop(event_tx);
+
+    timeout(Duration::from_secs(1), runner.connect_and_register())
+        .await
+        .expect("runtime polling must not block registration heartbeat")
+        .unwrap();
+
+    assert_eq!(transport.emits()[0].event, "device:heartbeat");
+}
+
+#[tokio::test]
 async fn local_backend_relays_events_from_shared_app_runtime_handler() {
     let transport = RecordingTransport::default();
     let (event_tx, _) = broadcast::channel(8);
@@ -546,12 +670,14 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
         local_backend_config(),
         transport.clone(),
         handler,
         event_tx.subscribe(),
     );
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_emit_event("device:heartbeat").await;
 
     event_tx
         .send(json!({
@@ -561,27 +687,24 @@ async fn local_backend_relays_events_from_shared_app_runtime_handler() {
         }))
         .unwrap();
 
-    timeout(Duration::from_secs(3), async {
-        loop {
-            if !transport.emits().is_empty() {
-                return;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    transport.wait_for_emit_event("runtime:event").await;
+    runner_task.abort();
+    let _ = runner_task.await;
 
-    let emits = transport.emits();
+    let emits = transport.emits_for_event("runtime:event");
     assert_eq!(emits.len(), 1);
     assert_eq!(emits[0].event, "runtime:event");
     assert_eq!(emits[0].payload["event"], "runtime.task.completed");
 }
 
 #[tokio::test]
-async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
+async fn local_backend_replays_runtime_events_after_reconnecting() {
     let transport = RecordingTransport::with_emit_results(vec![
+        Ok(()),
         Err("Socket.IO client is not connected".to_owned()),
+        Err("heartbeat failed before reconnect".to_owned()),
+        Err("heartbeat failed before reconnect".to_owned()),
+        Ok(()),
         Ok(()),
     ]);
     let (event_tx, _) = broadcast::channel(8);
@@ -590,12 +713,19 @@ async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
         "/bin/false",
         event_tx.clone(),
     ));
-    let _runner = LocalBackendRunner::new_with_shared_runtime_work_handler(
-        local_backend_config(),
+    let mut config = local_backend_config();
+    config.heartbeat_interval = Duration::from_millis(100);
+    config.heartbeat_timeout = Duration::from_millis(5);
+    config.reconnect_delay = Duration::from_millis(1);
+    config.reconnect_delay_max = Duration::from_millis(1);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        config,
         transport.clone(),
         handler,
         event_tx.subscribe(),
     );
+    let runner_task = tokio::spawn(runner.run_forever());
+    transport.wait_for_emit_event("device:heartbeat").await;
     let event = json!({
         "type": "event",
         "event": "runtime.task.completed",
@@ -604,12 +734,14 @@ async fn local_backend_retries_runtime_events_until_the_backend_accepts_them() {
 
     event_tx.send(event.clone()).unwrap();
 
-    let emits = transport.wait_for_emits(2).await;
+    let emits = transport.wait_for_emit_count("runtime:event", 2).await;
+    runner_task.abort();
+    let _ = runner_task.await;
     assert_eq!(emits.len(), 2);
     assert_eq!(emits[0].event, "runtime:event");
-    assert_eq!(emits[0].payload, event);
     assert_eq!(emits[1].event, "runtime:event");
-    assert_eq!(emits[1].payload, event);
+    assert_eq!(emits[0].payload["event"], "runtime.task.completed");
+    assert_eq!(emits[1].payload["event"], "runtime.task.completed");
 }
 
 #[test]
@@ -700,6 +832,20 @@ impl RecordingTransport {
         self.emits.lock().unwrap().clone()
     }
 
+    async fn wait_for_calls(&self, count: usize) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let calls = self.calls();
+                if calls.len() >= count {
+                    return calls;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
     fn handler(&self, event: &str) -> Option<wegent_executor::local::backend::EventHandler> {
         self.handlers
             .lock()
@@ -730,15 +876,42 @@ impl RecordingTransport {
     async fn wait_for_emit_event(&self, event: &str) -> Vec<RecordedCall> {
         timeout(Duration::from_secs(10), async {
             loop {
+                let notified = self.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
                 let emits = self.emits();
                 if emits.iter().any(|emit| emit.event == event) {
                     return emits;
                 }
-                self.notify.notified().await;
+                notified.await;
             }
         })
         .await
         .unwrap()
+    }
+
+    async fn wait_for_emit_count(&self, event: &str, count: usize) -> Vec<RecordedCall> {
+        timeout(Duration::from_secs(10), async {
+            loop {
+                let notified = self.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                let emits = self.emits_for_event(event);
+                if emits.len() >= count {
+                    return emits;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    fn emits_for_event(&self, event: &str) -> Vec<RecordedCall> {
+        self.emits()
+            .into_iter()
+            .filter(|emit| emit.event == event)
+            .collect()
     }
 }
 
@@ -852,6 +1025,38 @@ impl CapabilityReportProvider for StaticCapabilityReporter {
             "last_sync_at": null,
         })
     }
+}
+
+struct StaticRuntimeWorkHandler(Value);
+
+impl RuntimeWorkHandler for StaticRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move { Ok(self.0.clone()) })
+    }
+}
+
+struct PendingRuntimeWorkHandler;
+
+impl RuntimeWorkHandler for PendingRuntimeWorkHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(std::future::pending())
+    }
+}
+
+fn decode_compressed_runtime_ack(ack: &Value) -> Value {
+    let compressed = BASE64_STANDARD
+        .decode(ack["payload"].as_str().expect("compressed payload"))
+        .expect("valid base64");
+    let mut decoder = GzDecoder::new(compressed.as_slice());
+    let mut raw = Vec::new();
+    decoder.read_to_end(&mut raw).expect("valid gzip");
+    serde_json::from_slice(&raw).expect("valid runtime response")
 }
 
 #[cfg(unix)]

@@ -18,7 +18,7 @@ import {
 } from '@/lib/local-harness'
 import { listLocalHarnesses, type LocalHarnessDescriptor } from '@/lib/local-terminal'
 import { openNativeExecutablePicker } from '@/lib/native-executable-picker'
-import { updateAppPreferences } from '@/tauri/appPreferences'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import {
   SettingsGroup,
   SettingsPage,
@@ -50,12 +50,6 @@ function buildDrafts(preferences: LocalHarnessPreference[]): Record<LocalHarness
   ) as Record<LocalHarnessId, HarnessDraft>
 }
 
-function executableOverrides(drafts: Record<LocalHarnessId, HarnessDraft>) {
-  return Object.fromEntries(
-    Object.values(drafts).map(({ preference }) => [preference.id, preference.executablePath])
-  ) as Partial<Record<LocalHarnessId, string | null>>
-}
-
 export function HarnessSettingsPage() {
   const { t } = useTranslation('common')
   const preferencesState = useAppPreferencesState()
@@ -76,15 +70,21 @@ export function HarnessSettingsPage() {
     setDrafts(buildDrafts(storedPreferences))
   }
 
-  const overrides = useMemo(() => executableOverrides(drafts), [drafts])
-  const storedOverrides = useMemo(
-    () => executableOverrides(buildDrafts(storedPreferences)),
-    [storedPreferences]
+  const overrides = useMemo(
+    () => ({
+      opencode: drafts.opencode.preference.executablePath,
+      claude_code: drafts.claude_code.preference.executablePath,
+      kimi_code: drafts.kimi_code.preference.executablePath,
+    }),
+    [
+      drafts.opencode.preference.executablePath,
+      drafts.claude_code.preference.executablePath,
+      drafts.kimi_code.preference.executablePath,
+    ]
   )
-
   useEffect(() => {
     let cancelled = false
-    void listLocalHarnesses(storedOverrides)
+    void listLocalHarnesses(overrides)
       .then(harnesses => {
         if (!cancelled) {
           setDescriptors(harnesses)
@@ -100,7 +100,7 @@ export function HarnessSettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [storedOverrides, t])
+  }, [overrides, t])
 
   const updateDraft = (id: LocalHarnessId, updater: (draft: HarnessDraft) => HarnessDraft) => {
     setDrafts(current => ({ ...current, [id]: updater(current[id]) }))

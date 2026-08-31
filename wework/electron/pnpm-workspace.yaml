@@ -1,0 +1,11 @@
+packages: []
+
+confirmModulesPurge: false
+verifyDepsBeforeRun: warn
+
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+
+patchedDependencies:
+  '@trycua/cua-driver@0.22.1': patches/@trycua__cua-driver@0.22.1.patch

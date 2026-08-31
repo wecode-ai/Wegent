@@ -186,7 +186,11 @@ export function CloudConnectionDialog({
             </div>
           </div>
         ) : (
-          <div className="mt-5 space-y-5">
+          <form
+            data-testid="cloud-authorization-form"
+            onSubmit={handleAuthorizationSubmit}
+            className="mt-5 space-y-5"
+          >
             <div>
               <label
                 htmlFor="cloud-backend-url-input"
@@ -244,7 +248,7 @@ export function CloudConnectionDialog({
               </div>
             </details>
 
-            {cloud.status === 'connecting' && (
+            {['restoring', 'connecting'].includes(cloud.status) && (
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-secondary">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 {t('workbench.cloud_connection_connecting', '正在连接云端')}
@@ -277,11 +281,7 @@ export function CloudConnectionDialog({
                   {t('workbench.cloud_connection_disconnect', '断开连接')}
                 </button>
               )}
-              <form
-                data-testid="cloud-authorization-form"
-                onSubmit={handleAuthorizationSubmit}
-                className={canDisconnect ? 'flex-1' : 'w-full'}
-              >
+              <div className={canDisconnect ? 'flex-1' : 'w-full'}>
                 <button
                   type="submit"
                   data-testid="cloud-authorization-submit-button"
@@ -303,9 +303,9 @@ export function CloudConnectionDialog({
                     </>
                   )}
                 </button>
-              </form>
+              </div>
             </div>
-          </div>
+          </form>
         )}
       </div>
     </div>,

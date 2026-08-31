@@ -13,6 +13,8 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  FORK_FOLLOW_UP_COMPLETION_TEXT,
+  FORK_FOLLOW_UP_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
   SHORT_CONVERSATION_MAX_MESSAGE_TOP_OFFSET,
@@ -23,6 +25,7 @@ import {
   pathExists,
   resultDir,
   selectE2EModel,
+  sendPromptUntilScenarioRequest,
   withTimeout,
   writeFile,
 } from './shared.mjs'
@@ -544,6 +547,17 @@ async function waitForElementWidth(control, selector, predicate, description, ti
   throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
 }
 
+async function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (predicate(metrics.top)) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} remained at ${metrics.top}px after ${timeoutMs}ms`)
+}
+
 async function waitForProcessingBlock(
   control,
   selector,
@@ -913,6 +927,51 @@ async function verifyWorktreeCreationStatus({ composerSelector, control, workspa
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
+  const taskRowsBeforeFork = new Set(
+    JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
+      testId.startsWith('runtime-local-task-row-')
+    )
+  )
+  await control.command(
+    'clickDescendantInElementWithText',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      target: '[data-testid="fork-message-button"]',
+      text: CHECKPOINT_TASK_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const forkTaskRowTestId = await waitForNewTaskRow(control, taskRowsBeforeFork, '')
+  const forkTaskId = forkTaskRowTestId.replace('runtime-local-task-row-', '')
+  const forkDebugSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  assert.equal(
+    forkDebugSnapshot.workbench?.currentRuntimeTask?.taskId,
+    forkTaskId,
+    'Forking a worktree task did not open the forked task'
+  )
+  assert.equal(
+    forkDebugSnapshot.workbench?.currentRuntimeTask?.workspacePath,
+    worktreePath,
+    'The forked task did not inherit the managed source worktree'
+  )
+
+  control.setScenario('fork_follow_up')
+  const forkRequest = await sendPromptUntilScenarioRequest(
+    control,
+    composerSelector,
+    FORK_FOLLOW_UP_PROMPT,
+    'fork_follow_up'
+  )
+  assert.ok(
+    JSON.stringify(forkRequest.body).includes(FORK_FOLLOW_UP_PROMPT),
+    'The forked managed-worktree task did not send its follow-up'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: FORK_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(control, 'worktree-status-05-fork-follow-up-complete.png')
+
   await control.command('click', `[data-testid="runtime-local-task-archive-${worktreeTaskId}"]`)
   await withTimeout(
     (async () => {
@@ -942,6 +1001,7 @@ export {
   waitForElementInsideScroller,
   waitForTopMetrics,
   waitForElementWidth,
+  waitForElementTop,
   waitForProcessingBlock,
   verifyViewImageProcessingBlock,
   distanceFromBottom,

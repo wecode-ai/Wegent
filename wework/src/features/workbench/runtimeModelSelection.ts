@@ -33,6 +33,15 @@ export interface CloudVisionSidecarReference {
   apiFormat: 'openai-responses' | 'openai-chat-completions' | 'anthropic-messages'
 }
 
+/**
+ * Validate the shape of a cloud vision sidecar reference stored on a Model CRD.
+ *
+ * The reference is authoritative: the backend LLM gateway resolves it against the
+ * `kinds` table and enforces access with the same identity headers, so there is no
+ * client-side catalog lookup here. A reference that points at a missing or
+ * non-visual model fails per image inside the executor's vision sidecar with an
+ * inline diagnostic, instead of leaking the image to a text-only primary model.
+ */
 export function parseCloudVisionSidecarReference(
   value: unknown
 ): CloudVisionSidecarReference | null {
@@ -60,25 +69,6 @@ export function parseCloudVisionSidecarReference(
     resourceUserId: record.resourceUserId,
     apiFormat: record.apiFormat as CloudVisionSidecarReference['apiFormat'],
   }
-}
-
-export function resolveCloudVisionSidecarReference(
-  value: unknown,
-  models: UnifiedModel[]
-): CloudVisionSidecarReference | null {
-  const reference = parseCloudVisionSidecarReference(value)
-  if (!reference) return null
-  const target = models.find(
-    model =>
-      model.isActive !== false &&
-      model.modelCapabilities?.supportsImage === true &&
-      model.name === reference.modelName &&
-      model.type === reference.modelType &&
-      (model.namespace ?? 'default') === reference.namespace &&
-      model.resourceUserId === reference.resourceUserId &&
-      getCloudModelUpstreamApiFormat(model) === reference.apiFormat
-  )
-  return target ? reference : null
 }
 
 function getStringConfigValue(

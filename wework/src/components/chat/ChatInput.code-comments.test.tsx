@@ -5,10 +5,7 @@ import type { CodeCommentContext } from '@/types/workspace-files'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (
-      key: string,
-      options?: string | { count?: number },
-    ) => {
+    t: (key: string, options?: string | { count?: number }) => {
       if (typeof options === 'string') return options
       if (key === 'workbench.code_comment_count') {
         return `${options?.count ?? 0} 个评论`
@@ -20,6 +17,14 @@ vi.mock('@/hooks/useTranslation', () => ({
     },
   }),
 }))
+
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
+  return {
+    ...actual,
+    getAppPreferences: vi.fn().mockResolvedValue(actual.defaultAppPreferences),
+  }
+})
 
 import { ChatInput } from './ChatInput'
 
@@ -47,7 +52,7 @@ describe('ChatInput code comments', () => {
         variant="desktop"
         codeComments={[codeComment]}
         onClearCodeComments={onClearCodeComments}
-      />,
+      />
     )
 
     expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')
@@ -67,7 +72,7 @@ describe('ChatInput code comments', () => {
         variant="desktop"
         codeComments={[codeComment]}
         onClearCodeComments={vi.fn()}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByTestId('send-message-button'))
@@ -87,7 +92,7 @@ describe('ChatInput code comments', () => {
         disabled={false}
         codeComments={[codeComment]}
         onClearCodeComments={onClearCodeComments}
-      />,
+      />
     )
 
     expect(screen.getByTestId('code-comment-context-badge')).toHaveTextContent('1 个评论')

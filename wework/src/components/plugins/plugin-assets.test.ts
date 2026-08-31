@@ -1,14 +1,10 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test } from 'vitest'
 import {
   currentPluginLogoAppearanceMode,
   resolvePluginLogo,
   resolvePluginLogoUrl,
   resolvePreferredPluginLogo,
 } from './plugin-assets'
-
-vi.mock('@tauri-apps/api/core', () => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
-}))
 
 describe('resolvePluginLogo', () => {
   afterEach(() => {

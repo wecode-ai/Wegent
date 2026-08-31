@@ -8,11 +8,13 @@ from typing import Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
+from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.project_chat import ProjectChatSchema
 
 AutomationRunStatus = Literal[
     "pending",
     "queued",
+    "waiting_runtime",
     "waiting_device",
     "running",
     "succeeded",
@@ -22,6 +24,13 @@ AutomationRunStatus = Literal[
 ]
 AutomationAssignmentMode = Literal["manual", "ai_managed"]
 AutomationManagerType = Literal["custom", "wegent"]
+AutomationRoleSource = Literal["generic", "agent"]
+AutomationRuntimeSource = Literal[
+    "agent_default",
+    "fixed_profile",
+    "issue_creator",
+    "runtime_user",
+]
 
 
 class ProjectAutomationManagerAssign(ProjectChatSchema):
@@ -48,10 +57,13 @@ def _validate_assignment_fields(
     model: str | None,
     execution_environment: Literal["local", "cloud"] | None,
     execution_device_id: str | None,
+    role_source: AutomationRoleSource = "agent",
 ) -> None:
     if assignment_mode == "manual":
-        if not agent_id:
+        if role_source == "agent" and not agent_id:
             raise ValueError("agent_id is required for manual assignment")
+        if role_source == "generic" and agent_id:
+            raise ValueError("generic role does not accept agent_id")
         if manager_type is not None:
             raise ValueError("manager_type is only valid for AI-managed assignment")
         if wegent_team_id is not None:
@@ -64,11 +76,8 @@ def _validate_assignment_fields(
     if manager_type == "custom":
         if wegent_team_id is not None:
             raise ValueError("wegent_team_id is only valid for a Wegent manager")
-        if not model or not execution_environment or not execution_device_id:
-            raise ValueError(
-                "model, execution_environment, and execution_device_id are required "
-                "for a custom AI manager"
-            )
+        if model or execution_environment or execution_device_id:
+            raise ValueError("custom managers use a Runtime profile")
         return
     if manager_type == "wegent":
         if wegent_team_id is None:
@@ -83,7 +92,7 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     name: str = Field(min_length=1, max_length=255)
     prompt: str = Field(min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] = "schedule"
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] = Field(default_factory=dict)
     cron_expression: str | None = Field(default=None, min_length=1, max_length=100)
     timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
@@ -95,6 +104,10 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
     execution_environment: Literal["local", "cloud"] | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     enabled: bool = True
+    role_source: AutomationRoleSource = "agent"
+    runtime_source: AutomationRuntimeSource = "agent_default"
+    runtime_profile_id: str | None = Field(default=None, max_length=64)
+    runtime_user_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_assignment(self) -> Self:
@@ -106,8 +119,36 @@ class ProjectAutomationCreate(ProjectAutomationAssignmentSchema):
             model=self.model,
             execution_environment=self.execution_environment,
             execution_device_id=self.execution_device_id,
+            role_source=self.role_source,
         )
+        self._validate_runtime()
         return self
+
+    def _validate_runtime(self) -> None:
+        if self.assignment_mode == "ai_managed" and self.manager_type == "wegent":
+            if (
+                self.runtime_source != "agent_default"
+                or self.runtime_profile_id
+                or self.runtime_user_id
+            ):
+                raise ValueError("Wegent managers use managed Runtime")
+            return
+        if self.role_source == "agent" and self.assignment_mode == "manual":
+            if not self.agent_id:
+                raise ValueError("agent role requires agent_id")
+        elif self.assignment_mode == "manual" and self.agent_id:
+            raise ValueError("generic role does not accept agent_id")
+        if self.runtime_source == "agent_default":
+            if self.assignment_mode == "manual" and self.role_source != "agent":
+                raise ValueError("agent_default requires an agent role")
+        elif self.runtime_source == "fixed_profile":
+            if not self.runtime_profile_id:
+                raise ValueError("fixed_profile requires runtime_profile_id")
+        elif self.runtime_source == "runtime_user":
+            if self.runtime_user_id is None:
+                raise ValueError("runtime_user requires runtime_user_id")
+        elif self.trigger_type == "schedule":
+            raise ValueError("scheduled automation cannot use issue_creator Runtime")
 
 
 class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
@@ -115,7 +156,7 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     prompt: str | None = Field(default=None, min_length=1, max_length=100_000)
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] | None = None
     assignment_mode: AutomationAssignmentMode | None = None
     manager_type: AutomationManagerType | None = None
@@ -127,6 +168,10 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
     execution_environment: Literal["local", "cloud"] | None = None
     execution_device_id: str | None = Field(default=None, max_length=100)
     enabled: bool | None = None
+    role_source: AutomationRoleSource | None = None
+    runtime_source: AutomationRuntimeSource | None = None
+    runtime_profile_id: str | None = Field(default=None, max_length=64)
+    runtime_user_id: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def validate_assignment_switch(self) -> Self:
@@ -152,8 +197,17 @@ class ProjectAutomationUpdate(ProjectAutomationAssignmentSchema):
             model=self.model,
             execution_environment=self.execution_environment,
             execution_device_id=self.execution_device_id,
+            role_source=self.role_source or "agent",
         )
         return self
+
+
+class ProjectAutomationWorkflowMigration(ProjectChatSchema):
+    """Atomically promote the legacy project workflow into one automation."""
+
+    project_version: int = Field(ge=1)
+    automation: ProjectAutomationCreate
+    workflow_definition: ProjectWorkflowDefinition
 
 
 class ProjectAutomationView(ProjectChatSchema):
@@ -162,7 +216,7 @@ class ProjectAutomationView(ProjectChatSchema):
     name: str
     prompt: str
     trigger_type: Literal["schedule", "event", "workflow"]
-    event_type: Literal["task.created"] | None
+    event_type: Literal["task.created", "task.status_changed"] | None
     event_config: dict[str, Any]
     assignment_mode: AutomationAssignmentMode
     manager_type: AutomationManagerType | None
@@ -176,6 +230,10 @@ class ProjectAutomationView(ProjectChatSchema):
     agent_name: str
     execution_environment: Literal["local", "cloud", "managed"]
     execution_device_id: str | None
+    role_source: AutomationRoleSource = "agent"
+    runtime_source: AutomationRuntimeSource = "agent_default"
+    runtime_profile_id: str | None = None
+    runtime_user_id: int | None = None
     enabled: bool
     next_run_at: datetime | None
     last_run_at: datetime | None
@@ -183,6 +241,21 @@ class ProjectAutomationView(ProjectChatSchema):
     version: int
     created_at: datetime
     updated_at: datetime
+
+
+class ProjectAutomationWorkflowMigrationView(ProjectChatSchema):
+    """Result of promoting one legacy workflow into automation storage."""
+
+    automation: ProjectAutomationView
+    project_version: int
+    workflow_automation_id: str
+
+
+class ProjectAutomationDeleteView(ProjectChatSchema):
+    """Project state after deleting one automation."""
+
+    project_version: int
+    workflow_automation_id: str | None
 
 
 class ProjectAutomationRunView(ProjectChatSchema):
@@ -204,5 +277,5 @@ class ProjectAutomationRunView(ProjectChatSchema):
     completed_at: datetime | None = None
     retryable: bool = False
     trigger_type: Literal["schedule", "event", "workflow"] | None = None
-    event_type: Literal["task.created"] | None = None
+    event_type: Literal["task.created", "task.status_changed"] | None = None
     event_config: dict[str, Any] | None = None

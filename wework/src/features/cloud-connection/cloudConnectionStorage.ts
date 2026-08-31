@@ -5,10 +5,13 @@ const DEFAULT_SOCKET_PATH = '/socket.io'
 
 export type CloudConnectionStatus =
   | 'disconnected'
+  | 'restoring'
   | 'connecting'
   | 'connected'
   | 'expired'
   | 'error'
+
+export type CloudCredentialMode = 'desktop_refresh' | 'legacy_access_token'
 
 export interface CloudConnectionRuntimeConfig {
   backendUrl: string
@@ -20,8 +23,9 @@ export interface CloudConnectionRuntimeConfig {
 export interface StoredCloudConnection extends CloudConnectionRuntimeConfig {
   socketBaseUrlOverride?: string
   webUrl?: string
-  token: string
-  tokenExpiresAt: number | null
+  credentialMode?: CloudCredentialMode
+  token?: string
+  tokenExpiresAt?: number | null
   user: User
   connectedAt: string
 }
@@ -30,6 +34,7 @@ export interface CloudConnectionSnapshot extends Partial<CloudConnectionRuntimeC
   socketBaseUrlOverride?: string
   webUrl?: string
   status: CloudConnectionStatus
+  credentialMode?: CloudCredentialMode | null
   token: string | null
   tokenExpiresAt: number | null
   user: User | null
@@ -133,33 +138,54 @@ export function getJwtExpiry(token: string): number | null {
   }
 }
 
-export function isCloudTokenExpired(tokenExpiresAt: number | null): boolean {
-  return typeof tokenExpiresAt === 'number' && Date.now() >= tokenExpiresAt
-}
-
 export function readStoredCloudConnection(): StoredCloudConnection | null {
   try {
     const value = localStorage.getItem(CLOUD_CONNECTION_STORAGE_KEY)
     if (!value) return null
-    const parsed = JSON.parse(value) as Partial<StoredCloudConnection>
-    if (
-      !parsed ||
-      typeof parsed.backendUrl !== 'string' ||
-      typeof parsed.apiBaseUrl !== 'string' ||
-      typeof parsed.socketBaseUrl !== 'string' ||
-      typeof parsed.socketPath !== 'string' ||
-      (parsed.socketBaseUrlOverride !== undefined &&
-        typeof parsed.socketBaseUrlOverride !== 'string') ||
-      typeof parsed.token !== 'string' ||
-      !parsed.user ||
-      typeof parsed.user !== 'object' ||
-      typeof parsed.connectedAt !== 'string'
-    ) {
-      return null
-    }
-    return parsed as StoredCloudConnection
+    return normalizeStoredCloudConnection(JSON.parse(value))
   } catch {
     return null
+  }
+}
+
+export function normalizeStoredCloudConnection(value: unknown): StoredCloudConnection | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const parsed = value as Partial<StoredCloudConnection>
+  if (
+    typeof parsed.backendUrl !== 'string' ||
+    typeof parsed.apiBaseUrl !== 'string' ||
+    typeof parsed.socketBaseUrl !== 'string' ||
+    typeof parsed.socketPath !== 'string' ||
+    (parsed.socketBaseUrlOverride !== undefined &&
+      typeof parsed.socketBaseUrlOverride !== 'string') ||
+    (parsed.credentialMode !== undefined &&
+      !['desktop_refresh', 'legacy_access_token'].includes(parsed.credentialMode)) ||
+    (parsed.token !== undefined && (typeof parsed.token !== 'string' || !parsed.token.trim())) ||
+    (parsed.tokenExpiresAt !== undefined &&
+      parsed.tokenExpiresAt !== null &&
+      (typeof parsed.tokenExpiresAt !== 'number' || !Number.isFinite(parsed.tokenExpiresAt))) ||
+    !parsed.user ||
+    typeof parsed.user !== 'object' ||
+    typeof parsed.connectedAt !== 'string'
+  ) {
+    return null
+  }
+  const credentialMode =
+    parsed.credentialMode ?? (parsed.token ? 'legacy_access_token' : 'desktop_refresh')
+  if (credentialMode === 'legacy_access_token' && !parsed.token) return null
+  return {
+    backendUrl: parsed.backendUrl,
+    apiBaseUrl: parsed.apiBaseUrl,
+    socketBaseUrl: parsed.socketBaseUrl,
+    socketPath: parsed.socketPath,
+    socketBaseUrlOverride: parsed.socketBaseUrlOverride,
+    webUrl: parsed.webUrl,
+    credentialMode,
+    token: credentialMode === 'legacy_access_token' ? parsed.token : undefined,
+    tokenExpiresAt:
+      credentialMode === 'legacy_access_token' ? (parsed.tokenExpiresAt ?? null) : undefined,
+    user: parsed.user,
+    connectedAt: parsed.connectedAt,
   }
 }
 

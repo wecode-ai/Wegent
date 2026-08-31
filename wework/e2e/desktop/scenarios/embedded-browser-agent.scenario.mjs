@@ -64,6 +64,7 @@ const ANNOTATION_COMMENT = 'Make this target more prominent'
 const ANNOTATION_NAVIGATION_COMMENT = 'This comment must not survive navigation'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const repoDir = resolve(scriptDir, '..', '..', '..', '..')
+let desktopScenarioExecutorBinary = null
 
 async function readBrowserPanelLabel(control, scopeSelector, timeoutMs) {
   const selector = `${scopeSelector} ${WORKBENCH_BROWSER_LABEL_SELECTOR}`
@@ -218,20 +219,6 @@ async function waitForBridgeIdentity(executorHome, timeoutMs) {
   throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
 }
 
-async function writeStaleBridgeRuntime(identity) {
-  await writeFile(
-    identity.runtimePath,
-    `${JSON.stringify({
-      schemaVersion: 1,
-      pid: process.pid,
-      address: '127.0.0.1:9',
-      token: 'stale-upgrade-token',
-      startedAtUnixMs: Date.now() - 60_000,
-    })}\n`,
-    'utf8'
-  )
-}
-
 async function callBridge(identity, payload, label = BROWSER_LABEL) {
   const body = await callBridgeResponse(identity, payload, label)
   assert.equal(body.ok, true, `Bridge action failed: ${JSON.stringify(body)}`)
@@ -295,9 +282,6 @@ async function waitForVisibleSingleElement(control, selector, timeoutMs, message
     appShellHeight: await control.command('getInlineStyle', '[data-testid="app-shell"]', {
       value: 'height',
     }),
-    tauriViewportHeight: await control.command('getAttribute', '[data-testid="app-shell"]', {
-      value: 'data-tauri-viewport-height',
-    }),
     routeHost: JSON.parse(
       await control.command('getElementMetrics', '[data-testid="app-route-host"]')
     ),
@@ -356,6 +340,7 @@ async function waitForRuntimeTaskId(control, timeoutMs) {
 
 async function withBrowserMcp(identity, label, callback) {
   const executorPath =
+    desktopScenarioExecutorBinary ||
     process.env.WEWORK_E2E_EXECUTOR_BIN ||
     join(
       repoDir,
@@ -368,8 +353,6 @@ async function withBrowserMcp(identity, label, callback) {
     cwd: repoDir,
     env: {
       ...process.env,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_URL: identity.baseUrl,
-      WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN: identity.token,
       WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE: identity.runtimePath,
       WEWORK_EMBEDDED_BROWSER_LABEL: label,
     },
@@ -472,6 +455,9 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
   let cacheResourceRequests = 0
 
   return {
+    setExecutorBinary(path) {
+      desktopScenarioExecutorBinary = path
+    },
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === REDIRECT_PATH) {
         response.writeHead(302, { location: FIXTURE_PATH })
@@ -662,7 +648,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       )
       assert.match(
         inactiveTaskClassName,
-        /(?:^|\s)invisible(?:\s|$)/,
+        /(?:^|\s)hidden(?:\s|$)/,
         'Inactive task browser calls made the task surface visible'
       )
       await control.command('click', `[data-testid="${firstTaskTabTestId}"]`)
@@ -966,7 +952,28 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         timeoutMs: 35_000,
       })
       await bridgeCall({ action: 'close', timeoutMs: 8_000 })
+      await waitForElementCount(
+        control,
+        BROWSER_NATIVE_VIEW_SELECTOR,
+        0,
+        uiTimeoutMs,
+        'The browser host remained mounted after the bridge close completed'
+      )
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        '',
+        uiTimeoutMs,
+        'The browser address bar did not settle after the bridge close'
+      )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: cacheFixtureUrl })
+      await waitForControlValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        cacheFixtureUrl,
+        uiTimeoutMs,
+        'The browser address bar lost the cache fixture URL before submission'
+      )
       await control.command('submit', BROWSER_INPUT_SELECTOR)
       await control.command('waitFor', BROWSER_NATIVE_VIEW_SELECTOR, { timeoutMs: uiTimeoutMs })
       await bridgeCall({
@@ -1014,6 +1021,39 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `Annotation target click failed: ${JSON.stringify(createAnnotation)}`
       )
       assert.equal(createAnnotation.value, true, 'Annotation target click did not open the editor')
+      const draftAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `(() => {
+          const draft = document.querySelector('[data-wework-annotation="draft-marker"]')
+          return {
+            exists: Boolean(draft),
+            text: draft?.textContent ?? null,
+            fill: draft?.querySelector('path')?.getAttribute('fill') ?? null,
+            transform: draft?.style.transform ?? null,
+            savedCount: document.querySelectorAll('[data-wework-annotation="marker"]').length,
+            annotationCount:
+              window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.().annotations.length ?? null,
+          }
+        })()`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        draftAnnotationMarker.ok,
+        true,
+        `Draft annotation marker evaluation failed: ${JSON.stringify(draftAnnotationMarker)}`
+      )
+      assert.deepEqual(
+        draftAnnotationMarker.value,
+        {
+          exists: true,
+          text: '',
+          fill: '#0069FB',
+          transform: 'translate(-15.689%, -89.696%)',
+          savedCount: 0,
+          annotationCount: 0,
+        },
+        'The first annotation did not show the unnumbered draft marker'
+      )
       const fillAnnotationComment = await bridgeCall({
         action: 'fill',
         selector: '[data-wework-annotation="comment-input"]',
@@ -1039,6 +1079,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: '1',
         timeoutMs: uiTimeoutMs,
       })
+      const publishedAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `({
+          draftExists: Boolean(
+            document.querySelector('[data-wework-annotation="draft-marker"]')
+          ),
+          savedText:
+            document.querySelector('[data-wework-annotation="marker"]')?.textContent ?? null,
+        })`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(publishedAnnotationMarker.ok, true)
+      assert.deepEqual(
+        publishedAnnotationMarker.value,
+        { draftExists: false, savedText: '1' },
+        'Publishing did not replace the draft marker with numbered marker 1'
+      )
 
       const annotationMarker = await bridgeCall({
         action: 'click',
@@ -1115,6 +1172,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Annotation adjustment did not update the target'
       )
       await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
       const originalViewPressedBefore = await control.command(
@@ -1323,7 +1381,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `The embedded browser fixture did not reload after annotation checks: ${JSON.stringify(restoredFixtureReady)}`
       )
 
-      await writeStaleBridgeRuntime(bridgeIdentity)
       const mcpResult = await withBrowserMcp(bridgeIdentity, browserLabel, async callTool => {
         const openText = await callTool('browser_open_and_inspect', {
           url: redirectUrl,
@@ -1510,6 +1567,20 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       assert.ok(deleteApproval.approval?.approvalId)
       await control.command('waitFor', BROWSER_AGENT_APPROVE_SELECTOR, { timeoutMs: uiTimeoutMs })
       await control.command('click', BROWSER_AGENT_APPROVE_SELECTOR)
+      const approvalResolutionStartedAt = Date.now()
+      let approvalButtonCount = 1
+      while (Date.now() - approvalResolutionStartedAt < uiTimeoutMs) {
+        approvalButtonCount = Number(
+          await control.command('getElementCount', BROWSER_AGENT_APPROVE_SELECTOR)
+        )
+        if (approvalButtonCount === 0) break
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+      }
+      assert.equal(
+        approvalButtonCount,
+        0,
+        'Browser approval remained pending after the user approved it'
+      )
 
       const approvedDeleteResult = await bridgeCall({
         action: 'click',
@@ -1714,15 +1785,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       zipBytes.set([0x50, 0x4b, 0x03, 0x04])
       await writeFile(localZipPath, zipBytes)
       const localZipUrl = pathToFileURL(localZipPath).href
-      await control.command('fill', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
-      await waitForControlValue(
-        control,
-        BROWSER_INPUT_SELECTOR,
-        localZipUrl,
-        uiTimeoutMs,
-        'Browser URL input did not receive local zip URL before submit'
-      )
-      await control.command('submit', BROWSER_INPUT_SELECTOR)
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: localZipUrl })
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: LOCAL_TOAST_TEXT,
         timeoutMs: uiTimeoutMs,

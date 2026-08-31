@@ -88,6 +88,7 @@ describe('remote runtime work cache', () => {
             runtime: 'codex',
             updatedAt: '2026-07-17T00:00:00Z',
             running: true,
+            continuable: true,
             pinned: true,
             gitInfo: {
               branch: 'feature/offline-cache',
@@ -105,6 +106,7 @@ describe('remote runtime work cache', () => {
       projectStore: 'backend',
       projectId: 'space-1',
     }
+    input.projects[0].project.sidebarOrder = 4
 
     writeCachedRemoteRuntimeWork(7, input, [
       device('remote-a', 'online', { client_ip: '10.201.3.200' }),
@@ -126,28 +128,37 @@ describe('remote runtime work cache', () => {
       projectStore: 'backend',
       projectId: 'space-1',
     })
+    expect(restored.projects[0].project.sidebarOrder).toBe(4)
     expect(restoredTask).toMatchObject({
       taskId: 'task-a',
       threadId: 'thread-a',
       title: 'Cached task',
       runtime: 'codex',
-      running: false,
+      cachedProjection: true,
       pinned: true,
       gitInfo: { branch: 'feature/offline-cache' },
     })
+    expect(restoredTask).not.toHaveProperty('running')
+    expect(restoredTask).not.toHaveProperty('status')
+    expect(restoredTask).not.toHaveProperty('threadStatus')
+    expect(restoredTask).not.toHaveProperty('turnStatus')
+    expect(restoredTask).not.toHaveProperty('continuable')
     expect(restoredTask).not.toHaveProperty('runtimeHandle')
     expect(restoredTask).not.toHaveProperty('modelSelection')
     expect(restoredTask).not.toHaveProperty('parent')
     expect(restoredTask).not.toHaveProperty('children')
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.7')).not.toContain(
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
       'must-not-persist'
     )
-    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v1.7')).not.toContain(
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
       'full conversation'
+    )
+    expect(localStorage.getItem('wework.workbench.remoteRuntimeWork.v2.7')).not.toContain(
+      'cachedProjection'
     )
   })
 
-  test('preserves canonical completion fields and normalizes cached status to done', () => {
+  test('does not persist terminal lifecycle fields either', () => {
     const input = runtimeWork(
       workspace('remote-a', 'task-a', {
         tasks: [
@@ -170,14 +181,51 @@ describe('remote runtime work cache', () => {
 
     const restored = createRemoteRuntimeWorkCacheSnapshot(input)
 
-    expect(restored.projects[0].deviceWorkspaces[0].tasks[0]).toMatchObject({
+    const restoredTask = restored.projects[0].deviceWorkspaces[0].tasks[0]
+
+    expect(restoredTask).toMatchObject({
       taskId: 'task-a',
-      running: false,
-      status: 'done',
-      threadStatus: 'idle',
-      turnStatus: 'completed',
-      completedAt: 1_786_686_568_931,
+      updatedAt: 1_786_686_568_931,
+      cachedProjection: true,
     })
+    expect(restoredTask).not.toHaveProperty('running')
+    expect(restoredTask).not.toHaveProperty('status')
+    expect(restoredTask).not.toHaveProperty('threadStatus')
+    expect(restoredTask).not.toHaveProperty('turnStatus')
+    expect(restoredTask).not.toHaveProperty('completedAt')
+  })
+
+  test('drops transient lifecycle fields from a cached running task', () => {
+    const input = runtimeWork(
+      workspace('remote-a', 'task-a', {
+        tasks: [
+          {
+            taskId: 'task-a',
+            threadId: 'thread-a',
+            workspacePath: '/srv/remote-a',
+            title: 'Running task',
+            runtime: 'codex',
+            running: true,
+            status: 'running',
+            threadStatus: 'active',
+            turnStatus: 'inProgress',
+            updatedAt: 1_786_686_568_931,
+          },
+        ],
+      })
+    )
+
+    const restored = createRemoteRuntimeWorkCacheSnapshot(input)
+    const restoredTask = restored.projects[0].deviceWorkspaces[0].tasks[0]
+
+    expect(restoredTask).toMatchObject({
+      taskId: 'task-a',
+      updatedAt: 1_786_686_568_931,
+    })
+    expect(restoredTask).not.toHaveProperty('running')
+    expect(restoredTask).not.toHaveProperty('status')
+    expect(restoredTask).not.toHaveProperty('threadStatus')
+    expect(restoredTask).not.toHaveProperty('turnStatus')
   })
 
   test('isolates cache entries by user and ignores malformed data', () => {
@@ -189,7 +237,7 @@ describe('remote runtime work cache', () => {
       totalTasks: 0,
     })
 
-    localStorage.setItem('wework.workbench.remoteRuntimeWork.v1.7', '{')
+    localStorage.setItem('wework.workbench.remoteRuntimeWork.v2.7', '{')
     expect(readCachedRemoteRuntimeWork(7)).toEqual({
       projects: [],
       chats: [],

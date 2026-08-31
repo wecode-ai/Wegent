@@ -50,6 +50,49 @@ describe('EnvironmentInfoPopover', () => {
     expect(popover).not.toHaveTextContent('9562a3b4-61a3-4217-9655-0341b231eb06')
   })
 
+  test('shows the task executor instead of the workspace access device', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'cloud',
+          executionDeviceId: 'cloud-device',
+          deviceId: 'local-device',
+        }}
+        devices={[
+          {
+            id: 1,
+            device_id: 'local-device',
+            name: 'Local Executor',
+            status: 'online',
+            is_default: true,
+            device_type: 'local',
+          },
+          {
+            id: 2,
+            device_id: 'cloud-device',
+            name: 'Cloud Verify Device',
+            status: 'online',
+            is_default: false,
+            device_type: 'cloud',
+            client_ip: '127.0.0.1',
+          },
+        ]}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-device-button')).toHaveTextContent('Cloud Verify Device')
+    expect(screen.getByTestId('environment-device-button')).not.toHaveTextContent('Local Executor')
+  })
+
   test('delegates open state to the app shell without writing browser storage', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)
@@ -158,7 +201,7 @@ describe('EnvironmentInfoPopover', () => {
           additions: '',
           deletions: '',
           executionTarget: 'local',
-          workspacePath: '/workspace/web',
+          workspacePath: '/workspace/web/',
           workspaceRoots: ['/workspace/web', '/workspace/api'],
         }}
         popoverContainer={popoverContainer}
@@ -175,6 +218,113 @@ describe('EnvironmentInfoPopover', () => {
     )
     expect(screen.getByTestId('environment-workspace-path-button')).toHaveClass('min-h-11')
     expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveClass('min-h-11')
+  })
+
+  test('matches Windows workspace roots with different separators and casing', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`C:\Workspace\Web`,
+          workspaceRoots: ['C:/workspace/web', 'C:/workspace/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('web')
+    expect(screen.getByTestId('environment-workspace-root-1')).toHaveTextContent('api')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveAttribute(
+      'title',
+      'C:/workspace/api'
+    )
+  })
+
+  test('matches UNC workspace roots with different separators and casing', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`\\SERVER\Share\Web`,
+          workspaceRoots: ['//server/share/web', '//server/share/api'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('web')
+    expect(screen.getByTestId('environment-workspace-root-1')).toHaveTextContent('api')
+    expect(screen.getByTestId('environment-workspace-root-button-1')).toHaveAttribute(
+      'title',
+      '//server/share/api'
+    )
+  })
+
+  test('shows the active worktree path instead of the source project root', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: '/workspace/worktrees/runtime-42/example-project',
+          workspaceRoots: ['/workspace/projects/example-project'],
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('example-project')
+    expect(screen.queryByText('/workspace/projects/example-project')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('environment-workspace-root-button-1')).not.toBeInTheDocument()
+  })
+
+  test('shows the last Windows workspace path segment', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          workspacePath: String.raw`C:\Users\me\worktrees\runtime-42\project`,
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('environment-workspace-path')).toHaveTextContent('project')
+    expect(screen.getByTestId('environment-workspace-path-button')).toHaveAttribute(
+      'title',
+      String.raw`C:\Users\me\worktrees\runtime-42\project`
+    )
   })
 
   test('keeps the newest workspace copy confirmation visible for its full duration', async () => {
@@ -257,6 +407,33 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.queryByText('-0')).not.toBeInTheDocument()
   })
 
+  test('shows a resolved branch while the rest of the environment is still loading', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '',
+          deletions: '',
+          executionTarget: 'local',
+          branchName: 'fix/fast-branch-status',
+          loading: true,
+          branchLoading: false,
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+        onListBranches={vi.fn().mockResolvedValue([])}
+        onCheckoutBranch={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('fix/fast-branch-status')
+    expect(screen.getByTestId('environment-branch-row')).not.toHaveTextContent('加载中')
+  })
+
   test('renders the pull request associated with the current branch', async () => {
     const popoverContainer = document.createElement('div')
     document.body.appendChild(popoverContainer)
@@ -298,11 +475,55 @@ describe('EnvironmentInfoPopover', () => {
     expect(screen.getByTestId('change-request-title')).toHaveTextContent(
       'feat(wework): show pull request status'
     )
-    expect(screen.getByTestId('change-request-state')).toHaveTextContent('进行中')
-    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('检查通过，等待合并')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过，等待合并')
     expect(
-      screen.getByTestId('change-request-button').querySelector('[aria-hidden="true"]')
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
     ).toHaveClass('text-green-500')
+    expect(screen.getByTestId('change-request-pull-request-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('change-request-merged-icon')).not.toBeInTheDocument()
+  })
+
+  test('opens the shared pull request status control from the environment panel', async () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+2',
+          deletions: '-1',
+          executionTarget: 'local',
+          branchName: 'feature/change-request-status',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2631,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2631',
+              title: 'feat(wework): show pull request status',
+              state: 'open',
+              draft: false,
+              checks: 'failure',
+              mergeability: 'mergeable',
+              mergeQueue: 'not_queued',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    await userEvent.click(screen.getByTestId('environment-change-request-status'))
+
+    expect(screen.getByTestId('environment-change-request-status-popover')).toBeInTheDocument()
+    expect(screen.getByTestId('environment-change-request-status-open')).toHaveTextContent(
+      '打开 PR'
+    )
   })
 
   test('shows merge conflicts on the pull request icon without adding a second row', () => {
@@ -341,9 +562,11 @@ describe('EnvironmentInfoPopover', () => {
 
     const button = screen.getByTestId('change-request-button')
     expect(button).toHaveClass('h-9')
-    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在冲突')
-    expect(button).toHaveAccessibleName(/存在冲突/)
-    expect(button.querySelector('[aria-hidden="true"]')).toHaveClass('text-red-500')
+    expect(screen.getByTestId('change-request-conflict')).toHaveTextContent('存在合并冲突')
+    expect(button).toHaveAccessibleName(/存在合并冲突/)
+    expect(
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
+    ).toHaveClass('text-red-500')
   })
 
   test('shows a pending status while the pull request is in the merge queue', () => {
@@ -381,11 +604,58 @@ describe('EnvironmentInfoPopover', () => {
     )
 
     const button = screen.getByTestId('change-request-button')
-    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('合并队列中')
+    expect(screen.getByTestId('change-request-merge-queue')).toHaveTextContent('Merge Queue 排队中')
     expect(screen.queryByTestId('change-request-checks')).not.toBeInTheDocument()
-    expect(button).toHaveAccessibleName(/合并队列中/)
+    expect(button).toHaveAccessibleName(/Merge Queue 排队中/)
     expect(button).not.toHaveAccessibleName(/检查通过/)
-    expect(button.querySelector('[aria-hidden="true"]')).not.toHaveClass('text-green-500')
+    expect(
+      screen.getByTestId('environment-change-request-status').querySelector('[aria-hidden="true"]')
+    ).not.toHaveClass('text-green-500')
+  })
+
+  test('shows a purple icon for a merged pull request', () => {
+    const popoverContainer = document.createElement('div')
+    document.body.appendChild(popoverContainer)
+    portalContainers.push(popoverContainer)
+
+    render(
+      <EnvironmentInfoPopover
+        info={{
+          additions: '+0',
+          deletions: '-0',
+          executionTarget: 'local',
+          branchName: 'feature/merged-change-request',
+          changeRequest: {
+            provider: 'github',
+            state: 'found',
+            changeRequest: {
+              provider: 'github',
+              number: 2780,
+              url: 'https://github.com/wecode-ai/Wegent/pull/2780',
+              title: 'feat(wework): merged change request',
+              state: 'merged',
+              draft: false,
+              checks: 'success',
+              mergeability: 'unknown',
+              mergeQueue: 'not_queued',
+            },
+          },
+        }}
+        popoverContainer={popoverContainer}
+        open
+        onOpenChange={vi.fn()}
+      />
+    )
+
+    const icon = screen
+      .getByTestId('environment-change-request-status')
+      .querySelector('[aria-hidden="true"]')
+    expect(screen.getByTestId('change-request-state')).toHaveTextContent('已合并')
+    expect(screen.getByTestId('change-request-checks')).toHaveTextContent('检查通过')
+    expect(icon).toHaveClass('text-violet-500')
+    expect(icon).not.toHaveClass('text-green-500')
+    expect(screen.getByTestId('change-request-merged-icon')).toBeInTheDocument()
+    expect(screen.queryByTestId('change-request-pull-request-icon')).not.toBeInTheDocument()
   })
 
   test('opens Git hosting settings from a GitLab CLI recovery hint', async () => {

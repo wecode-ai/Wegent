@@ -14,10 +14,10 @@ const labels = {
   agent: '智能体',
   auxiliary: '工作区',
   auxiliaryRoutes: {
-    plugins: '插件',
-    sites: '站点',
-    automations: '已安排',
-    cloud: '云端工作',
+    '/plugins': '插件',
+    '/sites': '站点',
+    '/automations': '已安排',
+    '/cloud-work': '云端工作',
   },
 }
 
@@ -32,7 +32,7 @@ describe('workspaceTabs', () => {
     expect(createWorkspaceTab('board', labels)).toMatchObject({
       kind: 'board',
       title: '项目空间',
-      contentRoute: '/todo',
+      contentRoute: '/todo?projectId=default-work-items',
     })
     expect(
       createWorkspaceTab('board', labels, {

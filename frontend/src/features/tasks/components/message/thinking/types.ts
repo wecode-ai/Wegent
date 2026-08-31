@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import type { CardBlock as SharedCardBlock } from '@wegent/chat-core'
+
 /**
  * Thinking step structure from backend
  */
@@ -281,6 +283,14 @@ export interface SubscriptionPreviewBlockType extends BaseBlock {
 }
 
 /**
+ * Generic data-backed card block.
+ *
+ * Card renderers are selected by card_type. The payload remains data-only;
+ * renderers must not execute arbitrary markup or scripts from card_data.
+ */
+export type CardBlock = SharedCardBlock
+
+/**
  * Union type of all message block types.
  * Use this for type-safe block handling with discriminated unions.
  */
@@ -293,6 +303,7 @@ export type MessageBlock =
   | ErrorBlock
   | VideoBlock
   | ImageBlock
+  | CardBlock
   | PromptOptimizationBlock
   | SubscriptionPreviewBlockType
 

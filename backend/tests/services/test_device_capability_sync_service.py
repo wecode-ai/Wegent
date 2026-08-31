@@ -5,10 +5,12 @@
 import pytest
 
 from app.models.kind import Kind
+from app.schemas.device import DeviceType
 from app.services.device.capability_sync_service import (
     DeviceCapabilitySyncError,
     DeviceCapabilitySyncService,
 )
+from app.services.device.runtime_route import RuntimeRoute
 
 
 class FakeSio:
@@ -27,6 +29,23 @@ class FakeSio:
             }
         )
         return self.response
+
+
+def _runtime_route(
+    *,
+    logical_device_id: str,
+    runtime_device_id: str | None = None,
+    socket_id: str | None = None,
+) -> RuntimeRoute:
+    resolved_runtime_id = runtime_device_id or logical_device_id
+    return RuntimeRoute(
+        logical_device_id=logical_device_id,
+        runtime_device_id=resolved_runtime_id,
+        runtime_instance_id=None,
+        device_type=DeviceType.LOCAL,
+        socket_id=socket_id or f"socket-{resolved_runtime_id}",
+        online_info={"status": "online"},
+    )
 
 
 def _create_skill(test_db, user_id: int, name: str = "image-gen") -> Kind:
@@ -225,16 +244,16 @@ async def test_sync_user_global_capabilities_replaces_all_online_devices(
     async def fake_online_devices(db, user_id):
         return [{"device_id": "device-a"}, {"device_id": "device-b"}]
 
-    async def fake_online_info(user_id, device_id):
-        return {"socket_id": f"socket-{device_id}", "status": "online"}
+    async def resolve_route(*, user_id, submitted_device_id):
+        return _runtime_route(logical_device_id=submitted_device_id)
 
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.device_service.get_online_devices",
         fake_online_devices,
     )
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_device_online_info",
-        fake_online_info,
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        resolve_route,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.get_sio",
@@ -263,22 +282,24 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
     test_db, test_user, monkeypatch
 ):
     fake_sio = FakeSio()
-    seen_device_ids = []
 
     async def fake_online_devices(db, user_id):
         return [{"device_id": "sandbox-1", "socket_device_id": "executor-device-1"}]
 
-    async def fake_online_info(user_id, device_id):
-        seen_device_ids.append(device_id)
-        return {"socket_id": "socket-cloud", "status": "online"}
+    async def resolve_route(*, user_id, submitted_device_id):
+        assert submitted_device_id == "executor-device-1"
+        return _runtime_route(
+            logical_device_id=submitted_device_id,
+            socket_id="socket-cloud",
+        )
 
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.device_service.get_online_devices",
         fake_online_devices,
     )
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_device_online_info",
-        fake_online_info,
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        resolve_route,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.get_sio",
@@ -293,7 +314,6 @@ async def test_sync_user_global_capabilities_uses_cloud_socket_device_id(
     )
 
     assert result.synced == 1
-    assert seen_device_ids == ["executor-device-1"]
     assert fake_sio.calls[0]["to"] == "socket-cloud"
 
 
@@ -336,22 +356,18 @@ async def test_sync_installed_plugin_to_device_merges_only_target_plugin(
             ],
         }
     )
-    seen_device_ids = []
 
-    async def fake_all_devices(db, user_id):
-        return [{"device_id": "sandbox-1", "socket_device_id": "executor-device-1"}]
-
-    async def fake_online_info(user_id, device_id):
-        seen_device_ids.append(device_id)
-        return {"socket_id": "socket-cloud", "status": "online"}
+    async def resolve_route(*, user_id, submitted_device_id):
+        assert submitted_device_id == "sandbox-1"
+        return _runtime_route(
+            logical_device_id=submitted_device_id,
+            runtime_device_id="executor-device-1",
+            socket_id="socket-cloud",
+        )
 
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_all_devices",
-        fake_all_devices,
-    )
-    monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_device_online_info",
-        fake_online_info,
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        resolve_route,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.get_sio",
@@ -369,7 +385,6 @@ async def test_sync_installed_plugin_to_device_merges_only_target_plugin(
     assert result.mode == "merge"
     assert result.synced == 1
     assert result.failed == 0
-    assert seen_device_ids == ["executor-device-1"]
     payload = fake_sio.calls[0]["payload"]
     assert payload["device_id"] == "executor-device-1"
     assert payload["mode"] == "merge"
@@ -403,19 +418,15 @@ async def test_sync_installed_plugin_to_device_rejects_missing_acknowledgement(
     test_db.commit()
     fake_sio = FakeSio({"success": True, "plugins": []})
 
-    async def fake_all_devices(db, user_id):
-        return [{"device_id": "device-1"}]
-
-    async def fake_online_info(user_id, device_id):
-        return {"socket_id": "socket-local", "status": "online"}
+    async def resolve_route(*, user_id, submitted_device_id):
+        return _runtime_route(
+            logical_device_id=submitted_device_id,
+            socket_id="socket-local",
+        )
 
     monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_all_devices",
-        fake_all_devices,
-    )
-    monkeypatch.setattr(
-        "app.services.device.capability_sync_service.device_service.get_device_online_info",
-        fake_online_info,
+        "app.services.device.capability_sync_service.runtime_route_resolver.resolve",
+        resolve_route,
     )
     monkeypatch.setattr(
         "app.services.device.capability_sync_service.get_sio",

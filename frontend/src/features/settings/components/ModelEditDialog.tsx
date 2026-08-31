@@ -64,11 +64,13 @@ import { CapabilityScopeSelector } from '@/features/resource-library/components/
 import { useCapabilityPublicationScope } from '@/features/resource-library/useCapabilityPublicationScope'
 import type { Group } from '@/types/group'
 import {
-  matchesVisionSidecarRef,
+  initialVisionSidecarSelection,
+  selectedVisionSidecarRef,
+  UNRESOLVED_VISION_SIDECAR_KEY,
   visionSidecarModelKey,
   visionSidecarModels,
-  visionSidecarRef,
 } from '@/features/settings/utils/vision-sidecar-model'
+import { preventSelectCloseFromStealingFocus } from '@/features/settings/utils/select-focus'
 
 // Model form data that can be used by callers
 export interface ModelFormData {
@@ -431,8 +433,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
   // Wework desktop client availability
   const [isWeworkAvailable, setIsWeworkAvailable] = useState(false)
   const [selectedVisionSidecarKey, setSelectedVisionSidecarKey] = useState('')
+  const [unresolvedVisionSidecar, setUnresolvedVisionSidecar] =
+    useState<VisionSidecarModelRef | null>(null)
   const [availableVisionModels, setAvailableVisionModels] = useState<UnifiedModel[]>([])
   const [loadingVisionModels, setLoadingVisionModels] = useState(false)
+  const visionSidecarTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const visionSidecarContentRef = React.useRef<HTMLDivElement>(null)
 
   // Video capabilities state
   const [capRatios, setCapRatios] = useState<AspectRatioOption[]>([])
@@ -587,6 +593,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Load wework availability
         setIsWeworkAvailable(effectiveInitialData.isWeworkAvailable ?? false)
         setSelectedVisionSidecarKey('')
+        setUnresolvedVisionSidecar(null)
       } else {
         // Reset for new model
         setModelIdName('')
@@ -628,6 +635,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Reset wework availability
         setIsWeworkAvailable(false)
         setSelectedVisionSidecarKey('')
+        setUnresolvedVisionSidecar(null)
         setCostIndex(undefined)
         // Reset video capabilities
         setCapRatios([])
@@ -662,10 +670,9 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         setAvailableVisionModels(response.data)
         const initialRef = effectiveInitialData?.visionSidecarModel
         if (initialRef) {
-          const selected = response.data.find(candidate =>
-            matchesVisionSidecarRef(candidate, initialRef)
-          )
-          setSelectedVisionSidecarKey(selected ? visionSidecarModelKey(selected) : '')
+          const selection = initialVisionSidecarSelection(response.data, initialRef)
+          setSelectedVisionSidecarKey(selection.selectedKey)
+          setUnresolvedVisionSidecar(selection.unresolvedRef)
         }
       })
       .catch(() => {
@@ -1260,15 +1267,12 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         modelCategoryType === 'llm' && Object.keys(rawModelCapabilities).length > 0
           ? rawModelCapabilities
           : undefined
-      const selectedVisionModel =
-        modelCategoryType === 'llm' && isWeworkAvailable
-          ? visionModelOptions.find(
-              candidate => visionSidecarModelKey(candidate) === selectedVisionSidecarKey
-            )
-          : undefined
-      const selectedVisionSidecar = selectedVisionModel
-        ? (visionSidecarRef(selectedVisionModel) ?? undefined)
-        : undefined
+      const selectedVisionSidecar = selectedVisionSidecarRef(
+        modelCategoryType === 'llm' && isWeworkAvailable,
+        selectedVisionSidecarKey,
+        availableVisionModels,
+        unresolvedVisionSidecar
+      )
 
       // Map provider type to model field value
       // For LLM: openai -> openai, openai-responses -> openai, anthropic -> claude, gemini -> gemini
@@ -1715,6 +1719,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                 disabled={loadingVisionModels}
               >
                 <SelectTrigger
+                  ref={visionSidecarTriggerRef}
                   id="vision-sidecar-model"
                   data-testid="vision-sidecar-model-select"
                   className="bg-base"
@@ -1727,10 +1732,30 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
                     }
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent
+                  ref={visionSidecarContentRef}
+                  onCloseAutoFocus={event =>
+                    preventSelectCloseFromStealingFocus(
+                      event,
+                      document.activeElement,
+                      visionSidecarTriggerRef.current,
+                      visionSidecarContentRef.current
+                    )
+                  }
+                >
                   <SelectItem value="disabled">
                     {t('common:models.vision_sidecar_disabled')}
                   </SelectItem>
+                  {unresolvedVisionSidecar && (
+                    <SelectItem
+                      value={UNRESOLVED_VISION_SIDECAR_KEY}
+                      data-testid="vision-sidecar-model-unavailable-option"
+                    >
+                      {t('common:models.vision_sidecar_unavailable', {
+                        modelName: unresolvedVisionSidecar.modelName,
+                      })}
+                    </SelectItem>
+                  )}
                   {visionModelOptions.map(candidate => (
                     <SelectItem
                       key={visionSidecarModelKey(candidate)}

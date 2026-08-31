@@ -26,9 +26,16 @@ def test_frontend_builder_includes_chat_core_workspace_dependencies() -> None:
 
 
 def test_frontend_builders_use_workspace_pnpm_version() -> None:
-    """Frontend image builds should not download a second pnpm version."""
+    """Frontend image builds should use the workspace pnpm version."""
     dockerfile = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
     package_json = json.loads(PACKAGE_JSON.read_text(encoding="utf-8"))
     prepare_command = f"corepack prepare {package_json['packageManager']} --activate"
 
     assert dockerfile.count(prepare_command) == 2
+
+
+def test_frontend_build_stage_does_not_reinstall_workspace_dependencies() -> None:
+    """The builder must use the dependencies frozen in the deps stage."""
+    dockerfile = FRONTEND_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "pnpm --config.verify-deps-before-run=false run build" in dockerfile

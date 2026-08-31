@@ -7,15 +7,11 @@ sidebar_position: 20
 ## 1. 文档状态
 
 - 制定日期：2026-08-17
-- 状态：核心代码、真实 Tauri 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
+- 状态：核心代码、真实 Electron 云端闭环和 Remote Docker 容器生命周期验收完成；仅托管生产持久卷与实例重建待目标环境验收
 - 目标：让 Wework 的本地设备、托管云设备和 Remote Docker 设备共用同一套托管 Git Worktree 能力
-- 开发方式：一个主 Agent 负责目标、架构真值、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
+- 开发方式：一个主 Agent 负责目标、公共契约和集成；多个子 Agent 在互斥写入范围内并行实现
 
-本文记录实施计划、并行分工和验收状态，不替代架构真值。对应架构真值已经建立：
-
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- 两个架构目录的索引行
+本文记录实施计划、并行分工和验收状态。
 
 ## 2. 目标模式
 
@@ -55,7 +51,9 @@ flowchart LR
 ### 2.3 必要不变量
 
 1. Worktree 只能由持有源仓库的目标 Executor 创建、删除和恢复。
-2. `deviceId` 是 Worktree 身份的一部分，不能跨设备回退或迁移。
+2. `deviceId` 记录创建或最近准备 Worktree 的设备，并用于请求路由；它不是 Worktree
+   归属或操作权限，Executor 不得仅因持久化记录中的 `deviceId` 不同而阻止任务执行、
+   对账、归档、恢复或清理。
 3. Backend 不执行 Git 命令，不持有 Worktree 文件状态真值。
 4. 一个 Runtime Task 最多绑定一个托管 Worktree。
 5. Worktree ID 必须由稳定、唯一的任务 ID 派生。
@@ -85,7 +83,7 @@ flowchart LR
 - 补齐云端归档、快照、恢复、自动清理和设置。
 - 确保 Terminal、code-server、文件树和 Git 操作使用任务 Worktree 路径。
 - 明确并验证托管云设备持久卷要求。
-- 增加单元、契约、Backend、桌面 E2E 和真实 Tauri 验证。
+- 增加单元、契约、Backend、桌面 E2E 和真实 Electron 验证。
 
 ### 3.2 非目标
 
@@ -139,7 +137,7 @@ Wework
 
 ```mermaid
 flowchart TD
-  A0["A0 架构真值和公共契约"]
+  A0["A0 公共契约"]
   A1["A1 Wework 类型和可用性模型"]
   A2["A2 Executor capability + preflight"]
   A3["A3 Backend 能力透传和云存储确认"]
@@ -154,7 +152,7 @@ flowchart TD
 
   D1["D1 跨层契约测试"]
   D2["D2 Desktop E2E"]
-  D3["D3 真实 Tauri 和云设备验收"]
+  D3["D3 真实 Electron 和云设备验收"]
 
   A0 --> A1
   A0 --> A2
@@ -183,19 +181,15 @@ flowchart TD
 职责：
 
 - 创建并维护目标状态。
-- 先完成架构真值和公共协议决策。
+- 先完成公共协议决策。
 - 管理任务依赖、Agent 写入范围和合并顺序。
 - 处理跨模块公共类型、协议命名和冲突。
 - 审查所有子 Agent 变更。
-- 运行跨模块测试、真实 Tauri 验证和最终验收。
+- 运行跨模块测试、真实 Electron 验证和最终验收。
 - 在目标真正完成后才将目标标记为完成。
 
 主 Agent 独占写入范围：
 
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- `docs/zh/architecture/README.md`
-- `docs/en/architecture/README.md`
 - 跨模块共享协议和最终集成文件
 - 任何需要同时修改 Wework、Backend 和 Executor 语义的决策
 
@@ -335,7 +329,7 @@ flowchart TD
 - 增加本地、云端和 Remote Docker 的完整场景。
 - 增加排队取消、归档恢复、设备离线和重启场景。
 - 保证所有新增 E2E 由 GitHub CI 调用。
-- 输出真实 Tauri 验收步骤和证据要求。
+- 输出真实 Electron 验收步骤和证据要求。
 
 限制：
 
@@ -471,7 +465,7 @@ Wave 3 门禁：
 ### Wave 4：验证 Agent 与主 Agent集成
 
 - Agent F 编写和运行 CI 覆盖的桌面 E2E。
-- 主 Agent运行跨模块测试、真实 Tauri 和实际云/Remote 设备验收。
+- 主 Agent运行跨模块测试、真实 Electron 和实际云/Remote 设备验收。
 - 主 Agent修复集成缺陷；不得通过跳过、重跑或放宽断言获得通过。
 
 ## 8. 公共协议冻结建议
@@ -571,7 +565,7 @@ Backend 不自动重试有副作用的 Runtime RPC。超时表示结果未知，
 ## 9. 写入冲突规则
 
 1. 一个文件在同一 Wave 只能归一个 Agent。
-2. 公共类型、协议和架构真值只能由主 Agent 修改。
+2. 公共类型和协议只能由主 Agent 修改。
 3. 子 Agent 不得顺手修改其他工作流的文件。
 4. 如果实现需要修改不在写入范围内的文件，子 Agent只报告所需改动，由主 Agent处理。
 5. 子 Agent完成后必须列出修改文件、测试命令、已知限制和未完成依赖。
@@ -649,7 +643,7 @@ cd backend && uv run pytest
 cd executor && cargo test
 ```
 
-Wework UI、Runtime IPC、Tauri 或本地运行时行为发生变化时，必须使用隔离的真实 Tauri 会话执行完整 QA 计划，并在结束后停止会话。
+Wework UI、Runtime IPC、Electron 或本地运行时行为发生变化时，必须使用隔离的真实 Electron 会话执行完整 QA 计划，并在结束后停止会话。
 
 ## 13. E2E Checkpoint
 
@@ -693,7 +687,10 @@ cloud-worktree-device-restart
 
 ### 14.5 设备重建
 
-相同逻辑设备如果获得新的 `deviceId`，旧 Worktree 不能自动归属新设备。需要明确的设备恢复或数据丢失状态。
+设备重建或本地设备 ID 变化后，只要 Executor 仍访问同一持久化 Worktree 和 Git 仓库，
+旧记录中的 `deviceId` 不得阻止后续任务发送和 Worktree 生命周期操作。`deviceId` 继续
+作为诊断与路由元数据保留；存储是否连续仍由 Runtime Instance ID、稳定挂载路径和
+Git Worktree 身份校验决定。
 
 ### 14.6 Executor 崩溃窗口
 
@@ -707,7 +704,7 @@ cloud-worktree-device-restart
 
 只有同时满足以下条件，目标才能标记为完成：
 
-- 中英文架构真值和索引已更新。
+- 跨模块公共契约已确认。
 - 本地、云端和 Remote Docker 共用相同 Worktree 数据面。
 - Wework 不再以设备类型硬编码 Worktree 能力。
 - 旧 Executor、离线设备和非 Git 工作区有明确不可用原因。
@@ -715,7 +712,7 @@ cloud-worktree-device-restart
 - Terminal、IDE、文件树和 Git 操作使用任务最终工作区路径。
 - 云设备持久卷和稳定路径要求已实现并验证。
 - 新增 E2E 被 GitHub CI 调用。
-- 聚焦测试、完整回归和真实 Tauri 验证通过。
+- 聚焦测试、完整回归和真实 Electron 验证通过。
 - 没有跳过、重试或 fallback 用于掩盖失败。
 
 ## 16. 启动执行时的主 Agent Prompt
@@ -723,12 +720,9 @@ cloud-worktree-device-restart
 ```text
 目标：完成 Wework 云端 Git Worktree 支持。
 
-先读取仓库与 wework/AGENTS.md，再读取：
-- docs/zh/architecture/git-worktree-execution.md
-- docs/en/architecture/git-worktree-execution.md
-- 本开发计划
+先读取仓库与 wework/AGENTS.md，再读取本开发计划。
 
-主 Agent负责目标状态、公共契约、架构真值、Agent 写入范围、合并和最终验证。
+主 Agent负责目标状态、公共契约、Agent 写入范围、合并和最终验证。
 按 Wave 启动子 Agent；每个 Agent 必须有互斥写入范围、明确依赖和验收标准。
 不得让两个 Agent 同时修改同一文件。
 不得由 Backend 执行 Git。
@@ -743,15 +737,15 @@ cloud-worktree-device-restart
 
 | Wave | 结果                                                                                        |
 | ---- | ------------------------------------------------------------------------------------------- |
-| A0   | 中英文架构真值、索引、协议边界和必要不变量已冻结                                            |
+| A0   | 跨模块协议边界和必要不变量已冻结                                                            |
 | A1   | Wework 已补齐 Local、Cloud、Remote 和 `device_path` 类型及统一 Worktree availability        |
 | A2   | Executor 已实现版本化 capability、preflight、延迟创建、身份校验、快照、恢复、清理和重启对账 |
 | A3   | Backend 已实现逻辑设备路由、所有权校验、结构化 RPC 错误和 `runtime_features` 投影           |
 | B    | Hybrid 创建路径、计划/最终路径对账、工具路径跟随和 DeviceWorkspace 偏好已完成               |
 | C    | 归档停止确认、快照删除、反归档恢复、设置和自动清理链路已完成                                |
-| D    | 跨层契约、CI 分类、六个原子 checkpoint 和真实 Tauri 云端闭环已完成；目标环境验收见下文      |
+| D    | 跨层契约、CI 分类、六个原子 checkpoint 和真实 Electron 云端闭环已完成；目标环境验收见下文      |
 
-真实 Tauri 的 `cloud-git-worktree` 聚合入口已并行展开并验证六个可独立运行的 checkpoint：
+真实 Electron 的 `cloud-git-worktree` 聚合入口已并行展开并验证六个可独立运行的 checkpoint：
 
 1. `cloud-worktree-capability`：在线能力、协议版本、目标工作区 preflight 和不可用原因。
 2. `cloud-worktree-create`：选择“新工作树”，由目标 Executor 创建隔离 Worktree，并以最终路径运行任务。
@@ -770,7 +764,7 @@ Executor: cargo fmt --check and cargo test passed
   unit layer: 869 passed, 1 ignored
   app_runtime_work_send_contract: 37 passed in 3.54s
 CI desktop classifier contract: passed
-Real Tauri aggregate:
+Real Electron aggregate:
   node e2e/desktop/run-checkpoints.mjs --parallel-segments cloud-git-worktree
   all six atomic checkpoints passed with three isolated workers
 Evidence:

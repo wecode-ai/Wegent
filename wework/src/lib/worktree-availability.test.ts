@@ -115,6 +115,16 @@ function createPreflight(
 describe('resolveProjectWorktreeAvailability', () => {
   test.each([
     ['supported capability', createDevice(), true],
+    [
+      'supported capability in a newer runtime feature envelope',
+      createDevice({
+        runtime_features: {
+          ...createDevice().runtime_features!,
+          schemaVersion: 2,
+        },
+      }),
+      true,
+    ],
     ['missing capability', createDevice({ runtime_features: null }), false],
     [
       'old capability version',
@@ -527,6 +537,65 @@ describe('resolveProjectWorktreeAvailability', () => {
 })
 
 describe('probeProjectWorktreeAvailability', () => {
+  test('shares identical in-flight capability and preflight probes', async () => {
+    let resolveCapabilities: ((value: ReturnType<typeof createCapabilities>) => void) | null = null
+    const getWorktreeCapabilities = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof createCapabilities>>(resolve => {
+          resolveCapabilities = resolve
+        })
+    )
+    const preflightWorktree = vi.fn(async () => createPreflight())
+    const api = { getWorktreeCapabilities, preflightWorktree }
+    const input = {
+      api,
+      project: createProject(),
+      workspace: createWorkspace(),
+      device: createDevice({ runtime_features: null }),
+      ref: 'feature/cloud-worktree',
+    }
+
+    const first = probeProjectWorktreeAvailability(input)
+    const second = probeProjectWorktreeAvailability(input)
+    resolveCapabilities?.(createCapabilities())
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ available: true }),
+      expect.objectContaining({ available: true }),
+    ])
+    expect(getWorktreeCapabilities).toHaveBeenCalledOnce()
+    expect(preflightWorktree).toHaveBeenCalledOnce()
+  })
+
+  test('does not share results across different repository fingerprints', async () => {
+    const getWorktreeCapabilities = vi.fn(async () => createCapabilities())
+    const preflightWorktree = vi.fn(async () => createPreflight())
+    const api = { getWorktreeCapabilities, preflightWorktree }
+
+    const [matching, mismatched] = await Promise.all([
+      probeProjectWorktreeAvailability({
+        api,
+        project: createProject(),
+        workspace: createWorkspace(),
+        device: createDevice(),
+      }),
+      probeProjectWorktreeAvailability({
+        api,
+        project: createProject(),
+        workspace: createWorkspace({ repoRootFingerprint: 'different-repository' }),
+        device: createDevice(),
+      }),
+    ])
+
+    expect(matching).toMatchObject({ available: true, reason: 'available' })
+    expect(mismatched).toMatchObject({
+      available: false,
+      reason: 'workspace_identity_mismatch',
+    })
+    expect(getWorktreeCapabilities).toHaveBeenCalledTimes(2)
+    expect(preflightWorktree).toHaveBeenCalledTimes(2)
+  })
+
   test('uses capability and preflight RPC as the send-time authority', async () => {
     const getWorktreeCapabilities = vi.fn(async () => createCapabilities())
     const preflightWorktree = vi.fn(async () => createPreflight())

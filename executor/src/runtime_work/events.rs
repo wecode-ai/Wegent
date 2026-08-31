@@ -9,6 +9,7 @@ use std::{
 };
 
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
 use crate::{
@@ -21,8 +22,9 @@ use super::{
         codex_notification, debug_ignored_codex_notification, is_root_codex_turn_event,
     },
     notification_mapping::{
-        log_dropped_notification, log_stream_text_mapping, log_text_mapping, map_text_chunk,
-        map_tool_output_delta, notification_item_id, TextChunkMapping,
+        codex_stream_debug_enabled, log_dropped_notification, log_stream_text_mapping,
+        log_text_mapping, map_text_chunk, map_tool_output_delta, notification_item_id,
+        TextChunkMapping,
     },
     transcript::{
         completed_workbench_block_from_notification, file_changes_block_from_patch_updated,
@@ -31,7 +33,8 @@ use super::{
     },
     util::{
         extract_text, is_codex_context_compaction_item_type, is_completed_plan_item, item_id,
-        item_type, now_ms, raw_string_field, string_field,
+        item_type, normalize_runtime_goal_timestamps, now_ms, raw_string_field, runtime_task_title,
+        string_field,
     },
 };
 
@@ -146,6 +149,14 @@ pub(crate) fn emit_response_event(
             payload_object.insert("source".to_owned(), source.clone());
         }
     }
+    if terminal {
+        if let Some(title) = runtime_task_title(request) {
+            if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut)
+            {
+                payload_object.insert("taskTitle".to_owned(), Value::String(title));
+            }
+        }
+    }
     if let Some(generated_user_message) = request.extra.get("runtime_generated_user_message") {
         if let Some(payload_object) = payload.get_mut("payload").and_then(Value::as_object_mut) {
             payload_object.insert(
@@ -250,7 +261,10 @@ struct ProcessTextStream {
     process_kind: String,
     item_id: Option<String>,
     content: String,
+    emitted_content_len: usize,
 }
+
+const PROCESS_TEXT_UPDATE_MIN_CHARS: usize = 16;
 
 impl CodexNotificationEventMapper {
     pub(crate) fn map(
@@ -481,11 +495,14 @@ impl CodexNotificationEventMapper {
                 emit_goal_continuation_event(&emit_context, notification.params, "settled");
             }
             "thread/goal/updated" => {
-                self.goal_status = notification
+                let goal = notification
                     .params
                     .get("goal")
-                    .and_then(|goal| string_field(goal, "status"))
-                    .map(|status| status.to_ascii_lowercase());
+                    .cloned()
+                    .map(normalize_runtime_goal_timestamps)
+                    .unwrap_or(Value::Null);
+                self.goal_status =
+                    string_field(&goal, "status").map(|status| status.to_ascii_lowercase());
                 emit_response_event(
                     event_tx,
                     device_id,
@@ -497,7 +514,7 @@ impl CodexNotificationEventMapper {
                             .or_else(|| string_field(notification.params, "thread_id")),
                         "turn_id": string_field(notification.params, "turnId")
                             .or_else(|| string_field(notification.params, "turn_id")),
-                        "goal": notification.params.get("goal").cloned().unwrap_or(Value::Null),
+                        "goal": goal,
                     }),
                 );
             }
@@ -719,6 +736,7 @@ impl CodexNotificationEventMapper {
     fn emit_process_text_delta(
         &mut self,
         emit_context: &EventEmitContext<'_>,
+        method: &str,
         block_type: &str,
         process_kind: &str,
         item_id: Option<String>,
@@ -728,6 +746,25 @@ impl CodexNotificationEventMapper {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
             process_text.content.push_str(&delta);
+            let pending_content_len = process_text
+                .content
+                .len()
+                .saturating_sub(process_text.emitted_content_len);
+            if delta.len() == 1 && pending_content_len < PROCESS_TEXT_UPDATE_MIN_CHARS {
+                return;
+            }
+            let pending_delta = process_text.content[process_text.emitted_content_len..].to_owned();
+            let content_offset = process_text.emitted_content_len;
+            process_text.emitted_content_len = process_text.content.len();
+            log_process_text_delta(
+                emit_context.local_task_id,
+                method,
+                &process_text.id,
+                process_text.item_id.as_deref(),
+                &pending_delta,
+                content_offset,
+                process_text.content.len(),
+            );
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -737,7 +774,7 @@ impl CodexNotificationEventMapper {
                 json!({
                     "block_id": process_text.id.clone(),
                     "updates": {
-                        "content": process_text.content.clone(),
+                        "content_delta": pending_delta,
                         "status": "streaming",
                     }
                 }),
@@ -760,7 +797,17 @@ impl CodexNotificationEventMapper {
             process_kind: process_kind.to_owned(),
             item_id: item_id.clone(),
             content: delta.clone(),
+            emitted_content_len: delta.len(),
         });
+        log_process_text_delta(
+            emit_context.local_task_id,
+            method,
+            &id,
+            item_id.as_deref(),
+            &delta,
+            0,
+            delta.len(),
+        );
         emit_response_event(
             emit_context.event_tx,
             emit_context.device_id,
@@ -792,7 +839,8 @@ impl CodexNotificationEventMapper {
         if let Some(process_text) = self.process_text.as_mut().filter(|process_text| {
             process_text.accepts(block_type, process_kind, item_id.as_deref())
         }) {
-            process_text.content = text.clone();
+            let emitted_content = &process_text.content[..process_text.emitted_content_len];
+            let updates = terminal_content_updates(emitted_content, &text);
             emit_response_event(
                 emit_context.event_tx,
                 emit_context.device_id,
@@ -801,10 +849,7 @@ impl CodexNotificationEventMapper {
                 emit_context.request,
                 json!({
                     "block_id": process_text.id.clone(),
-                    "updates": {
-                        "content": text,
-                        "status": "done",
-                    }
+                    "updates": updates,
                 }),
             );
             self.reset_process_text();
@@ -865,6 +910,7 @@ impl CodexNotificationEventMapper {
                 );
                 self.emit_process_text_delta(
                     emit_context,
+                    method,
                     block_type,
                     process_kind,
                     item_id,
@@ -956,7 +1002,7 @@ impl CodexNotificationEventMapper {
             json!({
                 "block_id": block_id,
                 "updates": {
-                    "content": content.clone(),
+                    "content_delta": delta,
                     "status": "streaming",
                 }
             }),
@@ -973,8 +1019,8 @@ impl CodexNotificationEventMapper {
         text: String,
     ) {
         let block_id = plan_block_id(params);
-        let had_streaming_block = self.plan_blocks.remove(&block_id).is_some();
-        if had_streaming_block {
+        let streamed_content = self.plan_blocks.remove(&block_id);
+        if let Some(streamed_content) = streamed_content {
             emit_response_event(
                 event_tx,
                 device_id,
@@ -983,10 +1029,7 @@ impl CodexNotificationEventMapper {
                 request,
                 json!({
                     "block_id": block_id,
-                    "updates": {
-                        "content": text,
-                        "status": "done",
-                    }
+                    "updates": terminal_content_updates(&streamed_content, &text),
                 }),
             );
             return;
@@ -1206,6 +1249,7 @@ fn log_unhandled_codex_raw_message(
 ) {
     let raw = serde_json::to_string(message)
         .unwrap_or_else(|error| format!("<failed to serialize raw message: {error}>"));
+    let raw_hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
     log_executor_event(
         "codex unhandled raw message",
         &[
@@ -1213,7 +1257,8 @@ fn log_unhandled_codex_raw_message(
             ("task_id", task_id.to_owned()),
             ("subtask_id", subtask_id.to_owned()),
             ("method", method.to_owned()),
-            ("raw", raw),
+            ("raw_len", raw.len().to_string()),
+            ("raw_sha256", raw_hash),
         ],
     );
 }
@@ -1317,6 +1362,56 @@ fn emit_context_compaction_event(
         request,
         json!({"block": context_compaction_block(params)}),
     );
+}
+
+fn terminal_content_updates(streamed_content: &str, completed_content: &str) -> Value {
+    if let Some(delta) = completed_content.strip_prefix(streamed_content) {
+        if delta.is_empty() {
+            return json!({ "status": "done" });
+        }
+        return json!({
+            "content_delta": delta,
+            "status": "done",
+        });
+    }
+    json!({
+        "content": completed_content,
+        "status": "done",
+    })
+}
+
+fn log_process_text_delta(
+    local_task_id: &str,
+    method: &str,
+    block_id: &str,
+    item_id: Option<&str>,
+    delta: &str,
+    content_offset: usize,
+    content_length: usize,
+) {
+    if !codex_stream_debug_enabled() {
+        return;
+    }
+    log_executor_event(
+        "codex runtime process text delta",
+        &[
+            ("local_task_id", local_task_id.to_owned()),
+            ("method", method.to_owned()),
+            ("block_id", block_id.to_owned()),
+            ("item_id", item_id.unwrap_or("<none>").to_owned()),
+            ("content_offset_bytes", content_offset.to_string()),
+            ("content_length_bytes", content_length.to_string()),
+            ("delta_length_bytes", delta.len().to_string()),
+            ("delta_fingerprint", text_fingerprint(delta)),
+        ],
+    );
+}
+
+fn text_fingerprint(value: &str) -> String {
+    let hash = value.as_bytes().iter().fold(0x811c_9dc5_u32, |hash, byte| {
+        (hash ^ u32::from(*byte)).wrapping_mul(0x0100_0193)
+    });
+    format!("{hash:08x}")
 }
 
 fn is_context_compaction_notification(params: &Value) -> bool {
@@ -2097,6 +2192,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_content_update_does_not_repeat_streamed_content() {
+        assert_eq!(
+            terminal_content_updates("already streamed", "already streamed"),
+            json!({"status": "done"})
+        );
+    }
+
+    #[test]
+    fn terminal_content_update_only_sends_an_unstreamed_suffix() {
+        assert_eq!(
+            terminal_content_updates("already", "already streamed"),
+            json!({"content_delta": " streamed", "status": "done"})
+        );
+    }
+
+    #[test]
+    fn terminal_content_update_repairs_a_mismatched_stream_with_the_final_snapshot() {
+        assert_eq!(
+            terminal_content_updates("streamed text", "canonical text"),
+            json!({"content": "canonical text", "status": "done"})
+        );
+    }
+
+    #[test]
     fn emits_client_user_message_id_with_runtime_response_events() {
         let (event_tx, mut event_rx) = broadcast::channel(1);
         let request = ExecutionRequest {
@@ -2139,6 +2258,42 @@ mod tests {
             "continue from dingtalk"
         );
         assert!(event["payload"]["eventSeq"].as_u64().unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn emits_runtime_task_title_only_with_terminal_response_events() {
+        let (event_tx, mut event_rx) = broadcast::channel(2);
+        let request = ExecutionRequest {
+            task_id: "task-1".to_owned(),
+            subtask_id: "codex-turn-1".to_owned(),
+            extra: Map::from_iter([(
+                "runtimeTaskTitle".to_owned(),
+                json!("Analyze production issue"),
+            )]),
+            ..ExecutionRequest::default()
+        };
+
+        emit_response_event(
+            &Some(event_tx.clone()),
+            "device-1",
+            "response.output_text.delta",
+            "local-task-1",
+            &request,
+            json!({"delta": "working"}),
+        );
+        emit_response_event(
+            &Some(event_tx),
+            "device-1",
+            "response.completed",
+            "local-task-1",
+            &request,
+            json!({"value": "done"}),
+        );
+
+        let progress = event_rx.try_recv().expect("progress event");
+        let terminal = event_rx.try_recv().expect("terminal event");
+        assert!(progress["payload"].get("taskTitle").is_none());
+        assert_eq!(terminal["payload"]["taskTitle"], "Analyze production issue");
     }
 
     #[test]
@@ -2715,12 +2870,91 @@ mod tests {
         assert_eq!(created["payload"]["data"]["block"]["type"], "text");
         assert_eq!(completed["event"], "response.block.updated");
         assert_eq!(completed["payload"]["data"]["block_id"], "msg-progress");
-        assert_eq!(
-            completed["payload"]["data"]["updates"]["content"],
-            "I will inspect."
-        );
+        assert!(completed["payload"]["data"]["updates"]["content"].is_null());
+        assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
         assert!(event_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn coalesces_dense_process_text_deltas_before_the_terminal_update() {
+        let (event_tx, mut event_rx) = broadcast::channel(256);
+        let request = ExecutionRequest {
+            task_id: "7".to_owned(),
+            subtask_id: "8".to_owned(),
+            ..ExecutionRequest::default()
+        };
+        let mut mapper = CodexNotificationEventMapper::default();
+
+        mapper.map(
+            &Some(event_tx.clone()),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/started",
+                "params": {
+                    "item": {
+                        "id": "msg-noisy",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": ""
+                    }
+                }
+            }),
+        );
+        for _ in 0..2_200 {
+            mapper.map(
+                &Some(event_tx.clone()),
+                "device-1",
+                "local-1",
+                &request,
+                json!({
+                    "method": "item/agentMessage/delta",
+                    "params": {
+                        "itemId": "msg-noisy",
+                        "delta": "x"
+                    }
+                }),
+            );
+        }
+        mapper.map(
+            &Some(event_tx),
+            "device-1",
+            "local-1",
+            &request,
+            json!({
+                "method": "item/completed",
+                "params": {
+                    "item": {
+                        "id": "msg-noisy",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "NOISY_COMPLETE"
+                    }
+                }
+            }),
+        );
+
+        let mut events = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(
+            events.len() < 160,
+            "dense text deltas should not flood the desktop transport"
+        );
+        assert_eq!(events[0]["event"], "response.block.created");
+        let completed = events
+            .last()
+            .expect("terminal block update should be emitted");
+        assert_eq!(completed["event"], "response.block.updated");
+        assert_eq!(
+            completed["payload"]["data"]["updates"]["content"],
+            "NOISY_COMPLETE"
+        );
+        assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
     }
 
     #[test]
@@ -3072,8 +3306,8 @@ mod tests {
         assert_eq!(first_event["payload"]["data"]["block"]["content"], "Done.");
         assert_eq!(second_event["event"], "response.block.updated");
         assert_eq!(
-            second_event["payload"]["data"]["updates"]["content"],
-            "Done. More."
+            second_event["payload"]["data"]["updates"]["content_delta"],
+            " More."
         );
         assert_eq!(next_event["event"], "response.block.created");
         assert_eq!(next_event["payload"]["data"]["block"]["type"], "text");
@@ -3312,8 +3546,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], block_id);
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "I will inspect."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "inspect."
         );
     }
 
@@ -3408,8 +3642,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], block_id);
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "I found the issue."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "the issue."
         );
     }
 
@@ -3578,8 +3812,8 @@ mod tests {
         assert_eq!(updated["event"], "response.block.updated");
         assert_eq!(updated["payload"]["data"]["block_id"], "plan-turn-1-plan");
         assert_eq!(
-            updated["payload"]["data"]["updates"]["content"],
-            "# Plan\n\n- Inspect the repo."
+            updated["payload"]["data"]["updates"]["content_delta"],
+            "\n- Inspect the repo."
         );
         assert_eq!(updated["payload"]["data"]["updates"]["status"], "streaming");
 
@@ -3588,10 +3822,8 @@ mod tests {
             .expect("completed event should be emitted");
         assert_eq!(completed["event"], "response.block.updated");
         assert_eq!(completed["payload"]["data"]["block_id"], "plan-turn-1-plan");
-        assert_eq!(
-            completed["payload"]["data"]["updates"]["content"],
-            "# Plan\n\n- Inspect the repo."
-        );
+        assert!(completed["payload"]["data"]["updates"]["content"].is_null());
+        assert!(completed["payload"]["data"]["updates"]["content_delta"].is_null());
         assert_eq!(completed["payload"]["data"]["updates"]["status"], "done");
     }
 
@@ -3729,11 +3961,23 @@ mod tests {
                 "method": "thread/goal/updated",
                 "params": {
                     "threadId": "thread-root",
-                    "goal": { "status": "active" }
+                    "goal": {
+                        "status": "active",
+                        "createdAt": 1_787_636_000,
+                        "updatedAt": 1_787_636_001
+                    }
                 }
             }),
         );
-        let _ = event_rx.try_recv().expect("goal event should be emitted");
+        let goal = event_rx.try_recv().expect("goal event should be emitted");
+        assert_eq!(
+            goal["payload"]["data"]["goal"]["createdAt"],
+            1_787_636_000_000_i64
+        );
+        assert_eq!(
+            goal["payload"]["data"]["goal"]["updatedAt"],
+            1_787_636_001_000_i64
+        );
 
         mapper.map(
             &Some(event_tx.clone()),

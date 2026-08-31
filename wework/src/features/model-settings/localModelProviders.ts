@@ -1,5 +1,3 @@
-import { fetch as tauriFetch } from '@tauri-apps/plugin-http'
-import { shouldUseTauriFetch } from '@/api/http'
 import {
   DEEPSEEK_V4_CONTEXT_WINDOW,
   DEEPSEEK_V4_FLASH_MODEL_ID,
@@ -27,10 +25,12 @@ export interface LocalModelProviderProfile {
   displayNameKey?: string
   description: string
   baseUrl: string
+  modelsBaseUrl?: string
   apiFormat: LocalModelApiFormat
   requestPath: string
   modelsPath?: string
   modelsApiKeyHeader?: 'Authorization' | 'X-Api-Key'
+  connectionTest?: LocalModelProviderConnectionTest
   allowedModelIds?: readonly string[]
   toolProfile: LocalModelToolProfile
   group?: string
@@ -51,6 +51,12 @@ export interface DiscoveredLocalModel {
   displayName: string
 }
 
+export interface LocalModelProviderConnectionTest {
+  baseUrl: string
+  requestPath: string
+  apiFormat: 'openai-chat-completions'
+}
+
 const MINIMAX_MODEL_DEFAULTS = {
   'MiniMax-M2.7': { contextWindow: 204_800 },
   'MiniMax-M2.7-highspeed': { contextWindow: 204_800 },
@@ -65,7 +71,8 @@ function miniMaxProviderProfile(
   id: Extract<LocalModelProviderProfileId, 'minimax' | 'minimax-global'>,
   displayName: string,
   displayNameKey: string,
-  baseUrl: string
+  baseUrl: string,
+  modelsBaseUrl: string
 ): LocalModelProviderProfile {
   return {
     id,
@@ -73,10 +80,16 @@ function miniMaxProviderProfile(
     displayNameKey,
     description: 'MiniMax Anthropic-compatible API',
     baseUrl,
+    modelsBaseUrl,
     apiFormat: 'anthropic-messages',
     requestPath: '/v1/messages',
     modelsPath: '/v1/models',
-    modelsApiKeyHeader: 'X-Api-Key',
+    modelsApiKeyHeader: 'Authorization',
+    connectionTest: {
+      baseUrl: modelsBaseUrl,
+      requestPath: '/v1/text/chatcompletion_v2',
+      apiFormat: 'openai-chat-completions',
+    },
     toolProfile: 'function',
     group: 'MiniMax',
     contextWindow: 204_800,
@@ -196,13 +209,15 @@ export const LOCAL_MODEL_PROVIDER_PROFILES: LocalModelProviderProfile[] = [
     'minimax',
     'MiniMax (China mainland)',
     'workbench.local_model_provider_minimax_cn',
-    'https://api.minimaxi.com/anthropic'
+    'https://api.minimaxi.com/anthropic',
+    'https://api.minimaxi.com'
   ),
   miniMaxProviderProfile(
     'minimax-global',
     'MiniMax (Global)',
     'workbench.local_model_provider_minimax_global',
-    'https://api.minimax.io/anthropic'
+    'https://api.minimax.io/anthropic',
+    'https://api.minimax.io'
   ),
   {
     id: 'custom',
@@ -244,7 +259,7 @@ export function localModelSupportsImageInput(config: LocalModelConfig): boolean 
 }
 
 function defaultFetcher(): typeof fetch {
-  return shouldUseTauriFetch() ? (tauriFetch as typeof fetch) : globalThis.fetch.bind(globalThis)
+  return globalThis.fetch.bind(globalThis)
 }
 
 function modelListError(body: unknown): string | null {
@@ -267,20 +282,18 @@ export async function discoverProviderModels(
   if (!apiKey.trim()) throw new Error('API Key is required')
 
   const fetcher = options.fetcher ?? defaultFetcher()
+  const modelsBaseUrl = (profile.modelsBaseUrl ?? profile.baseUrl).replace(/\/+$/, '')
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? 15_000)
   try {
-    const response = await fetcher(
-      `${profile.baseUrl.replace(/\/+$/, '')}/${profile.modelsPath.replace(/^\/+/, '')}`,
-      {
-        method: 'GET',
-        headers:
-          profile.modelsApiKeyHeader === 'X-Api-Key'
-            ? { 'X-Api-Key': apiKey.trim() }
-            : { Authorization: `Bearer ${apiKey.trim()}` },
-        signal: controller.signal,
-      }
-    )
+    const response = await fetcher(`${modelsBaseUrl}/${profile.modelsPath.replace(/^\/+/, '')}`, {
+      method: 'GET',
+      headers:
+        profile.modelsApiKeyHeader === 'X-Api-Key'
+          ? { 'X-Api-Key': apiKey.trim() }
+          : { Authorization: `Bearer ${apiKey.trim()}` },
+      signal: controller.signal,
+    })
     let body: unknown
     try {
       body = await response.json()

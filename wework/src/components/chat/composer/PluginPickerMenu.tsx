@@ -7,9 +7,11 @@ import {
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
 import { prefetchLocalConnectorAuthForPluginNames } from '@/features/plugins/prefetchLocalConnectorAuth'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Tooltip } from '@/components/ui/tooltip'
-import { navigateTo } from '@/lib/navigation'
 import type { LocalDeviceApp } from '@/types/api'
 import { resolvePluginLogo } from '@/components/plugins/plugin-assets'
 import { useOptionalAppearance } from '@/features/appearance'
@@ -71,13 +73,15 @@ export function PluginPickerMenu({
   onListLocalApps,
 }: PluginPickerMenuProps) {
   const { t } = useTranslation('common')
+  const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
+  const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [apps, setApps] = useState<LocalDeviceApp[]>(() => paintComposerApps(getComposerApps()))
   const hasCachedAppsRef = useRef(apps.length > 0)
-  const [loading, setLoading] = useState(() => Boolean(onListLocalApps) && apps.length === 0)
+  const [loading, setLoading] = useState(false)
   const [reloadToken, setReloadToken] = useState(0)
 
   const applySharedApps = (
@@ -129,17 +133,15 @@ export function PluginPickerMenu({
   useEffect(() => {
     let current = true
     let retryTimer: number | null = null
-    if (!onListLocalApps) return
-    if (!hasCachedAppsRef.current) setLoading(true)
+    if (!open || !onListLocalApps) return
 
     const applySharedOrRetry = (attempt: number) => {
       requestComposerAppsSync()
       if (applySharedApps()) return true
       hasCachedAppsRef.current = false
       setApps([])
-      // Install → notify can race ahead of plugin/installed. Retry whether the
-      // menu is open or closed so the toolbar does not stay empty after a
-      // transient cloud/list failure on first paint.
+      // Install → notify can race ahead of plugin/installed. Retry while the
+      // menu remains open so a transient first-paint failure can recover.
       if (attempt < 30) {
         retryTimer = window.setTimeout(() => load(attempt + 1), attempt < 6 ? 500 : 1000)
       }
@@ -323,23 +325,25 @@ export function PluginPickerMenu({
               </div>
             )}
           </div>
-          <button
-            type="button"
-            data-testid="composer-open-plugin-marketplace"
-            className="mt-1 flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
-            onClick={() => {
-              setOpen(false)
-              navigateTo('/plugins')
-            }}
-          >
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface">
-              <Boxes className="h-3.5 w-3.5 text-text-secondary" />
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">
-              {t('workbench.composer_open_plugin_marketplace', '打开插件市场')}
-            </span>
-            <ExternalLink className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-          </button>
+          {openPluginCenterAction ? (
+            <button
+              type="button"
+              data-testid="composer-open-plugin-marketplace"
+              className="mt-1 flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left transition-colors hover:bg-muted"
+              onClick={() => {
+                setOpen(false)
+                executeDshAction(openPluginCenterAction)
+              }}
+            >
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-surface">
+                <Boxes className="h-3.5 w-3.5 text-text-secondary" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {t('workbench.composer_open_plugin_marketplace', '打开插件市场')}
+              </span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-text-muted" />
+            </button>
+          ) : null}
         </div>
       )}
     </div>

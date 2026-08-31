@@ -15,7 +15,7 @@ import {
   updateActiveWorkbenchSplitSizes,
   type WorkbenchSplitGroupsState,
 } from './workbenchSplitGroups'
-import type { WorkbenchSplitDirection } from './workbenchSplitLayout'
+import { collectWorkbenchPaneKeys, type WorkbenchSplitDirection } from './workbenchSplitLayout'
 
 interface UseWorkbenchSplitGroupsOptions {
   storageKey: string
@@ -32,6 +32,22 @@ export function workbenchSplitStorageKeys(scope: string) {
   }
 }
 
+function loadWorkbenchSplitGroupsState(
+  storageKey: string,
+  legacyStorageKey: string,
+  activePaneKey: string
+): WorkbenchSplitGroupsState {
+  if (typeof window === 'undefined') return createWorkbenchSplitGroupsState(activePaneKey)
+  return (
+    parsePersistedWorkbenchSplitGroups(window.localStorage.getItem(storageKey), activePaneKey) ??
+    migratePersistedWorkbenchSplitLayout(
+      window.localStorage.getItem(legacyStorageKey),
+      activePaneKey
+    ) ??
+    createWorkbenchSplitGroupsState(activePaneKey)
+  )
+}
+
 export function useWorkbenchSplitGroups({
   storageKey,
   legacyStorageKey,
@@ -39,30 +55,37 @@ export function useWorkbenchSplitGroups({
   validRuntimeKeys,
   runtimeKeysReady,
 }: UseWorkbenchSplitGroupsOptions) {
-  const [state, setState] = useState<WorkbenchSplitGroupsState>(() => {
-    if (typeof window === 'undefined') return createWorkbenchSplitGroupsState(activePaneKey)
-    return (
-      parsePersistedWorkbenchSplitGroups(window.localStorage.getItem(storageKey), activePaneKey) ??
-      migratePersistedWorkbenchSplitLayout(
-        window.localStorage.getItem(legacyStorageKey),
-        activePaneKey
-      ) ??
-      createWorkbenchSplitGroupsState(activePaneKey)
-    )
-  })
-  const stateRef = useRef(state)
+  const scopeKey = `${storageKey}\u0000${legacyStorageKey}`
+  const loadedState = useMemo(
+    () => loadWorkbenchSplitGroupsState(storageKey, legacyStorageKey, activePaneKey),
+    [activePaneKey, legacyStorageKey, storageKey]
+  )
+  const [statesByScope, setStatesByScope] = useState(() => new Map([[scopeKey, loadedState]]))
+  const statesByScopeRef = useRef(statesByScope)
+  const observedRuntimeKeysByScopeRef = useRef(new Map<string, Set<string>>())
+  const previousActivePaneRef = useRef<{
+    storageKey: string
+    legacyStorageKey: string
+    paneKey: string
+  } | null>(null)
+  const state = statesByScope.get(scopeKey) ?? loadedState
   useLayoutEffect(() => {
-    stateRef.current = state
-  }, [state])
+    statesByScopeRef.current = statesByScope
+  }, [statesByScope])
 
   const commit = useCallback(
     (update: (current: WorkbenchSplitGroupsState) => WorkbenchSplitGroupsState) => {
-      const next = update(stateRef.current)
-      stateRef.current = next
-      setState(next)
+      const currentStates = statesByScopeRef.current
+      const current = currentStates.get(scopeKey) ?? loadedState
+      const next = update(current)
+      if (next === current && currentStates.has(scopeKey)) return next
+      const nextStates = new Map(currentStates)
+      nextStates.set(scopeKey, next)
+      statesByScopeRef.current = nextStates
+      setStatesByScope(nextStates)
       return next
     },
-    []
+    [loadedState, scopeKey]
   )
 
   useEffect(() => {
@@ -74,14 +97,52 @@ export function useWorkbenchSplitGroups({
   }, [state, storageKey])
 
   useEffect(() => {
+    const previousActivePane = previousActivePaneRef.current
+    const sameScope =
+      previousActivePane?.storageKey === storageKey &&
+      previousActivePane.legacyStorageKey === legacyStorageKey
+    if (sameScope && previousActivePane?.paneKey === activePaneKey) {
+      return
+    }
+    previousActivePaneRef.current = {
+      storageKey,
+      legacyStorageKey,
+      paneKey: activePaneKey,
+    }
+    if (
+      activePaneKey.startsWith('blank:') &&
+      collectWorkbenchPaneKeys(getActiveWorkbenchLayout(state).root).some(key =>
+        key.startsWith('runtime:')
+      ) &&
+      (!sameScope || previousActivePane?.paneKey.startsWith('blank:'))
+    ) {
+      return
+    }
     commit(current => activateWorkbenchPane(current, activePaneKey))
-  }, [activePaneKey, commit])
+  }, [activePaneKey, commit, legacyStorageKey, state, storageKey])
 
   useEffect(() => {
     if (!runtimeKeysReady) return
-    const validKeys = new Set([...validRuntimeKeys, activePaneKey])
-    commit(current => pruneWorkbenchSplitGroups(current, validKeys, activePaneKey))
-  }, [activePaneKey, commit, runtimeKeysReady, validRuntimeKeys])
+    const observedRuntimeKeys =
+      observedRuntimeKeysByScopeRef.current.get(scopeKey) ?? new Set<string>()
+    validRuntimeKeys.forEach(key => observedRuntimeKeys.add(key))
+    observedRuntimeKeysByScopeRef.current.set(scopeKey, observedRuntimeKeys)
+    commit(current => {
+      const validKeys = new Set([...validRuntimeKeys, activePaneKey])
+      const layouts = [
+        getActiveWorkbenchLayout(current),
+        ...current.groups.map(group => group.layout),
+      ]
+      layouts.forEach(layout => {
+        collectWorkbenchPaneKeys(layout.root).forEach(key => {
+          if (key.startsWith('runtime:') && !observedRuntimeKeys.has(key)) {
+            validKeys.add(key)
+          }
+        })
+      })
+      return pruneWorkbenchSplitGroups(current, validKeys, activePaneKey)
+    })
+  }, [activePaneKey, commit, runtimeKeysReady, scopeKey, validRuntimeKeys])
 
   const activeLayout = getActiveWorkbenchLayout(state)
   const memberships = useMemo(() => getWorkbenchSplitGroupMemberships(state), [state])

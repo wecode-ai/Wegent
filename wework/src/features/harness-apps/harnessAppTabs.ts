@@ -1,9 +1,8 @@
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { WorkspaceTabsContextValue } from '@/features/workspace-tabs/workspaceTabsContextValue'
-import { invoke } from '@tauri-apps/api/core'
-import { getWorkbenchPluginRuntime } from '@/plugin-runtime/bootstrap'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
-const disposers = new Map<string, () => void>()
+const runningApps = new Map<string, HarnessAppInstallation>()
 
 export function harnessAppKey(installationId: string): string {
   return `harness-${installationId}`
@@ -16,24 +15,27 @@ export function harnessAppRoute(installationId: string): string {
 export function registerHarnessAppTab(installation: HarnessAppInstallation): string {
   const key = harnessAppKey(installation.id)
   if (!installation.webUrl) throw new Error('Harness app is not running')
-  disposers.get(installation.id)?.()
-  const dispose = getWorkbenchPluginRuntime().apps.register({
-    key,
-    mode: 'iframe',
-    url: installation.webUrl,
-    hidden: true,
-    labelKey: `harness-app.${installation.id}.label`,
-    label: installation.manifest.displayName,
-    descriptionKey: `harness-app.${installation.id}.description`,
-    description: installation.manifest.description,
-  })
-  disposers.set(installation.id, dispose)
+  runningApps.set(installation.id, installation)
   return key
 }
 
 export function unregisterHarnessAppTab(installationId: string): void {
-  disposers.get(installationId)?.()
-  disposers.delete(installationId)
+  runningApps.delete(installationId)
+}
+
+export function resolveRunningHarnessApp(
+  key: string
+): { key: string; nativeLabel: string; title: string; url: string } | null {
+  if (!key.startsWith('harness-')) return null
+  const installationId = key.slice('harness-'.length)
+  const installation = runningApps.get(installationId)
+  if (!installation?.webUrl) return null
+  return {
+    key,
+    nativeLabel: `smart-app:${installationId}`,
+    title: installation.manifest.displayName,
+    url: installation.webUrl,
+  }
 }
 
 export function openHarnessAppTab(
@@ -56,17 +58,17 @@ export function openHarnessAppTab(
 }
 
 export function takeHarnessAppProxyToken(installationId: string): Promise<string | null> {
-  return invoke<string | null>('take_harness_app_proxy_token', { installationId })
+  return invokeDesktopHost<string | null>('smartApps.takeProxyToken', { installationId })
 }
 
 export function storeHarnessAppProxyToken(installationId: string, token: string): Promise<void> {
-  return invoke<void>('store_harness_app_proxy_token', { installationId, token })
+  return invokeDesktopHost<void>('smartApps.storeProxyToken', { installationId, token })
 }
 
 export function takeHarnessAppContextToken(installationId: string): Promise<string | null> {
-  return invoke<string | null>('take_harness_app_context_token', { installationId })
+  return invokeDesktopHost<string | null>('smartApps.takeContextToken', { installationId })
 }
 
 export function storeHarnessAppContextToken(installationId: string, token: string): Promise<void> {
-  return invoke<void>('store_harness_app_context_token', { installationId, token })
+  return invokeDesktopHost<void>('smartApps.storeContextToken', { installationId, token })
 }

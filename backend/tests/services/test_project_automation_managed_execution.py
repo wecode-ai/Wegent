@@ -18,6 +18,7 @@ from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.task import TaskResource
 from app.services.execution.emitters.status_updating import StatusUpdatingEmitter
 from app.services.execution.router import CommunicationMode, ExecutionRouter
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_automation_managed_execution import (
     ManagedTeamExecutionHandle,
     project_automation_managed_execution_service,
@@ -699,6 +700,127 @@ async def test_managed_execution_builds_explicit_board_mcp_and_has_no_device(
     dispatcher.dispatch.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_board_team_execution_reads_status_before_session_closes(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    execution = LoopItemExecution(
+        loop_item_id="board-task-1",
+        cloud_project_id="project-1",
+        executor_owner_user_id=test_user.id,
+        agent_id="board-agent-1",
+        team_id=8,
+        assigner_user_id=test_user.id,
+        execution_environment="wegent",
+        status="queued",
+    )
+    test_db.add(execution)
+    test_db.flush()
+    execution_id = execution.id
+    activity = ProjectChatMessage(
+        message_id="board-team-execution-activity",
+        client_message_id="board-team-execution-activity",
+        project_id="project-1",
+        task_id="board-task-1",
+        sender_type="agent",
+        sender_id="board-agent-1",
+        sender_name="Board Agent",
+        message_type="agent_status",
+        content="",
+        metadata_json={"execution_id": execution_id, "run_status": "queued"},
+        agent_id="board-agent-1",
+        status="pending",
+    )
+    test_db.add(activity)
+    test_db.commit()
+    test_db.expire_on_commit = True
+
+    session_closed = False
+
+    @contextmanager
+    def session():
+        nonlocal session_closed
+        try:
+            yield test_db
+        finally:
+            test_db.expunge_all()
+            session_closed = True
+
+    objects = SimpleNamespace(
+        task=SimpleNamespace(id=51),
+        assistant_subtask=SimpleNamespace(id=53),
+        team=SimpleNamespace(id=8),
+        user=SimpleNamespace(id=test_user.id),
+    )
+    request = ExecutionRequest(task_id=51, subtask_id=53, device_id=None)
+    build_request = AsyncMock(return_value=request)
+
+    async def dispatch(_request, device_id=None, emitter=None):
+        assert session_closed is True
+        assert device_id is None
+        await emitter.close()
+
+    dispatcher = MagicMock()
+    dispatcher.dispatch = AsyncMock(side_effect=dispatch)
+    push_activity = MagicMock()
+    monkeypatch.setattr(
+        "app.services.project_automation_managed_execution.get_db_session", session
+    )
+    monkeypatch.setattr(
+        "app.services.board_team_completion.register_board_team_completion_handler",
+        MagicMock(),
+    )
+    monkeypatch.setattr(
+        project_automation_managed_execution_service,
+        "_claim_pending_execution",
+        MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        project_automation_managed_execution_service,
+        "_load_detached_execution_objects",
+        MagicMock(return_value=objects),
+    )
+    monkeypatch.setattr(
+        project_automation_managed_execution_service,
+        "_execution_is_running",
+        MagicMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "app.services.chat.trigger.unified.build_execution_request",
+        build_request,
+    )
+    monkeypatch.setattr(
+        "app.services.execution.execution_dispatcher",
+        dispatcher,
+    )
+    monkeypatch.setattr(loop_item_execution_service, "_push_activity", push_activity)
+
+    dispatched = await project_automation_managed_execution_service.execute(
+        handle=ManagedTeamExecutionHandle(
+            task_id=51,
+            subtask_id=53,
+            source="board_team_assignment",
+            execution_id=execution_id,
+        ),
+        user_subtask_id=52,
+        team_id=8,
+        user_id=test_user.id,
+        prompt="Handle board task",
+        source="board_team_assignment",
+        execution_id=execution_id,
+    )
+
+    persisted = test_db.get(LoopItemExecution, execution_id)
+    assert dispatched is True
+    assert persisted is not None
+    assert persisted.status == "running"
+    assert persisted.backend_task_id == 51
+    assert push_activity.call_count == 1
+    dispatcher.dispatch.assert_awaited_once()
+
+
 @pytest.mark.parametrize("cancel_acknowledged", [True, False])
 @pytest.mark.asyncio
 async def test_cancel_routes_real_managed_request_without_device(
@@ -1048,11 +1170,11 @@ async def test_completion_handler_persists_comment_and_run_once(
 
     test_db.refresh(run)
     test_db.refresh(message)
-    assert run.status == "skipped"
+    assert run.status == "failed"
     assert run.backend_task_id == task.id
     assert run.completed_at is not None
     assert run.version == 2
-    assert message.status == "completed"
+    assert message.status == "failed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id
@@ -1321,9 +1443,9 @@ async def test_executor_callback_projects_managed_parent_comment(
     test_db.refresh(run)
     test_db.refresh(message)
     assert response.status == "ok"
-    assert run.status == "skipped"
+    assert run.status == "failed"
     assert run.backend_task_id == task.id
-    assert message.status == "completed"
+    assert message.status == "failed"
     assert message.message_type == "text"
     assert message.content == "No suitable project assignee"
     assert message.metadata_json["backend_task_id"] == task.id

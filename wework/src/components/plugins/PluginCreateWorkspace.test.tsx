@@ -167,7 +167,7 @@ describe('PluginCreateWorkspace', () => {
     await waitFor(() =>
       expect(workbench.sendCurrentInput).toHaveBeenCalledWith(
         expect.stringMatching(
-          /registered managed local marketplace named "wework-personal"[\s\S]*Do not use the Plugin Creator defaults under ~\/plugins or ~\/\.agents[\s\S]*Create a release-notes plugin/
+          /DEVICE_TYPE=cloud[\s\S]*\$WEGENT_TASK_WORKSPACE\/plugins\/<plugin-name>[\s\S]*registered managed local marketplace named "wework-personal"[\s\S]*do not use the defaults under ~\/plugins or ~\/\.agents[\s\S]*plugin-workspace describe[\s\S]*Create a release-notes plugin/
         ),
         expect.objectContaining({
           forceNewTask: true,

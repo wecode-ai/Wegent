@@ -1,48 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import type { DragDropEvent } from '@tauri-apps/api/window'
-import { emit, listen } from '@tauri-apps/api/event'
 import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { readWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 
 type DropAction = 'new-chat' | 'follow-up' | 'stash'
 type DropStatus = { kind: 'success' | 'error'; action: DropAction } | null
-type NativeTextDropPayload = { text: string; x: number }
 
 const FEEDBACK_DURATION_MS = 800
 const DROP_DEDUP_WINDOW_MS = 500
-const PANEL_WIDTH = 440
-const PANEL_CONTENT_INSET = 5
-const BRAND_WIDTH = 64
-const CLOSE_AREA_WIDTH = 32
-
-function actionAtPosition(x: number, hasConversation: boolean): DropAction | null {
-  const actionAreaStart = PANEL_CONTENT_INSET + BRAND_WIDTH
-  const actionAreaEnd = PANEL_WIDTH - PANEL_CONTENT_INSET - CLOSE_AREA_WIDTH
-  const dropAreaWidth = actionAreaEnd - actionAreaStart
-  const relativeX = x - actionAreaStart
-  if (relativeX < 0 || relativeX >= dropAreaWidth) return null
-  if (!hasConversation) return relativeX < dropAreaWidth / 2 ? 'new-chat' : 'stash'
-  if (relativeX < dropAreaWidth / 3) return 'new-chat'
-  if (relativeX < (dropAreaWidth / 3) * 2) return 'follow-up'
-  return 'stash'
-}
 
 export function SystemDragPanel() {
   const { t } = useTranslation('common')
   const [activeAction, setActiveAction] = useState<DropAction | null>(null)
   const [conversationTitle, setConversationTitle] = useState<string | null>(null)
   const [dropStatus, setDropStatus] = useState<DropStatus>(null)
-  const lastFileDropRef = useRef<{ key: string; timestamp: number } | null>(null)
   const lastTextDropRef = useRef<{ key: string; timestamp: number } | null>(null)
-  const lastOverLogRef = useRef<{ x: number; timestamp: number } | null>(null)
 
   const dismiss = useCallback(() => {
     setDropStatus(null)
     setActiveAction(null)
-    void invoke('dismiss_system_drag_panel')
+    void invokeDesktopHost('systemDrag.dismissPanel')
   }, [])
 
   useEscapeKey(dismiss)
@@ -56,141 +35,38 @@ export function SystemDragPanel() {
 
   const complete = async (action: DropAction, text: string | null, paths: string[]) => {
     try {
-      await invoke('complete_system_drag_drop', { payload: { action, text, paths } })
+      const payload = { action, text, paths }
+      await invokeDesktopHost('systemDrag.complete', { payload })
       setDropStatus({ kind: 'success', action })
     } catch (error) {
       console.error('[Wework] Failed to complete system drop:', error)
       setDropStatus({ kind: 'error', action })
     }
     window.setTimeout(() => {
-      void invoke('dismiss_system_drag_panel')
+      void invokeDesktopHost('systemDrag.dismissPanel')
       setDropStatus(null)
       setActiveAction(null)
     }, FEEDBACK_DURATION_MS)
   }
 
   useEffect(() => {
-    let cancelled = false
-    let dispose: (() => void) | undefined
-    void listen<NativeTextDropPayload>('wework-system-drag-native-text-drop', event => {
-      const text = event.payload.text.trim()
-      if (!text) return
-      const action = actionAtPosition(event.payload.x, Boolean(conversationTitle))
-      if (!action) {
-        dismiss()
-        return
-      }
-      const key = `${action}:${text}`
-      const now = Date.now()
-      const previous = lastTextDropRef.current
-      if (previous?.key === key && now - previous.timestamp < DROP_DEDUP_WINDOW_MS) return
-      lastTextDropRef.current = { key, timestamp: now }
-      setActiveAction(action)
-      void complete(action, text, [])
-    }).then(unlisten => {
-      if (cancelled) unlisten()
-      else dispose = unlisten
-    })
-    return () => {
-      cancelled = true
-      dispose?.()
-    }
-  }, [conversationTitle, dismiss])
-
-  useEffect(() => {
-    let cancelled = false
-    let unlisten: (() => void) | undefined
-    void getCurrentWebview()
-      .onDragDropEvent(event => {
-        const payload: DragDropEvent = event.payload
-        if (payload.type === 'leave') {
-          setActiveAction(null)
-          return
-        }
-        const action = actionAtPosition(payload.position.x, Boolean(conversationTitle))
-        if (payload.type === 'over' || payload.type === 'enter') {
-          const now = Date.now()
-          const previous = lastOverLogRef.current
-          if (
-            !previous ||
-            Math.abs(previous.x - payload.position.x) >= 20 ||
-            now - previous.timestamp >= 250
-          ) {
-            lastOverLogRef.current = { x: payload.position.x, timestamp: now }
-            void invoke('log_system_drag_debug', {
-              stage: `webview_${payload.type}`,
-              action,
-              x: payload.position.x,
-              y: payload.position.y,
-            })
-          }
-        }
-        setActiveAction(action)
-        if (payload.type === 'drop' && payload.paths.length > 0) {
-          if (!action) {
-            dismiss()
-            return
-          }
-          const paths = [...new Set(payload.paths)]
-          const key = `${action}:${[...paths].sort().join('\u0000')}`
-          const now = Date.now()
-          const previous = lastFileDropRef.current
-          const duplicate = Boolean(
-            previous?.key === key && now - previous.timestamp < DROP_DEDUP_WINDOW_MS
-          )
-          void invoke('log_system_drag_debug', {
-            stage: 'webview_drop',
-            action,
-            rawPathCount: payload.paths.length,
-            uniquePathCount: paths.length,
-            duplicate,
-            x: payload.position.x,
-            y: payload.position.y,
-          })
-          if (duplicate) return
-          lastFileDropRef.current = { key, timestamp: now }
-          void complete(action, null, paths)
-        }
-      })
-      .then(dispose => {
-        if (cancelled) dispose()
-        else unlisten = dispose
-      })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [conversationTitle, dismiss])
-
-  useEffect(() => {
-    let cancelled = false
-    let dispose: (() => void) | undefined
-    void listen<{ conversationTitle: string | null }>('wework-system-drag-context', event => {
-      setConversationTitle(event.payload.conversationTitle)
-    }).then(unlisten => {
-      if (cancelled) unlisten()
-      else {
-        dispose = unlisten
-        void emit('wework-system-drag-context-requested')
-      }
-    })
-    return () => {
-      cancelled = true
-      dispose?.()
-    }
+    void invokeDesktopHost<{ conversationTitle: string | null }>('systemDrag.getContext').then(
+      context => setConversationTitle(context.conversationTitle)
+    )
   }, [])
 
   const handleTextDrop = (action: DropAction, event: DragEvent<HTMLDivElement>) => {
     const text = event.dataTransfer.getData('text/plain').trim()
+    const paths = readWorkspacePathDragData(event.dataTransfer)?.map(entry => entry.path) ?? []
     event.preventDefault()
     setActiveAction(action)
-    if (!text) return
-    const key = `${action}:${text}`
+    if (!text && paths.length === 0) return
+    const key = `${action}:${text}:${paths.join('\0')}`
     const now = performance.timeOrigin + event.timeStamp
     const previous = lastTextDropRef.current
     if (previous?.key === key && now - previous.timestamp < DROP_DEDUP_WINDOW_MS) return
     lastTextDropRef.current = { key, timestamp: now }
-    void complete(action, text, [])
+    void complete(action, text || null, paths)
   }
 
   const zones = [
@@ -267,6 +143,7 @@ export function SystemDragPanel() {
                     className={`relative flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-2 text-left transition-colors duration-150 after:absolute after:-right-0.5 after:top-2 after:h-[calc(100%-1rem)] after:w-px after:bg-border last:after:hidden ${activeAction === action ? 'border-text-primary/15 bg-muted shadow-sm' : 'border-transparent'}`}
                     onDragOver={event => {
                       event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
                       setActiveAction(action)
                     }}
                     onDrop={event => handleTextDrop(action, event)}

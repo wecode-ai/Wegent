@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
 
-const ACTIVE_WORKBENCH_SELECTOR =
-  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const ACTIVE_WORKSPACE_TAB_SELECTOR = '[data-workspace-tab-content][aria-hidden="false"]'
+const ACTIVE_WORKBENCH_SELECTOR =
+  `${ACTIVE_WORKSPACE_TAB_SELECTOR} ` +
+  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const COMPOSER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const PROMPTS = {
   quiet: 'WEWORK_E2E_CODEX_NOTIFICATION_QUIET',
@@ -15,6 +16,7 @@ const COMPLETIONS = {
   noisy: 'WEWORK_E2E_CODEX_NOTIFICATION_NOISY_COMPLETE',
 }
 const NOISE_DELTA_COUNT = 2200
+const BURST_RENDER_TIMEOUT_MS = 30_000
 
 function sse(event) {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`
@@ -88,26 +90,29 @@ function streamFinish(id, text) {
   ]
 }
 
-async function waitForNewTaskRow(control, knownRows, timeoutMs) {
+async function waitForTaskRow(control, prompt, timeoutMs) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
-    const next = snapshot.testIds.find(
-      testId => testId.startsWith('runtime-local-task-row-') && !knownRows.has(testId)
-    )
-    if (next) return next
+    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKSPACE_TAB_SELECTOR))
+    const taskRows = snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+    for (const testId of taskRows) {
+      const text = await control.command(
+        'getText',
+        `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="${testId}"]`
+      )
+      if (text.includes(prompt)) return testId
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error('Timed out waiting for a Codex notification isolation task')
+  throw new Error(`Timed out waiting for Codex notification isolation task "${prompt}"`)
 }
 
-async function sendTask(control, knownRows, prompt, timeoutMs) {
-  await control.command('click', '[data-testid="project-new-conversation-button"]')
+async function sendTask(control, newConversationSelector, prompt, timeoutMs) {
+  await control.command('clickWhenEnabled', newConversationSelector, { timeoutMs })
   await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs })
   await control.command('fill', COMPOSER_SELECTOR, { value: prompt })
   await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-  const rowTestId = await waitForNewTaskRow(control, knownRows, timeoutMs)
-  knownRows.add(rowTestId)
+  const rowTestId = await waitForTaskRow(control, prompt, timeoutMs)
   return {
     rowTestId,
     taskId: rowTestId.replace('runtime-local-task-row-', ''),
@@ -123,7 +128,7 @@ async function waitForRequestCount(requests, count, timeoutMs) {
   throw new Error(`Timed out waiting for ${count} notification isolation requests`)
 }
 
-async function selectTask(control, sidebar, task, timeoutMs) {
+async function selectTask(control, sidebar, task, completion, timeoutMs) {
   const rowSelector = `${sidebar} [data-testid="${task.rowTestId}"]`
   await control.command('scrollIntoView', rowSelector)
   await control.command('waitFor', rowSelector, { timeoutMs, visible: true })
@@ -131,14 +136,30 @@ async function selectTask(control, sidebar, task, timeoutMs) {
 
   const startedAt = Date.now()
   let lastTaskId = null
+  let transcriptLoading = null
+  let taskRunning = null
+  let lastMessage = null
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastTaskId = snapshot.workbench?.currentRuntimeTask?.taskId ?? null
-    if (lastTaskId === task.taskId) return
+    transcriptLoading = snapshot.pane?.transcript?.loading ?? null
+    taskRunning = snapshot.pane?.status?.taskExecution?.running ?? null
+    lastMessage = snapshot.pane?.messageSummary?.lastMessage ?? null
+    if (
+      lastTaskId === task.taskId &&
+      transcriptLoading === false &&
+      taskRunning === false &&
+      lastMessage?.status === 'done' &&
+      lastMessage?.contentLength === completion.length
+    ) {
+      return
+    }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(
-    `Timed out selecting notification isolation task ${task.taskId}; active task was ${lastTaskId}`
+    `Timed out waiting for notification isolation task ${task.taskId}; ` +
+      `active task was ${lastTaskId}, transcript loading was ${transcriptLoading}, ` +
+      `task running was ${taskRunning}, last message was ${JSON.stringify(lastMessage)}`
   )
 }
 
@@ -237,20 +258,30 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await createSingleRootLocalProject(control, workspacePath, 'codex-notification-isolation')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
       await selectE2EModel(control)
-      const initialSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-      const knownRows = new Set(
-        initialSnapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+      const createdProjectSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
       )
-      const quiet = await sendTask(control, knownRows, PROMPTS.quiet, uiTimeoutMs)
-      const noisy = await sendTask(control, knownRows, PROMPTS.noisy, uiTimeoutMs)
+      const createdProjectId = createdProjectSnapshot.workbench?.currentProject?.id
+      assert.ok(
+        createdProjectId,
+        'The notification isolation project did not become the active project'
+      )
+      const newConversationSelector =
+        `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="project-row-${createdProjectId}"] ` +
+        '[data-testid="project-new-conversation-button"]'
+      await control.command('waitFor', newConversationSelector, { timeoutMs: uiTimeoutMs })
+      const quiet = await sendTask(control, newConversationSelector, PROMPTS.quiet, uiTimeoutMs)
+      await waitForRequestCount(requests, 1, uiTimeoutMs)
+      const noisy = await sendTask(control, newConversationSelector, PROMPTS.noisy, uiTimeoutMs)
       await waitForRequestCount(requests, 2, uiTimeoutMs)
+      const burstSettleTimeoutMs = Math.max(uiTimeoutMs, BURST_RENDER_TIMEOUT_MS)
 
       const sidebar = `${ACTIVE_WORKSPACE_TAB_SELECTOR} [data-testid="desktop-sidebar"]`
       for (const [task, completion] of [
         [quiet, COMPLETIONS.quiet],
         [noisy, COMPLETIONS.noisy],
       ]) {
-        await selectTask(control, sidebar, task, uiTimeoutMs)
+        await selectTask(control, sidebar, task, completion, burstSettleTimeoutMs)
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
@@ -263,7 +294,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     diagnostics() {
-      return { active, emitted, requests, streamCount: streams.size }
+      return {
+        active,
+        burstRenderTimeoutMs: BURST_RENDER_TIMEOUT_MS,
+        emitted,
+        noiseDeltaCount: NOISE_DELTA_COUNT,
+        requests,
+        streamCount: streams.size,
+      }
     },
   }
 }

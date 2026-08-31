@@ -227,6 +227,27 @@ class ProjectChatAgent(LoopNode):
         super().__init__(**kwargs)
 
 
+class RuntimeProfile(LoopNode):
+    """A reusable, user-owned Wework execution configuration."""
+
+    __mapper_args__ = {"polymorphic_identity": "runtime_profile"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        super().__init__(**kwargs)
+
+
+class RuntimeBinding(LoopNode):
+    """One project member's default Runtime profile."""
+
+    __mapper_args__ = {"polymorphic_identity": "runtime_binding"}
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("status", "active")
+        kwargs.setdefault("is_default", True)
+        super().__init__(**kwargs)
+
+
 class ProjectAutomationRule(LoopNode):
     """A scheduled automation owned by one Wework project."""
 
@@ -237,6 +258,18 @@ class ProjectAutomationRun(LoopNode):
     """One scheduled or manual occurrence of a project automation."""
 
     __mapper_args__ = {"polymorphic_identity": "automation_run"}
+
+
+class ProjectWorkflowRun(LoopNode):
+    """One durable AI planning attempt for an Issue."""
+
+    __mapper_args__ = {"polymorphic_identity": "workflow_run"}
+
+
+class ProjectWorkflowPlanItem(LoopNode):
+    """One proposed concrete child task in a workflow plan version."""
+
+    __mapper_args__ = {"polymorphic_identity": "workflow_plan_item"}
 
 
 class ProjectIncomingHook(LoopNode):

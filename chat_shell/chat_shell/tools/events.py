@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Coroutine
 from typing import Any, Callable
 
 from chat_shell.services.streaming.core import should_display_tool_details
@@ -19,12 +20,22 @@ from chat_shell.tools.deferred_input import (
     DeferredUserInputExit,
     is_deferred_user_input_result,
 )
-from shared.models import ResponsesAPIEmitter
+from shared.models import ResponsesAPIEmitter, create_card_block
 from shared.telemetry.context.large_data import log_large_attribute
 from shared.telemetry.decorators import add_span_event
 from shared.utils.tool_arguments import sanitize_tool_arguments
 
 logger = logging.getLogger(__name__)
+
+
+def _log_task_error(task: asyncio.Task[Any]) -> None:
+    """Log exceptions from fire-and-forget tasks."""
+    if not task.cancelled() and task.exception() is not None:
+        logger.exception(
+            "[TOOL_EVENT] Async event task failed: %s",
+            task.exception(),
+            exc_info=task.exception(),
+        )
 
 
 def _normalize_protocol_type(tool_protocol: str | None) -> str:
@@ -59,75 +70,96 @@ def _infer_tool_completion(
     return ("completed", None)
 
 
-def create_tool_event_handler(
-    state: Any,
-    emitter: ResponsesAPIEmitter,
-    agent_builder: Any,
-) -> Callable[[str, dict], None]:
-    """Create a tool event handler function.
+class ToolEventHandler:
+    """Handle tool events and track their asynchronous emitter tasks."""
 
-    Args:
-        state: Streaming state to update
-        emitter: ResponsesAPIEmitter for events
-        agent_builder: Agent builder for tool registry access
+    def __init__(
+        self,
+        state: Any,
+        emitter: ResponsesAPIEmitter,
+        agent_builder: Any,
+    ) -> None:
+        self._state = state
+        self._emitter = emitter
+        self._agent_builder = agent_builder
+        self._pending_tasks: set[asyncio.Task[Any]] = set()
 
-    Returns:
-        Tool event handler function
-    """
-
-    def handle_tool_event(kind: str, event_data: dict):
+    def __call__(self, kind: str, event_data: dict[str, Any]) -> None:
         """Handle tool events and emit tool data via ResponsesAPIEmitter."""
         tool_name = event_data.get("name", "unknown")
         run_id = event_data.get("run_id", "")
 
         if kind == "tool_start":
             _handle_tool_start(
-                state,
-                emitter,
-                agent_builder,
+                self._state,
+                self._emitter,
+                self._agent_builder,
                 tool_name,
                 run_id,
                 event_data,
+                self._run_async,
             )
         elif kind == "tool_end":
             _handle_tool_end(
-                state,
-                emitter,
-                agent_builder,
+                self._state,
+                self._emitter,
+                self._agent_builder,
                 tool_name,
                 run_id,
                 event_data,
+                self._run_async,
             )
         elif kind == "tool_argument_start":
-            _handle_tool_argument_start(emitter, event_data)
+            _handle_tool_argument_start(
+                self._emitter,
+                event_data,
+                self._run_async,
+            )
         elif kind == "tool_argument_delta":
-            _handle_tool_argument_delta(emitter, event_data)
+            _handle_tool_argument_delta(
+                self._emitter,
+                event_data,
+                self._run_async,
+            )
         elif kind == "tool_argument_done":
-            _handle_tool_argument_done(emitter, event_data)
+            _handle_tool_argument_done(
+                self._emitter,
+                event_data,
+                self._run_async,
+            )
 
-    return handle_tool_event
+    def _run_async(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """Schedule an emitter coroutine and retain it until completion."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(coro)
+            return
 
-
-def _log_task_error(task: "asyncio.Task") -> None:
-    """Log exceptions from fire-and-forget tasks."""
-    if not task.cancelled() and task.exception() is not None:
-        logger.exception(
-            "[TOOL_EVENT] Async event task failed: %s",
-            task.exception(),
-            exc_info=task.exception(),
-        )
-
-
-def _run_async(coro):
-    """Run async coroutine from sync context."""
-    try:
-        loop = asyncio.get_running_loop()
-        # We're in an async context, create a task
         task = loop.create_task(coro)
-        task.add_done_callback(_log_task_error)
-    except RuntimeError:
-        # No running event loop, run directly
-        asyncio.run(coro)
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._task_done)
+
+    def _task_done(self, task: asyncio.Task[Any]) -> None:
+        self._pending_tasks.discard(task)
+        _log_task_error(task)
+
+    async def wait_pending(self) -> None:
+        """Wait until every scheduled emitter task has finished."""
+        while self._pending_tasks:
+            await asyncio.gather(
+                *tuple(self._pending_tasks),
+                return_exceptions=True,
+            )
+
+
+def create_tool_event_handler(
+    state: Any,
+    emitter: ResponsesAPIEmitter,
+    agent_builder: Any,
+) -> ToolEventHandler:
+    """Create a tracked tool event handler."""
+    return ToolEventHandler(state, emitter, agent_builder)
 
 
 def _handle_tool_start(
@@ -136,7 +168,8 @@ def _handle_tool_start(
     agent_builder: Any,
     tool_name: str,
     run_id: str,
-    event_data: dict,
+    event_data: dict[str, Any],
+    run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
     """Handle tool start event."""
     logger.info(
@@ -206,7 +239,7 @@ def _handle_tool_start(
     )
 
     if not event_data.get("tool_arguments_streamed"):
-        _run_async(
+        run_async(
             emitter.tool_start(
                 call_id=tool_use_id,
                 name=tool_name,
@@ -219,9 +252,11 @@ def _handle_tool_start(
 
 
 def _handle_tool_argument_start(
-    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+    emitter: ResponsesAPIEmitter,
+    event_data: dict[str, Any],
+    run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
-    _run_async(
+    run_async(
         emitter.tool_argument_start(
             call_id=event_data["call_id"],
             name=event_data.get("name", "unknown"),
@@ -231,9 +266,11 @@ def _handle_tool_argument_start(
 
 
 def _handle_tool_argument_delta(
-    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+    emitter: ResponsesAPIEmitter,
+    event_data: dict[str, Any],
+    run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
-    _run_async(
+    run_async(
         emitter.tool_argument_delta(
             call_id=event_data["call_id"],
             arguments_delta=event_data.get("arguments_delta", ""),
@@ -243,9 +280,11 @@ def _handle_tool_argument_delta(
 
 
 def _handle_tool_argument_done(
-    emitter: ResponsesAPIEmitter, event_data: dict[str, Any]
+    emitter: ResponsesAPIEmitter,
+    event_data: dict[str, Any],
+    run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
-    _run_async(
+    run_async(
         emitter.tool_argument_done(
             call_id=event_data["call_id"],
             arguments_summary=event_data.get("arguments_summary"),
@@ -259,7 +298,8 @@ def _handle_tool_end(
     agent_builder: Any,
     tool_name: str,
     run_id: str,
-    event_data: dict,
+    event_data: dict[str, Any],
+    run_async: Callable[[Coroutine[Any, Any, Any]], None],
 ) -> None:
     """Handle tool end event."""
     # Extract and serialize tool output
@@ -345,6 +385,8 @@ def _handle_tool_end(
                 skill_name,
             )
 
+    _store_card_block(state, tool_name, serializable_output)
+
     # Emit tool_done event via ResponsesAPIEmitter
     # Only include arguments if tool is in whitelist
     arguments = (
@@ -382,7 +424,7 @@ def _handle_tool_end(
         },
     )
 
-    _run_async(
+    run_async(
         emitter.tool_done(
             call_id=tool_use_id,
             name=tool_name,
@@ -436,6 +478,78 @@ def _parse_json_object(value: Any) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def _extract_card_result(value: Any) -> dict[str, Any] | None:
+    """Extract a card result from plain and MCP text-content outputs."""
+    parsed = _parse_json_object(value)
+    if parsed is not None:
+        return parsed
+    if not isinstance(value, list):
+        return None
+    for item in value:
+        if isinstance(item, dict) and item.get("type") == "text":
+            parsed = _parse_json_object(item.get("text"))
+        elif getattr(item, "type", None) == "text":
+            parsed = _parse_json_object(getattr(item, "text", None))
+        else:
+            parsed = None
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _store_card_block(
+    state: Any,
+    tool_name: str,
+    tool_output: Any,
+) -> None:
+    """Store a backend-owned card in the final response without re-emitting it."""
+    card = _extract_card_result(tool_output)
+    if not card or card.get("error"):
+        return
+
+    card_id = card.get("id") or card.get("card_id")
+    card_type = card.get("card_type")
+    if not card_id or not card_type:
+        return
+    card_status = str(card.get("status") or card.get("card_status") or "populated")
+    if card_status == "polling":
+        card_status = "pending"
+    block = create_card_block(
+        card_id=card_id,
+        card_type=str(card_type),
+        card_data=(
+            card.get("data")
+            if isinstance(card.get("data"), dict)
+            else (
+                card.get("card_data") if isinstance(card.get("card_data"), dict) else {}
+            )
+        ),
+        card_status=card_status,
+        card_preview_data=(
+            card.get("preview_data")
+            if isinstance(card.get("preview_data"), dict)
+            else (
+                card.get("card_preview_data")
+                if isinstance(card.get("card_preview_data"), dict)
+                else {}
+            )
+        ),
+        card_error=(
+            str(card["card_error"]) if card.get("card_error") is not None else None
+        ),
+    )
+    if hasattr(state, "add_block"):
+        state.add_block(block)
+    logger.info(
+        "[TOOL_END] Stored backend-owned CardBlock: "
+        "tool_name=%s card_id=%s card_type=%s card_status=%s",
+        tool_name,
+        block["card_id"],
+        block["card_type"],
+        block["card_status"],
+    )
 
 
 def _extract_sources(tool_name: str, tool_output: Any) -> list[dict[str, Any]]:

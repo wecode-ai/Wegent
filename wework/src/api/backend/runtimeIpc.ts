@@ -1,12 +1,18 @@
 import { createSocketClient, type AuthenticatedSocketClient } from '@wegent/chat-core'
-import type { LocalExecutorEvent } from '@/tauri/localExecutor'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 
 const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
 const RUNTIME_EVENT = 'runtime:event'
 const ACK_TIMEOUT_MS = 75_000
+export const RUNTIME_TRANSCRIPT_ACK_TIMEOUT_MS = 15_000
+const RUNTIME_RPC_COMPRESSED_ENCODING = 'gzip+base64+json'
 const COMMAND_ACK_GRACE_MS = 10_000
 const MAX_COMMAND_TIMEOUT_SECONDS = 600
+
+interface DecompressionStreamConstructor {
+  new (format: string): TransformStream<Uint8Array, Uint8Array>
+}
 
 interface RuntimeIpcClientOptions {
   socketBaseUrl: string
@@ -25,8 +31,14 @@ interface RuntimeIpcAck<T> {
 }
 
 export interface CloudRuntimeIpcClient {
-  request: <T>(method: string, params?: Record<string, unknown>, deviceId?: string) => Promise<T>
+  request: <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    deviceId?: string,
+    timeoutMs?: number
+  ) => Promise<T>
   subscribe: (handler: (event: LocalExecutorEvent) => void) => Promise<() => void>
+  reconnect: () => Promise<void>
   dispose: () => void
 }
 
@@ -48,9 +60,10 @@ export function createCloudRuntimeIpcClient(
     request<T>(
       method: string,
       params: Record<string, unknown> = {},
-      deviceId?: string
+      deviceId?: string,
+      timeoutMs = ACK_TIMEOUT_MS
     ): Promise<T> {
-      return emitRuntimeRequest<T>(client, method, params, deviceId)
+      return emitRuntimeRequest<T>(client, method, params, deviceId, timeoutMs)
     },
     async subscribe(handler: (event: LocalExecutorEvent) => void): Promise<() => void> {
       await client.ensureConnected()
@@ -59,6 +72,10 @@ export function createCloudRuntimeIpcClient(
       }
       client.socket.on(RUNTIME_EVENT, runtimeHandler)
       return () => client.socket.off(RUNTIME_EVENT, runtimeHandler)
+    },
+    async reconnect() {
+      client.disconnect()
+      await client.connect(undefined, true)
     },
     dispose() {
       client.dispose()
@@ -70,7 +87,8 @@ async function emitRuntimeRequest<T>(
   client: AuthenticatedSocketClient,
   method: string,
   params: Record<string, unknown>,
-  deviceId?: string
+  deviceId?: string,
+  timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
   await client.ensureConnected()
   const requestId = `cloud-runtime-${nextRequestId++}`
@@ -78,11 +96,11 @@ async function emitRuntimeRequest<T>(
   if (!targetDeviceId) {
     throw new Error(`Cloud runtime request ${method} missing deviceId`)
   }
-  const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params)
+  const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params, timeoutMs)
   const acknowledgementTimeoutMs =
     method === 'device.execute_command'
       ? relayTimeoutSeconds * 1000 + COMMAND_ACK_GRACE_MS
-      : ACK_TIMEOUT_MS
+      : timeoutMs
 
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
@@ -109,15 +127,62 @@ async function emitRuntimeRequest<T>(
           reject(new Error(formatRuntimeIpcError(ack)))
           return
         }
-        resolve((ack.result ?? null) as T)
+        void decodeRuntimeIpcResult<T>(ack.result ?? null).then(resolve, reject)
       }
     )
   })
 }
 
-function resolveRelayTimeoutSeconds(method: string, params: Record<string, unknown>): number {
+async function decodeRuntimeIpcResult<T>(result: unknown): Promise<T> {
+  if (!isCompressedRuntimeIpcResult(result)) {
+    return result as T
+  }
+
+  const DecompressionStreamCtor = (
+    globalThis as unknown as {
+      DecompressionStream?: DecompressionStreamConstructor
+    }
+  ).DecompressionStream
+  if (!DecompressionStreamCtor) {
+    throw new Error('Runtime RPC gzip decompression is not supported')
+  }
+
+  const binary = window.atob(result.payload)
+  const payload = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) {
+    payload[index] = binary.charCodeAt(index)
+  }
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(payload)
+      controller.close()
+    },
+  })
+  const stream = source.pipeThrough(new DecompressionStreamCtor('gzip'))
+  const decoded = await new Response(stream).text()
+  return JSON.parse(decoded) as T
+}
+
+function isCompressedRuntimeIpcResult(
+  result: unknown
+): result is { __runtimeRpcEncoding: string; payload: string } {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return false
+  }
+  const value = result as Record<string, unknown>
+  return (
+    value.__runtimeRpcEncoding === RUNTIME_RPC_COMPRESSED_ENCODING &&
+    typeof value.payload === 'string'
+  )
+}
+
+function resolveRelayTimeoutSeconds(
+  method: string,
+  params: Record<string, unknown>,
+  timeoutMs: number
+): number {
   if (method !== 'device.execute_command') {
-    return Math.ceil(ACK_TIMEOUT_MS / 1000)
+    return Math.ceil(timeoutMs / 1000)
   }
   const requested = params.timeout_seconds
   if (typeof requested !== 'number' || !Number.isFinite(requested) || requested <= 0) {

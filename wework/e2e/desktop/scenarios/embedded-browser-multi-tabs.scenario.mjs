@@ -37,7 +37,7 @@ const OPEN_BROWSER_WHILE_CLOSED_KEY =
   process.platform === 'win32' ? 'Control+Shift+B' : 'Meta+Shift+B'
 const OPEN_BROWSER_WHILE_OPEN_KEY = process.platform === 'win32' ? 'Control+T' : 'Meta+T'
 
-function fixtureHtml(title, text) {
+function fixtureHtml(title, text, popupUrl = null, autoPopup = false) {
   return [
     '<!doctype html>',
     '<html>',
@@ -51,9 +51,15 @@ function fixtureHtml(title, text) {
     '  </head>',
     '  <body>',
     '    <h1>' + text + '</h1>',
+    popupUrl ? '    <a id="popup-link" href="' + popupUrl + '" target="_blank">Open B</a>' : null,
+    autoPopup && popupUrl
+      ? '    <script>window.open(' + JSON.stringify(popupUrl) + ', "_blank")</script>'
+      : null,
     '  </body>',
     '</html>',
-  ].join('\n')
+  ]
+    .filter(line => line !== null)
+    .join('\n')
 }
 
 async function waitForBridgeIdentity(executorHome, timeoutMs) {
@@ -123,15 +129,58 @@ async function waitForSnapshot(control, predicate, message, timeoutMs, selector 
 }
 
 export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
+  let fixtureAResponseGate = null
+  let fixtureARequestStartCount = 0
+  let fixtureAResponseCount = 0
+
+  const holdNextFixtureAResponse = () => {
+    let release
+    fixtureAResponseGate = new Promise(resolve => {
+      release = resolve
+    })
+    return () => release?.()
+  }
+
+  const waitForFixtureAResponseCount = async expected => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < uiTimeoutMs) {
+      if (fixtureAResponseCount >= expected) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(`Timed out waiting for fixture A response ${expected}`)
+  }
+
+  const waitForFixtureARequestStartCount = async expected => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < uiTimeoutMs) {
+      if (fixtureARequestStartCount >= expected) return
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error(`Timed out waiting for fixture A request ${expected}`)
+  }
+
   return {
     async handleHttp(request, response, url) {
       if (request.method !== 'GET') return false
       if (url.pathname === FIXTURE_A_PATH) {
-        const html = fixtureHtml(FIXTURE_A_TEXT, FIXTURE_A_TEXT)
+        const html = fixtureHtml(
+          FIXTURE_A_TEXT,
+          FIXTURE_A_TEXT,
+          url.origin + FIXTURE_B_PATH,
+          url.searchParams.get('popup') === '1'
+        )
+        const responseGate = fixtureAResponseGate
+        fixtureAResponseGate = null
+        fixtureARequestStartCount += 1
         response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         response.write(html.slice(0, 120))
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        if (responseGate) {
+          await responseGate
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+        }
         response.end(html.slice(120))
+        fixtureAResponseCount += 1
         return true
       }
       if (url.pathname === FIXTURE_B_PATH) {
@@ -171,10 +220,18 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         uiTimeoutMs,
         'The first browser tab did not load the A fixture'
       )
+      await waitForFixtureAResponseCount(1)
+      const expectedReloadRequestStartCount = fixtureARequestStartCount + 1
+      const releaseReloadResponse = holdNextFixtureAResponse()
       await control.command('click', BROWSER_RELOAD_SELECTOR)
-      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
+      try {
+        await waitForFixtureARequestStartCount(expectedReloadRequestStartCount)
+        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseReloadResponse()
+      }
       await waitForSnapshot(
         control,
         snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
@@ -204,10 +261,17 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
         FIRST_BROWSER_TAB_SELECTOR
       )
       await control.command('fill', BROWSER_INPUT_SELECTOR, { value: fixtureAUrl })
+      const expectedRecoveryRequestStartCount = fixtureARequestStartCount + 1
+      const releaseRecoveryResponse = holdNextFixtureAResponse()
       await control.command('submit', BROWSER_INPUT_SELECTOR)
-      await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
-        timeoutMs: uiTimeoutMs,
-      })
+      try {
+        await waitForFixtureARequestStartCount(expectedRecoveryRequestStartCount)
+        await control.command('waitFor', FIRST_BROWSER_LOADING_ICON_SELECTOR, {
+          timeoutMs: uiTimeoutMs,
+        })
+      } finally {
+        releaseRecoveryResponse()
+      }
       await waitForSnapshot(
         control,
         snapshot => !snapshot.testIds.includes('right-workspace-browser-tab-1-loading-icon'),
@@ -430,6 +494,37 @@ export function createDesktopScenario({ executorHome, uiTimeoutMs }) {
       assert.ok(
         reopenedText.inspectText.includes(FIXTURE_A_TEXT),
         'The reopened browser panel did not render the fresh page'
+      )
+
+      await callBridge(
+        bridgeIdentity,
+        { action: 'open', url: fixtureAUrl + '?popup=1', timeoutMs: 8000 },
+        firstBrowserLabel
+      )
+      await waitForSnapshot(
+        control,
+        snapshot =>
+          snapshot.testIds.filter(testId => /^right-workspace-browser-tab-\d+$/.test(testId))
+            .length >= 2,
+        'A blank-target popup did not open another browser tab',
+        uiTimeoutMs,
+        RIGHT_WORKSPACE_TABBAR_SELECTOR
+      )
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureBUrl,
+        uiTimeoutMs,
+        'The popup browser tab did not load the linked page'
+      )
+      const popupTabText = await callBridge(bridgeIdentity, {
+        action: 'inspect',
+        options: { includeTextBlocks: true, interactiveOnly: false, maxNodes: 40 },
+        timeoutMs: 5000,
+      })
+      assert.ok(
+        popupTabText.inspectText.includes(FIXTURE_B_TEXT),
+        'The popup browser tab did not retain the linked page state'
       )
     },
   }

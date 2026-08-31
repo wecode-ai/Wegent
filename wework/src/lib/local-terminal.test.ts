@@ -1,40 +1,48 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
-import i18n from '@/i18n'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  archiveLocalHarnessSession,
   closeLocalTerminal,
   connectLocalTerminal,
-  deleteArchivedLocalHarnessSession,
   getLocalExecutorDeviceId,
+  getLocalPathKind,
   isLocalHarnessAvailable,
   isLocalTerminalAvailable,
-  listArchivedLocalHarnessSessions,
-  listenLocalTerminalExit,
-  listenLocalTerminalOutput,
-  getLocalPathKind,
+  listLocalWorkspaceOpeners,
   localPathExists,
   openLocalFile,
   openLocalWorkspace,
+  pickLocalWorkspaceOpenerExe,
   resizeLocalTerminal,
+  startLocalHarness,
   startLocalTerminal,
-  unarchiveLocalHarnessSession,
-  updateLocalHarnessSessionTitle,
   writeLocalTerminal,
 } from './local-terminal'
 
-vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: vi.fn(() => false),
-  invoke: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  desktop: true,
+  desktopHost: vi.fn(),
+  executorStatus: vi.fn(),
+  localExecutor: vi.fn(),
+  terminalRequest: vi.fn(),
+  terminalSubscribe: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(),
+vi.mock('./runtime-environment', () => ({
+  isDesktopRuntime: () => mocks.desktop,
 }))
 
-const invokeMock = vi.mocked(invoke)
-const listenMock = vi.mocked(listen)
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: mocks.desktopHost,
+}))
+
+vi.mock('@/api/dsh/terminalTransport', () => ({
+  requestDshTerminal: mocks.terminalRequest,
+  subscribeDshTerminalEvents: mocks.terminalSubscribe,
+}))
+
+vi.mock('@/desktop/localExecutor', () => ({
+  getLocalExecutorStatus: mocks.executorStatus,
+  requestLocalExecutor: mocks.localExecutor,
+}))
 
 function setNavigatorValue<K extends keyof Navigator>(key: K, value: Navigator[K]) {
   Object.defineProperty(navigator, key, {
@@ -43,544 +51,191 @@ function setNavigatorValue<K extends keyof Navigator>(key: K, value: Navigator[K
   })
 }
 
-describe('local-terminal', () => {
+describe('Electron local terminal', () => {
   beforeEach(() => {
-    invokeMock.mockReset()
-    listenMock.mockReset()
-    vi.unstubAllEnvs()
-  })
-
-  afterEach(() => {
-    vi.unstubAllEnvs()
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-  })
-
-  test('is available inside the WeWork macOS Tauri app', () => {
+    mocks.desktop = true
+    mocks.desktopHost.mockReset()
+    mocks.executorStatus.mockReset()
+    mocks.localExecutor.mockReset()
+    mocks.terminalRequest.mockReset()
+    mocks.terminalSubscribe.mockReset()
+    mocks.terminalSubscribe.mockReturnValue(vi.fn())
     setNavigatorValue(
       'userAgent',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
     )
     setNavigatorValue('platform', 'MacIntel')
     setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
-    expect(isLocalTerminalAvailable()).toBe(true)
   })
 
-  test('is available inside the WeWork Windows Tauri app', () => {
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    setNavigatorValue('platform', 'Win32')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
+  test('exposes terminal and harness features only in the Electron desktop runtime', () => {
     expect(isLocalTerminalAvailable()).toBe(true)
-  })
-
-  test('makes the local terminal available inside the Linux Tauri desktop E2E app', () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
-    setNavigatorValue('platform', 'Linux x86_64')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
-    expect(isLocalTerminalAvailable()).toBe(true)
-  })
-
-  test('makes local harnesses available inside the Linux Tauri desktop E2E app', () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
-    setNavigatorValue('platform', 'Linux x86_64')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
     expect(isLocalHarnessAvailable()).toBe(true)
-  })
 
-  test('is unavailable for regular browsers even on macOS', () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
+    mocks.desktop = false
 
     expect(isLocalTerminalAvailable()).toBe(false)
+    expect(isLocalHarnessAvailable()).toBe(false)
   })
 
-  test('is unavailable inside the iOS Tauri app', () => {
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')
-    setNavigatorValue('platform', 'iPhone')
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('reads executor and filesystem state through Electron services', async () => {
+    mocks.executorStatus.mockResolvedValue({ deviceId: ' local-device-1 ' })
+    mocks.desktopHost
+      .mockResolvedValueOnce({ isDirectory: false, isFile: true })
+      .mockResolvedValueOnce({ isDirectory: true, isFile: false })
 
-    expect(isLocalTerminalAvailable()).toBe(false)
-  })
-
-  test('reads the local executor device id from the native app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue(' local-device-1 ')
-
-    await expect(getLocalExecutorDeviceId(' http://localhost:8000/api ')).resolves.toBe(
-      'local-device-1'
-    )
-    expect(invokeMock).toHaveBeenCalledWith('get_local_executor_device_id', {
-      expectedBackendUrl: 'http://localhost:8000/api',
-    })
-  })
-
-  test('does not read the local executor device id in regular browsers', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-
-    await expect(getLocalExecutorDeviceId()).resolves.toBeNull()
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  test('checks local project path existence through the native app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue(true)
-
+    await expect(getLocalExecutorDeviceId()).resolves.toBe('local-device-1')
     await expect(localPathExists(' /Users/me/project ')).resolves.toBe(true)
-    expect(invokeMock).toHaveBeenCalledWith('local_path_exists', {
+    await expect(getLocalPathKind(' /Users/me/project ')).resolves.toBe('directory')
+
+    expect(mocks.desktopHost).toHaveBeenNthCalledWith(1, 'filesystem.stat', {
+      path: '/Users/me/project',
+    })
+    expect(mocks.desktopHost).toHaveBeenNthCalledWith(2, 'filesystem.stat', {
       path: '/Users/me/project',
     })
   })
 
-  test('does not check local project paths in regular browsers', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-
-    await expect(localPathExists('/Users/me/project')).resolves.toBe(false)
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  test('reads local path kinds through the native app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue('directory')
-
-    await expect(getLocalPathKind(' /Users/me/tmp ')).resolves.toBe('directory')
-    expect(invokeMock).toHaveBeenCalledWith('get_local_path_kind', {
-      path: '/Users/me/tmp',
-    })
-  })
-
-  test('starts an embedded local terminal session through the native app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue('local-terminal-1')
+  test('starts and controls a terminal through the DSH terminal transport', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000001')
+    mocks.terminalRequest.mockResolvedValue(undefined)
 
     await expect(
       startLocalTerminal({
         cwd: ' /Users/me/project ',
         rows: 30,
         cols: 100,
-        diagnosticContext: {
-          taskId: ' runtime-1 ',
-          workspacePath: ' /Users/me/project ',
-        },
-      })
-    ).resolves.toBe('local-terminal-1')
-    expect(invokeMock).toHaveBeenCalledWith('start_local_terminal', {
-      cwd: '/Users/me/project',
-      rows: 30,
-      cols: 100,
-      taskId: 'runtime-1',
-      workspacePath: '/Users/me/project',
-    })
-  })
-
-  test('passes sanitized context env when starting an embedded local terminal', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue('local-terminal-1')
-
-    await expect(
-      startLocalTerminal({
-        cwd: '/Users/me/project',
         env: {
           WEWORK_PARENT_TITLE: 'Task A',
           ' BAD=KEY ': 'ignored',
           EMPTY_VALUE: null,
         },
       })
-    ).resolves.toBe('local-terminal-1')
-    expect(invokeMock).toHaveBeenCalledWith('start_local_terminal', {
+    ).resolves.toBe('00000000-0000-4000-8000-000000000001')
+    await writeLocalTerminal('terminal-1', 'pwd\r')
+    await resizeLocalTerminal('terminal-1', 40, 120)
+    await closeLocalTerminal('terminal-1')
+
+    expect(mocks.terminalRequest.mock.calls).toEqual([
+      [
+        'terminal.start',
+        {
+          session_id: '00000000-0000-4000-8000-000000000001',
+          cwd: '/Users/me/project',
+          rows: 30,
+          cols: 100,
+          env: { WEWORK_PARENT_TITLE: 'Task A' },
+        },
+      ],
+      ['terminal.input', { session_id: 'terminal-1', data: 'pwd\r' }],
+      ['terminal.resize', { session_id: 'terminal-1', rows: 40, cols: 120 }],
+      ['terminal.close', { session_id: 'terminal-1' }],
+    ])
+  })
+
+  test('passes a new Kimi prompt as a launch argument without PTY input injection', async () => {
+    vi.spyOn(crypto, 'randomUUID').mockReturnValue('00000000-0000-4000-8000-000000000002')
+    mocks.localExecutor.mockResolvedValue({
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
+      env: { KIMI_CONFIG_DIR: '/tmp/kimi' },
+    })
+    mocks.terminalRequest.mockResolvedValue(undefined)
+
+    await startLocalHarness({
+      harnessId: 'kimi_code',
+      prompt: 'Inspect the project with Kimi',
+      isPrimary: false,
+      projectId: 7,
+      executablePath: '/usr/local/bin/kimi',
+      args: ['--model', '__kimi_env_model__'],
+      pluginRoots: [],
+      cwd: '/Users/me/project',
+      modelKey: 'wework:model',
+      resumeSessionId: null,
+    })
+
+    expect(mocks.localExecutor).toHaveBeenCalledWith('executor.harnesses.prepare_launch', {
+      harness_id: 'kimi_code',
+      session_id: expect.stringContaining('local-harness-'),
+      cwd: '/Users/me/project',
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
+      uses_wework_model: false,
+      accept_bypass_permissions: false,
+    })
+    expect(mocks.terminalRequest).toHaveBeenCalledWith('terminal.start', {
+      session_id: expect.stringContaining('local-harness-'),
+      executable: '/usr/local/bin/kimi',
+      args: ['--model', '__kimi_env_model__', '--prompt', 'Inspect the project with Kimi'],
       cwd: '/Users/me/project',
       rows: undefined,
       cols: undefined,
-      taskId: null,
-      workspacePath: null,
-      env: {
-        WEWORK_PARENT_TITLE: 'Task A',
-      },
+      env: { KIMI_CONFIG_DIR: '/tmp/kimi' },
     })
   })
 
-  test('rejects starting a local terminal outside the Tauri desktop app', async () => {
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
-    setNavigatorValue('platform', 'Win32')
-    setNavigatorValue('maxTouchPoints', 0)
-
-    await expect(startLocalTerminal({ cwd: '/Users/me/project' })).rejects.toThrow(
-      i18n.t('localRuntime:local_terminal_unavailable')
-    )
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  test('rejects starting a local terminal inside the iOS-like Tauri app', async () => {
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)')
-    setNavigatorValue('platform', 'iPhone')
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
-    await expect(startLocalTerminal({ cwd: '/Users/me/project' })).rejects.toThrow(
-      i18n.t('localRuntime:local_terminal_unavailable')
-    )
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  test('opens a local workspace through the selected native app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue(undefined)
+  test('opens local paths through Electron host capabilities', async () => {
+    mocks.desktopHost
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce([
+        { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
+        { id: 'file-manager', category: 'fileManager', available: true },
+      ])
+      .mockResolvedValueOnce('C:\\Tools\\Helix\\hx.exe')
 
     await openLocalWorkspace({ opener: 'vscode', path: ' /Users/me/project ' })
-
-    expect(invokeMock).toHaveBeenCalledWith('open_local_workspace', {
-      opener: 'vscode',
-      path: '/Users/me/project',
-    })
-  })
-
-  test('opens a local file with the native default app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue(undefined)
-
-    await openLocalFile(' /Users/me/project/.wegent/attachments/draft/1/paste.txt ')
-
-    expect(invokeMock).toHaveBeenCalledWith('open_local_file', {
-      path: '/Users/me/project/.wegent/attachments/draft/1/paste.txt',
-    })
-  })
-
-  test('does not open a local workspace outside the macOS Tauri app', async () => {
-    setNavigatorValue(
-      'userAgent',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15'
-    )
-    setNavigatorValue('platform', 'MacIntel')
-    setNavigatorValue('maxTouchPoints', 0)
-
-    await expect(
-      openLocalWorkspace({ opener: 'vscode', path: '/Users/me/project' })
-    ).rejects.toThrow(i18n.t('localRuntime:local_workspace_opening_unavailable'))
-    expect(invokeMock).not.toHaveBeenCalled()
-  })
-
-  test('writes, resizes, and closes embedded local terminal sessions', async () => {
-    invokeMock.mockResolvedValue(undefined)
-
-    await writeLocalTerminal('local-terminal-1', 'pwd\r')
-    await resizeLocalTerminal('local-terminal-1', 40, 120)
-    await closeLocalTerminal('local-terminal-1', {
-      taskId: 'runtime-1',
-      workspacePath: '/Users/me/project',
-      reason: 'user-closed-session',
-    })
-
-    expect(invokeMock).toHaveBeenCalledWith('write_local_terminal', {
-      sessionId: 'local-terminal-1',
-      data: 'pwd\r',
-    })
-    expect(invokeMock).toHaveBeenCalledWith('resize_local_terminal', {
-      sessionId: 'local-terminal-1',
-      rows: 40,
-      cols: 120,
-    })
-    expect(invokeMock).toHaveBeenCalledWith('close_local_terminal', {
-      sessionId: 'local-terminal-1',
-      taskId: 'runtime-1',
-      workspacePath: '/Users/me/project',
-      reason: 'user-closed-session',
-    })
-  })
-
-  test('persists a generated Harness session title in native session metadata', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
-    setNavigatorValue('platform', 'Linux x86_64')
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue(undefined)
-
-    await updateLocalHarnessSessionTitle('local-harness-1', 'Greeting')
-
-    expect(invokeMock).toHaveBeenCalledWith('update_local_harness_session_title', {
-      sessionId: 'local-harness-1',
-      title: 'Greeting',
-    })
-  })
-
-  test('archives, lists, restores, and deletes local Harness sessions', async () => {
-    vi.stubEnv('VITE_WEWORK_E2E', 'true')
-    setNavigatorValue('userAgent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36')
-    setNavigatorValue('platform', 'Linux x86_64')
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-    invokeMock.mockResolvedValue([])
-
-    await archiveLocalHarnessSession('local-harness-1')
-    await listArchivedLocalHarnessSessions()
-    await unarchiveLocalHarnessSession('local-harness-1')
-    await deleteArchivedLocalHarnessSession('local-harness-1')
-
-    expect(invokeMock).toHaveBeenCalledWith('archive_local_harness_session', {
-      sessionId: 'local-harness-1',
-    })
-    expect(invokeMock).toHaveBeenCalledWith('list_archived_local_harness_sessions')
-    expect(invokeMock).toHaveBeenCalledWith('unarchive_local_harness_session', {
-      sessionId: 'local-harness-1',
-    })
-    expect(invokeMock).toHaveBeenCalledWith('delete_archived_local_harness_session', {
-      sessionId: 'local-harness-1',
-    })
-  })
-
-  test('listens to embedded local terminal native events', async () => {
-    const unlisten = vi.fn()
-    listenMock.mockResolvedValue(unlisten)
-    const outputHandler = vi.fn()
-    const exitHandler = vi.fn()
-
-    await listenLocalTerminalOutput(outputHandler)
-    await listenLocalTerminalExit(exitHandler)
-
-    expect(listenMock).toHaveBeenCalledWith('local-terminal-output', expect.any(Function))
-    expect(listenMock).toHaveBeenCalledWith('local-terminal-exit', expect.any(Function))
-  })
-
-  test('attaches an embedded local terminal after listeners are ready', async () => {
-    const calls: string[] = []
-    const outputUnlisten = vi.fn()
-    const exitUnlisten = vi.fn()
-    listenMock.mockImplementation(async event => {
-      calls.push(`listen:${event}`)
-      return event === 'local-terminal-output' ? outputUnlisten : exitUnlisten
-    })
-    invokeMock.mockImplementation(async command => {
-      calls.push(`invoke:${command}`)
-      if (command === 'get_local_terminal_snapshot') {
-        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
-      }
-      return undefined
-    })
-
-    const unlisten = await connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn(), {
-      taskId: ' runtime-1 ',
-      workspacePath: ' /Users/me/project ',
-    })
-
-    expect(calls).toEqual([
-      'listen:local-terminal-output',
-      'listen:local-terminal-exit',
-      'invoke:get_local_terminal_snapshot',
-      'invoke:attach_local_terminal',
+    await openLocalFile(' /Users/me/project/readme.md ')
+    await expect(listLocalWorkspaceOpeners()).resolves.toEqual([
+      { id: 'vscode', category: 'general', available: true, label: 'VS Code' },
+      { id: 'file-manager', category: 'fileManager', available: true },
     ])
-    expect(invokeMock).toHaveBeenCalledWith('attach_local_terminal', {
-      sessionId: 'local-terminal-1',
-      taskId: 'runtime-1',
-      workspacePath: '/Users/me/project',
-    })
+    await expect(pickLocalWorkspaceOpenerExe()).resolves.toBe('C:\\Tools\\Helix\\hx.exe')
 
-    unlisten()
-    expect(outputUnlisten).toHaveBeenCalledOnce()
-    expect(exitUnlisten).toHaveBeenCalledOnce()
+    expect(mocks.desktopHost.mock.calls).toEqual([
+      ['workspace.open', { opener: 'vscode', path: '/Users/me/project' }],
+      ['shell.openPath', { path: '/Users/me/project/readme.md' }],
+      ['workspace.listOpeners'],
+      ['workspace.pickOpener'],
+    ])
   })
 
-  test('removes local terminal listeners when attach fails', async () => {
-    const outputUnlisten = vi.fn()
-    const exitUnlisten = vi.fn()
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    listenMock.mockResolvedValueOnce(outputUnlisten).mockResolvedValueOnce(exitUnlisten)
-    invokeMock.mockImplementation(async command => {
-      if (command === 'get_local_terminal_snapshot') {
-        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
-      }
-      throw new Error('attach failed')
+  test('replays snapshots before buffered live output and filters other sessions', async () => {
+    const listeners: Array<(event: { event: string; payload: Record<string, unknown> }) => void> =
+      []
+    const unlisteners = [vi.fn(), vi.fn()]
+    mocks.terminalSubscribe.mockImplementation(listener => {
+      listeners.push(listener)
+      return unlisteners[listeners.length - 1]
+    })
+    mocks.terminalRequest.mockImplementation(async method => {
+      if (method !== 'terminal.snapshot') return undefined
+      listeners[0]?.({
+        event: 'terminal.output',
+        payload: { session_id: 'terminal-1', sequence: 3, data: 'live' },
+      })
+      listeners[1]?.({
+        event: 'terminal.exit',
+        payload: { session_id: 'terminal-2' },
+      })
+      return { session_id: 'terminal-1', sequence: 2, data: 'history' }
+    })
+    const output = vi.fn()
+    const exit = vi.fn()
+
+    const disconnect = await connectLocalTerminal('terminal-1', output, exit)
+    listeners[1]?.({
+      event: 'terminal.exit',
+      payload: { session_id: 'terminal-1' },
     })
 
-    await expect(connectLocalTerminal('local-terminal-1', vi.fn(), vi.fn())).rejects.toThrow(
-      'attach failed'
-    )
-
-    expect(outputUnlisten).toHaveBeenCalledOnce()
-    expect(exitUnlisten).toHaveBeenCalledOnce()
-    expect(consoleError).toHaveBeenCalledWith('Local terminal connection failed', {
-      sessionId: 'local-terminal-1',
-      stage: 'attach',
-      taskId: null,
-      workspacePath: null,
-      reason: null,
-      error: 'attach failed',
-    })
-  })
-
-  test('replays a snapshot before buffered live output without duplicates', async () => {
-    const outputHandler = vi.fn()
-    let nativeOutput:
-      | ((event: { payload: { session_id: string; sequence: number; data: string } }) => void)
-      | undefined
-    listenMock.mockImplementation(async (event, handler) => {
-      if (event === 'local-terminal-output') {
-        nativeOutput = handler as typeof nativeOutput
-      }
-      return vi.fn()
-    })
-    invokeMock.mockImplementation(async command => {
-      if (command === 'get_local_terminal_snapshot') {
-        nativeOutput?.({
-          payload: { session_id: 'local-terminal-1', sequence: 3, data: 'live' },
-        })
-        return { session_id: 'local-terminal-1', sequence: 2, data: 'history' }
-      }
-      return undefined
-    })
-
-    await connectLocalTerminal('local-terminal-1', outputHandler, vi.fn())
-
-    expect(outputHandler.mock.calls.map(([payload, source]) => [payload.data, source])).toEqual([
+    expect(output.mock.calls.map(([payload, source]) => [payload.data, source])).toEqual([
       ['history', 'snapshot'],
       ['live', 'live'],
     ])
-  })
+    expect(exit).toHaveBeenCalledOnce()
 
-  test('signals snapshot completion when the terminal has no buffered output', async () => {
-    const outputHandler = vi.fn()
-    invokeMock.mockImplementation(async command => {
-      if (command === 'get_local_terminal_snapshot') {
-        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
-      }
-      return undefined
-    })
-
-    await connectLocalTerminal('local-terminal-1', outputHandler, vi.fn())
-
-    expect(outputHandler).toHaveBeenCalledOnce()
-    expect(outputHandler).toHaveBeenCalledWith(
-      { session_id: 'local-terminal-1', sequence: 0, data: '' },
-      'snapshot'
-    )
-  })
-
-  test('ignores exit events from other local terminal sessions', async () => {
-    const exitHandler = vi.fn()
-    let nativeExit: ((event: { payload: { session_id: string } }) => void) | undefined
-    listenMock.mockImplementation(async (event, handler) => {
-      if (event === 'local-terminal-exit') {
-        nativeExit = handler as typeof nativeExit
-      }
-      return vi.fn()
-    })
-    invokeMock.mockImplementation(async command => {
-      if (command === 'get_local_terminal_snapshot') {
-        return { session_id: 'local-terminal-1', sequence: 0, data: '' }
-      }
-      return undefined
-    })
-
-    await connectLocalTerminal('local-terminal-1', vi.fn(), exitHandler)
-    nativeExit?.({ payload: { session_id: 'local-terminal-2' } })
-    nativeExit?.({ payload: { session_id: 'local-terminal-1' } })
-
-    expect(exitHandler).toHaveBeenCalledOnce()
-    expect(exitHandler).toHaveBeenCalledWith({ session_id: 'local-terminal-1' })
+    disconnect()
+    expect(unlisteners[0]).toHaveBeenCalledOnce()
+    expect(unlisteners[1]).toHaveBeenCalledOnce()
   })
 })

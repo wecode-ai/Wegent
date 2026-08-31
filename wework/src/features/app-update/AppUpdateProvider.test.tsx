@@ -1,8 +1,9 @@
-import { act, render } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { useAppUpdate, type AppUpdateContextValue } from './app-update-context'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   APP_UPDATE_AUTO_CHECK_MIN_AGE_MS,
+  APP_UPDATE_AUTO_DOWNLOAD_KEY,
   APP_UPDATE_CHANNEL_KEY,
   APP_UPDATE_INITIAL_CHECK_DELAY_MS,
   APP_UPDATE_LAST_AUTO_CHECK_KEY,
@@ -10,29 +11,31 @@ import {
   APP_UPDATE_TIMER_INTERVAL_MS,
 } from './app-update-context'
 import { AppUpdateProvider } from './AppUpdateProvider'
-import { checkForWeworkUpdate, installPendingWeworkUpdate } from '@/lib/app-updater'
+import {
+  checkForWeworkUpdate,
+  downloadPendingWeworkUpdate,
+  installDownloadedWeworkUpdate,
+} from '@/lib/app-updater'
 import { APP_UPDATE_PENDING_RELEASE_NOTES_KEY } from './app-release-notes'
 
 const appVersionMock = vi.hoisted(() => ({ value: '0.1.0' }))
 
 vi.mock('@/lib/app-updater', () => ({
   checkForWeworkUpdate: vi.fn(),
-  installPendingWeworkUpdate: vi.fn(),
+  downloadPendingWeworkUpdate: vi.fn(),
+  installDownloadedWeworkUpdate: vi.fn(),
 }))
 
 vi.mock('@/hooks/useAppVersion', () => ({
   useAppVersion: () => appVersionMock.value,
 }))
 
-function enableTauri() {
-  Object.defineProperty(window, '__TAURI_INTERNALS__', {
-    configurable: true,
-    value: {},
-  })
+function enableElectron() {
+  window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
 }
 
-function disableTauri() {
-  delete (window as Window & { __TAURI_INTERNALS__?: object }).__TAURI_INTERNALS__
+function disableElectron() {
+  delete window.__WEWORK_RUNTIME_CONFIG__
 }
 
 describe('AppUpdateProvider', () => {
@@ -40,13 +43,15 @@ describe('AppUpdateProvider', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-06-16T00:00:00Z'))
     localStorage.clear()
-    enableTauri()
+    enableElectron()
     appVersionMock.value = '0.1.0'
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(null)
+    vi.mocked(downloadPendingWeworkUpdate).mockResolvedValue()
+    vi.mocked(installDownloadedWeworkUpdate).mockResolvedValue()
   })
 
   afterEach(() => {
-    disableTauri()
+    disableElectron()
     vi.useRealTimers()
     vi.clearAllMocks()
   })
@@ -86,6 +91,152 @@ describe('AppUpdateProvider', () => {
     expect(localStorage.getItem(APP_UPDATE_CHANNEL_KEY)).toBe('beta')
     expect(appUpdate?.updateChannel).toBe('beta')
     expect(checkForWeworkUpdate).toHaveBeenCalledWith('beta')
+  })
+
+  test('downloads a discovered update silently by default', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.autoUpdateEnabled).toBe(true)
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(appUpdate?.downloadProgress).toBeNull()
+    expect(appUpdate?.status).toBe('available')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('waits for an active background download before asking for restart confirmation', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    let finishDownload: (() => void) | undefined
+    let updateRequest: Promise<void> | undefined
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+    vi.mocked(downloadPendingWeworkUpdate).mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finishDownload = resolve
+        })
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      updateRequest = appUpdate?.installUpdate()
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.status).toBe('downloading')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+
+    if (!finishDownload) {
+      throw new Error('Background download resolver was not initialized')
+    }
+    finishDownload()
+    await act(async () => {
+      await updateRequest
+    })
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('does not download automatically when automatic updates are disabled', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.autoUpdateEnabled).toBe(false)
+    expect(downloadPendingWeworkUpdate).not.toHaveBeenCalled()
+  })
+
+  test('starts a silent download when automatic updates are enabled for an available update', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.1.0',
+      version: '0.2.0',
+    })
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    act(() => {
+      appUpdate?.setAutoUpdateEnabled(true)
+    })
+
+    expect(localStorage.getItem(APP_UPDATE_AUTO_DOWNLOAD_KEY)).toBe('true')
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledWith()
+    expect(appUpdate?.downloadProgress).toBeNull()
   })
 
   test('restores the persisted Beta channel for automatic checks', async () => {
@@ -203,14 +354,81 @@ describe('AppUpdateProvider', () => {
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(1)
   })
 
-  test('exposes download progress while installing an available update', async () => {
+  test('downloads an update before asking for restart confirmation', async () => {
     let appUpdate: AppUpdateContextValue | null = null
+    let finishDownload: (() => void) | undefined
+    let updateRequest: Promise<void> | undefined
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.0.8',
       version: '0.0.9',
     })
-    vi.mocked(installPendingWeworkUpdate).mockImplementation(async onProgress => {
-      onProgress({ downloadedBytes: 50, totalBytes: 100 })
+    vi.mocked(downloadPendingWeworkUpdate).mockImplementation(onProgress => {
+      onProgress?.({ downloadedBytes: 50, totalBytes: 100 })
+      return new Promise(resolve => {
+        finishDownload = resolve
+      })
+    })
+
+    function Probe() {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+    await act(async () => {
+      updateRequest = appUpdate?.installUpdate()
+      await Promise.resolve()
+    })
+
+    expect(appUpdate?.status).toBe('downloading')
+    expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+
+    if (!finishDownload) {
+      throw new Error('Update download resolver was not initialized')
+    }
+    finishDownload()
+    await act(async () => {
+      await updateRequest
+    })
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
+    expect(screen.getByRole('dialog')).toHaveTextContent('v0.0.9')
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.downloadProgress).toBeNull()
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(appUpdate?.status).toBe('available')
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+    expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test('installs a downloaded update only after restart confirmation', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
+    vi.mocked(checkForWeworkUpdate).mockResolvedValue({
+      currentVersion: '0.0.8',
+      version: '0.0.9',
     })
 
     function Probe() {
@@ -231,19 +449,28 @@ describe('AppUpdateProvider', () => {
       await appUpdate?.installUpdate()
     })
 
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(1)
+    expect(installDownloadedWeworkUpdate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
+    })
+
     expect(appUpdate?.status).toBe('installing')
-    expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 50, totalBytes: 100 })
+    expect(appUpdate?.downloadProgress).toBeNull()
+    expect(installDownloadedWeworkUpdate).toHaveBeenCalledTimes(1)
   })
 
   test('persists release notes before installing an available update', async () => {
     let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     vi.mocked(checkForWeworkUpdate).mockResolvedValue({
       currentVersion: '0.1.0',
       version: '0.2.0',
       body: '## Changes\n\n- Added release notes.',
     })
-    vi.mocked(installPendingWeworkUpdate).mockResolvedValue()
-
     function Probe() {
       appUpdate = useAppUpdate()
       return null
@@ -260,6 +487,10 @@ describe('AppUpdateProvider', () => {
     })
     await act(async () => {
       await appUpdate?.installUpdate()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
     })
 
     expect(JSON.parse(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY) ?? '{}')).toEqual({
@@ -332,13 +563,14 @@ describe('AppUpdateProvider', () => {
 
   test('refreshes a failed update so installation can be retried without restarting', async () => {
     let appUpdate: AppUpdateContextValue | null = null
+    localStorage.setItem(APP_UPDATE_AUTO_DOWNLOAD_KEY, 'false')
     const update = {
       currentVersion: '0.0.18',
       version: '0.0.19',
       body: '## Changes\n\n- Fixed update retries.',
     }
     vi.mocked(checkForWeworkUpdate).mockResolvedValue(update)
-    vi.mocked(installPendingWeworkUpdate)
+    vi.mocked(installDownloadedWeworkUpdate)
       .mockRejectedValueOnce(new Error('The signature verification failed'))
       .mockResolvedValueOnce()
 
@@ -359,6 +591,10 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.installUpdate()
     })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
+    })
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
     expect(appUpdate?.status).toBe('available')
@@ -368,11 +604,16 @@ describe('AppUpdateProvider', () => {
     await act(async () => {
       await appUpdate?.installUpdate()
     })
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
+      await Promise.resolve()
+    })
 
-    expect(installPendingWeworkUpdate).toHaveBeenCalledTimes(2)
+    expect(downloadPendingWeworkUpdate).toHaveBeenCalledTimes(2)
+    expect(installDownloadedWeworkUpdate).toHaveBeenCalledTimes(2)
   })
 
-  test('simulates an update download from the developer command menu', async () => {
+  test('routes simulated updates through download before restart confirmation', async () => {
     let appUpdate: AppUpdateContextValue | null = null
 
     function Probe() {
@@ -390,12 +631,45 @@ describe('AppUpdateProvider', () => {
       window.dispatchEvent(new Event(APP_UPDATE_SIMULATE_EVENT))
     })
 
-    expect(appUpdate?.status).toBe('installing')
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.availableUpdate?.version).toBe('debug-simulation')
+    expect(appUpdate?.downloadProgress).toBeNull()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(appUpdate?.status).toBe('downloading')
     expect(appUpdate?.downloadProgress).toEqual({ downloadedBytes: 0, totalBytes: 10_000_000 })
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_500)
+      await vi.advanceTimersByTimeAsync(4_750)
     })
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(appUpdate?.downloadProgress).toEqual({
+      downloadedBytes: 9_500_000,
+      totalBytes: 10_000_000,
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250)
+    })
+
+    expect(screen.getByRole('dialog')).toHaveTextContent('重启并更新 Wework？')
+    expect(appUpdate?.status).toBe('available')
+    expect(appUpdate?.downloadProgress).toBeNull()
+
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm-cancel-button'))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await appUpdate?.installUpdate()
+    })
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('app-update-restart-confirm'))
 
     expect(appUpdate?.availableUpdate).toBeNull()
     expect(appUpdate?.status).toBe('upToDate')

@@ -1,9 +1,18 @@
-import { invoke } from '@tauri-apps/api/core'
 import { ApiError, type HttpClient } from './http'
-import type { Attachment, RuntimeTaskAddress } from '@/types/api'
-
-import { openLocalFile } from '@/lib/local-terminal'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import type { ProjectChatAgent } from './projectChatAgents'
+import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
+import type {
+  Attachment,
+  ModelType,
+  RuntimeAdditionalContext,
+  RuntimeGoalCreateInput,
+  RuntimeProjectPluginRef,
+  RuntimeSupervisorCreateInput,
+  RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
+  SkillRef,
+} from '@/types/api'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 
 export type CloudProjectId = string
 type CloudProjectIdInput = CloudProjectId | number
@@ -107,6 +116,8 @@ export interface CloudLoopItem {
   created_by_user_name?: string | null
   can_view_detail?: boolean
   can_edit?: boolean
+  content_revision?: number
+  is_unread?: boolean
   assignee_user_id: number | null
   assignee_name?: string | null
   assignee_agent_id?: string | null
@@ -142,6 +153,15 @@ export interface CloudLoopItem {
       | 'task_started'
       | 'delivery'
       | 'status_removed'
+      | 'workflow_plan_approved'
+      | 'workflow_task_progress'
+      | 'workflow_outcome_passed'
+      | 'workflow_outcome_needs_rework'
+      | 'workflow_review_approved'
+      | 'workflow_stage_advanced'
+      | 'workflow_replanned'
+      | 'workflow_paused'
+      | 'workflow_resumed'
     by_user_id: number | null
     at: string
   }>
@@ -165,6 +185,7 @@ export interface CloudLoopItem {
     bug_key?: string
   } | null
   workflow?: IssueWorkflowInstance | null
+  execution_config?: WorkflowExecutionConfig | null
   ai_state?: {
     run_id?: string
     status?: string
@@ -215,6 +236,7 @@ export interface CloudLoopItemExecution {
   team_id?: number | null
   backend_task_id?: number | null
   automation_run_id: string
+  executor_owner_user_id?: number | null
   assigner_user_id: number
   execution_environment: string
   execution_device_id?: string | null
@@ -245,6 +267,10 @@ export interface CloudLoopItemExecution {
   rejected_reason?: string | null
   runtime_device_id?: string | null
   runtime_task_id?: string | null
+  runtime_profile_id?: string | null
+  runtime_source?: string | null
+  can_select_runtime?: boolean
+  waiting_runtime_reason?: string | null
   version: number
   created_at: string
   updated_at: string
@@ -299,6 +325,7 @@ export interface CloudProject {
   }
   board_config?: {
     group_by: 'status' | 'priority' | 'assignee' | 'tag'
+    processing_start_status_id: string | null
     statuses: Array<{
       id: string
       name: string
@@ -309,7 +336,13 @@ export interface CloudProject {
     auto_retry_on_failure: boolean
     max_retry_count: number
   }
+  pull_request_automation?: {
+    enabled: boolean
+    statuses: PullRequestAutoRepairStatus[]
+    prompt: string
+  }
   workflow_definition?: ProjectWorkflowDefinition
+  workflow_automation_id?: string | null
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
@@ -325,6 +358,13 @@ export interface CloudProject {
     [key: string]: unknown
   }
 }
+
+export type PullRequestAutoRepairStatus =
+  | 'checks_failed'
+  | 'merge_conflict'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_conflicting'
 
 export interface CloudTaskContext {
   id: string
@@ -357,17 +397,40 @@ export type WorkflowNodeStatus =
 export type IssueAdvancementPolicy = 'manual' | 'ai'
 export type IssueStageMode = 'none' | 'dag'
 
+export interface WorkflowExecutionConfig {
+  agent_id: string | null
+  runtime_profile_id: string | null
+  execution_device_id: string | null
+  model: string | null
+  model_type: ModelType | null
+  model_options: Record<string, string>
+  workspace_binding: ProjectChatWorkspaceBindingInput | null
+  runtime_permission_mode?: RuntimeTaskCreateRequest['runtimePermissionMode'] | null
+  execution?: RuntimeTaskCreateRequest['execution'] | null
+  initial_goal?: RuntimeGoalCreateInput | null
+  initial_supervisor?: RuntimeSupervisorCreateInput | null
+  additional_skills?: SkillRef[] | null
+  attachment_ids?: number[] | null
+  attachments?: Attachment[] | null
+  project_plugins?: RuntimeProjectPluginRef[] | null
+  additional_context?: RuntimeAdditionalContext | null
+  ephemeral?: boolean | null
+}
+
 export interface WorkflowNodeDefinition {
   id: string
   name: string
   prompt?: string
   kind?: 'my_task' | 'automation' | 'ai' | null
+  execution_mode?: 'human' | 'robot'
   depends_on: string[]
   dependency_context?: Record<string, WorkflowContextSource[]>
   required: boolean
   required_deliverables?: DeliverableRequirement[]
   workspace_policy: WorkflowWorkspacePolicy
   automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
+  execution_config_override?: boolean
 }
 
 export interface ProjectWorkflowDefinition {
@@ -375,7 +438,9 @@ export interface ProjectWorkflowDefinition {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
   nodes: WorkflowNodeDefinition[]
 }
 
@@ -394,6 +459,7 @@ export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
   }>
   execution_id?: number | null
   automation_run_id?: string | null
+  execution_error?: string | null
 }
 
 export interface IssueWorkflowInstance {
@@ -402,8 +468,74 @@ export interface IssueWorkflowInstance {
   stage_mode?: IssueStageMode
   advancement_policy?: IssueAdvancementPolicy
   coordinator_prompt?: string
+  approval_policy?: 'required' | 'automatic'
   ai_automation_rule_id?: string | null
+  execution_config?: WorkflowExecutionConfig | null
+  orchestration_status?:
+    | 'idle'
+    | 'planning'
+    | 'awaiting_approval'
+    | 'dispatching'
+    | 'running'
+    | 'awaiting_review'
+    | 'paused'
+    | 'completed'
+    | 'failed'
+  active_run_id?: string | null
+  active_plan_version?: number | null
+  current_stage_id?: string | null
   nodes: WorkflowNodeInstance[]
+}
+
+export type WorkflowPlanStatus =
+  | 'idle'
+  | 'planning'
+  | 'awaiting_approval'
+  | 'dispatching'
+  | 'running'
+  | 'awaiting_review'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+
+export interface WorkflowPlanItem {
+  id: string
+  client_key: string
+  stage_id: string
+  title: string
+  description: string
+  assignee_type: 'user' | 'agent' | 'team'
+  assignee_id: string
+  assignee_name: string
+  rationale: string
+  task_id?: string | null
+  task_status?: CloudLoopItem['status'] | null
+  outcome_verdict?: 'passed' | 'needs_rework' | null
+  outcome_summary?: string
+  status: 'proposed' | 'materialized' | 'superseded'
+}
+
+export interface WorkflowManagerRun {
+  id: string
+  status: string
+  model?: string | null
+  execution_environment?: string | null
+  device_id?: string | null
+  recent_activity: string
+  error?: string | null
+  updated_at: string
+}
+
+export interface WorkflowPlan {
+  run_id: string
+  issue_id: string
+  stage_id: string
+  plan_version: number
+  approval_policy: 'required' | 'automatic'
+  status: WorkflowPlanStatus
+  summary: string
+  items: WorkflowPlanItem[]
+  manager_run?: WorkflowManagerRun | null
 }
 
 export interface CloudProjectFile {
@@ -448,6 +580,27 @@ export interface CloudProjectMember {
   capability_description?: string
 }
 
+export interface LoopItemTaskBinding {
+  id: number
+  cloud_project_id?: string | number
+  loop_item_id: string | null
+  task_user_id: number
+  device_id: string
+  task_id: string
+  task_title: string | null
+  backend_task_id: number | null
+  workflow_node_id?: string | null
+  binding_type?: 'system' | 'user'
+  linked_at: string
+}
+
+export interface ProjectBoardSnapshot {
+  items: CloudLoopItem[]
+  task_bindings: LoopItemTaskBinding[]
+  members: CloudProjectMember[]
+  agents: ProjectChatAgent[]
+}
+
 export interface CloudLoopItemCollaborator {
   id: string
   loop_item_id: string
@@ -474,7 +627,13 @@ export interface CloudMyWorkItem extends CloudLoopItem {
 export const DEFAULT_WORK_ITEM_PROJECT_KEY = 'WORK'
 export const DEFAULT_WORK_ITEM_PROJECT_ID = 'default-work-items'
 
-type TaskExecutionStatus = 'running' | 'succeeded' | 'failed' | 'cancelled' | 'archived'
+export type TaskExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'archived'
 
 export function isDefaultWorkItemProject(project: CloudProject | null | undefined): boolean {
   return (
@@ -486,20 +645,23 @@ export function isDefaultWorkItemProject(project: CloudProject | null | undefine
 
 export function nextTaskTrackingStatus(
   itemStatus: CloudLoopItem['status'],
-  executionStatus: TaskExecutionStatus,
-  options: { completeOnSuccess?: boolean } = {}
+  executionStatus: TaskExecutionStatus
 ): CloudLoopItem['status'] | null {
-  if (
-    executionStatus === 'running' &&
-    (itemStatus === 'inbox' ||
-      itemStatus === 'pending' ||
-      itemStatus === 'in_review' ||
-      (options.completeOnSuccess && itemStatus === 'completed'))
-  ) {
+  if (executionStatus === 'queued' && itemStatus !== 'pending') {
+    return 'pending'
+  }
+  if (executionStatus === 'running' && itemStatus !== 'in_progress') {
     return 'in_progress'
   }
-  if (executionStatus === 'succeeded' && itemStatus === 'in_progress') {
-    return options.completeOnSuccess ? 'completed' : 'in_review'
+  if (executionStatus === 'succeeded' && itemStatus !== 'completed') {
+    return 'in_review'
+  }
+  if (
+    (executionStatus === 'failed' || executionStatus === 'cancelled') &&
+    itemStatus !== 'completed' &&
+    itemStatus !== 'in_review'
+  ) {
+    return 'in_review'
   }
   if (executionStatus === 'archived' && itemStatus !== 'completed') return 'completed'
   return null
@@ -616,6 +778,7 @@ export function createDeliveryApi(client: HttpClient) {
         visibility?: 'private' | 'public'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
+        pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         provider_config?: {
           repository?: string
@@ -660,6 +823,9 @@ export function createDeliveryApi(client: HttpClient) {
       const suffix = query.toString() ? `?${query.toString()}` : ''
       return client.get(`/v1/cloud-projects/${projectId}/loop-items${suffix}`)
     },
+    getBoardSnapshot(projectId: CloudProjectIdInput): Promise<ProjectBoardSnapshot> {
+      return client.get(`/v1/cloud-projects/${projectId}/board-snapshot`)
+    },
     listLoopItemExecutions(
       projectId: CloudProjectIdInput,
       options: { agent_id?: string; status?: string } = {}
@@ -685,6 +851,8 @@ export function createDeliveryApi(client: HttpClient) {
             team_id: row.teamId == null ? null : Number(row.teamId),
             backend_task_id: row.backendTaskId == null ? null : Number(row.backendTaskId),
             automation_run_id: String(row.automationRunId ?? ''),
+            executor_owner_user_id:
+              row.executorOwnerUserId == null ? null : Number(row.executorOwnerUserId),
             assigner_user_id: Number(row.assignerUserId ?? 0),
             execution_environment: String(row.executionEnvironment ?? ''),
             execution_device_id:
@@ -718,6 +886,11 @@ export function createDeliveryApi(client: HttpClient) {
             rejected_reason: row.rejectedReason == null ? null : String(row.rejectedReason),
             runtime_device_id: row.runtimeDeviceId == null ? null : String(row.runtimeDeviceId),
             runtime_task_id: row.runtimeTaskId == null ? null : String(row.runtimeTaskId),
+            runtime_profile_id: row.runtimeProfileId == null ? null : String(row.runtimeProfileId),
+            runtime_source: row.runtimeSource == null ? null : String(row.runtimeSource),
+            can_select_runtime: row.canSelectRuntime === true,
+            waiting_runtime_reason:
+              row.waitingRuntimeReason == null ? null : String(row.waitingRuntimeReason),
             version: Number(row.version ?? 1),
             created_at: String(row.createdAt ?? ''),
             updated_at: String(row.updatedAt ?? ''),
@@ -732,6 +905,27 @@ export function createDeliveryApi(client: HttpClient) {
     },
     getLoopItem(itemId: string): Promise<CloudLoopItem> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}`)
+    },
+    getWorkflowPlan(itemId: string): Promise<WorkflowPlan | null> {
+      return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan`)
+    },
+    approveWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/approve`, {})
+    },
+    approveWorkflowReview(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/review`, {})
+    },
+    pauseWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/pause`, {})
+    },
+    resumeWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/resume`, {})
+    },
+    replanWorkflowPlan(itemId: string): Promise<WorkflowPlan> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/workflow-plan/replan`, {})
+    },
+    markLoopItemRead(itemId: string): Promise<CloudLoopItem> {
+      return client.post(`/v1/loop-items/${encodeURIComponent(itemId)}/read`)
     },
     findLoopItemForTask(task: RuntimeTaskAddress): Promise<CloudLoopItem> {
       const query = new URLSearchParams({ device_id: task.deviceId, task_id: task.taskId })
@@ -754,6 +948,8 @@ export function createDeliveryApi(client: HttpClient) {
         local_project_id?: number | null
         local_project_name?: string | null
         workflow?: IssueWorkflowInstance | null
+        execution_config?: WorkflowExecutionConfig | null
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.post(`/v1/cloud-projects/${projectId}/loop-items`, data)
@@ -774,9 +970,11 @@ export function createDeliveryApi(client: HttpClient) {
           | 'due_at'
           | 'tags'
           | 'workflow'
+          | 'execution_config'
         >
       > & {
         version: number
+        automation_rule_id?: string | null
       }
     ): Promise<CloudLoopItem> {
       return client.patch(`/v1/loop-items/${encodeURIComponent(itemId)}`, data)
@@ -865,38 +1063,12 @@ export function createDeliveryApi(client: HttpClient) {
     },
     async downloadLoopItemAttachment(attachmentId: string, filename: string): Promise<void> {
       const content = await client.getBlob(`/v1/loop-item-attachments/${attachmentId}/content`)
-      if (isTauriRuntime()) {
-        const path = await invoke<string>('save_local_attachment_file', {
-          workspacePath: null,
-          filename,
-          bytes: Array.from(new Uint8Array(await content.arrayBuffer())),
-        })
-        await openLocalFile(path)
-        return
-      }
-      const url = URL.createObjectURL(content)
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = filename
-      anchor.click()
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+      await saveBlobToDownloads(content, filename)
     },
     deleteLoopItemAttachment(attachmentId: string): Promise<void> {
       return client.delete(`/v1/loop-item-attachments/${attachmentId}`)
     },
-    listTaskBindings(itemId: string): Promise<
-      Array<{
-        id: number
-        loop_item_id: string
-        task_user_id: number
-        device_id: string
-        task_id: string
-        task_title: string | null
-        backend_task_id: number | null
-        workflow_node_id?: string | null
-        linked_at: string
-      }>
-    > {
+    listTaskBindings(itemId: string): Promise<LoopItemTaskBinding[]> {
       return client.get(`/v1/loop-items/${encodeURIComponent(itemId)}/tasks`)
     },
     listLoopItemCollaborators(itemId: string): Promise<CloudLoopItemCollaborator[]> {
@@ -968,7 +1140,7 @@ export function createDeliveryApi(client: HttpClient) {
           (await api.createLoopItem(projectId, {
             title: taskTitle,
             description,
-            status: 'pending',
+            status: String(projectId) === DEFAULT_WORK_ITEM_PROJECT_ID ? 'inbox' : 'pending',
           }))
         pendingTrackedItems.set(trackingKey, item)
         await api.bindTask(item.id, task, taskTitle)
@@ -981,28 +1153,41 @@ export function createDeliveryApi(client: HttpClient) {
       executionStatus: TaskExecutionStatus
     ): Promise<CloudLoopItem | null> {
       return enqueueTaskTrackingMutation(task, async () => {
+        console.info('[IssueTaskStatusSync] status update requested', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+        })
         let context: CloudTaskContext
         try {
           context = await api.findCloudContextForTask(task)
         } catch (error) {
-          if (error instanceof ApiError && error.status === 404) return null
+          if (error instanceof ApiError && error.status === 404) {
+            console.warn('[IssueTaskStatusSync] task binding not found', {
+              deviceId: task.deviceId,
+              taskId: task.taskId,
+              executionStatus,
+            })
+            return null
+          }
           throw error
         }
+        console.info('[IssueTaskStatusSync] task binding resolved', {
+          deviceId: task.deviceId,
+          taskId: task.taskId,
+          executionStatus,
+          loopItemId: context.loop_item_id,
+          workflowNodeId: context.workflow_node_id,
+        })
         if (!context.loop_item_id) return null
         const item = context.loop_item ?? (await api.getLoopItem(context.loop_item_id))
-        if (item.workflow && context.workflow_node_id) {
-          return client.patch('/v1/runtime-tasks/cloud-context/status', {
-            ...task,
-            status: executionStatus,
-          })
-        }
+        if (item.workflow && context.workflow_node_id) return item
+        if (item.execution_id != null) return item
         if (executionStatus === 'succeeded') {
           const bindings = await api.listTaskBindings(item.id)
           if (bindings.length > 1) return item
         }
-        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus, {
-          completeOnSuccess: isDefaultWorkItemProject(context.project),
-        })
+        const nextStatus = nextTaskTrackingStatus(item.status, executionStatus)
         return nextStatus
           ? api.updateLoopItem(item.id, {
               version: item.version,
@@ -1129,7 +1314,7 @@ export function createDeliveryApi(client: HttpClient) {
     getWorkflowStageContext(
       itemId: string,
       workflowNodeId: string
-    ): Promise<Record<string, unknown>> {
+    ): Promise<Record<string, unknown> & { compiled_task_instruction: string }> {
       return client.get(
         `/v1/loop-items/${encodeURIComponent(itemId)}/workflow-nodes/${encodeURIComponent(
           workflowNodeId

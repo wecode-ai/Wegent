@@ -14,7 +14,7 @@ const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
-  'The completed response contains one long SQL block.',
+  'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
   ...Array.from(
@@ -23,6 +23,12 @@ const LONG_CODE_COMPLETION = [
       `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
   ),
   '```',
+  '',
+  ...Array.from(
+    { length: 24 },
+    (_, index) =>
+      `### Rapid scroll section ${index + 1}\n\n${`Visible fallback content ${index + 1} keeps the conversation painted during rapid scrolling. `.repeat(18)}`
+  ),
 ].join('\n')
 const LONG_CODE_REASONING = Array.from(
   { length: 180 },
@@ -94,7 +100,7 @@ const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
     ? `${APPEND_MARKER}: later streamed content is now visible in the response.`
     : `Later streaming paragraph ${index + 1}: this content arrives after the user pauses automatic following.`
 )
-const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue.\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
+const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue. 中文流式内容不得重复。\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
 const APPENDED_TEXT = `\n\n${APPENDED_PARAGRAPHS.join('\n\n')}`
 const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}\n\nCOMPLETE`
 
@@ -122,7 +128,8 @@ function responseCompleted(id) {
   }
 }
 
-function assistantMessage(text) {
+function assistantMessage(text, phase) {
+  const phaseFields = phase ? { phase } : {}
   return {
     type: 'response.output_item.done',
     item: {
@@ -130,6 +137,7 @@ function assistantMessage(text) {
       type: 'message',
       role: 'assistant',
       content: [{ type: 'output_text', text, annotations: [] }],
+      ...phaseFields,
     },
   }
 }
@@ -156,7 +164,8 @@ function functionCall(callId, name, argumentsValue) {
   ]
 }
 
-function reasoningEvents(itemId, text) {
+function reasoningEvents(itemId, text, deltaChunkSize = text.length) {
+  const deltas = text.match(new RegExp(`[\\s\\S]{1,${deltaChunkSize}}`, 'g')) ?? []
   return [
     {
       type: 'response.output_item.added',
@@ -175,13 +184,13 @@ function reasoningEvents(itemId, text) {
       summary_index: 0,
       part: { type: 'summary_text', text: '' },
     },
-    {
+    ...deltas.map(delta => ({
       type: 'response.reasoning_summary_text.delta',
       item_id: itemId,
       output_index: 0,
       summary_index: 0,
-      delta: text,
-    },
+      delta,
+    })),
     {
       type: 'response.reasoning_summary_text.done',
       item_id: itemId,
@@ -386,6 +395,29 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
+}
+
+async function waitForRuntimeAssistantText(control, address, expectedText, timeoutMs) {
+  const startedAt = Date.now()
+  let latestText = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    const runtimeMessages = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(address),
+      })
+    )
+    latestText =
+      runtimeMessages
+        .filter(message => message.role === 'assistant')
+        .flatMap(message => message.blocks ?? [])
+        .filter(block => block.type === 'text')
+        .at(-1)?.content ?? ''
+    if (latestText === expectedText) return latestText
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `The runtime conversation cache did not converge to the streamed text; received ${latestText.length} of ${expectedText.length} characters`
+  )
 }
 
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
@@ -630,6 +662,58 @@ async function waitForNewTaskRow(control, knownTaskRows, expectedText, timeoutMs
   throw new Error(`The streaming task row did not appear for ${expectedText}`)
 }
 
+async function retainSecondTaskWorkspace(control, timeoutMs) {
+  const activeTabId = await control.command(
+    'getAttribute',
+    '[data-workspace-tab-content][aria-hidden="false"]',
+    { value: 'data-workspace-tab-content' }
+  )
+  assert.ok(activeTabId, 'The active task workspace tab identity was not observable')
+  await control.command('click', '[data-testid="workspace-tab-add"]')
+  await control.command('waitFor', '[data-testid="workspace-tab-add-menu"]', { timeoutMs })
+  await control.command('click', '[data-testid="workspace-tab-add-task"]')
+  const startedAt = Date.now()
+  let secondTabId = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    secondTabId = await control.command(
+      'getAttribute',
+      '[data-workspace-tab-content][aria-hidden="false"]',
+      { value: 'data-workspace-tab-content' }
+    )
+    if (secondTabId && secondTabId !== activeTabId) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  assert.ok(
+    secondTabId && secondTabId !== activeTabId,
+    'The second task workspace tab was not created'
+  )
+  const secondWorkbenchSelector =
+    `[data-workspace-tab-content="${secondTabId}"] ` + '[data-testid="desktop-workbench-main"]'
+  await control.command('waitFor', secondWorkbenchSelector, { timeoutMs })
+  await control.command(
+    'waitFor',
+    `${secondWorkbenchSelector} [data-testid="chat-message-input"]`,
+    {
+      timeoutMs,
+    }
+  )
+  await control.command('click', `[data-testid="workspace-tab-select-${activeTabId}"]`)
+  await control.command(
+    'waitFor',
+    `[data-workspace-tab-content="${activeTabId}"] ${COMPOSER_SELECTOR}`,
+    { timeoutMs }
+  )
+  assert.ok(
+    Number(
+      await control.command(
+        'getElementCount',
+        '[data-workspace-tab-content] [data-testid="desktop-workbench-surface"]'
+      )
+    ) >= 2,
+    'The inactive task workspace provider was not retained for the streaming regression'
+  )
+}
+
 export function createDesktopScenario({
   captureScreenshot,
   standalone,
@@ -647,6 +731,7 @@ export function createDesktopScenario({
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
+  let resolvePartialWritten
   let resolveRequest
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -665,6 +750,9 @@ export function createDesktopScenario({
   })
   const appendWritten = new Promise(resolve => {
     resolveAppendWritten = resolve
+  })
+  const partialWritten = new Promise(resolve => {
+    resolvePartialWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -706,6 +794,19 @@ export function createDesktopScenario({
       'The long completed code block rendered syntax token nodes'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    const rapidScrollSamples = JSON.parse(
+      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+        value: JSON.stringify({
+          contentSelector: '[data-markdown-window-chunk] > *',
+          ratios: [0.75, 0.5, 0.25],
+        }),
+      })
+    )
+    assert.equal(
+      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      true,
+      `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
@@ -787,8 +888,8 @@ export function createDesktopScenario({
         response.end(
           sse([
             responseCreated(responseId),
-            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING),
-            assistantMessage(LONG_CODE_COMPLETION),
+            ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
+            assistantMessage(LONG_CODE_COMPLETION, 'final_answer'),
             responseCompleted(responseId),
           ])
         )
@@ -876,7 +977,14 @@ export function createDesktopScenario({
         })
         response.flushHeaders()
         response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
+        let partialOffset = 0
+        for (const chunk of PARTIAL_TEXT.match(/[\s\S]{1,24}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, partialOffset)))
+          response.flush?.()
+          partialOffset += chunk.length
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        resolvePartialWritten()
         await appendRelease
         await new Promise(resolve => setTimeout(resolve, 100))
         let appendOffset = PARTIAL_TEXT.length
@@ -1344,6 +1452,7 @@ export function createDesktopScenario({
         })
         await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
       }
+      await retainSecondTaskWorkspace(control, uiTimeoutMs)
       await capture(control, 'streaming-text-11-ready-to-send.png')
       await control.command('pasteFile', COMPOSER_SELECTOR, {
         filename: ATTACHMENT_FILENAME,
@@ -1411,6 +1520,29 @@ export function createDesktopScenario({
         'The latest user message after sending'
       )
       releaseStart()
+      await partialWritten
+      const runtimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      const runtimePartial = await waitForRuntimeAssistantText(
+        control,
+        {
+          deviceId: runtimeTask.deviceId,
+          taskId: runtimeTask.taskId,
+        },
+        PARTIAL_TEXT,
+        uiTimeoutMs
+      )
+      assert.equal(
+        runtimePartial,
+        PARTIAL_TEXT,
+        'The runtime conversation cache lost or reordered streamed text before rendering'
+      )
+      const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+      assert.equal(
+        immediatelyRenderedPartial.replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      )
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
@@ -1431,6 +1563,11 @@ export function createDesktopScenario({
       assert.ok(
         streamingSnapshot.testIds.includes('process-text-block'),
         'The phase-less streaming response was not rendered as process content'
+      )
+      assert.equal(
+        (await control.command('getText', PROCESS_TEXT_SELECTOR)).replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        'The streaming process text duplicated or dropped response deltas'
       )
       assert.ok(
         !streamingSnapshot.text.includes(APPEND_MARKER),

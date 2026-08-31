@@ -7,6 +7,14 @@ use serde_json::json;
 
 use super::*;
 
+#[test]
+fn windows_router_auth_script_succeeds_after_reading_from_nul() {
+    assert_eq!(
+        windows_codex_router_auth_script(),
+        "<nul set /p =wework-local-router & exit /b 0"
+    );
+}
+
 #[tokio::test]
 async fn codex_request_preparation_stops_when_cancelled() {
     let (cancel_tx, mut cancellation) = oneshot::channel();
@@ -119,6 +127,15 @@ async fn notification_hub_delivers_unscoped_process_exit_to_each_thread() {
         assert_eq!(message["method"], "codex/app-server/exited");
         assert_eq!(message["params"]["message"], "app-server stopped");
     }
+}
+
+#[test]
+fn shared_notification_lag_is_recoverable() {
+    let notification =
+        shared_notification_result(Err(broadcast::error::RecvError::Lagged(37)), None)
+            .expect("lagged notifications should keep the turn alive");
+
+    assert!(matches!(notification, SharedNotification::Lagged(37)));
 }
 
 #[tokio::test]
@@ -387,6 +404,136 @@ fn mcp_form_elicitation_returns_accepted_form_content() {
             "_meta": Value::Null
         })
     );
+}
+
+#[test]
+fn mcp_tool_call_elicitation_can_be_auto_approved() {
+    let message = json!({
+        "id": 74,
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "serverName": "GitHub",
+            "mode": "form",
+            "message": "Allow GitHub to enable pull request auto-merge?",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {}
+            },
+            "_meta": {
+                "codex_approval_kind": "mcp_tool_call",
+                "persist": ["session"]
+            }
+        }
+    });
+
+    assert!(is_mcp_tool_call_approval(message_params(&message)));
+    assert_eq!(
+        mcp_server_tool_call_approval_response(&message)
+            .expect("MCP tool call approval should be accepted"),
+        json!({
+            "action": "accept",
+            "content": Value::Null,
+            "_meta": Value::Null
+        })
+    );
+}
+
+#[test]
+fn mcp_tool_call_request_user_input_can_be_auto_approved() {
+    let message = json!({
+        "id": 75,
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "thread-input",
+            "turnId": "turn-input",
+            "itemId": "call-1",
+            "questions": [{
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the wework_space MCP server to run tool \"get_board_item\"?",
+                "options": [
+                    {"label": "Allow", "description": "Run the tool and continue."},
+                    {
+                        "label": "Allow for this session",
+                        "description": "Run the tool and remember this choice for this session."
+                    },
+                    {"label": "Cancel", "description": "Cancel this tool call."}
+                ]
+            }],
+            "autoResolutionMs": Value::Null
+        }
+    });
+
+    assert!(is_mcp_tool_call_approval_request(&message));
+    assert_eq!(
+        mcp_tool_call_request_user_input_response(message_params(&message)),
+        Some(json!({
+            "answers": {
+                "mcp_tool_call_approval_call-1": {
+                    "answers": ["Allow"]
+                }
+            }
+        }))
+    );
+}
+
+#[test]
+fn ordinary_request_user_input_is_not_treated_as_mcp_tool_approval() {
+    for questions in [
+        json!([{
+            "id": "goal",
+            "header": "工作目标",
+            "question": "你希望我接下来问你哪些问题？"
+        }]),
+        json!([{
+            "id": "mcp_tool_call_approval_",
+            "header": "Approve app tool call?",
+            "question": "Missing call id"
+        }]),
+        json!([
+            {
+                "id": "mcp_tool_call_approval_call-1",
+                "header": "Approve app tool call?",
+                "question": "Allow the tool?"
+            },
+            {
+                "id": "follow-up",
+                "header": "Follow up",
+                "question": "Choose a scope"
+            }
+        ]),
+    ] {
+        let message = json!({
+            "id": 76,
+            "method": "item/tool/requestUserInput",
+            "params": {
+                "questions": questions
+            }
+        });
+        assert!(!is_mcp_tool_call_approval_request(&message));
+        assert!(mcp_tool_call_request_user_input_response(message_params(&message)).is_none());
+    }
+}
+
+#[test]
+fn mcp_business_form_is_not_treated_as_tool_call_approval() {
+    let params = json!({
+        "serverName": "wegent-sites",
+        "mode": "form",
+        "message": "请选择内网访问范围。",
+        "requestedSchema": {
+            "type": "object",
+            "properties": {
+                "audience": {
+                    "type": "string",
+                    "enum": ["all", "owner"]
+                }
+            }
+        }
+    });
+
+    assert!(!is_mcp_tool_call_approval(&params));
+    assert!(mcp_server_elicitation_request_user_input_params(&params).is_some());
 }
 
 #[test]
@@ -707,6 +854,19 @@ fn non_project_launch_keeps_global_plugin_configuration() {
     let request = ExecutionRequest::default();
 
     assert!(project_plugin_config_overrides(&request).is_empty());
+}
+
+#[test]
+fn standalone_robot_launch_enables_configured_plugins() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("project_plugin_ids".to_owned(), json!(["robot-tool@team"]));
+
+    assert_eq!(
+        project_plugin_config_overrides(&request),
+        vec!["plugins.\"robot-tool@team\".enabled=true"]
+    );
 }
 
 #[test]
@@ -1457,6 +1617,27 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
+    );
+}
+
+#[test]
+fn codex_worktree_launch_config_sets_pnpm_environment() {
+    let request = ExecutionRequest {
+        workspace_source: Some("git_worktree".to_owned()),
+        ..ExecutionRequest::default()
+    };
+
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_IGNORE_SCRIPTS"],
+        "true"
+    );
+    assert_eq!(
+        params["config"]["shell_environment_policy.set.PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE"],
+        "true"
     );
 }
 
@@ -2495,6 +2676,24 @@ fn codex_full_access_permission_profile_is_applied_by_default() {
 }
 
 #[test]
+fn codex_only_auto_approves_mcp_tool_calls_with_full_access() {
+    let full_access = ExecutionRequest::default();
+    assert!(codex_auto_approve_mcp_tool_calls(&full_access));
+
+    for profile in [
+        CODEX_WORKSPACE_PERMISSION_PROFILE,
+        CODEX_READ_ONLY_PERMISSION_PROFILE,
+    ] {
+        let mut request = ExecutionRequest::default();
+        request.extra.insert(
+            "runtime_permission_profile".to_owned(),
+            Value::String(profile.to_owned()),
+        );
+        assert!(!codex_auto_approve_mcp_tool_calls(&request));
+    }
+}
+
+#[test]
 fn codex_workspace_permission_profile_is_applied_when_requested() {
     let mut request = ExecutionRequest::default();
     request.extra.insert(
@@ -3032,18 +3231,15 @@ fn turn_input_converts_composer_file_references_to_plain_paths() {
 }
 
 #[test]
-fn codex_launch_config_includes_cdp_browser_mcp_server() {
+fn codex_launch_config_uses_persistent_browser_mcp_endpoint() {
     let _lock = crate::test_env::lock();
-    let home = env::temp_dir().join(format!("codex-browser-mcp-{}", std::process::id()));
-    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
-    let old_bridge_addr = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-    let old_bridge_token = env::var_os(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
-    env::set_var("WEGENT_EXECUTOR_HOME", &home);
-    env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, "127.0.0.1:43127");
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
     env::set_var(
-        WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV,
-        "bridge-test-token",
+        "WEWORK_EMBEDDED_BROWSER_BRIDGE_URL",
+        "http://127.0.0.1:43127",
     );
+    env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", "bridge-token");
     let request = ExecutionRequest {
         task_id: "task:123".to_owned(),
         ..ExecutionRequest::default()
@@ -3073,47 +3269,126 @@ fn codex_launch_config_includes_cdp_browser_mcp_server() {
     assert_eq!(config["features.non_prefixed_mcp_tool_names"], true);
     assert!(!config.contains_key("features.code_mode.direct_only_tool_namespaces"));
     assert_eq!(
-        config["mcp_servers.wework_browser.command"],
-        env::current_exe().unwrap().display().to_string()
+        config["mcp_servers.wework_browser.url"],
+        "http://127.0.0.1:2/mcp"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.args"],
-        json!(["browser-mcp-server"])
+        config["mcp_servers.wework_browser.http_headers.Authorization"],
+        "Bearer test-browser-mcp-instance-token"
     );
-    assert_eq!(config["mcp_servers.wework_browser.startup_timeout_sec"], 15);
+    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.args"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.startup_timeout_sec"));
     assert_eq!(config["mcp_servers.wework_browser.tool_timeout_sec"], 60);
     assert_eq!(
         config["mcp_servers.wework_browser.default_tools_approval_mode"],
         "approve"
     );
     assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_URL"],
-        "http://127.0.0.1:43127"
-    );
-    assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_LABEL"],
+        config["mcp_servers.wework_browser.http_headers.X-Wework-Browser-Label"],
         "workspace-browser-task-123"
     );
+
+    if let Some(value) = old_url {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    }
+    if let Some(value) = old_token {
+        env::set_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", value);
+    } else {
+        env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    }
+}
+
+#[test]
+fn codex_launch_config_omits_browser_mcp_without_local_bridge() {
+    let _lock = crate::test_env::lock();
+    let home = env::temp_dir().join(format!("codex-no-browser-bridge-{}", std::process::id()));
+    let old_home = env::var_os("WEGENT_EXECUTOR_HOME");
+    let old_runtime_file = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    let old_url = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    let old_token = env::var_os("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL");
+    env::remove_var("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN");
+
+    let request = ExecutionRequest {
+        task_id: "task:remote".to_owned(),
+        ..ExecutionRequest::default()
+    };
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params
+        .get("config")
+        .and_then(Value::as_object)
+        .expect("thread config should be present");
+
+    assert!(!config.contains_key("mcp_servers.wework_browser.url"));
+    assert!(!config.contains_key("mcp_servers.wework_browser.command"));
+
+    for (name, value) in [
+        ("WEGENT_EXECUTOR_HOME", old_home),
+        (
+            "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE",
+            old_runtime_file,
+        ),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_URL", old_url),
+        ("WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN", old_token),
+    ] {
+        if let Some(value) = value {
+            env::set_var(name, value);
+        } else {
+            env::remove_var(name);
+        }
+    }
+}
+
+#[test]
+fn codex_launch_config_includes_computer_use_mcp_server() {
+    let _lock = crate::test_env::lock();
+    let home = unique_test_path("codex-computer-use-mcp");
+    let runtime_path = home.join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
+    let _executor_home = EnvRestore::capture("WEGENT_EXECUTOR_HOME");
+    env::set_var("WEGENT_EXECUTOR_HOME", &home);
+    fs::create_dir_all(runtime_path.parent().expect("runtime parent should exist"))
+        .expect("runtime directory should be created");
+    fs::write(
+        &runtime_path,
+        br#"{"address":"127.0.0.1:43128","token":"computer-use-test-token"}"#,
+    )
+    .expect("computer use runtime record should be written");
+
+    let request = ExecutionRequest::default();
+    let launch_config =
+        build_codex_launch_config(&request).expect("Codex launch config should be built");
+    let params = thread_start_params(&request, &launch_config);
+    let config = params["config"].as_object().expect("thread config");
+
     assert_eq!(
-        config["mcp_servers.wework_browser.env.WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN"],
-        "bridge-test-token"
+        config["mcp_servers.wework_computer.command"],
+        env::current_exe().unwrap().display().to_string()
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.args"],
+        json!(["computer-use-mcp-server"])
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.default_tools_approval_mode"],
+        "writes"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_URL"],
+        "http://127.0.0.1:43128"
+    );
+    assert_eq!(
+        config["mcp_servers.wework_computer.env.WEWORK_COMPUTER_USE_BRIDGE_TOKEN"],
+        "computer-use-test-token"
     );
 
-    if let Some(old_home) = old_home {
-        env::set_var("WEGENT_EXECUTOR_HOME", old_home);
-    } else {
-        env::remove_var("WEGENT_EXECUTOR_HOME");
-    }
-    if let Some(old_bridge_addr) = old_bridge_addr {
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV, old_bridge_addr);
-    } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_ADDR_ENV);
-    }
-    if let Some(old_bridge_token) = old_bridge_token {
-        env::set_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV, old_bridge_token);
-    } else {
-        env::remove_var(WEWORK_EMBEDDED_BROWSER_BRIDGE_TOKEN_ENV);
-    }
+    let _ = fs::remove_dir_all(home);
 }
 
 #[test]
@@ -3304,6 +3579,34 @@ fn thread_goal_set_params_rejects_empty_objective() {
         .expect_err("empty objective should be rejected");
 
     assert_eq!(error, "initial goal objective is required");
+}
+
+#[test]
+fn authoritative_goal_response_replaces_stale_notification_status() {
+    let mut state = CodexRunState::default();
+    state.set_goal_status("active");
+
+    sync_goal_status_from_response(
+        &mut state,
+        &json!({
+            "goal": {
+                "status": "complete"
+            }
+        }),
+    );
+
+    assert_eq!(
+        state.goal_status_snapshot(),
+        (true, Some("complete".to_owned()))
+    );
+}
+
+#[test]
+fn completed_goal_does_not_require_authoritative_reconciliation() {
+    let mut state = CodexRunState::default();
+    state.set_goal_status("complete");
+
+    assert!(!state.goal_is_active());
 }
 
 #[test]

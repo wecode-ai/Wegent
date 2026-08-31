@@ -11,6 +11,7 @@ import time
 from logging.handlers import TimedRotatingFileHandler
 
 from app.core.config import settings
+from shared.utils.sensitive_data_masker import mask_string
 
 
 class HourlyRotatingFileHandler(TimedRotatingFileHandler):
@@ -111,6 +112,13 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+class SensitiveDataFormatter(logging.Formatter):
+    """Mask credentials after rendering the complete log record."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return mask_string(super().format(record))
+
+
 def _create_file_handler(log_format: str, datefmt: str) -> logging.Handler | None:
     """
     Create a TimedRotatingFileHandler that rotates every natural hour.
@@ -150,7 +158,7 @@ def _create_file_handler(log_format: str, datefmt: str) -> logging.Handler | Non
     # Override the default suffix so archived files look like:
     #   info.log.20260306-10
     file_handler.suffix = "%Y%m%d-%H"
-    file_handler.setFormatter(logging.Formatter(log_format, datefmt=datefmt))
+    file_handler.setFormatter(SensitiveDataFormatter(log_format, datefmt=datefmt))
     file_handler.setLevel(logging.DEBUG)
     file_handler.addFilter(RequestIdFilter())
     return file_handler
@@ -172,7 +180,7 @@ def setup_logging() -> None:
 
     # Console handler (keep existing behaviour)
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(logging.Formatter(log_format, datefmt=datefmt))
+    console_handler.setFormatter(SensitiveDataFormatter(log_format, datefmt=datefmt))
     console_handler.setLevel(logging.DEBUG)
     console_handler.addFilter(RequestIdFilter())
 
@@ -203,3 +211,5 @@ def setup_logging() -> None:
 
     # Log the configured level for debugging
     root_logger.info(f"Logging configured with level: {log_level_str} ({log_level})")
+    if file_handler is not None:
+        root_logger.info("File logging enabled: %s", file_handler.baseFilename)

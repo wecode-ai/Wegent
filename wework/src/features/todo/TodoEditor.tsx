@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,6 +18,7 @@ import {
   CircleUserRound,
   Copy,
   Download,
+  ExternalLink,
   File,
   FileText,
   Flag,
@@ -24,10 +26,13 @@ import {
   History,
   Link2,
   ListTodo,
+  LoaderCircle,
   Maximize2,
   Minimize2,
+  Package,
   Paperclip,
   Plus,
+  Sparkles,
   Tag,
   Trash2,
   Upload,
@@ -42,6 +47,9 @@ import type {
   CloudProjectMember,
   Delivery,
   DeliveryDetail,
+  IssueWorkflowInstance,
+  LoopItemTaskBinding,
+  WorkflowPlan,
 } from '@/api/deliveries'
 import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
 import type { ProjectChatAgent } from '@/api/projectChatAgents'
@@ -76,6 +84,44 @@ type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
 function supportsAssignApi(api: DeliveryApi): boolean {
   return typeof (api as { assignLoopItem?: unknown }).assignLoopItem === 'function'
+}
+
+type WorkflowPlanAction =
+  | 'approveWorkflowPlan'
+  | 'approveWorkflowReview'
+  | 'pauseWorkflowPlan'
+  | 'resumeWorkflowPlan'
+  | 'replanWorkflowPlan'
+
+type WorkflowPlanMethod = (itemId: string) => Promise<WorkflowPlan>
+
+function workflowPlanMethod(
+  api: DeliveryApi,
+  action: WorkflowPlanAction
+): WorkflowPlanMethod | null {
+  const method = (api as DeliveryApi & Partial<Record<WorkflowPlanAction, WorkflowPlanMethod>>)[
+    action
+  ]
+  return typeof method === 'function' ? method : null
+}
+
+type WorkflowErrorKind = 'timeout' | 'offline' | 'assignee' | 'model' | 'generic'
+
+function workflowErrorKind(error: string): WorkflowErrorKind {
+  const normalized = error.toLowerCase()
+  if (normalized.includes('no model or tool progress')) {
+    return 'timeout'
+  }
+  if (normalized.includes('executor-offline') || normalized.includes('device offline')) {
+    return 'offline'
+  }
+  if (normalized.includes('assignee is not active')) {
+    return 'assignee'
+  }
+  if (normalized.includes('model') && normalized.includes('available')) {
+    return 'model'
+  }
+  return 'generic'
 }
 
 type AttachmentRow = Pick<CloudLoopItemAttachment, 'id' | 'display_name' | 'size_bytes'>
@@ -194,7 +240,7 @@ function AvatarMark({
     <span
       className={cn(
         'flex shrink-0 items-center justify-center rounded-full font-semibold text-background',
-        size === 'md' ? 'h-6 w-6 text-xs' : 'h-6 w-6 text-xs',
+        size === 'md' ? 'h-6 w-6 text-xs' : 'h-5 w-5 text-xs',
         avatarPalette[index % avatarPalette.length]
       )}
     >
@@ -251,6 +297,7 @@ function TodoAttachmentSection({
   error,
   editable,
   compactRail = false,
+  downloadingId,
   onAdd,
   onOpen,
   onRemove,
@@ -260,10 +307,12 @@ function TodoAttachmentSection({
   error: string | null
   editable: boolean
   compactRail?: boolean
+  downloadingId?: string | null
   onAdd: (files: FileList | null) => Promise<void>
   onOpen?: (attachment: AttachmentRow) => Promise<void>
   onRemove: (attachment: AttachmentRow) => Promise<void>
 }) {
+  const { t } = useTranslation('common')
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const visibleRows = compactRail && !expanded ? attachments.slice(0, 2) : attachments
@@ -326,24 +375,31 @@ function TodoAttachmentSection({
             <div className="task-detail-rail-list">
               {visibleRows.map(attachment => (
                 <div key={attachment.id} className="task-detail-rail-file group">
-                  <span className="task-detail-rail-icon">
-                    <File className="icon" />
-                  </span>
                   <button
                     type="button"
                     data-testid={`cloud-todo-attachment-download-${attachment.id}`}
-                    disabled={!onOpen}
+                    disabled={!onOpen || downloadingId === attachment.id}
                     onClick={() => {
                       if (onOpen) void onOpen(attachment)
                     }}
-                    className="task-detail-rail-name text-left"
+                    className="task-detail-rail-download"
                     title={attachment.display_name}
+                    aria-label={`下载 ${attachment.display_name}`}
                   >
-                    {attachment.display_name}
+                    <span className="task-detail-rail-icon">
+                      {downloadingId === attachment.id ? (
+                        <LoaderCircle className="icon animate-spin" />
+                      ) : (
+                        <File className="icon" />
+                      )}
+                    </span>
+                    <span className="task-detail-rail-name">{attachment.display_name}</span>
+                    <span className="task-detail-rail-meta">
+                      {downloadingId === attachment.id
+                        ? t('todo.file_downloading', '下载中…')
+                        : formatAttachmentSize(attachment.size_bytes)}
+                    </span>
                   </button>
-                  <span className="task-detail-rail-meta">
-                    {formatAttachmentSize(attachment.size_bytes)}
-                  </span>
                   {editable && (
                     <button
                       type="button"
@@ -424,11 +480,16 @@ function TodoAttachmentSection({
                 <button
                   type="button"
                   data-testid={`cloud-todo-attachment-download-${attachment.id}`}
+                  disabled={downloadingId === attachment.id}
                   onClick={() => void onOpen(attachment)}
-                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-hover hover:text-text-primary group-hover:opacity-100"
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-hover hover:text-text-primary group-hover:opacity-100 disabled:opacity-50"
                   aria-label={`下载 ${attachment.display_name}`}
                 >
-                  <Download className="h-3.5 w-3.5" />
+                  {downloadingId === attachment.id ? (
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5" />
+                  )}
                 </button>
               )}
               {editable && (
@@ -523,6 +584,8 @@ export type TodoEditorProps = {
     task_id: string
     task_title: string | null
   }) => void
+  onOpenChildTask?: (task: CloudLoopItem) => void
+  onWorkflowPlanChanged?: () => void | Promise<void>
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -575,6 +638,9 @@ export function TodoEditor(props: TodoEditorProps) {
           : ''
   )
   const [tags, setTags] = useState<string[]>(item?.tags ?? draft?.tags ?? [])
+  const [workflowDraft, setWorkflowDraft] = useState<IssueWorkflowInstance | null>(
+    item?.workflow ?? null
+  )
   const [tagDraft, setTagDraft] = useState('')
   // Track the item version the local editable state mirrors. External updates
   // (for example the project AI completing a run) bump the version; sync the
@@ -617,8 +683,22 @@ export function TodoEditor(props: TodoEditorProps) {
       setAssigneeTarget(nextAssigneeTarget)
     }
     if (!sameTask || tagsMatch(tags, previous?.tags ?? [])) setTags(item.tags ?? [])
+    if (!sameTask || workflowDraft === previous?.workflow) {
+      setWorkflowDraft(item.workflow ?? null)
+    }
     syncedItemRef.current = item
-  }, [item, title, description, status, priority, parentId, dueDate, assigneeTarget, tags])
+  }, [
+    item,
+    title,
+    description,
+    status,
+    priority,
+    parentId,
+    dueDate,
+    assigneeTarget,
+    tags,
+    workflowDraft,
+  ])
   // A create draft or initial parent can reference a task that was archived
   // since; a deleted parent is not in the live item list, so fall back to a
   // top-level task instead of sending a parent id the backend rejects.
@@ -642,28 +722,34 @@ export function TodoEditor(props: TodoEditorProps) {
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [selectedDelivery, setSelectedDelivery] = useState<DeliveryDetail | null>(null)
-  const [tasks, setTasks] = useState<
-    Array<{
-      id: number
-      device_id: string
-      task_id: string
-      task_title: string | null
-      workflow_node_id?: string | null
-      linked_at?: string
-    }>
-  >([])
+  const [tasks, setTasks] = useState<LoopItemTaskBinding[]>([])
   const [attachments, setAttachments] = useState<CloudLoopItemAttachment[]>([])
   const [collaborators, setCollaborators] = useState<CloudLoopItemCollaborator[]>([])
   const [projectMembers, setProjectMembers] = useState<CloudProjectMember[]>([])
   const [projectAgents, setProjectAgents] = useState<ProjectChatAgent[]>([])
   const [wegentTeams, setWegentTeams] = useState<Team[]>([])
+  const [workflowPlanState, setWorkflowPlanState] = useState<{
+    itemId: string
+    plan: WorkflowPlan | null
+  } | null>(null)
+  const workflowPlanRequestIdRef = useRef(0)
+  const [workflowPlanBusy, setWorkflowPlanBusy] = useState(false)
+  const [openWorkflowManagerExecution, setOpenWorkflowManagerExecution] = useState<
+    (() => void) | null
+  >(null)
+  const [workflowPlanErrorState, setWorkflowPlanErrorState] = useState<{
+    itemId: string
+    error: string | null
+  } | null>(null)
   const [addingCollaborator, setAddingCollaborator] = useState(false)
   const [selectedCollaboratorId, setSelectedCollaboratorId] = useState<number | null>(null)
   const [collaboratorBusy, setCollaboratorBusy] = useState(false)
   const [collaboratorError, setCollaboratorError] = useState<string | null>(null)
   const [attachmentBusy, setAttachmentBusy] = useState(false)
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  const [downloadingAttachmentId, setDownloadingAttachmentId] = useState<string | null>(null)
   const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const [descriptionOverflowing, setDescriptionOverflowing] = useState(false)
   const [expandedRailSections, setExpandedRailSections] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -673,10 +759,14 @@ export function TodoEditor(props: TodoEditorProps) {
   const [statusHistoryOpen, setStatusHistoryOpen] = useState(false)
   const statusHistoryTriggerRef = useRef<HTMLButtonElement>(null)
   const detailScrollRef = useRef<HTMLDivElement>(null)
+  const descriptionCollapseRef = useRef<HTMLDivElement>(null)
 
   const editItemId = item?.id ?? null
   const editProjectId = item?.cloud_project_id ?? null
   const createProjectId = createProps?.project.id ?? null
+  const workflowPlan = workflowPlanState?.itemId === editItemId ? workflowPlanState.plan : null
+  const workflowPlanError =
+    workflowPlanErrorState?.itemId === editItemId ? workflowPlanErrorState.error : null
   const loadedEditItemIdRef = useRef(editItemId)
   const visibleAttachments = useMemo(() => {
     const merged = new Map<string, AttachmentRow>()
@@ -685,15 +775,56 @@ export function TodoEditor(props: TodoEditorProps) {
     return Array.from(merged.values())
   }, [attachments, description])
   const displayedWorkflow = useMemo(
-    () => (item?.workflow ? reconcileIssueWorkflowForTaskBindings(item.workflow, tasks) : null),
-    [item?.workflow, tasks]
+    () => (workflowDraft ? reconcileIssueWorkflowForTaskBindings(workflowDraft, tasks) : null),
+    [workflowDraft, tasks]
   )
+  const refreshTaskBindings = useCallback(async () => {
+    if (editItemId == null) return
+    setTasks(await api.listTaskBindings(editItemId))
+  }, [api, editItemId])
 
   useEffect(() => {
     const node = detailScrollRef.current
     if (!node) return
     node.scrollTop = 0
   }, [editItemId, isCreate])
+
+  useEffect(() => {
+    if (!workspacePanel || descriptionExpanded) return
+    const container = descriptionCollapseRef.current
+    if (!container) return
+
+    let frameId: number | null = null
+    const updateOverflow = () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+      frameId = window.requestAnimationFrame(() => {
+        frameId = null
+        const editor = container.querySelector<HTMLElement>('.bn-editor')
+        const editorBottom = editor?.getBoundingClientRect().bottom ?? 0
+        const overflowing = Array.from(
+          editor?.querySelectorAll<HTMLElement>('.bn-block-outer') ?? []
+        ).some(block => block.getBoundingClientRect().bottom > editorBottom + 1)
+        setDescriptionOverflowing(current => (current === overflowing ? current : overflowing))
+      })
+    }
+
+    updateOverflow()
+    const mutationObserver = new MutationObserver(updateOverflow)
+    mutationObserver.observe(container, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    })
+    const resizeObserver =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateOverflow)
+    resizeObserver?.observe(container)
+
+    return () => {
+      if (frameId !== null) window.cancelAnimationFrame(frameId)
+      mutationObserver.disconnect()
+      resizeObserver?.disconnect()
+    }
+  }, [descriptionExpanded, editItemId, workspacePanel])
 
   useLayoutEffect(() => {
     if (loadedEditItemIdRef.current === editItemId) return
@@ -703,6 +834,8 @@ export function TodoEditor(props: TodoEditorProps) {
     setTasks([])
     setAttachments([])
     setCollaborators([])
+    setDownloadingAttachmentId(null)
+    setAttachmentError(null)
   }, [editItemId])
 
   // Edit mode loads everything tied to the item id.
@@ -742,6 +875,34 @@ export function TodoEditor(props: TodoEditorProps) {
     props.taskRefreshKey,
     props.teamApi,
   ])
+
+  const refreshWorkflowPlan = useCallback(() => {
+    if (editItemId == null || item?.workflow?.advancement_policy !== 'ai') return
+    const getWorkflowPlan = (
+      api as DeliveryApi & {
+        getWorkflowPlan?: (itemId: string) => Promise<WorkflowPlan | null>
+      }
+    ).getWorkflowPlan
+    if (!getWorkflowPlan) return
+    const requestId = ++workflowPlanRequestIdRef.current
+    void getWorkflowPlan(editItemId)
+      .then(plan => {
+        if (requestId !== workflowPlanRequestIdRef.current) return
+        setWorkflowPlanState({ itemId: editItemId, plan })
+        setWorkflowPlanErrorState({ itemId: editItemId, error: null })
+      })
+      .catch(error => {
+        if (requestId !== workflowPlanRequestIdRef.current) return
+        setWorkflowPlanErrorState({
+          itemId: editItemId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      })
+  }, [api, editItemId, item?.workflow?.advancement_policy])
+
+  useEffect(() => {
+    refreshWorkflowPlan()
+  }, [props.taskRefreshKey, refreshWorkflowPlan])
 
   // Assignee sources are independent: one unavailable directory must not hide
   // otherwise valid members, robots, or Wegent Teams.
@@ -792,9 +953,44 @@ export function TodoEditor(props: TodoEditorProps) {
       ? tasks.slice(0, 1)
       : []
     : tasks
+  const executionChildItems = showChildren ? [] : childItems
+  const executionTaskCount = executionChildItems.length + displayedTasks.length
+  const workflowPlanStatus = workflowPlan?.status ?? item?.workflow?.orchestration_status ?? 'idle'
+  const workflowPlanStatusLabel = {
+    idle: t('todo.workflow_plan_idle', '等待触发'),
+    planning: t('todo.workflow_plan_planning', 'AI 正在生成方案'),
+    awaiting_approval: t('todo.workflow_plan_awaiting_approval', '等待人工确认'),
+    dispatching: t('todo.workflow_plan_dispatching', '正在创建并分配任务'),
+    running: t('todo.workflow_plan_running', '子任务执行中'),
+    awaiting_review: t('todo.workflow_plan_awaiting_review', '等待统一验收'),
+    paused: t('todo.workflow_plan_paused', '已暂停'),
+    completed: t('todo.workflow_plan_completed', '已完成'),
+    failed: t('todo.workflow_plan_failed', '生成方案失败'),
+  }[workflowPlanStatus]
+  const planItems = workflowPlan?.items ?? []
+  const workflowManager = workflowPlan?.manager_run
+  const workflowManagerPlanConflict =
+    (workflowPlanStatus === 'awaiting_approval' && workflowManager?.status === 'failed') ||
+    (workflowPlanStatus === 'planning' &&
+      ['completed', 'succeeded'].includes(workflowManager?.status ?? ''))
+  const registerWorkflowManagerExecution = useCallback((action: (() => void) | null) => {
+    setOpenWorkflowManagerExecution(() => action)
+  }, [])
+  const rawWorkflowError = workflowManager?.error || workflowPlanError || ''
+  const workflowError =
+    rawWorkflowError || workflowPlanStatus === 'failed'
+      ? {
+          timeout: t('todo.workflow_error_timeout'),
+          offline: t('todo.workflow_error_offline'),
+          assignee: t('todo.workflow_error_assignee'),
+          model: t('todo.workflow_error_model'),
+          generic: t('todo.workflow_error_generic'),
+        }[workflowErrorKind(rawWorkflowError)]
+      : ''
   const itemTags = item?.tags ?? []
   const tagsDirty =
     tags.length !== itemTags.length || tags.some((tag, index) => tag !== itemTags[index])
+  const workflowDirty = JSON.stringify(workflowDraft) !== JSON.stringify(item?.workflow ?? null)
   const dirty = item
     ? title.trim() !== item.title ||
       description !== normalizedItemDescription ||
@@ -810,7 +1006,8 @@ export function TodoEditor(props: TodoEditorProps) {
               ? `user:${item.assignee_user_id}`
               : '') ||
       dueDate !== (item.due_at?.slice(0, 10) ?? '') ||
-      tagsDirty
+      tagsDirty ||
+      workflowDirty
     : false
   const hasDraftContent = Boolean(
     title ||
@@ -849,6 +1046,28 @@ export function TodoEditor(props: TodoEditorProps) {
       : item
         ? memberNameById(projectMembers, item.created_by_user_id)
         : null)
+
+  async function mutateWorkflowPlan(action: WorkflowPlanAction) {
+    if (!item || workflowPlanBusy) return
+    const method = workflowPlanMethod(api, action)
+    if (!method) return
+    workflowPlanRequestIdRef.current += 1
+    setWorkflowPlanBusy(true)
+    setWorkflowPlanErrorState({ itemId: item.id, error: null })
+    try {
+      const plan = await method(item.id)
+      setWorkflowPlanState({ itemId: item.id, plan })
+      await props.onWorkflowPlanChanged?.()
+      editProps?.onUpdated(await api.getLoopItem(item.id))
+    } catch (error) {
+      setWorkflowPlanErrorState({
+        itemId: item.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setWorkflowPlanBusy(false)
+    }
+  }
 
   async function submitCreate() {
     if (props.mode !== 'create' || !title.trim() || saving) return
@@ -935,6 +1154,7 @@ export function TodoEditor(props: TodoEditorProps) {
         parent_id: parentId || null,
         due_at: dueDate || null,
         tags,
+        ...(workflowDirty ? { workflow: workflowDraft } : {}),
       })
       const currentAssigneeTarget = current.assignee_team_id
         ? `team:${current.assignee_team_id}`
@@ -1084,7 +1304,20 @@ export function TodoEditor(props: TodoEditorProps) {
   }
 
   async function openAttachment(attachment: AttachmentRow) {
-    await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
+    if (downloadingAttachmentId) return
+    setDownloadingAttachmentId(attachment.id)
+    setAttachmentError(null)
+    try {
+      await api.downloadLoopItemAttachment(attachment.id, attachment.display_name)
+    } catch (cause) {
+      setAttachmentError(
+        cause instanceof Error
+          ? cause.message
+          : t('todo.attachment_download_failed', '附件下载失败')
+      )
+    } finally {
+      setDownloadingAttachmentId(null)
+    }
   }
 
   async function removeAttachment(attachment: AttachmentRow) {
@@ -1183,6 +1416,12 @@ export function TodoEditor(props: TodoEditorProps) {
         projectChatAgentApi={props.projectChatAgentApi}
         localProjects={props.localProjects}
         selfManagedExecution={props.selfManagedExecution}
+        workflowManagerRunId={workflowManager?.id}
+        onWorkflowManagerExecutionChange={registerWorkflowManagerExecution}
+        onWorkflowManagerFinished={refreshWorkflowPlan}
+        taskBindings={tasks}
+        onOpenTask={props.onOpenTaskConversation}
+        onRefreshTaskBindings={refreshTaskBindings}
         linear
       />
     ) : null
@@ -1349,6 +1588,44 @@ export function TodoEditor(props: TodoEditorProps) {
       {prioritySelect}
     </span>
   )
+  const tagControls = (
+    <>
+      <span className="task-detail-pill">
+        <Plus className="h-3.5 w-3.5" />
+        <input
+          data-testid={isCreate ? 'cloud-todo-create-tag-input' : 'cloud-todo-detail-tag-input'}
+          value={tagDraft}
+          onChange={event => setTagDraft(event.target.value)}
+          onBlur={commitTagDraft}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ',') {
+              event.preventDefault()
+              commitTagDraft()
+            }
+          }}
+          placeholder="添加标签"
+        />
+      </span>
+      {tags.map(tag => (
+        <span
+          key={tag}
+          data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-${tag}`}
+          className="task-detail-pill"
+        >
+          # {tag}
+          <button
+            type="button"
+            aria-label={`移除标签 ${tag}`}
+            data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-remove-${tag}`}
+            onClick={() => setTags(current => current.filter(candidate => candidate !== tag))}
+            className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted transition hover:bg-muted hover:text-text-primary"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </span>
+      ))}
+    </>
+  )
   // Single-column layout: all props stay as one wrapping chip row.
   const propChips = (
     <>
@@ -1497,7 +1774,7 @@ export function TodoEditor(props: TodoEditorProps) {
           : workspacePanel
             ? cn(
                 'task-detail-workspace-panel-shell relative z-10 h-full min-h-0 shrink-0',
-                props.workspacePanelFill ? 'w-full min-w-0' : 'w-[min(480px,32vw)] min-w-[380px]'
+                props.workspacePanelFill && 'w-full min-w-0'
               )
             : twoColumn
               ? 'fixed bottom-0 right-0 top-[38px] z-modal w-[min(760px,calc(100vw-48px))]'
@@ -1514,7 +1791,7 @@ export function TodoEditor(props: TodoEditorProps) {
           fullScreen
             ? 'h-full w-full'
             : workspacePanel
-              ? 'h-full w-full max-w-none rounded-none border-l border-border shadow-none'
+              ? 'todo-floating-panel-surface h-full w-full max-w-none'
               : cn(
                   'max-w-[calc(100vw-48px)]',
                   twoColumn
@@ -1530,7 +1807,11 @@ export function TodoEditor(props: TodoEditorProps) {
         <header
           className={cn(
             'flex shrink-0 items-center',
-            twoColumn ? 'h-12 border-b border-border px-4' : 'px-4 pt-3'
+            twoColumn && !workspacePanel
+              ? 'h-12 border-b border-border px-4'
+              : workspacePanel
+                ? 'task-detail-workspace-header'
+                : 'px-4 pt-3'
           )}
         >
           <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
@@ -1562,7 +1843,10 @@ export function TodoEditor(props: TodoEditorProps) {
                   data-testid="cloud-todo-save"
                   disabled={!title.trim() || saving}
                   onClick={() => void saveDetails()}
-                  className="mr-2 h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-50"
+                  className={cn(
+                    'mr-2 bg-text-primary px-3 font-medium text-background transition hover:opacity-90 disabled:opacity-50',
+                    workspacePanel ? 'task-detail-workspace-save' : 'h-8 rounded-lg text-sm'
+                  )}
                 >
                   {saving ? '保存中…' : '保存'}
                 </button>
@@ -1601,12 +1885,13 @@ export function TodoEditor(props: TodoEditorProps) {
             twoColumn
               ? workspacePanel
                 ? 'grid grid-cols-1 overflow-hidden bg-background'
-                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-visible'
+                : 'grid grid-cols-1 overflow-y-auto bg-background md:grid-cols-[minmax(0,1fr)_320px] md:overflow-hidden'
               : 'overflow-y-auto'
           )}
         >
           <div
             ref={twoColumn ? detailScrollRef : undefined}
+            data-testid={twoColumn ? 'cloud-todo-detail-scroll' : undefined}
             className={cn(
               'pb-6 pt-2.5',
               twoColumn ? 'task-detail-left md:min-h-0' : 'px-14',
@@ -1614,7 +1899,7 @@ export function TodoEditor(props: TodoEditorProps) {
             )}
           >
             <div className={cn(twoColumn && 'task-detail-left-inner')}>
-              {twoColumn && item ? (
+              {twoColumn && item && !workspacePanel ? (
                 <div className="task-detail-id-row">
                   <span>{item.id}</span>
                   <span>·</span>
@@ -1627,6 +1912,38 @@ export function TodoEditor(props: TodoEditorProps) {
                       </span>
                     </>
                   ) : null}
+                </div>
+              ) : null}
+              {workspacePanel && item ? (
+                <div className="task-detail-workspace-meta-row">
+                  <span className="task-detail-workspace-meta-pill relative">
+                    {assigneeAgent || assigneeTeam ? (
+                      <Bot className="h-3.5 w-3.5 text-violet-600" />
+                    ) : (
+                      <span className="task-detail-workspace-mini-avatar">
+                        {(assignee?.user_name ?? '?').slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
+                    <span>负责人</span>
+                    <span className="text-text-primary">
+                      {assignee?.user_name ??
+                        assigneeTeam?.displayName ??
+                        assigneeTeam?.name ??
+                        assigneeAgent?.name ??
+                        '未指派'}
+                    </span>
+                    <ChevronDown className="h-3 w-3" />
+                    {assigneeSelect}
+                  </span>
+                  <span className="task-detail-workspace-meta-pill relative">
+                    <Calendar className="h-3.5 w-3.5" />
+                    <span>截止</span>
+                    <span className="text-text-primary">
+                      {dueDate ? dueDate.slice(5) : '未设置'}
+                    </span>
+                    <ChevronDown className="h-3 w-3" />
+                    {dueInput}
+                  </span>
                 </div>
               ) : null}
               <textarea
@@ -1643,61 +1960,25 @@ export function TodoEditor(props: TodoEditorProps) {
                   twoColumn ? 'task-detail-title' : 'py-1.5 text-heading-lg'
                 )}
               />
-
-              <div
-                className={cn(
-                  'flex flex-wrap items-center gap-2',
-                  twoColumn ? 'task-detail-pill-row' : 'mt-3'
-                )}
-              >
-                {twoColumn ? (
-                  <>
-                    {statusChip}
-                    {statusHistoryTrigger}
-                    {priorityChip}
-                    <span className="task-detail-pill">
-                      <Plus className="h-3.5 w-3.5" />
-                      <input
-                        data-testid={
-                          isCreate ? 'cloud-todo-create-tag-input' : 'cloud-todo-detail-tag-input'
-                        }
-                        value={tagDraft}
-                        onChange={event => setTagDraft(event.target.value)}
-                        onBlur={commitTagDraft}
-                        onKeyDown={event => {
-                          if (event.key === 'Enter' || event.key === ',') {
-                            event.preventDefault()
-                            commitTagDraft()
-                          }
-                        }}
-                        placeholder="添加标签"
-                      />
-                    </span>
-                    {tags.map(tag => (
-                      <span
-                        key={tag}
-                        data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-${tag}`}
-                        className="task-detail-pill"
-                      >
-                        # {tag}
-                        <button
-                          type="button"
-                          aria-label={`移除标签 ${tag}`}
-                          data-testid={`${isCreate ? 'cloud-todo-create-tag' : 'cloud-todo-detail-tag'}-tag-remove-${tag}`}
-                          onClick={() =>
-                            setTags(current => current.filter(candidate => candidate !== tag))
-                          }
-                          className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted transition hover:bg-muted hover:text-text-primary"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </span>
-                    ))}
-                  </>
-                ) : (
-                  propChips
-                )}
-              </div>
+              {!workspacePanel ? (
+                <div
+                  className={cn(
+                    'flex flex-wrap items-center gap-2',
+                    twoColumn ? 'task-detail-pill-row' : 'mt-3'
+                  )}
+                >
+                  {twoColumn ? (
+                    <>
+                      {statusChip}
+                      {statusHistoryTrigger}
+                      {priorityChip}
+                      {tagControls}
+                    </>
+                  ) : (
+                    propChips
+                  )}
+                </div>
+              ) : null}
 
               {!twoColumn ? (
                 <div className="mt-2.5 flex items-center gap-2">
@@ -1714,7 +1995,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 </div>
               ) : null}
 
-              {twoColumn ? (
+              {twoColumn && !workspacePanel ? (
                 <div className="task-detail-meta-line">
                   <span className="task-detail-meta-item relative cursor-pointer">
                     {assigneeAgent || assigneeTeam ? (
@@ -1760,8 +2041,15 @@ export function TodoEditor(props: TodoEditorProps) {
               ) : null}
 
               {!isAITableEdit ? (
-                <div className={cn(twoColumn ? 'mt-0' : 'mt-3 min-h-[240px]')}>
+                <div
+                  className={cn(
+                    twoColumn ? 'mt-0' : 'mt-3 min-h-[240px]',
+                    workspacePanel && 'task-detail-workspace-description'
+                  )}
+                >
                   <div
+                    ref={workspacePanel ? descriptionCollapseRef : undefined}
+                    data-overflowing={descriptionOverflowing ? 'true' : 'false'}
                     className={cn(
                       twoColumn && 'task-detail-desc',
                       twoColumn && !descriptionExpanded && 'is-collapsed'
@@ -1782,10 +2070,22 @@ export function TodoEditor(props: TodoEditorProps) {
                       onClick={() => setDescriptionExpanded(current => !current)}
                       className="task-detail-desc-toggle"
                     >
-                      {descriptionExpanded ? '收起' : '展开描述'}
+                      <span>{descriptionExpanded ? '收起' : '展开描述'}</span>
+                      <ChevronDown
+                        className={cn(
+                          'h-3.5 w-3.5 transition-transform',
+                          descriptionExpanded && 'rotate-180'
+                        )}
+                      />
                     </button>
                   ) : null}
-                  <p className={cn('mt-2.5 text-xs text-text-muted', twoColumn && 'hidden')}>
+                  <p
+                    className={cn(
+                      'mt-2.5 text-xs text-text-muted',
+                      twoColumn && !workspacePanel && 'hidden',
+                      workspacePanel && 'task-detail-desc-hint'
+                    )}
+                  >
                     支持 Markdown，可拖拽文件到编辑器添加附件
                   </p>
                 </div>
@@ -1794,24 +2094,283 @@ export function TodoEditor(props: TodoEditorProps) {
 
               {workspacePanel && item ? (
                 <>
-                  <section className="mt-6" data-testid="cloud-todo-tasks">
-                    <div className="flex h-8 items-center gap-2">
-                      <h3 className="text-sm font-semibold text-text-primary">
+                  {item.workflow?.advancement_policy === 'ai' ? (
+                    <section
+                      className="mt-6 rounded-xl border border-border bg-muted/20 p-3"
+                      data-testid="cloud-todo-workflow-plan"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+                        <Sparkles className="h-4 w-4 shrink-0 text-text-secondary" />
+                        <h3 className="shrink-0 whitespace-nowrap text-sm font-semibold text-text-primary">
+                          {t('todo.workflow_plan_title', 'AI 编排方案')}
+                        </h3>
+                        <span
+                          className="shrink-0 whitespace-nowrap text-xs text-text-muted"
+                          data-testid="cloud-todo-workflow-plan-status"
+                        >
+                          {workflowManagerPlanConflict
+                            ? t('todo.workflow_plan_failed', '生成方案失败')
+                            : workflowPlanStatusLabel}
+                        </span>
+                        <div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap">
+                          {workflowManagerPlanConflict ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-replan"
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_retry', '重新生成')}
+                            </button>
+                          ) : workflowPlanStatus === 'awaiting_approval' ? (
+                            <>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-replan"
+                                disabled={
+                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                                }
+                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_replan', '要求重规划')}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-approve"
+                                disabled={
+                                  workflowPlanBusy ||
+                                  !workflowPlanMethod(api, 'approveWorkflowPlan')
+                                }
+                                onClick={() => void mutateWorkflowPlan('approveWorkflowPlan')}
+                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_approve', '确认并执行')}
+                              </button>
+                            </>
+                          ) : workflowPlanStatus === 'awaiting_review' ? (
+                            <>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-replan"
+                                disabled={
+                                  workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                                }
+                                onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                                className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_replan', '要求重规划')}
+                              </button>
+                              <button
+                                type="button"
+                                data-testid="cloud-todo-workflow-review"
+                                disabled={
+                                  workflowPlanBusy ||
+                                  !workflowPlanMethod(api, 'approveWorkflowReview')
+                                }
+                                onClick={() => void mutateWorkflowPlan('approveWorkflowReview')}
+                                className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                              >
+                                {t('todo.workflow_plan_review', '验收并完成')}
+                              </button>
+                            </>
+                          ) : workflowPlanStatus === 'paused' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-resume"
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'resumeWorkflowPlan')
+                              }
+                              onClick={() => void mutateWorkflowPlan('resumeWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_resume', '继续执行')}
+                            </button>
+                          ) : workflowPlanStatus === 'planning' ||
+                            workflowPlanStatus === 'running' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-pause"
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'pauseWorkflowPlan')
+                              }
+                              onClick={() => void mutateWorkflowPlan('pauseWorkflowPlan')}
+                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_pause', '暂停')}
+                            </button>
+                          ) : workflowPlanStatus === 'failed' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-replan"
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg bg-text-primary px-2.5 text-xs font-medium text-background disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_retry', '重新生成')}
+                            </button>
+                          ) : workflowPlanStatus === 'completed' ? (
+                            <button
+                              type="button"
+                              data-testid="cloud-todo-workflow-rerun"
+                              disabled={
+                                workflowPlanBusy || !workflowPlanMethod(api, 'replanWorkflowPlan')
+                              }
+                              onClick={() => void mutateWorkflowPlan('replanWorkflowPlan')}
+                              className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted disabled:opacity-40"
+                            >
+                              {t('todo.workflow_plan_rerun', '再次执行')}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      {workflowPlan?.summary ? (
+                        <p className="mt-2 text-xs leading-5 text-text-secondary">
+                          {workflowPlan.summary}
+                        </p>
+                      ) : null}
+                      {workflowManager ||
+                      ['planning', 'failed', 'paused'].includes(workflowPlanStatus) ? (
+                        <button
+                          type="button"
+                          disabled={!openWorkflowManagerExecution}
+                          onClick={openWorkflowManagerExecution ?? undefined}
+                          className="mt-2 block w-full rounded-lg border border-border bg-background px-3 py-2 text-left transition-colors enabled:cursor-pointer enabled:hover:bg-muted/40 disabled:cursor-default"
+                          data-testid="cloud-todo-workflow-manager-run"
+                        >
+                          <div className="flex items-center gap-2 text-xs">
+                            <Bot className="h-3.5 w-3.5 text-text-muted" />
+                            <span className="font-medium text-text-primary">
+                              {t('todo.workflow_manager')}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-text-muted">
+                              {workflowManager?.recent_activity ||
+                                (workflowPlanStatus === 'planning'
+                                  ? t('todo.workflow_manager_entering_queue')
+                                  : workflowPlanStatusLabel)}
+                            </span>
+                            {openWorkflowManagerExecution ? (
+                              <span
+                                data-testid="cloud-todo-workflow-manager-open-execution"
+                                className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                                {t('workbench.task_activity_view_execution')}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 truncate text-xs text-text-muted">
+                            {[workflowManager?.model, workflowManager?.device_id]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        </button>
+                      ) : null}
+                      {planItems.length > 0 ? (
+                        <div className="mt-2 divide-y divide-border rounded-lg border border-border bg-background">
+                          {planItems.map((planItem, index) => {
+                            const child = childItems.find(
+                              candidate => candidate.id === planItem.task_id
+                            )
+                            const planStatus =
+                              planItem.outcome_verdict === 'passed'
+                                ? t('todo.workflow_outcome_passed')
+                                : planItem.outcome_verdict === 'needs_rework'
+                                  ? t('todo.workflow_outcome_needs_rework')
+                                  : planItem.task_status
+                                    ? (statusOptions.find(
+                                        option => option.id === planItem.task_status
+                                      )?.name ?? planItem.task_status)
+                                    : t('todo.workflow_task_pending_creation')
+                            return (
+                              <div
+                                key={planItem.id}
+                                data-testid={`cloud-todo-workflow-plan-item-${planItem.id}`}
+                                className="flex gap-2 px-3 py-2"
+                              >
+                                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-xs text-text-muted">
+                                  {index + 1}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <p className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                                      {planItem.title}
+                                    </p>
+                                    <span className="shrink-0 text-xs text-text-muted">
+                                      {planStatus}
+                                    </span>
+                                  </div>
+                                  {!planItem.task_id ? (
+                                    <p className="mt-0.5 line-clamp-2 text-xs text-text-muted">
+                                      {planItem.description}
+                                    </p>
+                                  ) : null}
+                                  <p className="mt-1 text-xs text-text-secondary">
+                                    {planItem.assignee_name || planItem.assignee_id}
+                                    {planItem.rationale ? ` · ${planItem.rationale}` : ''}
+                                  </p>
+                                  {planItem.outcome_summary ? (
+                                    <p className="mt-1 line-clamp-2 text-xs text-text-muted">
+                                      {planItem.outcome_summary}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                {child && props.onOpenChildTask ? (
+                                  <button
+                                    type="button"
+                                    data-testid={`cloud-todo-open-plan-task-${child.id}`}
+                                    onClick={() => props.onOpenChildTask?.(child)}
+                                    className="shrink-0 self-start rounded-md px-1.5 py-1 text-xs text-text-secondary hover:bg-muted"
+                                  >
+                                    {t('todo.workflow_open_task')}
+                                  </button>
+                                ) : null}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : null}
+                      {workflowError ? (
+                        <details className="mt-2 text-xs text-destructive">
+                          <summary
+                            className={cn(rawWorkflowError && 'cursor-pointer')}
+                            data-testid="cloud-todo-workflow-error-summary"
+                          >
+                            {workflowError}
+                          </summary>
+                          {rawWorkflowError ? (
+                            <p className="mt-1 break-words text-text-muted">{rawWorkflowError}</p>
+                          ) : null}
+                        </details>
+                      ) : null}
+                    </section>
+                  ) : null}
+                  <section className="task-detail-workspace-section" data-testid="cloud-todo-tasks">
+                    <div className="task-detail-workspace-section-head">
+                      <h3 className="task-detail-workspace-section-title">
                         {displayedWorkflow?.nodes.length
                           ? t('todo.workflow_runtime_title')
                           : props.showCurrentTaskOnly
                             ? t('todo.current_running_task')
-                            : t('todo.tasks')}
+                            : t('todo.execution_tasks')}
                       </h3>
-                      <span className="text-xs text-text-muted">
-                        {displayedWorkflow?.nodes.length ?? displayedTasks.length}
+                      <span
+                        className="task-detail-workspace-count"
+                        data-testid="cloud-todo-execution-task-count"
+                      >
+                        {displayedWorkflow?.nodes.length ?? executionTaskCount}
                       </span>
                       {props.onCreateTask && !displayedWorkflow?.nodes.length ? (
                         <button
                           type="button"
                           data-testid="cloud-todo-create-task"
                           onClick={() => props.onCreateTask?.()}
-                          className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                          className="task-detail-workspace-ghost-action"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           {t('todo.new_task')}
@@ -1823,6 +2382,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         nodes={displayedWorkflow.nodes}
                         tasks={tasks}
                         deliveries={deliveries}
+                        executionError={item?.execution_error}
+                        selectedTaskId={props.selectedTaskId}
                         onCreateTask={props.onCreateTask}
                         onRunAutomation={props.onRunWorkflowNode}
                         onOpenTask={props.onOpenTaskConversation}
@@ -1832,8 +2393,8 @@ export function TodoEditor(props: TodoEditorProps) {
                         onCompleteStage={props.onCompleteWorkflowStage}
                         onDecide={props.onDecideWorkflowNode}
                       />
-                    ) : displayedTasks.length === 0 ? (
-                      <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
+                    ) : executionTaskCount === 0 ? (
+                      <p className="task-detail-workspace-empty">
                         {props.showCurrentTaskOnly
                           ? t('todo.no_running_task')
                           : t('todo.no_linked_task')}
@@ -1841,8 +2402,46 @@ export function TodoEditor(props: TodoEditorProps) {
                     ) : (
                       <div
                         data-testid="cloud-todo-task-list"
-                        className="mt-1 max-h-[280px] space-y-1 overflow-y-auto overscroll-contain pr-1"
+                        className="task-detail-flat-task-list"
                       >
+                        {executionChildItems.map(child => {
+                          const assignee =
+                            child.assignee_agent_name ??
+                            child.assignee_team_name ??
+                            child.assignee_name
+                          const childStatus =
+                            statusOptions.find(option => option.id === child.status)?.name ??
+                            child.status
+                          return (
+                            <button
+                              key={child.id}
+                              type="button"
+                              data-testid={`cloud-todo-open-child-task-${child.id}`}
+                              disabled={!props.onOpenChildTask || child.can_view_detail === false}
+                              onClick={() => props.onOpenChildTask?.(child)}
+                              className="task-detail-flat-task-row"
+                            >
+                              <span
+                                className={cn(
+                                  'task-detail-flat-task-dot',
+                                  columnDotClasses[child.status]
+                                )}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium text-text-primary">
+                                  {child.title}
+                                </span>
+                                <span className="mt-0.5 block truncate text-xs text-text-muted">
+                                  {childStatus}
+                                  {assignee ? ` · ${assignee}` : ''}
+                                </span>
+                              </span>
+                              {props.onOpenChildTask && child.can_view_detail !== false ? (
+                                <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+                              ) : null}
+                            </button>
+                          )
+                        })}
                         {displayedTasks.map(task => {
                           const selected = props.selectedTaskId === task.task_id
                           return (
@@ -1852,17 +2451,12 @@ export function TodoEditor(props: TodoEditorProps) {
                               data-testid={`cloud-todo-open-task-conversation-${task.id}`}
                               data-selected={selected ? 'true' : 'false'}
                               onClick={() => props.onOpenTaskConversation?.(task)}
-                              className={cn(
-                                'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition',
-                                selected
-                                  ? 'border-blue-500/50 bg-blue-500/5'
-                                  : 'border-transparent hover:bg-muted'
-                              )}
+                              className="task-detail-flat-task-row"
                             >
                               <span
                                 className={cn(
-                                  'h-2 w-2 shrink-0 rounded-full',
-                                  selected ? 'bg-blue-500' : 'bg-text-muted'
+                                  'task-detail-flat-task-dot',
+                                  selected ? 'is-selected' : 'is-idle'
                                 )}
                               />
                               <span className="min-w-0 flex-1">
@@ -1885,10 +2479,13 @@ export function TodoEditor(props: TodoEditorProps) {
                   </section>
 
                   {showChildren ? (
-                    <section className="mt-6" data-testid="cloud-todo-children">
-                      <div className="flex h-8 items-center gap-2">
-                        <h3 className="text-sm font-semibold text-text-primary">子 Issue</h3>
-                        <span className="text-xs text-text-muted">
+                    <section
+                      className="task-detail-workspace-section"
+                      data-testid="cloud-todo-children"
+                    >
+                      <div className="task-detail-workspace-section-head">
+                        <h3 className="task-detail-workspace-section-title">子 Issue</h3>
+                        <span className="task-detail-workspace-count">
                           {childItems.length > 0
                             ? `${completedChildCount}/${childItems.length}`
                             : childItems.length}
@@ -1898,7 +2495,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             type="button"
                             data-testid="cloud-todo-detail-add-child"
                             onClick={editProps.onAddChild}
-                            className="ml-auto flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                            className="task-detail-workspace-ghost-action"
                           >
                             <Plus className="h-3.5 w-3.5" />
                             添加
@@ -1906,11 +2503,14 @@ export function TodoEditor(props: TodoEditorProps) {
                         ) : null}
                       </div>
                       {childItems.length > 0 ? (
-                        <div className="mt-1 space-y-1">
+                        <div>
                           {childItems.map(child => (
                             <div
                               key={child.id}
-                              className="flex min-h-9 items-center gap-2 rounded-lg px-2 text-sm hover:bg-muted"
+                              className={cn(
+                                'task-detail-workspace-sub-row',
+                                child.status === 'completed' && 'is-completed'
+                              )}
                             >
                               <span
                                 className={cn(
@@ -1929,34 +2529,89 @@ export function TodoEditor(props: TodoEditorProps) {
                     </section>
                   ) : null}
 
-                  <details className="mt-6 border-t border-border pt-3">
-                    <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary">
+                  <details className="task-detail-workspace-properties" open>
+                    <summary className="task-detail-workspace-properties-toggle">
                       更多属性
                       <ChevronDown className="ml-auto h-4 w-4" />
                     </summary>
-                    <div className="mt-1 grid grid-cols-1 gap-0.5 px-1">{railProps}</div>
+                    <div className="task-detail-workspace-properties-grid">
+                      <RailProp label="状态" control={statusSelect}>
+                        {statusValue}
+                        {statusHistoryTrigger}
+                      </RailProp>
+                      <RailProp label="优先级" control={prioritySelect}>
+                        <span className="task-detail-workspace-tag">
+                          {priority === 'none' ? '普通' : priority}
+                          <ChevronDown className="h-3 w-3" />
+                        </span>
+                      </RailProp>
+                      <RailProp label="标签" clickable={false} valueClassName="overflow-visible">
+                        <span className="task-detail-workspace-tags">
+                          {tags.map(tag => (
+                            <span
+                              key={tag}
+                              data-testid={`cloud-todo-detail-tag-tag-${tag}`}
+                              className="task-detail-workspace-tag"
+                            >
+                              {tag}
+                              <button
+                                type="button"
+                                aria-label={`移除标签 ${tag}`}
+                                data-testid={`cloud-todo-detail-tag-tag-remove-${tag}`}
+                                onClick={() =>
+                                  setTags(current => current.filter(candidate => candidate !== tag))
+                                }
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </span>
+                          ))}
+                          <label className="task-detail-workspace-tag-add">
+                            <Plus className="h-3 w-3" />
+                            <span>添加标签</span>
+                            <input
+                              data-testid="cloud-todo-detail-tag-input"
+                              value={tagDraft}
+                              onChange={event => setTagDraft(event.target.value)}
+                              onBlur={commitTagDraft}
+                              onKeyDown={event => {
+                                if (event.key === 'Enter' || event.key === ',') {
+                                  event.preventDefault()
+                                  commitTagDraft()
+                                }
+                              }}
+                            />
+                          </label>
+                        </span>
+                      </RailProp>
+                      {railProps}
+                      <RailProp label="指派" clickable={false}>
+                        {item.assignment_history?.length ? (
+                          <button
+                            ref={assignmentChainTriggerRef}
+                            type="button"
+                            data-testid="cloud-todo-assignment-chain-trigger"
+                            aria-label={t('todo.assignment_chain_trigger', '查看指派详情')}
+                            aria-expanded={assignmentChainOpen}
+                            onClick={() => setAssignmentChainOpen(current => !current)}
+                            className="task-detail-workspace-prop-link"
+                          >
+                            {t('todo.assignment_chain_trigger', '查看指派详情')}
+                          </button>
+                        ) : (
+                          <span className="text-text-muted">暂无</span>
+                        )}
+                      </RailProp>
+                    </div>
                   </details>
 
-                  <div className="mt-4">
-                    <TodoAttachmentSection
-                      attachments={visibleAttachments}
-                      busy={attachmentBusy}
-                      error={attachmentError}
-                      editable
-                      compactRail
-                      onAdd={addAttachments}
-                      onOpen={openAttachment}
-                      onRemove={removeAttachment}
-                    />
-                  </div>
-
                   {deliveries.length > 0 ? (
-                    <section className="mt-4 border-t border-border pt-3">
-                      <div className="flex h-8 items-center gap-2">
-                        <h3 className="text-sm font-semibold text-text-primary">交付</h3>
-                        <span className="text-xs text-text-muted">{deliveries.length}</span>
+                    <section className="task-detail-workspace-section">
+                      <div className="task-detail-workspace-section-head">
+                        <h3 className="task-detail-workspace-section-title">交付</h3>
+                        <span className="task-detail-workspace-count">{deliveries.length}</span>
                       </div>
-                      <div className="space-y-1">
+                      <div>
                         {deliveries.map(delivery => (
                           <button
                             key={delivery.id}
@@ -1964,13 +2619,14 @@ export function TodoEditor(props: TodoEditorProps) {
                             onClick={() =>
                               void api.getDelivery(delivery.id).then(setSelectedDelivery)
                             }
-                            className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-sm hover:bg-muted"
+                            className="task-detail-workspace-sub-row w-full text-left"
                           >
-                            <FileText className="h-4 w-4 shrink-0 text-text-muted" />
+                            <Package className="h-4 w-4 shrink-0 text-text-muted" />
                             <span className="min-w-0 flex-1 truncate">
+                              交付结果
                               {delivery.assets.length > 0
-                                ? `${delivery.assets.length} 个附件`
-                                : '交付结果'}
+                                ? ` · ${delivery.assets.length} 个附件`
+                                : ''}
                             </span>
                             <span className="shrink-0 text-xs text-text-muted">
                               {delivery.delivered_at?.slice(0, 10)}
@@ -2012,6 +2668,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     busy={attachmentBusy}
                     error={attachmentError}
                     editable
+                    downloadingId={downloadingAttachmentId}
                     onAdd={isCreate ? stageFiles : addAttachments}
                     onOpen={isCreate ? undefined : openAttachment}
                     onRemove={isCreate ? removePendingFile : removeAttachment}
@@ -2319,6 +2976,7 @@ export function TodoEditor(props: TodoEditorProps) {
                     error={attachmentError}
                     editable
                     compactRail
+                    downloadingId={downloadingAttachmentId}
                     onAdd={addAttachments}
                     onOpen={openAttachment}
                     onRemove={removeAttachment}
@@ -2443,6 +3101,25 @@ export function TodoEditor(props: TodoEditorProps) {
             </aside>
           ) : null}
         </div>
+
+        {workspacePanel && item ? (
+          <div
+            data-testid="cloud-todo-attachment-footer"
+            className="task-detail-workspace-attachments task-detail-rail-sections"
+          >
+            <TodoAttachmentSection
+              attachments={visibleAttachments}
+              busy={attachmentBusy}
+              error={attachmentError}
+              editable
+              compactRail
+              downloadingId={downloadingAttachmentId}
+              onAdd={addAttachments}
+              onOpen={openAttachment}
+              onRemove={removeAttachment}
+            />
+          </div>
+        ) : null}
 
         {!twoColumn ? (
           <footer className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">

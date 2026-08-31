@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
+import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import type { WorkbenchContextValue } from '@/features/workbench/workbenchContextTypes'
 import { GeneralSettingsPage } from './GeneralSettingsPage'
@@ -9,7 +10,12 @@ import { GeneralSettingsPage } from './GeneralSettingsPage'
 const defaultPreferences: AppPreferences = {
   closeToTrayEnabled: true,
   showMainWindowOnLaunch: true,
-  defaultWorkspaceTab: 'task',
+  fixedWorkspaceTabs: [
+    { id: 'fixed-task', kind: 'task' },
+    { id: 'fixed-board', kind: 'board' },
+    { id: 'fixed-agent', kind: 'agent' },
+  ],
+  startupWorkspaceTabId: 'fixed-task',
   systemDragEnabled: true,
   preventSleepWhileTasksRunning: true,
   closeToTrayHintSeen: false,
@@ -34,6 +40,10 @@ const defaultPreferences: AppPreferences = {
   friendlyTaskTitlesEnabled: false,
   friendlyTaskTitleModel: null,
   quickPhrases: [],
+  supervisorPrinciples: '',
+  supervisorModelSelection: null,
+  supervisorIntervalSeconds: 30,
+  localHarnesses: [],
 }
 
 const getAppPreferencesMock = vi.hoisted(() => vi.fn())
@@ -59,11 +69,16 @@ vi.mock('@/hooks/useTranslation', () => ({
   }),
 }))
 
-vi.mock('@/tauri/appPreferences', () => ({
+vi.mock('@/desktop/appPreferences', () => ({
   defaultAppPreferences: {
     closeToTrayEnabled: true,
     showMainWindowOnLaunch: true,
-    defaultWorkspaceTab: 'task',
+    fixedWorkspaceTabs: [
+      { id: 'fixed-task', kind: 'task' },
+      { id: 'fixed-board', kind: 'board' },
+      { id: 'fixed-agent', kind: 'agent' },
+    ],
+    startupWorkspaceTabId: 'fixed-task',
     systemDragEnabled: true,
     preventSleepWhileTasksRunning: true,
     closeToTrayHintSeen: false,
@@ -87,6 +102,10 @@ vi.mock('@/tauri/appPreferences', () => ({
     friendlyTaskTitlesEnabled: false,
     friendlyTaskTitleModel: null,
     quickPhrases: [],
+    supervisorPrinciples: '',
+    supervisorModelSelection: null,
+    supervisorIntervalSeconds: 30,
+    localHarnesses: [],
   },
   getAppPreferences: getAppPreferencesMock,
   updateAppPreferences: updateAppPreferencesMock,
@@ -237,16 +256,16 @@ describe('GeneralSettingsPage', () => {
     expect(applyLanguagePreferenceMock).toHaveBeenCalledWith('en')
   })
 
-  test('persists the selected default workspace tab', async () => {
+  test('persists the selected startup workspace tab', async () => {
     getAppPreferencesMock.mockResolvedValue({
       ...defaultPreferences,
       experimentalFeaturesEnabled: true,
     })
     render(<GeneralSettingsPage />)
 
-    const boardButton = await screen.findByTestId('general-default-workspace-tab-board-button')
+    const boardButton = await screen.findByTestId('general-fixed-tab-startup-fixed-board')
     await waitFor(() => expect(boardButton).toBeEnabled())
-    expect(screen.getByTestId('general-default-workspace-tab-task-button')).toHaveAttribute(
+    expect(screen.getByTestId('general-fixed-tab-startup-fixed-task')).toHaveAttribute(
       'aria-pressed',
       'true'
     )
@@ -255,16 +274,17 @@ describe('GeneralSettingsPage', () => {
 
     await waitFor(() => {
       expect(updateAppPreferencesMock).toHaveBeenCalledWith({
-        defaultWorkspaceTab: 'board',
+        fixedWorkspaceTabs: defaultPreferences.fixedWorkspaceTabs,
+        startupWorkspaceTabId: 'fixed-board',
       })
     })
     expect(boardButton).toHaveAttribute('aria-pressed', 'true')
   })
 
-  test('shows the default workspace tab setting while experimental features are disabled', async () => {
+  test('shows fixed workspace tabs while experimental features are disabled', async () => {
     render(<GeneralSettingsPage />)
-    expect(await screen.findByTestId('general-default-workspace-tab-task-button')).toBeEnabled()
-    expect(screen.getByTestId('general-default-workspace-tab-board-button')).toBeInTheDocument()
+    expect(await screen.findByTestId('general-fixed-tab-startup-fixed-task')).toBeEnabled()
+    expect(screen.getByTestId('general-fixed-tab-fixed-board')).toBeInTheDocument()
   })
 
   test('keeps experimental features off by default and persists enabling them', async () => {
@@ -410,6 +430,25 @@ describe('GeneralSettingsPage', () => {
         telemetryEnabled: false,
       })
     })
+  })
+
+  test('shows the loaded shared preferences without flashing defaults', async () => {
+    getAppPreferencesMock.mockImplementation(() => new Promise(() => undefined))
+
+    render(
+      <AppPreferencesContext.Provider
+        value={{
+          loaded: true,
+          preferences: { ...defaultPreferences, telemetryEnabled: true },
+        }}
+      >
+        <GeneralSettingsPage />
+      </AppPreferencesContext.Provider>
+    )
+
+    const toggle = await screen.findByTestId('general-telemetry-toggle')
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    expect(getAppPreferencesMock).not.toHaveBeenCalled()
   })
 
   test('groups task runtime controls separately and spaces later sections', async () => {

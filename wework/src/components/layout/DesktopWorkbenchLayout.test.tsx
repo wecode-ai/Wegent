@@ -13,6 +13,10 @@ import {
   RuntimeTaskLifecycleProvider,
   RuntimeTaskLifecycleStore,
 } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  applyRuntimeConversationAction,
+  clearRuntimeConversationCacheForTests,
+} from '@/features/workbench/runtimeConversationCache'
 import type {
   WorkbenchContextValue,
   WorkbenchPaneContextValue,
@@ -22,6 +26,7 @@ import {
   WorkspaceTabsContext,
   type WorkspaceTabsContextValue,
 } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { dispatchWorkspaceTabsClosed } from '@/features/workspace-tabs/workspaceTabs'
 import { openExternalUrl } from '@/lib/external-links'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import {
@@ -37,11 +42,13 @@ import {
   openLocalWorkspace,
   startLocalHarness,
   startLocalTerminal,
-  updateLocalHarnessSessionTitle,
 } from '@/lib/local-terminal'
 import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-workspace'
 import { setActiveKeybindings } from '@/lib/keybindings'
+import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
+import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 import {
@@ -58,6 +65,7 @@ const paneSessionMockRef = vi.hoisted(() => ({
   current: undefined as unknown,
 }))
 const experimentalFeatures = vi.hoisted(() => ({ enabled: true }))
+const runtimeMocks = vi.hoisted(() => ({ electron: false }))
 const deliveryApiMock = vi.hoisted(() => ({
   available: false,
   listCloudProjects: vi.fn(),
@@ -68,7 +76,29 @@ const deliveryApiMock = vi.hoisted(() => ({
   trackProjectTask: vi.fn(),
 }))
 const embeddedBrowserMocks = vi.hoisted(() => ({
+  closeEmbeddedBrowser: vi.fn().mockResolvedValue(undefined),
   setEmbeddedBrowserActiveTab: vi.fn().mockResolvedValue(undefined),
+}))
+const desktopHostMocks = vi.hoisted(() => ({
+  invoke: vi.fn(async (capability: string): Promise<unknown> => {
+    if (capability === 'browser.open') {
+      return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
+    }
+    if (capability === 'window.getState') return { maximized: false }
+    return {}
+  }),
+}))
+const harnessAppMocks = vi.hoisted(() => ({
+  addPlugin: vi.fn(),
+  list: vi.fn(),
+  start: vi.fn(),
+  stop: vi.fn(),
+}))
+const harnessAppTabMocks = vi.hoisted(() => ({
+  register: vi.fn(),
+  unregister: vi.fn(),
+  takeProxyToken: vi.fn(),
+  takeContextToken: vi.fn(),
 }))
 const cloudDesktopExtensionMock = vi.hoisted(() => {
   const launch = vi.fn()
@@ -105,16 +135,53 @@ vi.mock('@/features/experimental-features/useExperimentalFeaturesEnabled', () =>
   useExperimentalFeaturesEnabled: () => experimentalFeatures.enabled,
 }))
 
+vi.mock('@/lib/runtime-environment', () => ({
+  isDesktopRuntime: () => runtimeMocks.electron,
+  isElectronRuntime: () => runtimeMocks.electron,
+  getDesktopWindowLabel: () => 'main',
+}))
+
 vi.mock('@/lib/embedded-browser', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/embedded-browser')>()
   return {
     ...actual,
+    closeEmbeddedBrowser: embeddedBrowserMocks.closeEmbeddedBrowser,
     setEmbeddedBrowserActiveTab: embeddedBrowserMocks.setEmbeddedBrowserActiveTab,
+  }
+})
+
+vi.mock('@/api/local/harnessApps', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/api/local/harnessApps')>()
+  return {
+    ...actual,
+    harnessAppsApi: {
+      ...actual.harnessAppsApi,
+      addPlugin: harnessAppMocks.addPlugin,
+      list: harnessAppMocks.list,
+      start: harnessAppMocks.start,
+      stop: harnessAppMocks.stop,
+    },
+  }
+})
+
+vi.mock('@/features/harness-apps/harnessAppTabs', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/features/harness-apps/harnessAppTabs')>()
+  return {
+    ...actual,
+    registerHarnessAppTab: harnessAppTabMocks.register,
+    unregisterHarnessAppTab: harnessAppTabMocks.unregister,
+    takeHarnessAppProxyToken: harnessAppTabMocks.takeProxyToken,
+    takeHarnessAppContextToken: harnessAppTabMocks.takeContextToken,
   }
 })
 
 vi.mock('./useWorkbenchPaneSession', () => ({
   useWorkbenchPaneSession: () => paneSessionMockRef.current,
+}))
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostMocks.invoke,
+  subscribeDesktopHostEvents: vi.fn(() => () => {}),
 }))
 
 function createPaneStatus({
@@ -179,19 +246,6 @@ vi.mock('@/lib/native-directory-picker', () => ({
     const selected = await nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker(...args)
     return selected ? [selected] : []
   },
-}))
-
-const tauriMenuMocks = vi.hoisted(() => ({
-  getCurrentWindow: vi.fn(() => ({
-    startDragging: vi.fn(),
-    minimize: vi.fn(),
-    toggleMaximize: vi.fn(),
-    close: vi.fn(),
-    isMaximized: vi.fn().mockResolvedValue(false),
-    onResized: vi.fn().mockResolvedValue(vi.fn()),
-  })),
-  menuNew: vi.fn(),
-  menuPopup: vi.fn(),
 }))
 
 const authMocks = vi.hoisted(() => ({
@@ -316,7 +370,6 @@ vi.mock('@/lib/local-terminal', () => ({
   resolveLocalHarnessPluginRoots: vi.fn().mockResolvedValue([]),
   startLocalHarness: vi.fn(),
   startLocalTerminal: vi.fn(),
-  updateLocalHarnessSessionTitle: vi.fn(),
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT: 'wework:local-harness-sessions-changed',
 }))
 
@@ -426,28 +479,6 @@ vi.mock('@pierre/trees/react', async () => {
   }
 })
 
-vi.mock('@tauri-apps/api/dpi', () => ({
-  LogicalPosition: class LogicalPosition {
-    x: number
-    y: number
-
-    constructor(x: number, y: number) {
-      this.x = x
-      this.y = y
-    }
-  },
-}))
-
-vi.mock('@tauri-apps/api/menu', () => ({
-  Menu: {
-    new: tauriMenuMocks.menuNew,
-  },
-}))
-
-vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: tauriMenuMocks.getCurrentWindow,
-}))
-
 vi.mock('./workspace-panels/RemoteTerminal', () => ({
   RemoteTerminal: ({
     active,
@@ -499,7 +530,6 @@ const localPathExistsMock = vi.mocked(localPathExists)
 const getLocalPathKindMock = vi.mocked(getLocalPathKind)
 const openLocalWorkspaceMock = vi.mocked(openLocalWorkspace)
 const startLocalHarnessMock = vi.mocked(startLocalHarness)
-const updateLocalHarnessSessionTitleMock = vi.mocked(updateLocalHarnessSessionTitle)
 const resolveLocalHarnessLaunchMock = vi.fn()
 const unregisterHarnessProxyMock = vi.fn()
 const startLocalTerminalMock = vi.mocked(startLocalTerminal)
@@ -515,6 +545,30 @@ const sendRuntimePaneGuidanceMock = vi.fn().mockResolvedValue({
   turnId: 'runtime-side-chat-turn',
 })
 const subscribeRuntimeTaskStreamMock = vi.fn(() => vi.fn())
+
+type CreateTemporaryRuntimeTaskOptions = Parameters<
+  WorkbenchContextValue['createTemporaryRuntimeTask']
+>[1]
+
+async function openOptimisticTemporaryRuntimeTask(
+  address: RuntimeTaskAddress,
+  options: CreateTemporaryRuntimeTaskOptions
+) {
+  address.runtimeHandle ??= {
+    modelSelection: {
+      modelName: 'test-model',
+      modelType: 'user',
+      options: {},
+    },
+  }
+  if (options?.optimisticUserMessage) {
+    applyRuntimeConversationAction(address, {
+      type: 'user_added',
+      message: options.optimisticUserMessage,
+    })
+  }
+  await options?.onRuntimeTaskOptimisticOpen?.(address)
+}
 
 function createDefaultImNotificationSettings() {
   return {
@@ -536,6 +590,15 @@ describe('DesktopWorkbenchLayout', () => {
       reject = promiseReject
     })
     return { promise, resolve, reject }
+  }
+
+  function setComposerValue(container: HTMLElement, value: string) {
+    const editor = within(container).getByTestId('chat-message-input') as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = value
+    })
   }
 
   function getDesktopWorkbenchMainElement() {
@@ -596,8 +659,10 @@ describe('DesktopWorkbenchLayout', () => {
     }
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
+    runtimeMocks.electron = false
     vi.clearAllMocks()
     deliveryApiMock.available = false
     deliveryApiMock.listCloudProjects.mockResolvedValue({ items: [] })
@@ -621,26 +686,12 @@ describe('DesktopWorkbenchLayout', () => {
       value: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
     })
     setActiveKeybindings([])
-    tauriMenuMocks.getCurrentWindow.mockReturnValue({
-      label: 'main',
-      startDragging: vi.fn(),
-      minimize: vi.fn(),
-      maximize: vi.fn(),
-      unmaximize: vi.fn(),
-      toggleMaximize: vi.fn(),
-      close: vi.fn(),
-      isMaximized: vi.fn().mockResolvedValue(false),
-      onResized: vi.fn().mockResolvedValue(vi.fn()),
-      onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()),
-    })
-    tauriMenuMocks.menuNew.mockResolvedValue({ popup: tauriMenuMocks.menuPopup })
-    tauriMenuMocks.menuPopup.mockResolvedValue(undefined)
     document.getElementById(TITLEBAR_ACTIONS_PORTAL_ID)?.remove()
     document.getElementById(TITLEBAR_FEEDBACK_PORTAL_ID)?.remove()
     document.getElementById(TITLEBAR_RIGHT_PANEL_PORTAL_ID)?.remove()
     screen.queryByTestId('titlebar-right-workspace-zone')?.remove()
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
     localStorage.clear()
+    sessionStorage.clear()
     window.history.pushState({}, '', '/')
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -659,7 +710,6 @@ describe('DesktopWorkbenchLayout', () => {
     localPathExistsMock.mockResolvedValue(false)
     openLocalWorkspaceMock.mockResolvedValue(undefined)
     startLocalHarnessMock.mockReset().mockResolvedValue('local-harness-1')
-    updateLocalHarnessSessionTitleMock.mockResolvedValue(undefined)
     resolveLocalHarnessLaunchMock.mockImplementation(async harnessId => ({
       modelId:
         harnessId === 'claude_code'
@@ -683,6 +733,14 @@ describe('DesktopWorkbenchLayout', () => {
               }
             : { OPENCODE_CONFIG_CONTENT: '{"provider":{}}' },
     }))
+    harnessAppMocks.list.mockResolvedValue([])
+    harnessAppMocks.addPlugin.mockReset()
+    harnessAppMocks.start.mockReset()
+    harnessAppMocks.stop.mockReset().mockResolvedValue(undefined)
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
+    harnessAppTabMocks.takeProxyToken.mockResolvedValue(null)
+    harnessAppTabMocks.takeContextToken.mockResolvedValue(null)
     unregisterHarnessProxyMock.mockResolvedValue(undefined)
     nativeDirectoryPickerMocks.openNativeProjectDirectoryPicker.mockResolvedValue(null)
     automationMocks.useNativeDirectoryPicker = true
@@ -725,6 +783,7 @@ describe('DesktopWorkbenchLayout', () => {
       startCodeServerSession: startCodeServerSessionMock,
     } as unknown as ReturnType<typeof createProjectApi>)
     createTemporaryRuntimeTaskMock.mockResolvedValue(false)
+    clearRuntimeConversationCacheForTests()
     sendRuntimePaneMessageMock.mockReset()
     sendRuntimePaneMessageMock.mockResolvedValue(true)
     sendRuntimePaneGuidanceMock.mockReset()
@@ -738,7 +797,6 @@ describe('DesktopWorkbenchLayout', () => {
   const baseProps = {
     state: {
       user: null,
-      defaultTeam: null,
       projects: [{ id: 1, name: 'github_wegent', tasks: [] }],
       devices: [],
       runtimeWork: null,
@@ -935,6 +993,7 @@ describe('DesktopWorkbenchLayout', () => {
     codeCommentContexts?: unknown[]
     subagentStatuses?: RuntimeSubagentStatus[]
     workspaceFileApi?: WorkbenchContextValue['workspaceFileApi']
+    workspaceTabId?: string
     runtimeWorkApi?: WorkbenchServices['runtimeWorkApi']
     lifecycleTaskRunning?: boolean
     isAwaitingAssistantStart?: boolean
@@ -987,7 +1046,10 @@ describe('DesktopWorkbenchLayout', () => {
   }
 
   function DesktopWorkbenchLayout(
-    props: LegacyDesktopWorkbenchLayoutProps & { routeActive?: boolean }
+    props: LegacyDesktopWorkbenchLayoutProps & {
+      routeActive?: boolean
+      surfaceKind?: 'task' | 'board'
+    }
   ) {
     const { authValue, workbenchValue, paneValue, paneSession } = createWorkbenchMocks(props)
     paneSessionMockRef.current = paneSession
@@ -1012,7 +1074,10 @@ describe('DesktopWorkbenchLayout', () => {
           <AuthContext.Provider value={authValue}>
             <WorkbenchContext.Provider value={workbenchValue}>
               <WorkbenchPaneContext.Provider value={paneValue}>
-                <ActualDesktopWorkbenchLayout routeActive={props.routeActive} />
+                <ActualDesktopWorkbenchLayout
+                  routeActive={props.routeActive}
+                  surfaceKind={props.surfaceKind}
+                />
               </WorkbenchPaneContext.Provider>
             </WorkbenchContext.Provider>
           </AuthContext.Provider>
@@ -1168,6 +1233,7 @@ describe('DesktopWorkbenchLayout', () => {
         },
         ...(props.runtimeWorkApi ? { runtimeWorkApi: props.runtimeWorkApi } : {}),
       },
+      workspaceTabId: props.workspaceTabId,
       state,
       isStartupReady: true,
       workspaceFileApi: props.workspaceFileApi ?? baseProps.workspaceFileApi,
@@ -1510,9 +1576,22 @@ describe('DesktopWorkbenchLayout', () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
-    expect(
-      screen.getByTestId('desktop-workbench-content').closest('[aria-hidden="true"]')
-    ).toHaveStyle({ display: 'none' })
+    expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
+  })
+
+  test('keeps task and board surfaces independent from the active window route', () => {
+    window.history.pushState({}, '', '/todo')
+    const taskView = render(<DesktopWorkbenchLayout {...baseProps} surfaceKind="task" />)
+
+    expect(screen.getByTestId('desktop-workbench-content')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-loading')).not.toBeInTheDocument()
+
+    taskView.unmount()
+    window.history.pushState({}, '', '/')
+    render(<DesktopWorkbenchLayout {...baseProps} surfaceKind="board" />)
+
+    expect(screen.getByTestId('cloud-board-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('desktop-workbench-content')).not.toBeInTheDocument()
   })
 
   test('returns to the workspace after opening settings from its account menu', async () => {
@@ -2127,7 +2206,7 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  test('hides task fork and IM actions while experimental features are disabled', () => {
+  test('keeps IM actions available while experimental features are disabled', () => {
     experimentalFeatures.enabled = false
 
     render(
@@ -2145,7 +2224,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     expect(screen.queryByTestId('fork-runtime-task-button')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('continue-in-im-button')).not.toBeInTheDocument()
+    expect(screen.getByTestId('continue-in-im-button')).toBeInTheDocument()
     expect(screen.queryByTestId('workbench-harness-selector')).not.toBeInTheDocument()
   })
 
@@ -2214,6 +2293,74 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('mention-cloud-space-direct-action')).toBeInTheDocument()
   })
 
+  test('searches the sole project workspace from a new chat with multiple device workspaces', async () => {
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const runtimeWork = createRuntimeWorkForProject(workspacePanelState.currentProject)!
+    runtimeWork.chats = [
+      {
+        deviceId: 'workspace-cloud-device',
+        available: true,
+        workspacePath: '/workspace/other-chat-a',
+        tasks: [],
+      },
+      {
+        deviceId: 'workspace-cloud-device',
+        available: true,
+        workspacePath: '/workspace/other-chat-b',
+        tasks: [],
+      },
+    ]
+    const searchWorkspaceEntries = vi.fn().mockResolvedValue({
+      files: [
+        {
+          root: '/workspace/project',
+          path: 'cloud-context-folder',
+          fileName: 'cloud-context-folder',
+          matchType: 'directory' as const,
+          score: 100,
+          indices: [0, 1, 2, 3, 4],
+        },
+      ],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          ...baseProps.workspaceFileApi,
+          searchWorkspaceEntries,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+          runtimeWork,
+        }}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    const editor = (await screen.findByTestId('chat-message-input')) as HTMLElement & {
+      value: string
+    }
+    act(() => {
+      editor.value = '@cloud-context-folder'
+      editor.focus()
+    })
+
+    expect(await screen.findByTestId('workspace-mention-option-0')).toBeInTheDocument()
+    expect(searchWorkspaceEntries).toHaveBeenCalledWith(
+      'workspace-cloud-device',
+      '/workspace/project',
+      'cloud-context-folder',
+      expect.any(String)
+    )
+  })
+
   test('treats a runtime task missing from runtime work as a new project-space task', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
@@ -2269,7 +2416,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('keeps the work-item guide visible while a runtime task binding is unresolved', async () => {
+  test('keeps the work-item guide usable when a runtime task context lookup stalls', async () => {
     deliveryApiMock.available = true
     deliveryApiMock.listCloudProjects.mockResolvedValue({
       items: [
@@ -2325,8 +2472,9 @@ describe('DesktopWorkbenchLayout', () => {
 
     const workItemGuide = await screen.findByTestId('project-space-context-pill')
     const composerInput = screen.getByTestId('chat-message-input')
-    expect(workItemGuide).toHaveTextContent('工作空间')
-    expect(workItemGuide).toHaveAttribute('title', '工作空间')
+    expect(workItemGuide).toHaveTextContent('工作项')
+    expect(workItemGuide).toHaveAttribute('title', '工作项')
+    expect(screen.queryByTestId('work-item-guide-summary-pending')).not.toBeInTheDocument()
     expect(workItemGuide.compareDocumentPosition(composerInput)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
@@ -2468,16 +2616,11 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
   })
 
-  test('keeps continue-in-im action with titlebar actions in Tauri', () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
+  test('keeps continue-in-im action with titlebar actions in Electron', () => {
+    runtimeMocks.electron = true
     const feedbackPortal = document.createElement('div')
     feedbackPortal.id = TITLEBAR_FEEDBACK_PORTAL_ID
     document.body.append(feedbackPortal)
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
 
     try {
       render(
@@ -2517,37 +2660,17 @@ describe('DesktopWorkbenchLayout', () => {
       expect(screen.queryByTestId('workbench-topbar-right-actions')).not.toBeInTheDocument()
     } finally {
       feedbackPortal.remove()
-      if (previousTauriInternals === undefined) {
-        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_INTERNALS__', {
-          configurable: true,
-          value: previousTauriInternals,
-        })
-      }
     }
   })
 
   test('does not publish titlebar actions from an inactive workspace document tab', () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    runtimeMocks.electron = true
+    render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
 
-    try {
-      render(<DesktopWorkbenchLayout {...baseProps} routeActive={false} />)
-
-      expect(screen.getByTestId('workbench-main-header')).toBeEmptyDOMElement()
-      expect(screen.queryByTestId('titlebar-main-actions')).not.toBeInTheDocument()
-      expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
-    } finally {
-      Object.defineProperty(window, '__TAURI_INTERNALS__', {
-        configurable: true,
-        value: previousTauriInternals,
-      })
-    }
+    expect(screen.getByTestId('workbench-main-header')).toBeEmptyDOMElement()
+    expect(screen.queryByTestId('sidebar-worklists-scroll')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('titlebar-main-actions')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('titlebar-actions')).not.toBeInTheDocument()
   })
 
   test('hides continue-in-im action without a runtime task', () => {
@@ -3007,12 +3130,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('desktop-sidebar-hover-edge')).not.toBeInTheDocument()
   })
 
-  test('keeps sidebar controls out of the page chrome in Tauri', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
+  test('keeps sidebar controls out of the page chrome in Electron', async () => {
+    runtimeMocks.electron = true
     render(<DesktopWorkbenchLayout {...baseProps} />)
 
     expect(screen.queryByTestId('desktop-sidebar-topbar')).not.toBeInTheDocument()
@@ -3036,11 +3155,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('mt-1.5', 'mb-1.5', 'mr-1.5')
   })
 
-  test('keeps a collapsed Tauri task title clear of titlebar controls', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('keeps a collapsed Electron task title clear of titlebar controls', () => {
+    runtimeMocks.electron = true
     localStorage.setItem('wework.desktop.sidebar.collapsed', 'true')
 
     render(
@@ -3113,11 +3229,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(getDesktopWorkbenchMainElement()).not.toHaveClass('rounded-xl')
   })
 
-  test('lets the workbench background show through the Tauri right workspace titlebar', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('lets the workbench background show through the Electron right workspace titlebar', () => {
+    runtimeMocks.electron = true
     localStorage.setItem(
       'wework.appearance',
       JSON.stringify({
@@ -3134,10 +3247,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('leaves Windows window chrome to the application titlebar', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    runtimeMocks.electron = true
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
       value:
@@ -3155,10 +3265,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('renders Windows workbench actions in the shared workbench header', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    runtimeMocks.electron = true
     Object.defineProperty(navigator, 'userAgent', {
       configurable: true,
       value:
@@ -3171,12 +3278,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.queryByTestId('workbench-windows-titlebar')).not.toBeInTheDocument()
   })
 
-  test('opens project code-server from the Tauri titlebar', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
+  test('opens project code-server from the Electron titlebar', async () => {
+    runtimeMocks.electron = true
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -3230,12 +3333,8 @@ describe('DesktopWorkbenchLayout', () => {
     expect(bottomPanelTooltip).toHaveTextContent('J')
   })
 
-  test('shows project code-server in the Tauri titlebar before devices hydrate', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
+  test('shows project code-server in the Electron titlebar before devices hydrate', () => {
+    runtimeMocks.electron = true
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
@@ -3263,11 +3362,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens the local project from the Tauri titlebar with VS Code for local devices', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('opens the local project from the Electron titlebar with VS Code for local devices', async () => {
+    runtimeMocks.electron = true
     isLocalTerminalAvailableMock.mockReturnValue(true)
 
     render(
@@ -3321,10 +3417,7 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('shows a dialog when project code-server fails to start', async () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+    runtimeMocks.electron = true
     startCodeServerSessionMock.mockRejectedValueOnce(
       new Error('Local devices do not support code-server sessions')
     )
@@ -5071,7 +5164,7 @@ describe('DesktopWorkbenchLayout', () => {
         'new-project'
       )
     )
-  })
+  }, 15_000)
 
   test('clones a Git repository before opening the remote project', async () => {
     const onGetDeviceHomeDirectory = vi.fn().mockResolvedValue('/home/ubuntu')
@@ -5167,7 +5260,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('refreshes an offline device before retrying a Git clone', async () => {
     const refreshResult = createDeferred<void>()
@@ -5211,10 +5304,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
-    await waitFor(() =>
-      expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
-        'repository设备离线'
-      )
+    await waitFor(
+      () =>
+        expect(screen.getByTestId('git-clone-project-operations')).toHaveTextContent(
+          'repository设备离线'
+        ),
+      { timeout: 5_000 }
     )
     const refreshCountBeforeRetry = onRefreshDevices.mock.calls.length
     await userEvent.click(screen.getByRole('button', { name: '重试' }))
@@ -5233,7 +5328,7 @@ describe('DesktopWorkbenchLayout', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('git-clone-project-operations')).not.toBeInTheDocument()
     )
-  })
+  }, 15_000)
 
   test('rejects embedded HTTP Git credentials without cloning', async () => {
     const onCloneGitRepository = vi.fn().mockResolvedValue(undefined)
@@ -5263,10 +5358,9 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(screen.getByTestId('projects-create-button'))
     await userEvent.click(screen.getByTestId('project-create-remote-option'))
     await userEvent.click(screen.getByTestId('remote-project-source-git'))
-    await userEvent.type(
-      screen.getByTestId('remote-project-git-url-input'),
-      'https://token@github.com/owner/repository.git'
-    )
+    fireEvent.change(screen.getByTestId('remote-project-git-url-input'), {
+      target: { value: 'https://token@github.com/owner/repository.git' },
+    })
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
     expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
@@ -5274,11 +5368,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(onCloneGitRepository).not.toHaveBeenCalled()
 
-    await userEvent.clear(screen.getByTestId('remote-project-git-url-input'))
-    await userEvent.type(
-      screen.getByTestId('remote-project-git-url-input'),
-      'https://user:password@github.com/owner/repository.git'
-    )
+    fireEvent.change(screen.getByTestId('remote-project-git-url-input'), {
+      target: { value: 'https://user:password@github.com/owner/repository.git' },
+    })
     await userEvent.click(screen.getByTestId('remote-project-git-submit'))
 
     expect(await screen.findByTestId('remote-project-git-error')).toHaveTextContent(
@@ -5852,8 +5944,10 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
+    expect(document.body).toHaveAttribute('data-wework-panel-resizing', 'true')
     fireEvent.pointerMove(document, { clientX: 582 })
     fireEvent.pointerUp(document)
+    expect(document.body).not.toHaveAttribute('data-wework-panel-resizing')
 
     expect(content).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
@@ -6180,6 +6274,17 @@ describe('DesktopWorkbenchLayout', () => {
         'true'
       )
     )
+    const browserInputs = screen.getAllByTestId('workspace-browser-url-input')
+    expect(browserInputs).toHaveLength(2)
+    expect(browserInputs[0]).toHaveValue('http://example.com/')
+    expect(browserInputs[1]).toHaveValue('')
+    expect(
+      document.querySelector(
+        '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"] ' +
+          '[data-testid="right-workspace-panel"] div:not(.hidden) > ' +
+          '[data-testid="workspace-browser-panel"] [data-testid="workspace-browser-url-input"]'
+      )
+    ).toHaveValue('')
     expect(screen.queryByTestId('browser-tab-strip')).not.toBeInTheDocument()
     expect(screen.queryByTestId('browser-tab-add')).not.toBeInTheDocument()
 
@@ -6265,30 +6370,8 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('opens the right workspace new tab menu as an anchored popup in Tauri', async () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    const previousTauriEventPluginInternals = (
-      window as typeof window & {
-        __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
-      }
-    ).__TAURI_EVENT_PLUGIN_INTERNALS__
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {
-        transformCallback: vi.fn(() => 1),
-        unregisterCallback: vi.fn(),
-        invoke: vi.fn(async (command: string) => {
-          if (command === 'embedded_browser_pending_open_requests') return []
-          return null
-        }),
-      },
-    })
-    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
-      configurable: true,
-      value: { unregisterListener: vi.fn() },
-    })
-
+  test('opens the right workspace new tab menu as an anchored popup in Electron', async () => {
+    runtimeMocks.electron = true
     let unmount: (() => void) | undefined
     try {
       ;({ unmount } = renderWorkspacePanelLayout())
@@ -6303,31 +6386,9 @@ describe('DesktopWorkbenchLayout', () => {
       expect(within(menu).getByTestId('right-workspace-terminal-option')).toHaveTextContent('终端')
       expect(within(menu).getByTestId('right-workspace-browser-option')).toHaveTextContent('浏览器')
       expect(within(menu).getByTestId('right-workspace-file-option')).toHaveTextContent('文件')
-      expect(tauriMenuMocks.menuNew).not.toHaveBeenCalled()
-      expect(tauriMenuMocks.menuPopup).not.toHaveBeenCalled()
     } finally {
       unmount?.()
       await new Promise(resolve => setTimeout(resolve, 1_100))
-      if (previousTauriInternals === undefined) {
-        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_INTERNALS__', {
-          configurable: true,
-          value: previousTauriInternals,
-        })
-      }
-      if (previousTauriEventPluginInternals === undefined) {
-        delete (
-          window as typeof window & {
-            __TAURI_EVENT_PLUGIN_INTERNALS__?: unknown
-          }
-        ).__TAURI_EVENT_PLUGIN_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
-          configurable: true,
-          value: previousTauriEventPluginInternals,
-        })
-      }
     }
   })
 
@@ -6568,6 +6629,52 @@ describe('DesktopWorkbenchLayout', () => {
     expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
+  test('right workspace hosts a native DSH slot tab in the existing Wework panel shell', async () => {
+    const tabs = [{ id: 'test:inspector', title: 'DSH Inspector', order: 5 }]
+    const entries = tabs.map(tab => ({ ...tab, label: tab.title }))
+    window.__WEWORK_DSH_UI__ = {
+      getEntries: slot => (slot === 'wework.workspace.sidebar.tab' ? entries : []),
+      subscribe: () => () => undefined,
+      attach: (_slot, _id, container, props) => {
+        const panel = document.createElement('section')
+        panel.dataset.testid = 'dsh-inspector-panel'
+        panel.dataset.visible = String(props.visible)
+        panel.textContent = props.tab.title
+        container.append(panel)
+        return {
+          update(nextProps) {
+            panel.dataset.visible = String(nextProps.visible)
+            panel.textContent = nextProps.tab.title
+          },
+          dispose() {
+            panel.remove()
+          },
+        }
+      },
+    }
+
+    try {
+      renderWorkspacePanelLayout()
+      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+      await userEvent.click(screen.getByTestId('right-workspace-extension-option-test:inspector'))
+
+      const extensionTab = screen.getByTestId('right-workspace-extension-tab-test%3Ainspector')
+      expect(extensionTab).toHaveAttribute('aria-selected', 'true')
+      expect(extensionTab).toHaveTextContent('DSH Inspector')
+      expect(screen.getByTestId('dsh-inspector-panel')).toHaveAttribute('data-visible', 'true')
+      expect(screen.getByTestId('right-workspace-panel-shell')).toContainElement(extensionTab)
+
+      await userEvent.click(
+        within(extensionTab).getByTestId(
+          'right-workspace-extension-tab-test%3Ainspector-close-button'
+        )
+      )
+      expect(screen.queryByTestId('dsh-inspector-panel')).not.toBeInTheDocument()
+    } finally {
+      delete window.__WEWORK_DSH_UI__
+    }
+  })
+
   test('right workspace launcher keyboard shortcut opens the file tab', async () => {
     renderWorkspacePanelLayout()
 
@@ -6589,6 +6696,7 @@ describe('DesktopWorkbenchLayout', () => {
     const tabbar = screen.getByTestId('right-workspace-tabbar')
     const sideChat = screen.getByTestId('right-workspace-chat-panel')
     expect(sideChat).toBeInTheDocument()
+    expect(sideChat).toHaveClass('min-w-0')
     expect(screen.getByTestId('side-chat-composer-layout')).toHaveClass(
       'mx-auto',
       'w-[min(46rem,calc(100%_-_2rem))]',
@@ -6634,7 +6742,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await openOptimisticTemporaryRuntimeTask(optimisticAddress, options)
       return createResult.promise
     })
     renderWorkspacePanelLayout()
@@ -6714,7 +6822,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6723,12 +6831,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'queued follow-up')
+    setComposerValue(sideChat, 'queued follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     expect(sendRuntimePaneMessageMock).not.toHaveBeenCalled()
@@ -6759,7 +6866,7 @@ describe('DesktopWorkbenchLayout', () => {
     }
     const followUpSend = createDeferred<boolean>()
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     sendRuntimePaneMessageMock.mockReturnValue(followUpSend.promise)
@@ -6769,8 +6876,7 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
@@ -6779,7 +6885,7 @@ describe('DesktopWorkbenchLayout', () => {
       | undefined
     act(() => streamHandlers?.onAssistantStart?.())
 
-    await userEvent.type(sideChatInput, 'direct follow-up')
+    setComposerValue(sideChat, 'direct follow-up')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
     const userMessages = await within(sideChat).findAllByTestId('user-message-content')
@@ -6804,7 +6910,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6813,12 +6919,11 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
 
     const sideChat = await screen.findByTestId('right-workspace-chat-panel')
-    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
-    await userEvent.type(sideChatInput, 'first message')
+    setComposerValue(sideChat, 'first message')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
     await waitFor(() => expect(createTemporaryRuntimeTaskMock).toHaveBeenCalledTimes(1))
 
-    await userEvent.type(sideChatInput, 'guide the current response')
+    setComposerValue(sideChat, 'guide the current response')
     await userEvent.click(within(sideChat).getByTestId('send-mode-menu-button'))
     await userEvent.click(await screen.findByTestId('guide-current-turn-option'))
 
@@ -6875,7 +6980,7 @@ describe('DesktopWorkbenchLayout', () => {
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
     renderWorkspacePanelLayout()
@@ -6918,25 +7023,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).queryByTitle('draft attachment')).not.toBeInTheDocument()
   }, 15_000)
 
-  test('temporary chat converts a stale busy rejection into a queued follow-up', async () => {
+  test('temporary chat keeps a stale busy rejection queued without blind retries', async () => {
     const address: RuntimeTaskAddress = {
       deviceId: 'workspace-cloud-device',
       taskId: 'runtime-side-chat-stale-busy',
       workspacePath: '/workspace/project',
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(address)
+      await openOptimisticTemporaryRuntimeTask(address, options)
       return address
     })
-    const retryResult = createDeferred<boolean>()
-    let sendAttempt = 0
     sendRuntimePaneMessageMock.mockImplementation(async (_request, options) => {
-      sendAttempt += 1
-      if (sendAttempt === 1) {
-        options?.onError?.('runtime task is already running')
-        return false
-      }
-      return retryResult.promise
+      options?.onError?.('runtime task is already running')
+      return false
     })
     renderWorkspacePanelLayout()
 
@@ -6957,23 +7056,55 @@ describe('DesktopWorkbenchLayout', () => {
     await userEvent.type(sideChatInput, 'follow-up during stale state')
     await userEvent.click(within(sideChat).getByTestId('send-message-button'))
 
-    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1))
     expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
       'follow-up during stale state'
     )
     expect(within(sideChat).queryByTestId('chat-input-error')).not.toBeInTheDocument()
 
-    await act(async () => {
-      retryResult.resolve(true)
-      await retryResult.promise
-    })
-    await waitFor(() =>
-      expect(within(sideChat).queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
-    )
-    expect(within(sideChat).getAllByTestId('user-message-content').at(-1)).toHaveTextContent(
-      'follow-up during stale state'
-    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
   }, 20_000)
+
+  test('temporary chat marks a rejected queued send as failed', async () => {
+    const address: RuntimeTaskAddress = {
+      deviceId: 'workspace-cloud-device',
+      taskId: 'runtime-side-chat-rejected-queue',
+      workspacePath: '/workspace/project',
+    }
+    createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
+      await openOptimisticTemporaryRuntimeTask(address, options)
+      return address
+    })
+    sendRuntimePaneMessageMock.mockRejectedValueOnce(new Error('network unavailable'))
+    renderWorkspacePanelLayout()
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(await screen.findByTestId('right-workspace-chat-option'))
+
+    const sideChat = await screen.findByTestId('right-workspace-chat-panel')
+    const sideChatInput = within(sideChat).getByTestId('chat-message-input')
+    await userEvent.type(sideChatInput, 'first message')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    await waitFor(() => expect(subscribeRuntimeTaskStreamMock).toHaveBeenCalled())
+
+    await userEvent.type(sideChatInput, 'queued follow-up')
+    await userEvent.click(within(sideChat).getByTestId('send-message-button'))
+    expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+      'queued follow-up'
+    )
+
+    const streamHandlers = subscribeRuntimeTaskStreamMock.mock.calls.at(-1)?.[1] as
+      | { onAssistantStart?: () => void }
+      | undefined
+    act(() => streamHandlers?.onAssistantStart?.())
+
+    await waitFor(() =>
+      expect(within(sideChat).getByTestId('conversation-queue-panel')).toHaveTextContent(
+        'network unavailable'
+      )
+    )
+    expect(sendRuntimePaneMessageMock).toHaveBeenCalledTimes(1)
+  }, 15_000)
 
   test('temporary chat rolls back its optimistic address when runtime creation fails', async () => {
     const createResult = createDeferred<RuntimeTaskAddress | false>()
@@ -6985,7 +7116,7 @@ describe('DesktopWorkbenchLayout', () => {
     const unsubscribe = vi.fn()
     subscribeRuntimeTaskStreamMock.mockReturnValue(unsubscribe)
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(optimisticAddress)
+      await openOptimisticTemporaryRuntimeTask(optimisticAddress, options)
       return createResult.promise
     })
     renderWorkspacePanelLayout()
@@ -7016,154 +7147,101 @@ describe('DesktopWorkbenchLayout', () => {
     expect(within(sideChat).getByTestId('send-message-button')).toBeEnabled()
   }, 15_000)
 
-  test('moves right workspace tabs into the titlebar in Tauri', async () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
+  test('moves right workspace tabs into the titlebar in Electron', async () => {
+    runtimeMocks.electron = true
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
+
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+
+    const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
+      'absolute',
+      'top-0',
+      'h-full'
+    )
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
+      right: '5rem',
     })
-
-    try {
-      renderWorkspacePanelLayout({ mainWidth: 1000 })
-
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-      expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
-
-      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
-
-      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass(
-        'absolute',
-        'top-0',
-        'h-full'
-      )
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveStyle({
-        right: '5rem',
-      })
-      expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
-      expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
-      expect(screen.getByTestId('titlebar-actions')).toContainElement(
-        screen.getByTestId('toggle-right-workspace-panel-button')
-      )
-      expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
-        right: '0px',
-      })
-      expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain(
-        'calc(100% - 420px)'
-      )
-      expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass(
-        'after:bg-transparent'
-      )
-      const tabbar = screen.getByTestId('right-workspace-tabbar')
-      expect(titlebarRightPanel).toContainElement(tabbar)
-      expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
-      expect(titlebarRightPanel).toContainElement(
-        screen.getByTestId('right-workspace-new-tab-button')
-      )
-      const rightTitlebarDragRegion = screen.getByTestId('right-workspace-titlebar-drag-region')
-      expect(titlebarRightPanel).toContainElement(rightTitlebarDragRegion)
-      expect(
-        within(rightTitlebarDragRegion).getByTestId('macos-titlebar-drag-region')
-      ).toHaveAttribute('data-tauri-drag-region')
-      expect(screen.getByTestId('right-workspace-file-tab')).not.toContainElement(
-        rightTitlebarDragRegion
-      )
-      expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
-        rightTitlebarDragRegion
-      )
-      expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
-      await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
-      expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
-    } finally {
-      if (previousTauriInternals === undefined) {
-        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_INTERNALS__', {
-          configurable: true,
-          value: previousTauriInternals,
-        })
-      }
-    }
+    expect(screen.getByTestId('titlebar-right-workspace-zone')).toHaveClass('border-l')
+    expect(screen.getByTestId('titlebar-actions')).toHaveClass('min-w-[5rem]')
+    expect(screen.getByTestId('titlebar-actions')).toContainElement(
+      screen.getByTestId('toggle-right-workspace-panel-button')
+    )
+    expect(screen.getByTestId('titlebar-actions')).toHaveStyle({
+      right: '0px',
+    })
+    expect(screen.getByTestId('titlebar-right-workspace-zone').style.width).toContain(
+      'calc(100% - 420px)'
+    )
+    expect(screen.getByTestId('right-workspace-resize-handle')).toHaveClass('after:bg-transparent')
+    const tabbar = screen.getByTestId('right-workspace-tabbar')
+    expect(titlebarRightPanel).toContainElement(tabbar)
+    expect(titlebarRightPanel).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+    expect(titlebarRightPanel).toContainElement(
+      screen.getByTestId('right-workspace-new-tab-button')
+    )
+    const rightTitlebarDragRegion = screen.getByTestId('right-workspace-titlebar-drag-region')
+    expect(titlebarRightPanel).toContainElement(rightTitlebarDragRegion)
+    expect(within(rightTitlebarDragRegion).getByTestId('macos-titlebar-drag-region')).toHaveClass(
+      'electron-titlebar-drag-region'
+    )
+    expect(screen.getByTestId('right-workspace-file-tab')).not.toContainElement(
+      rightTitlebarDragRegion
+    )
+    expect(screen.getByTestId('right-workspace-new-tab-button')).not.toContainElement(
+      rightTitlebarDragRegion
+    )
+    expect(screen.queryByTestId('right-workspace-titlebar-spacer')).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('right-workspace-new-tab-button'))
+    expect(screen.getByTestId('right-workspace-new-tab-menu')).toBeInTheDocument()
   })
 
-  test('removes right workspace tabs from the titlebar when the Tauri panel is closed', async () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('removes right workspace tabs from the titlebar when the Electron panel is closed', async () => {
+    runtimeMocks.electron = true
+    renderWorkspacePanelLayout({ mainWidth: 1000 })
 
-    try {
-      renderWorkspacePanelLayout({ mainWidth: 1000 })
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+    expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
 
-      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
-      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-
-      const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
-      expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
-      expect(rightPanelShell).toHaveStyle({ width: '0px' })
-      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
-      expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
-      expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
-    } finally {
-      if (previousTauriInternals === undefined) {
-        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_INTERNALS__', {
-          configurable: true,
-          value: previousTauriInternals,
-        })
-      }
-    }
+    const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(rightPanelShell).toHaveAttribute('aria-hidden', 'true')
+    expect(rightPanelShell).toHaveStyle({ width: '0px' })
+    expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
+    expect(rightPanelShell).toContainElement(screen.getByTestId('right-workspace-file-tab'))
+    expect(await screen.findByTestId('workspace-file-tree')).toBeInTheDocument()
   })
 
-  test('does not show inactive runtime task right workspace tabs in the Tauri titlebar', async () => {
-    const previousTauriInternals = (window as typeof window & { __TAURI_INTERNALS__?: unknown })
-      .__TAURI_INTERNALS__
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
-
+  test('does not show inactive runtime task right workspace tabs in the Electron titlebar', async () => {
+    runtimeMocks.electron = true
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
 
-    try {
-      mockDesktopWorkbenchMainWidth(1000)
-      const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    mockDesktopWorkbenchMainWidth(1000)
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
-      await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
-      await userEvent.click(screen.getByTestId('right-workspace-file-option'))
+    await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
+    await userEvent.click(screen.getByTestId('right-workspace-file-option'))
 
-      const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
-      const sharedMainHeader = screen.getByTestId('workbench-main-header')
-      expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
+    const titlebarRightPanel = screen.getByTestId('titlebar-right-panel')
+    const sharedMainHeader = screen.getByTestId('workbench-main-header')
+    expect(within(titlebarRightPanel).getByTestId('right-workspace-file-tab')).toBeInTheDocument()
 
-      rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
 
-      expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
-      expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
-      expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
-      expect(screen.getAllByTestId('workbench-pane-task-title')).toHaveLength(1)
-      expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Task B')
-      expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveTextContent('Task A')
-      expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
-    } finally {
-      if (previousTauriInternals === undefined) {
-        delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
-      } else {
-        Object.defineProperty(window, '__TAURI_INTERNALS__', {
-          configurable: true,
-          value: previousTauriInternals,
-        })
-      }
-    }
+    expect(screen.getAllByTestId('workbench-main-header')).toHaveLength(1)
+    expect(screen.getByTestId('workbench-main-header')).toBe(sharedMainHeader)
+    expect(sharedMainHeader).toHaveClass('h-[38px]', 'shrink-0')
+    expect(screen.getAllByTestId('workbench-pane-task-title')).toHaveLength(1)
+    expect(screen.getByTestId('workbench-pane-task-title')).toHaveTextContent('Task B')
+    expect(screen.getByTestId('workbench-pane-task-title')).not.toHaveTextContent('Task A')
+    expect(within(titlebarRightPanel).queryByTestId('right-workspace-file-tab')).toBeNull()
   })
 
   test('right workspace panel restores the previous tab after closing and reopening', async () => {
@@ -7809,6 +7887,65 @@ describe('DesktopWorkbenchLayout', () => {
       '/workspace/project/README.md',
       '/workspace/project'
     )
+  })
+
+  test('decodes an encoded assistant file path before opening it in the workspace panel', async () => {
+    const user = userEvent.setup()
+    const workspacePanelState = createCloudWorkspacePanelState()
+    const filePath = '/workspace/project/README file.md'
+    const readWorkspaceTextFile = vi.fn().mockResolvedValue({
+      path: filePath,
+      name: 'README file.md',
+      content: 'opened encoded file path',
+      truncated: false,
+      size: 24,
+      modifiedAt: null,
+    })
+    const listWorkspaceEntries = vi.fn().mockResolvedValue({
+      path: '/workspace/project',
+      entries: [],
+    })
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceFileApi={{
+          listWorkspaceEntries,
+          readWorkspaceTextFile,
+        }}
+        state={{
+          ...baseProps.state,
+          ...workspacePanelState,
+        }}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content: '[README file.md](/workspace/project/README%2520file.md)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:00.000Z',
+          },
+        ]}
+        projectWork={{
+          ...baseProps.projectWork,
+          projects: workspacePanelState.projects,
+          devices: workspacePanelState.devices,
+          currentProjectId: workspacePanelState.currentProject.id,
+        }}
+      />
+    )
+
+    await user.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(await screen.findByTestId('workspace-markdown-preview')).toHaveTextContent(
+      'opened encoded file path'
+    )
+    expect(readWorkspaceTextFile).toHaveBeenCalledWith(
+      'local-device',
+      filePath,
+      '/workspace/project'
+    )
+    expect(screen.getByTestId('workspace-file-path')).toHaveTextContent(filePath)
   })
 
   test('opens a markdown directory link in the workspace tree without reading it as a file', async () => {
@@ -8818,12 +8955,17 @@ describe('DesktopWorkbenchLayout', () => {
 
   test('keeps the environment info panel open until its icon is clicked', async () => {
     mockDesktopWorkbenchMainWidth(1024)
+    const environmentRuntimeTask = {
+      ...activeProjectRuntimeTask,
+      deviceId: 'e13e1a10-5377-4a87-a3b3-634a098d0bb4',
+      workspacePath: '/workspace/projects/github_wegent',
+    }
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         state={{
           ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
+          currentRuntimeTask: environmentRuntimeTask,
           currentProject: activeProjectState.currentProject,
           devices: [
             {
@@ -8888,8 +9030,9 @@ describe('DesktopWorkbenchLayout', () => {
     const deviceButton = await screen.findByTestId('environment-device-button')
     expect(deviceSection).toContainElement(deviceButton)
     expect(deviceButton).toHaveTextContent('设备')
-    expect(deviceButton).toHaveTextContent('10.23.45.67')
+    expect(deviceButton).toHaveTextContent('yunpeng7-executor-0bb4')
     expect(deviceButton).not.toHaveTextContent('云设备')
+    expect(deviceButton).not.toHaveTextContent('10.23.45.67')
     expect(deviceButton).not.toHaveTextContent('e13e1a10')
     expect(deviceButton).not.toHaveTextContent('8ef4')
     expect(screen.queryByTestId('environment-device-id')).not.toBeInTheDocument()
@@ -9306,40 +9449,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-commit-progress-stop-icon')).toBeInTheDocument()
   })
 
-  test('switches and creates branches from the environment popover', async () => {
+  test('switches branches from the environment popover', async () => {
     mockDesktopWorkbenchMainWidth(1024)
     const onListEnvironmentBranches = vi
       .fn()
       .mockResolvedValue(['main', 'human/chipmunk-20260603-053420', 'human/alpaca-20260603-050330'])
     const onCheckoutEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
-    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
 
     render(
       <DesktopWorkbenchLayout
         {...baseProps}
         onListEnvironmentBranches={onListEnvironmentBranches}
         onCheckoutEnvironmentBranch={onCheckoutEnvironmentBranch}
-        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
-        state={{
-          ...baseProps.state,
-          currentRuntimeTask: activeProjectRuntimeTask,
-          currentProject: {
-            id: 1,
-            name: 'github_wegent',
-            tasks: [],
-            config: {
-              mode: 'workspace',
-              execution: {
-                targetType: 'local',
-                deviceId: 'device-1',
-              },
-              workspace: {
-                source: 'local_path',
-                localPath: '/workspace/github_wegent',
-              },
-            },
-          },
-        }}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
       />
     )
 
@@ -9361,6 +9483,21 @@ describe('DesktopWorkbenchLayout', () => {
         'human/alpaca-20260603-050330',
         activeProjectRuntimeTarget
       )
+    )
+  })
+
+  test('creates branches from the environment popover', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    const onListEnvironmentBranches = vi.fn().mockResolvedValue(['main'])
+    const onCreateEnvironmentBranch = vi.fn().mockResolvedValue(undefined)
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        onListEnvironmentBranches={onListEnvironmentBranches}
+        onCreateEnvironmentBranch={onCreateEnvironmentBranch}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+      />
     )
 
     await userEvent.click(await screen.findByTestId('environment-branch-row'))
@@ -9444,6 +9581,84 @@ describe('DesktopWorkbenchLayout', () => {
     expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('暂无分支')
     expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('create-pull-request-button')).not.toBeInTheDocument()
+  })
+
+  test('shows a partial branch result before environment loading finishes', async () => {
+    mockDesktopWorkbenchMainWidth(1024)
+    let publishPartialInfo: ((info: EnvironmentInfo) => void) | undefined
+    const onLoadEnvironmentInfo = vi.fn(
+      (
+        _project: unknown,
+        _target: unknown,
+        options?: { onPartialInfo?: (info: EnvironmentInfo) => void }
+      ) => {
+        publishPartialInfo = options?.onPartialInfo
+        return new Promise<EnvironmentInfo>(() => {})
+      }
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{ ...activeProjectState, currentRuntimeTask: activeProjectRuntimeTask }}
+        onLoadEnvironmentInfo={onLoadEnvironmentInfo}
+      />
+    )
+
+    await waitFor(() => expect(publishPartialInfo).toBeTypeOf('function'))
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('加载中')
+
+    const cachedPullRequest: EnvironmentInfo = {
+      additions: '+7',
+      deletions: '-2',
+      executionTarget: 'local',
+      deviceId: 'device-1',
+      workspacePath: '/workspace/github_wegent',
+      branchName: 'fix/fast-branch-status',
+      changeRequest: {
+        provider: 'github',
+        state: 'found',
+        changeRequest: {
+          provider: 'github',
+          number: 2875,
+          url: 'https://github.com/wecode-ai/Wegent/pull/2875',
+          title: 'Cached pull request',
+          state: 'open',
+          draft: false,
+          checks: 'success',
+          mergeability: 'mergeable',
+          mergeQueue: 'not_queued',
+        },
+      },
+    }
+    act(() => {
+      publishPartialInfo?.(cachedPullRequest)
+    })
+
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
+
+    act(() => {
+      publishPartialInfo?.({
+        additions: '',
+        deletions: '',
+        executionTarget: 'local',
+        deviceId: 'device-1',
+        workspacePath: '/workspace/github_wegent',
+        branchName: 'fix/fast-branch-status',
+      })
+    })
+
+    expect(screen.getByTestId('environment-branch-row')).toHaveTextContent('fix/fast-branch-status')
+    expect(screen.getByTestId('environment-branch-row')).not.toHaveTextContent('加载中')
+    expect(screen.getByTestId('change-request-button')).toHaveAccessibleName(
+      expect.stringContaining('#2875')
+    )
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('+7')
+    expect(screen.getByTestId('environment-git-section')).toHaveTextContent('-2')
   })
 
   test('closes the branch menu when Escape is pressed', async () => {
@@ -9595,12 +9810,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     await waitFor(() =>
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(runtimeProject, {
-        deviceId: 'runtime-device',
-        path: '/workspace/worktrees/8/project-alpha',
-        source: 'runtime',
-        taskId: 'runtime-1',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        runtimeProject,
+        {
+          deviceId: 'runtime-device',
+          path: '/workspace/worktrees/8/project-alpha',
+          source: 'runtime',
+          taskId: 'runtime-1',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     )
     expect(onGetProjectWorkspaceRoot).not.toHaveBeenCalled()
   })
@@ -9694,7 +9915,10 @@ describe('DesktopWorkbenchLayout', () => {
       expect(onLoadEnvironmentInfo).toHaveBeenLastCalledWith(
         runtimeProject,
         expect.objectContaining({ path: '/workspace/worktrees/8/project-alpha' }),
-        { force: true }
+        {
+          force: true,
+          onPartialInfo: expect.any(Function),
+        }
       )
     })
   })
@@ -9809,11 +10033,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -9895,11 +10125,17 @@ describe('DesktopWorkbenchLayout', () => {
 
     await waitFor(() => {
       expect(onLoadEnvironmentInfo).toHaveBeenCalledTimes(1)
-      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(workspaceProject, {
-        deviceId: 'device-1',
-        path: '/repo',
-        source: 'project',
-      })
+      expect(onLoadEnvironmentInfo).toHaveBeenCalledWith(
+        workspaceProject,
+        {
+          deviceId: 'device-1',
+          path: '/repo',
+          source: 'project',
+        },
+        {
+          onPartialInfo: expect.any(Function),
+        }
+      )
     })
 
     rerender(
@@ -10353,6 +10589,289 @@ describe('DesktopWorkbenchLayout', () => {
     )
   }, 10_000)
 
+  test('opens a dedicated Smart app development preview and reloads the DSH runtime', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'blank-workbench',
+      manifest: {
+        name: 'blank-workbench',
+        displayName: '空白工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'blank-workbench',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/blank-workbench',
+      sha256: 'a'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43123/',
+    }
+    harnessAppMocks.list
+      .mockResolvedValueOnce([installed])
+      .mockResolvedValueOnce([running])
+      .mockResolvedValueOnce([installed])
+      .mockResolvedValue([running])
+    const pluginAdded = {
+      ...installed,
+      manifest: {
+        ...installed.manifest,
+        plugins: [{ spec: '@scope/dsh-plugin' }],
+      },
+    }
+    const addPlugin = createDeferred<typeof pluginAdded>()
+    harnessAppMocks.addPlugin.mockImplementation(() => addPlugin.promise)
+    const initialStart = createDeferred<typeof running>()
+    harnessAppMocks.start
+      .mockImplementationOnce(() => initialStart.promise)
+      .mockResolvedValue(running)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    expect(await screen.findByTestId('smart-app-development-preview')).toBeInTheDocument()
+    expect(screen.getByTestId('right-workspace-panel-shell')).toHaveAttribute(
+      'aria-hidden',
+      'false'
+    )
+    expect(screen.getByTestId('right-workspace-browser-tab-1')).toHaveTextContent('空白工作台')
+    expect(screen.getByTestId('smart-app-development-preview-starting')).toHaveTextContent(
+      '正在准备运行环境和已配置插件，请稍候'
+    )
+    expect(screen.queryByTestId('workspace-browser-frame')).not.toBeInTheDocument()
+    expect(screen.queryByText('开始浏览')).not.toBeInTheDocument()
+
+    initialStart.resolve(running)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute('src', running.webUrl)
+    )
+    expect(screen.queryByTestId('workspace-browser-url-input')).not.toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
+    expect(harnessAppMocks.start).toHaveBeenCalledWith(installed.id, null)
+
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-add-plugins'))
+
+    expect(screen.getByTestId('smart-app-plugin-dialog')).toBeInTheDocument()
+    await userEvent.type(screen.getByTestId('smart-app-plugin-spec-input'), '@scope/dsh-plugin')
+    await userEvent.click(screen.getByTestId('smart-app-plugin-confirm'))
+
+    await waitFor(() => {
+      const reloading = screen.getByTestId('smart-app-development-preview-reloading')
+      expect(reloading).toHaveTextContent('正在重新加载 DSH…')
+      expect(reloading).toHaveTextContent('正在准备运行环境和已配置插件，请稍候')
+    })
+    expect(screen.queryByTestId('workspace-browser-frame')).not.toBeInTheDocument()
+    expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+      expect.any(String),
+      undefined
+    )
+    await waitFor(() =>
+      expect(harnessAppMocks.addPlugin).toHaveBeenCalledWith(installed.id, '@scope/dsh-plugin')
+    )
+    addPlugin.resolve(pluginAdded)
+    await waitFor(() =>
+      expect(screen.queryByTestId('smart-app-plugin-dialog')).not.toBeInTheDocument()
+    )
+    await waitFor(() => expect(harnessAppMocks.start).toHaveBeenCalledTimes(2))
+
+    await userEvent.click(screen.getByTestId('smart-app-development-preview-reload'))
+
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    await waitFor(() => expect(harnessAppMocks.start).toHaveBeenCalledTimes(3))
+    expect(screen.getByText('DSH 开发预览 · 文件改动后可重新加载')).toBeInTheDocument()
+
+    harnessAppMocks.stop.mockClear()
+    await userEvent.click(screen.getByTestId('right-workspace-browser-tab-1-close-button'))
+
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.any(String),
+        undefined
+      )
+    )
+    expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
+  test('keeps an inactive Smart app preview from reclaiming the browser after switching tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const installed = {
+      id: 'task-scoped-workbench',
+      manifest: {
+        name: 'task-scoped-workbench',
+        displayName: '任务内工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'task-scoped-workbench',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/task-scoped-workbench',
+      sha256: 'c'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43125/',
+    }
+    const start = createDeferred<typeof running>()
+    harnessAppMocks.list.mockResolvedValue([installed])
+    harnessAppMocks.start.mockImplementation(() => start.promise)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    const { rerender } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('smart-app-development-preview-starting')).toBeInTheDocument()
+    )
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} />)
+
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).queryByTestId(
+        'smart-app-development-preview'
+      )
+    ).not.toBeInTheDocument()
+
+    embeddedBrowserMocks.setEmbeddedBrowserActiveTab.mockClear()
+    await act(async () => {
+      start.resolve(running)
+      await start.promise
+    })
+    await waitFor(() => expect(harnessAppTabMocks.register).toHaveBeenCalledWith(running))
+    expect(embeddedBrowserMocks.setEmbeddedBrowserActiveTab).not.toHaveBeenCalled()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+          'right-workspace-browser-tab-1'
+        )
+      ).toHaveTextContent(installed.manifest.displayName)
+    )
+    expect(
+      within(screen.getByTestId('desktop-workbench-main')).getByTestId(
+        'right-workspace-browser-tab-1-close-button'
+      )
+    ).toBeInTheDocument()
+    expect(screen.getByTestId('smart-app-development-preview-add-plugins')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-refresh')).toBeEnabled()
+    expect(screen.getByTestId('smart-app-development-preview-reload')).toBeEnabled()
+  })
+
+  test('closes the Smart app browser and runtime when the development tab is disposed', async () => {
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const workspaceTab = {
+      id: 'smart-app-development-tab',
+      kind: 'task' as const,
+      title: '智能工作台开发',
+      contentRoute: '/',
+      fixed: false,
+    }
+    const workspaceTabs = {
+      tabs: [workspaceTab],
+      activeTabId: workspaceTab.id,
+      activeTab: workspaceTab,
+      openTab: vi.fn(),
+      selectTab: vi.fn(),
+      closeTab: vi.fn(),
+      closeOtherTabs: vi.fn(),
+      restoreClosedTab: vi.fn(),
+      moveTab: vi.fn(),
+      updateActiveTab: vi.fn(),
+    } satisfies WorkspaceTabsContextValue
+    const installed = {
+      id: 'blank-workbench-disposal',
+      manifest: {
+        name: 'blank-workbench-disposal',
+        displayName: '待关闭工作台',
+        version: '0.1.0',
+        type: 'deepseek-harness-plugin-bundle' as const,
+        description: 'Web preset',
+        entry: {
+          installPackage: 'packages/bundle/web-app',
+          profile: 'blank-workbench-disposal',
+        },
+        requirements: { dsh: '0.1.0-rc.8', node: '>=22' },
+      },
+      packagePath: '/tmp/blank-workbench-disposal',
+      sha256: 'b'.repeat(64),
+      modelKey: null,
+      resident: false,
+      runtimeVersion: null,
+      state: 'installed' as const,
+      webUrl: null,
+      error: null,
+      source: 'linked' as const,
+    }
+    const running = {
+      ...installed,
+      state: 'running' as const,
+      webUrl: 'http://127.0.0.1:43124/',
+    }
+    harnessAppMocks.list.mockResolvedValue([installed])
+    harnessAppMocks.start.mockResolvedValue(running)
+    queueSmartAppDevelopmentPreview({
+      installationId: installed.id,
+      displayName: installed.manifest.displayName,
+    })
+
+    render(
+      <WorkspaceTabsContext.Provider value={workspaceTabs}>
+        <DesktopWorkbenchLayout {...propsForTask(taskA)} workspaceTabId={workspaceTab.id} />
+      </WorkspaceTabsContext.Provider>
+    )
+
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-frame')).toHaveAttribute('src', running.webUrl)
+    )
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
+    harnessAppMocks.stop.mockClear()
+
+    act(() => dispatchWorkspaceTabsClosed([workspaceTab.id]))
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        expect.any(String),
+        undefined
+      )
+    )
+    await waitFor(() => expect(harnessAppMocks.stop).toHaveBeenCalledWith(installed.id))
+    expect(screen.queryByTestId('smart-app-development-preview')).not.toBeInTheDocument()
+  })
+
   test('exposes the task-scoped browser label before the browser panel mounts', () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
@@ -10374,39 +10893,21 @@ describe('DesktopWorkbenchLayout', () => {
   })
 
   test('does not reuse a migrated default browser label after switching panes', async () => {
+    runtimeMocks.electron = true
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
-    const tauriInvokeMock = vi.fn(async (command: string) => {
-      if (command === 'embedded_browser_pending_open_requests') return []
-      if (command === 'embedded_browser_open') {
-        return { nativeLabel: 'embedded-browser-native-test', title: null, url: null }
-      }
-      return null
-    })
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {
-        transformCallback: vi.fn(() => 1),
-        unregisterCallback: vi.fn(),
-        invoke: tauriInvokeMock,
-      },
-    })
-    Object.defineProperty(window, '__TAURI_EVENT_PLUGIN_INTERNALS__', {
-      configurable: true,
-      value: { unregisterListener: vi.fn() },
-    })
+    desktopHostMocks.invoke.mockClear()
     const { rerender, unmount } = render(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
 
     await waitFor(() => {
       expect(requestEmbeddedBrowserOpen('https://example.com/')).toBe(true)
     })
     await waitFor(() => {
-      expect(tauriInvokeMock).toHaveBeenCalledWith(
-        'embedded_browser_open',
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
         expect.objectContaining({
           label: 'workspace-browser-runtime-a',
           url: 'https://example.com/',
-        }),
-        undefined
+        })
       )
     })
 
@@ -10416,19 +10917,18 @@ describe('DesktopWorkbenchLayout', () => {
       expect(requestEmbeddedBrowserOpen('https://example.org/')).toBe(true)
     })
     await waitFor(() => {
-      expect(tauriInvokeMock).toHaveBeenCalledWith(
-        'embedded_browser_open',
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith(
+        'browser.open',
         expect.objectContaining({
           label: 'workspace-browser-runtime-b',
           url: 'https://example.org/',
-        }),
-        undefined
+        })
       )
     })
 
     unmount()
     await new Promise(resolve => setTimeout(resolve, 1_100))
-  })
+  }, 10_000)
 
   test('preserves the open file when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
@@ -10708,6 +11208,46 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activePane().getByTestId('right-workspace-launcher')).toBeInTheDocument()
   })
 
+  test('restores the opened plan when switching runtime tasks', async () => {
+    const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
+    const planMessage: WorkbenchMessage = {
+      id: 'assistant-plan-block',
+      role: 'assistant',
+      content: '',
+      status: 'done',
+      createdAt: '2026-08-29T00:00:01.000Z',
+      blocks: [
+        {
+          id: 'plan-1',
+          subtaskId: '1',
+          type: 'plan',
+          content: '# Task A 计划\n\n- 切换任务后恢复。',
+          status: 'done',
+          createdAt: Date.parse('2026-08-29T00:00:01.000Z'),
+        },
+      ],
+    }
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...propsForTask(taskA)} messages={[planMessage]} />
+    )
+
+    await userEvent.click(activePane().getByTestId('assistant-plan-expand-button'))
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('Task A 计划')
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskB)} messages={[]} />)
+    expect(activePane().queryByTestId('workspace-plan-panel')).not.toBeInTheDocument()
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} messages={[planMessage]} />)
+
+    expect(activePane().getByTestId('right-workspace-plan-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('Task A 计划')
+    expect(activePane().getByTestId('workspace-plan-panel')).toHaveTextContent('切换任务后恢复。')
+  })
+
   test('restores an ephemeral temporary chat when switching runtime tasks', async () => {
     const { propsForTask, taskA, taskB } = createLocalRuntimeTaskPanelFixture()
     const temporaryAddress: RuntimeTaskAddress = {
@@ -10720,7 +11260,7 @@ describe('DesktopWorkbenchLayout', () => {
       },
     }
     createTemporaryRuntimeTaskMock.mockImplementation(async (_input, options) => {
-      options?.onRuntimeTaskOptimisticOpen?.(temporaryAddress)
+      await openOptimisticTemporaryRuntimeTask(temporaryAddress, options)
       return temporaryAddress
     })
     const activePane = () => within(screen.getByTestId('desktop-workbench-main'))

@@ -8,25 +8,29 @@ import {
   Undo2,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkbenchHarnessSelector } from '@/components/layout/WorkbenchHarnessSelector'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
+import {
+  runtimeTaskProjectUiId,
+  withoutRuntimeTaskWorkspaceBinding,
+} from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
 import type {
-  Attachment,
-  ModelOptions,
-  ModelType,
+  ProjectExecutionMode,
   ProjectWithTasks,
-  RuntimeSendRequest,
   RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
 } from '@/types/api'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
-import { projectSpaceChatRuntimeContext } from './projectProviderConfig'
+import { useProjectRuntimeTaskComposer } from './useProjectRuntimeTaskComposer'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
+import { buildWorkItemRuntimeContext } from './workItemRuntimeContext'
 
 interface AiChatModalProps {
   project: CloudProject
@@ -37,12 +41,13 @@ interface AiChatModalProps {
    * even while the temporary task is still executing. */
   open: boolean
   onClose: () => void
+  onBack?: () => void
   initialAddress?: RuntimeTaskAddress | null
   initialLocalProjectId?: number | null
+  initialTaskRequest?: RuntimeTaskCreateRequest | null
   inheritFromTask?: RuntimeTaskAddress | null
   taskTitle?: string | null
   initialTaskInput?: string
-  autoSubmitInitialTaskInput?: boolean
   workflowNodeId?: string
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
   onAddressChange?: (address: RuntimeTaskAddress) => void
@@ -50,6 +55,10 @@ interface AiChatModalProps {
     address: RuntimeTaskAddress,
     localProject: ProjectWithTasks | null
   ) => Promise<void> | void
+  prepareTask?: (
+    address: RuntimeTaskAddress,
+    localProject: ProjectWithTasks | null
+  ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
   embedded?: boolean
 }
 
@@ -72,24 +81,31 @@ export function AiChatModal({
   task,
   open,
   onClose,
+  onBack,
   initialAddress = null,
   initialLocalProjectId = null,
+  initialTaskRequest = null,
   inheritFromTask = null,
   taskTitle,
   initialTaskInput = '',
-  autoSubmitInitialTaskInput = false,
   workflowNodeId,
   onOpenRuntimeTask,
   onAddressChange,
   onTaskCreated,
+  prepareTask,
   embedded = false,
 }: AiChatModalProps) {
   const { t } = useTranslation('common')
-  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
+  const { state } = useWorkbenchPaneContext()
+  const runtimeTaskProjects = useMemo(
+    () => resolveRuntimeTaskProjects(localProjects, state?.runtimeWork),
+    [localProjects, state?.runtimeWork]
+  )
   const storageKey = lastAddressStorageKey(project.id, task?.id)
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(
     () => initialAddress ?? storedLastAddress(storageKey)
   )
+  const notifiedInitialAddressRef = useRef(Boolean(initialAddress))
   // Compose a fresh temporary task (panel remounts without a saved address)
   // or return to the current conversation. The panel only reads the address on
   // mount, so explicit toggles bump the remount key; creating a new runtime
@@ -97,15 +113,28 @@ export function AiChatModal({
   const [composeNew, setComposeNew] = useState(false)
   const [sessionKey, setSessionKey] = useState(0)
   const [localProjectId, setLocalProjectId] = useState<number | null>(() => {
+    const requestedProjectId = runtimeTaskProjectUiId(state?.runtimeWork, initialTaskRequest)
     const matched =
-      localProjects.find(candidate => candidate.id === initialLocalProjectId) ??
-      localProjects.find(candidate => String(candidate.id) === String(project.id)) ??
-      localProjects[0]
+      runtimeTaskProjects.find(
+        candidate => candidate.id === (requestedProjectId ?? initialLocalProjectId)
+      ) ??
+      runtimeTaskProjects.find(candidate => String(candidate.id) === String(project.id)) ??
+      runtimeTaskProjects[0]
     return matched?.id ?? null
   })
-  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
+  const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(
+    initialTaskRequest?.deviceWorkspaceId ?? null
+  )
+  const [executionMode, setExecutionMode] = useState<ProjectExecutionMode>(
+    initialTaskRequest?.execution?.workspace?.source === 'git_worktree'
+      ? 'git_worktree'
+      : 'current_workspace'
+  )
+  const [worktreeBranch, setWorktreeBranch] = useState<string | null>(
+    initialTaskRequest?.execution?.workspace?.branch ?? null
+  )
   const selectedLocalProject =
-    localProjects.find(candidate => candidate.id === localProjectId) ?? null
+    runtimeTaskProjects.find(candidate => candidate.id === localProjectId) ?? null
   const selectLocalProject = useCallback((projectId: number | null) => {
     setLocalProjectId(projectId)
     setLocalDeviceWorkspaceId(null)
@@ -117,72 +146,8 @@ export function AiChatModal({
     },
     []
   )
-  const runtimeContext = useMemo<
-    Pick<RuntimeSendRequest, 'cloudProjectId' | 'origin' | 'additionalContext'>
-  >(
-    () => ({
-      cloudProjectId: String(project.id),
-      ...(task
-        ? {
-            origin: {
-              type: 'board_task' as const,
-              cloudProjectId: String(project.id),
-              loopItemId: String(task.id),
-            },
-          }
-        : {}),
-      additionalContext: {
-        ...projectSpaceChatRuntimeContext(project),
-        ...(task
-          ? {
-              issueEnvironment: {
-                kind: 'application' as const,
-                value: [
-                  '<issue_environment>',
-                  JSON.stringify({
-                    project: {
-                      id: String(project.id),
-                      name: project.name,
-                      description: project.description ?? '',
-                    },
-                    issue: {
-                      id: String(task.id),
-                      title: task.title,
-                      description: task.description ?? '',
-                      status: task.status,
-                      priority: task.priority,
-                      tags: task.tags ?? [],
-                      assigneeUserId: task.assignee_user_id ?? null,
-                      assigneeAgentId: task.assignee_agent_id || null,
-                      dueDate: task.due_at ?? null,
-                    },
-                    orchestration: task.workflow
-                      ? {
-                          advancementPolicy: task.workflow.advancement_policy ?? 'manual',
-                          stageMode:
-                            task.workflow.stage_mode ??
-                            (task.workflow.nodes.length ? 'dag' : 'none'),
-                          currentStageId: workflowNodeId ?? null,
-                          stages: task.workflow.nodes.map(node => ({
-                            id: node.id,
-                            name: node.name,
-                            prompt: node.prompt ?? '',
-                            status: node.status,
-                            dependsOn: node.depends_on,
-                            dependencyContext: node.dependency_context ?? {},
-                            required: node.required,
-                          })),
-                        }
-                      : null,
-                  }),
-                  '</issue_environment>',
-                  'Treat this Issue as immutable execution context. The user message is the concrete task instruction.',
-                ].join('\n'),
-              },
-            }
-          : {}),
-      },
-    }),
+  const runtimeContext = useMemo(
+    () => buildWorkItemRuntimeContext(project, task, workflowNodeId),
     [project, task, workflowNodeId]
   )
 
@@ -200,44 +165,34 @@ export function AiChatModal({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [onClose, open])
 
-  const createConversation = useCallback(
-    async (
-      message: string,
-      options: {
-        attachments: Attachment[]
-        executionModel: {
-          modelId?: string
-          modelType?: ModelType | null
-          modelOptions?: ModelOptions
-        }
-        onError: (message: string) => void
-        onRuntimeTaskOptimisticOpen: (address: RuntimeTaskAddress) => void
-      }
-    ) => {
-      const address = await createProjectRuntimeTask(message, {
-        project: selectedLocalProject,
-        deviceWorkspaceId: localDeviceWorkspaceId,
-        workspaceSource: inheritFromTask,
-        runtime: 'codex',
-        attachments: options.attachments,
-        executionModel: options.executionModel,
-        collaborationMode: 'default',
-        ...runtimeContext,
-        onError: options.onError,
-        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-      })
-      if (address) await onTaskCreated?.(address, selectedLocalProject)
-      return address
-    },
-    [
-      createProjectRuntimeTask,
-      inheritFromTask,
-      localDeviceWorkspaceId,
-      onTaskCreated,
-      runtimeContext,
-      selectedLocalProject,
-    ]
+  const taskRequest = useMemo(
+    () =>
+      initialTaskRequest
+        ? {
+            ...withoutRuntimeTaskWorkspaceBinding(initialTaskRequest),
+            execution:
+              executionMode === 'git_worktree'
+                ? {
+                    workspace: {
+                      source: 'git_worktree' as const,
+                      ...(worktreeBranch?.trim() ? { branch: worktreeBranch.trim() } : {}),
+                    },
+                  }
+                : undefined,
+            ...runtimeContext,
+          }
+        : null,
+    [executionMode, initialTaskRequest, runtimeContext, worktreeBranch]
   )
+  const createConversation = useProjectRuntimeTaskComposer({
+    project: selectedLocalProject,
+    deviceWorkspaceId: localDeviceWorkspaceId,
+    workspaceSource: inheritFromTask,
+    taskRequest,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  })
 
   const rememberAddress = useCallback(
     (address: RuntimeTaskAddress | null) => {
@@ -245,7 +200,10 @@ export function AiChatModal({
       window.localStorage.setItem(storageKey, JSON.stringify(address))
       setCurrentAddress(address)
       setComposeNew(false)
-      onAddressChange?.(address)
+      if (!notifiedInitialAddressRef.current) {
+        notifiedInitialAddressRef.current = true
+        onAddressChange?.(address)
+      }
     },
     [onAddressChange, storageKey]
   )
@@ -267,11 +225,11 @@ export function AiChatModal({
         instanceId={instanceId}
         testId={testId}
         initialInput={initialTaskInput}
-        autoSubmitInitialInput={autoSubmitInitialTaskInput}
         initialAddress={options.startFresh ? null : currentAddress}
         createTask={createConversation}
         onAddressChange={rememberAddress}
         runtimeContext={runtimeContext}
+        allowInitialGoal
         emptyStateText={t(
           'todo.issue_task_composer_empty',
           '描述这个任务要完成什么，发送后会创建任务并关联当前 Issue。'
@@ -299,8 +257,12 @@ export function AiChatModal({
       <ConnectedIssueProjectWork
         project={selectedLocalProject}
         selectedDeviceWorkspaceId={localDeviceWorkspaceId}
+        executionMode={executionMode}
+        worktreeBranch={worktreeBranch}
         onSelectProject={selectLocalProject}
         onSelectProjectWorkspace={selectLocalProjectWorkspace}
+        onExecutionModeChange={setExecutionMode}
+        onWorktreeBranchChange={setWorktreeBranch}
         inheritFromTask={inheritFromTask}
       >
         {projectWork => composer(projectWork)}
@@ -317,40 +279,49 @@ export function AiChatModal({
           data-testid="ai-chat-modal-backdrop"
           data-presentation="sidebar"
           className={cn(
-            'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
+            'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
             !open && 'hidden'
           )}
         >
-          <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
-            <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+          <section
+            data-testid="ai-chat-modal"
+            className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+          >
+            <header className="flex h-12 shrink-0 items-center gap-2 px-3">
               <button
                 type="button"
-                data-testid="ai-chat-modal-close"
-                onClick={onClose}
+                data-testid="ai-chat-modal-back"
+                onClick={onBack ?? onClose}
                 aria-label={t('workbench.back_to_work_item', '返回 Issue')}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
               >
                 <ArrowLeft className="h-4 w-4" />
               </button>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs text-text-muted">
-                  {task?.id} · {t('workbench.task_conversation', '任务会话')}
-                </div>
-                <div className="truncate text-sm font-medium text-text-primary">
-                  {taskTitle || initialAddress.taskId}
-                </div>
-              </div>
+              <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+                <b className="font-medium text-text-secondary">{task?.id}</b>
+                {' · '}
+                {t('workbench.task_conversation', '任务对话')}
+              </span>
               {onOpenRuntimeTask ? (
                 <button
                   type="button"
                   data-testid="ai-chat-open-runtime-task"
                   onClick={() => void onOpenRuntimeTask(initialAddress)}
-                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-sm text-text-primary transition hover:bg-muted"
+                  className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs text-text-secondary transition hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.open_full_task', '打开完整任务')}
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               ) : null}
+              <button
+                type="button"
+                data-testid="ai-chat-modal-close"
+                onClick={onClose}
+                aria-label={t('common.close', '关闭')}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </header>
             <TemporaryChatPanel
               currentProject={selectedLocalProject}
@@ -476,12 +447,15 @@ export function AiChatModal({
         data-testid="ai-chat-modal-backdrop"
         data-presentation="sidebar"
         className={cn(
-          'relative z-10 flex h-full min-h-0 w-[min(620px,38vw)] min-w-[460px] shrink-0 flex-col border-l border-border bg-background',
+          'task-conversation-workspace-panel relative z-10 flex h-full min-h-0 shrink-0 flex-col rounded-2xl bg-background',
           !open && 'hidden'
         )}
       >
-        <section data-testid="ai-chat-modal" className="flex h-full min-h-0 min-w-0 flex-col">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+        <section
+          data-testid="ai-chat-modal"
+          className="todo-floating-panel-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background"
+        >
+          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
             <button
               type="button"
               data-testid="ai-chat-modal-close"
@@ -491,14 +465,11 @@ export function AiChatModal({
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
-            <div className="min-w-0 flex-1">
-              <div className="text-xs text-text-muted">
-                {task?.id} · {t('workbench.runtime_task', '任务')}
-              </div>
-              <div className="truncate text-sm font-medium text-text-primary">
-                {t('todo.new_task')}
-              </div>
-            </div>
+            <span className="min-w-0 flex-1 truncate text-xs text-text-muted">
+              <b className="font-medium text-text-secondary">{task?.id}</b>
+              {' · '}
+              {t('todo.new_task')}
+            </span>
           </header>
           {renderNewTaskComposer(
             `work-item-new-task:${project.id}:${task?.id ?? 'project'}`,

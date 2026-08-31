@@ -35,6 +35,43 @@ const logger = createLogger()
 const defaultWarn = logger.warn.bind(logger)
 const browserExternalPackages = ['/avsc/', '/ag-psd/', '/jszip/', '/@ljheee/xmind-parser/']
 
+function preserveDshUiEntryExports() {
+  return {
+    name: 'wework-preserve-dsh-ui-entry-exports',
+    options(options: {
+      preserveEntrySignatures?: false | 'strict' | 'allow-extension' | 'exports-only'
+    }) {
+      return {
+        ...options,
+        preserveEntrySignatures: 'strict' as const,
+      }
+    },
+    generateBundle(
+      _options: unknown,
+      bundle: Record<
+        string,
+        {
+          exports?: string[]
+          isEntry?: boolean
+          name?: string
+          type: 'asset' | 'chunk'
+        }
+      >
+    ) {
+      for (const output of Object.values(bundle)) {
+        if (
+          output.type === 'chunk' &&
+          output.isEntry &&
+          output.name?.startsWith('wework-ui-') &&
+          !output.exports?.includes('default')
+        ) {
+          throw new Error(`DSH UI entry "${output.name}" must preserve its default export`)
+        }
+      }
+    },
+  }
+}
+
 logger.warn = (message, options) => {
   const isKnownBrowserExternal =
     message.includes('has been externalized for browser compatibility') &&
@@ -47,10 +84,11 @@ export default defineConfig({
   customLogger: logger,
   plugins: [
     react(),
+    preserveDshUiEntryExports(),
     fileViewerRenderers({
       preset: 'auto',
       autoPresets: ['office', 'lite', 'engineering'],
-      copyAssets: true,
+      copyAssets: process.env.VITEST !== 'true',
       chunkStrategy: 'renderer',
     }),
   ],
@@ -69,6 +107,39 @@ export default defineConfig({
     // File-viewer renderers are split into dedicated chunks; the desktop shell
     // intentionally remains a single entry bundle.
     chunkSizeWarningLimit: 5_000,
+    rolldownOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        'wework-ui-applications': path.resolve(__dirname, 'dsh/ui-applications/src/route.tsx'),
+        'wework-ui-automations': path.resolve(__dirname, 'dsh/ui-automations/src/route.tsx'),
+        'wework-ui-cloud-work': path.resolve(__dirname, 'dsh/ui-cloud-work/src/route.tsx'),
+        'wework-ui-cloud-work-sidebar': path.resolve(
+          __dirname,
+          'dsh/ui-cloud-work/src/sidebar-navigation.tsx'
+        ),
+        'wework-ui-core-settings': path.resolve(
+          __dirname,
+          'dsh/ui-core-settings/src/settings-page.tsx'
+        ),
+        'wework-ui-core-apps': path.resolve(__dirname, 'dsh/ui-core-apps/src/app-surface.tsx'),
+        'wework-ui-plugin-center-catalog': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/catalog-route.tsx'
+        ),
+        'wework-ui-plugin-center-create': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/create-route.tsx'
+        ),
+        'wework-ui-plugin-center-management': path.resolve(
+          __dirname,
+          'dsh/ui-plugin-center/src/management-route.tsx'
+        ),
+      },
+      output: {
+        entryFileNames: chunk =>
+          chunk.name.startsWith('wework-ui-') ? 'plugins/[name].js' : 'assets/[name]-[hash].js',
+      },
+    },
   },
   server: {
     host: '0.0.0.0',
@@ -116,7 +187,13 @@ export default defineConfig({
     // Keep local and pre-push runs below the resource-contention point where
     // jsdom-heavy files begin timing out nondeterministically.
     maxWorkers: 2,
-    exclude: [...configDefaults.exclude, 'e2e/**', 'test-results/**'],
+    exclude: [
+      ...configDefaults.exclude,
+      'dsh/**/*.test.mjs',
+      'e2e/**',
+      'scripts/harness-runtime-metadata.test.mjs',
+      'test-results/**',
+    ],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'lcov'],

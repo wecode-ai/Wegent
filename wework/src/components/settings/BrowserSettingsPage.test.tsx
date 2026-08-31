@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import type { AppPreferences } from '@/tauri/appPreferences'
+import type { AppPreferences } from '@/desktop/appPreferences'
 import './../../../src/i18n'
 import { BrowserSettingsPage } from './BrowserSettingsPage'
 
@@ -31,8 +31,8 @@ const preferences: AppPreferences = vi.hoisted(() => ({
   browserAskBeforeDownload: false,
 }))
 
-vi.mock('@/tauri/appPreferences', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/tauri/appPreferences')>()
+vi.mock('@/desktop/appPreferences', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/desktop/appPreferences')>()
   return {
     ...actual,
     defaultAppPreferences: preferences,
@@ -50,6 +50,21 @@ vi.mock('@/lib/native-directory-picker', () => ({
   openNativeDirectoryPicker: openNativeDirectoryPickerMock,
 }))
 
+const navigateToMock = vi.hoisted(() => vi.fn())
+const searchHistoryMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/navigation', () => ({
+  navigateTo: navigateToMock,
+  toBrowserPath: (path: string) => path,
+}))
+
+vi.mock('@/lib/embedded-browser-history', () => ({
+  searchEmbeddedBrowserHistory: searchHistoryMock,
+  removeEmbeddedBrowserHistoryEntries: vi.fn(),
+  embeddedBrowserHistoryEntryKey: (entry: { id: string }) => entry.id,
+  embeddedBrowserHistoryNextCursor: vi.fn(() => null),
+}))
+
 describe('BrowserSettingsPage', () => {
   beforeEach(() => {
     getAppPreferencesMock.mockReset()
@@ -62,6 +77,9 @@ describe('BrowserSettingsPage', () => {
     )
     clearEmbeddedBrowserDataMock.mockResolvedValue(1)
     openNativeDirectoryPickerMock.mockResolvedValue(null)
+    navigateToMock.mockReset()
+    searchHistoryMock.mockReset()
+    searchHistoryMock.mockResolvedValue([])
   })
 
   test('renders configured link targets without implementation notices', async () => {
@@ -135,5 +153,25 @@ describe('BrowserSettingsPage', () => {
     expect(await screen.findByTestId('browser-settings-status')).toHaveTextContent(
       '内置浏览器数据已清除'
     )
+  })
+
+  test('navigates to the browsing history page from the general section', async () => {
+    render(<BrowserSettingsPage />)
+
+    const manageButton = await screen.findByTestId('browser-history-manage-button')
+    await waitFor(() => expect(manageButton).toBeEnabled())
+    await userEvent.click(manageButton)
+
+    expect(navigateToMock).toHaveBeenCalledWith('/settings/browser/history')
+  })
+
+  test('renders the browsing history subview on the history path', async () => {
+    searchHistoryMock.mockResolvedValue([])
+    window.history.pushState({}, '', '/settings/browser/history')
+    render(<BrowserSettingsPage />)
+
+    expect(await screen.findByTestId('browser-history-page')).toBeInTheDocument()
+    expect(await screen.findByTestId('browser-history-empty')).toBeInTheDocument()
+    window.history.pushState({}, '', '/')
   })
 })

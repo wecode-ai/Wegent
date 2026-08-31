@@ -24,7 +24,6 @@ export interface UserPreferences {
     string,
     {
       use_user_config?: boolean
-      use_proxy?: boolean
     }
   > | null
 }
@@ -168,6 +167,10 @@ export interface ProjectWithTasks {
   client_origin?: string
   config?: ProjectConfig | null
   tasks?: ProjectTask[]
+}
+
+export interface CreatedRuntimeProject extends ProjectWithTasks {
+  runtimeProjectKey: string
 }
 
 export type ProjectExecutionMode = 'current_workspace' | 'git_worktree'
@@ -382,6 +385,7 @@ export interface RuntimeTaskSummary {
   queuePosition?: number | null
   goalStatus?: RuntimeGoalStatus | null
   optimistic?: boolean
+  cachedProjection?: boolean
   error?: string | null
   runtimeHandle?: Record<string, unknown> | null
   modelSelection?: ModelSelectionConfig | null
@@ -485,6 +489,7 @@ export interface RuntimeProjectRef {
   source?: 'legacy_root' | 'local_project' | 'remote_project' | string
   stateDeviceId?: string | null
   roots?: RuntimeProjectRoot[]
+  sidebarOrder?: number | null
   pinned?: boolean
   pinnedOrder?: number | null
   active?: boolean
@@ -975,6 +980,7 @@ export interface RuntimeTaskPinRequest {
 
 export interface BindRuntimeTaskIMSessionsRequest {
   address: RuntimeTaskAddress
+  taskTitle: string
   sessionKeys: string[]
   modelSelection?: ModelSelectionConfig | null
 }
@@ -1288,7 +1294,15 @@ export interface RuntimeTaskCancelResponse {
   error?: string | null
 }
 
+export interface RuntimeTaskExecutionConfig {
+  workspace?: {
+    source: 'git_worktree'
+    branch?: string
+  }
+}
+
 export interface RuntimeTaskCreateRequest {
+  schemaVersion?: 1 | 2
   projectId?: number
   deviceWorkspaceId?: number
   deviceId?: string
@@ -1300,7 +1314,6 @@ export interface RuntimeTaskCreateRequest {
   projectInstructions?: string
   projectPlugins?: RuntimeProjectPluginRef[]
   taskId?: string
-  teamId: number
   runtime: RuntimeName
   runtimeExecutablePath?: string
   runtimePermissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'bypassPermissions'
@@ -1317,11 +1330,12 @@ export interface RuntimeTaskCreateRequest {
   additionalSkills?: SkillRef[]
   attachmentIds?: number[]
   attachments?: Attachment[]
-  execution?: ChatSendPayload['execution']
+  execution?: RuntimeTaskExecutionConfig
   initialGoal?: RuntimeGoalCreateInput | null
   initialSupervisor?: RuntimeSupervisorCreateInput | null
   ephemeral?: boolean
   sideSource?: RuntimeTaskAddress | null
+  workspaceSourceTask?: RuntimeTaskAddress | null
   deliveryId?: string
   cloudProjectId?: string
   origin?: {
@@ -2527,6 +2541,7 @@ export interface ChatBlockUpdatedPayload {
   subtaskId?: string
   blockId: string
   content?: string
+  contentDelta?: string
   toolOutput?: unknown
   toolOutputDelta?: string
   toolOutputTruncated?: boolean
@@ -2725,6 +2740,7 @@ export interface Attachment {
 export interface AttachmentUploadProgress {
   file: File
   progress: number
+  previewUrl?: string
 }
 
 export interface MultiAttachmentUploadState {

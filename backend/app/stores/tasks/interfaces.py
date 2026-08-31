@@ -577,6 +577,10 @@ class SubtaskStore(Protocol):
         self, db: Session, *, subtask_id: int, owner_user_id: Optional[int] = None
     ) -> Optional[Subtask]: ...
 
+    def get_basic_by_id_for_update(
+        self, db: Session, *, subtask_id: int, owner_user_id: Optional[int] = None
+    ) -> Optional[Subtask]: ...
+
     def get_by_id_and_role(
         self,
         db: Session,
@@ -901,6 +905,10 @@ class SubtaskStore(Protocol):
 
     def list_cleanup_subtasks_for_task(
         self, db: Session, *, task_id: int, owner_user_id: Optional[int] = None
+    ) -> list[Subtask]: ...
+
+    def list_cleanup_subtasks_for_executors(
+        self, db: Session, *, executors: list[tuple[str, str]]
     ) -> list[Subtask]: ...
 
     def update_status(

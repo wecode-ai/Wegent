@@ -16,6 +16,7 @@ from app.api.endpoints import (
     device_chat_tasks,
     devices,
     dingtalk_docs,
+    dsh_plugin_storage,
     external_tasks,
     feedback,
     groups,
@@ -43,11 +44,13 @@ from app.api.endpoints import (
     remote_devices,
     repository,
     resource_library,
+    runtime_profiles,
     runtime_work,
     share,
     sites,
     skill_identity,
     skill_market,
+    smart_apps,
     subtasks,
     system_skills,
     tables,
@@ -157,6 +160,21 @@ api_router.include_router(
     project_automations.router,
     prefix="/v1/cloud-projects",
     tags=["project-automations"],
+)
+api_router.include_router(
+    runtime_profiles.router,
+    prefix="/v1/runtime-profiles",
+    tags=["runtime-profiles"],
+)
+api_router.include_router(
+    dsh_plugin_storage.router,
+    prefix="/v1/dsh-plugin-storage",
+    tags=["dsh-plugin-storage"],
+)
+api_router.include_router(
+    runtime_profiles.project_router,
+    prefix="/v1/cloud-projects",
+    tags=["runtime-profiles"],
 )
 api_router.include_router(
     project_incoming_hooks.router,
@@ -327,6 +345,7 @@ api_router.include_router(
 )
 api_router.include_router(installed_mcps.router, prefix="/mcps", tags=["mcps"])
 api_router.include_router(installed_plugins.router, prefix="/plugins", tags=["plugins"])
+api_router.include_router(smart_apps.router, prefix="/smart-apps", tags=["smart-apps"])
 api_router.include_router(
     local_executor.router, prefix="/local-executor", tags=["local-executor"]
 )

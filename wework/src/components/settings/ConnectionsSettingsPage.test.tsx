@@ -1,8 +1,14 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { ConnectionsSettingsPage } from './ConnectionsSettingsPage'
 import { createDeviceApi } from '@/api/devices'
+import {
+  deleteLocalCodexModelCatalogOverride,
+  getLocalCodexModelCatalogOverrides,
+  getLocalCodexOfficialModels,
+  saveLocalCodexModelCatalogOverride,
+} from '@/api/local/codexOfficialModels'
 import { createUserApi } from '@/api/users'
 import { AppearanceProvider } from '@/features/appearance'
 import {
@@ -13,7 +19,8 @@ import type { CloudConnectionContextValue } from '@/features/cloud-connection/Cl
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
 import { saveLocalModelConfig } from '@/features/model-settings/localModelSettings'
 import { openExternalUrl } from '@/lib/external-links'
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
+import { preloadDefaultDshUiTestModules } from '@/test/setup'
 import '@/i18n'
 import type { DeviceInfo } from '@/types/devices'
 
@@ -61,7 +68,7 @@ vi.mock('@/config/runtime', () => ({
 
 vi.mock('@/api/http', () => ({
   createHttpClient: vi.fn((options: unknown) => ({ options })),
-  shouldUseTauriFetch: vi.fn(() => false),
+  shouldUseNativeFetch: vi.fn(() => false),
 }))
 
 vi.mock('@/api/models', () => ({
@@ -75,6 +82,9 @@ vi.mock('@/api/local/codexOfficialModels', () => ({
     providers: [],
     models: [],
   }),
+  getLocalCodexModelCatalogOverrides: vi.fn().mockResolvedValue([]),
+  saveLocalCodexModelCatalogOverride: vi.fn().mockResolvedValue(undefined),
+  deleteLocalCodexModelCatalogOverride: vi.fn().mockResolvedValue(undefined),
 }))
 
 vi.mock('@/api/local/runtimeAuthStatus', () => ({
@@ -105,7 +115,7 @@ vi.mock('@/lib/external-links', () => ({
   openExternalUrl: vi.fn(),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   ensureLocalExecutorStarted: vi.fn().mockResolvedValue({
     running: true,
     ready: true,
@@ -128,6 +138,10 @@ vi.mock('@/components/layout/workspace-panels/RemoteTerminal', () => ({
 const createDeviceApiMock = vi.mocked(createDeviceApi)
 const createUserApiMock = vi.mocked(createUserApi)
 const openExternalUrlMock = vi.mocked(openExternalUrl)
+const getLocalCodexOfficialModelsMock = vi.mocked(getLocalCodexOfficialModels)
+const getLocalCodexModelCatalogOverridesMock = vi.mocked(getLocalCodexModelCatalogOverrides)
+const saveLocalCodexModelCatalogOverrideMock = vi.mocked(saveLocalCodexModelCatalogOverride)
+const deleteLocalCodexModelCatalogOverrideMock = vi.mocked(deleteLocalCodexModelCatalogOverride)
 
 function cloudDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   return {
@@ -181,9 +195,15 @@ function remoteDevice(overrides: Partial<DeviceInfo> = {}): DeviceInfo {
   })
 }
 
+// Compile the injected DSH modules outside the per-test hook timeout. The setup hook
+// still clears and restores the module cache before every test to preserve isolation.
+await preloadDefaultDshUiTestModules()
+
 describe('ConnectionsSettingsPage', () => {
   const api = {
     getAllDevices: vi.fn(),
+    getGitAccountSyncSummary: vi.fn(),
+    syncGitAccounts: vi.fn(),
     startTerminal: vi.fn(),
     startCodeServer: vi.fn(),
     createCloudDevice: vi.fn(),
@@ -205,11 +225,16 @@ describe('ConnectionsSettingsPage', () => {
     importRuntimeAuthJson: vi.fn(),
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await preloadDefaultDshUiTestModules()
     experimentalFeatures.enabled = true
     vi.clearAllMocks()
+    getLocalCodexOfficialModelsMock.mockResolvedValue({ providers: [], models: [] })
+    getLocalCodexModelCatalogOverridesMock.mockResolvedValue([])
+    saveLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
+    deleteLocalCodexModelCatalogOverrideMock.mockResolvedValue(undefined)
     localStorage.clear()
-    delete (window as typeof window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
+    delete window.__WEWORK_RUNTIME_CONFIG__
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: {
@@ -261,6 +286,31 @@ describe('ConnectionsSettingsPage', () => {
       })
     )
     createDeviceApiMock.mockReturnValue(api)
+    api.getGitAccountSyncSummary.mockResolvedValue({
+      accounts: [
+        {
+          id: 'git-1',
+          domain: 'git.example.com',
+          provider: 'gitlab',
+          login: 'alice',
+          email: 'alice@example.com',
+          effective: true,
+          duplicate_of: null,
+        },
+      ],
+      effective_count: 1,
+      duplicate_count: 0,
+    })
+    api.syncGitAccounts.mockResolvedValue({
+      device_id: 'remote-device',
+      status: 'synced',
+      synced_domains: ['git.example.com'],
+      removed_domains: [],
+      duplicate_domains: [],
+      identity_warning_domains: [],
+      cli: [],
+      warning_codes: [],
+    })
     userApi.getRuntimeConfig.mockResolvedValue({
       runtime: 'codex',
       display_name: 'Codex',
@@ -407,11 +457,8 @@ describe('ConnectionsSettingsPage', () => {
     expect(settingsPage).not.toHaveClass('h-screen')
   })
 
-  test('does not duplicate titlebar clearance beneath the Tauri app chrome', () => {
-    Object.defineProperty(window, '__TAURI_INTERNALS__', {
-      configurable: true,
-      value: {},
-    })
+  test('does not duplicate titlebar clearance beneath the Electron app chrome', () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     api.getAllDevices.mockResolvedValue([])
 
     render(<ConnectionsSettingsPage onBack={vi.fn()} />)
@@ -585,6 +632,98 @@ describe('ConnectionsSettingsPage', () => {
 
     expect(screen.queryByTestId('runtime-config-sync-button')).not.toBeInTheDocument()
     expect(screen.queryByTestId('runtime-config-sync-result')).not.toBeInTheDocument()
+  })
+
+  test('edits and restores the catalog for a visible Codex model', async () => {
+    api.getAllDevices.mockResolvedValue([localDevice()])
+    const model = {
+      id: 'gpt-5.6-sol',
+      displayName: 'GPT 5.6 Sol',
+      modelId: 'gpt-5.6-sol',
+      providerId: 'openai',
+      providerName: 'CodeX',
+      providerType: 'official' as const,
+      providerCurrent: true,
+      description: 'Agentic coding model',
+      hidden: false,
+      isDefault: true,
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['high'],
+      supportsFastMode: false,
+    }
+    getLocalCodexOfficialModelsMock.mockResolvedValue({
+      providers: [
+        {
+          id: 'openai',
+          displayName: 'CodeX',
+          type: 'official',
+          current: true,
+          available: true,
+          error: null,
+          models: [model],
+        },
+      ],
+      models: [model],
+    })
+    const baseline = createDefaultLocalModelCatalogEntry({
+      id: 'official-gpt',
+      displayName: 'GPT 5.6 Sol',
+      toolProfile: 'custom',
+      contextWindow: 272_000,
+    })
+    baseline.slug = 'gpt-5.6-sol'
+    baseline.visibility = 'list'
+    getLocalCodexModelCatalogOverridesMock
+      .mockResolvedValueOnce([
+        {
+          slug: 'gpt-5.6-sol',
+          baseline,
+          effective: baseline,
+          overridden: false,
+        },
+      ])
+      .mockResolvedValue([
+        {
+          slug: 'gpt-5.6-sol',
+          baseline,
+          effective: { ...baseline, context_window: 300_000, max_context_window: 300_000 },
+          overridden: true,
+        },
+      ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+    await userEvent.click(screen.getByTestId('settings-nav-model-settings'))
+    await userEvent.click(await screen.findByTestId('codex-model-provider-toggle-openai'))
+    const editButton = await screen.findByTestId('codex-catalog-edit-openai-gpt-5.6-sol')
+    await waitFor(() => expect(editButton).toBeEnabled())
+    await userEvent.click(editButton)
+
+    const contextWindow = screen.getByTestId('local-model-context-window-input')
+    await userEvent.clear(contextWindow)
+    await userEvent.type(contextWindow, '300000')
+    await userEvent.click(screen.getByTestId('codex-catalog-editor-save'))
+
+    await waitFor(() =>
+      expect(saveLocalCodexModelCatalogOverrideMock).toHaveBeenCalledWith(
+        'gpt-5.6-sol',
+        expect.objectContaining({
+          slug: 'gpt-5.6-sol',
+          context_window: 300_000,
+          max_context_window: 300_000,
+        })
+      )
+    )
+    expect(requestLocalExecutor).toHaveBeenCalledWith('runtime.codex.app_server.restart', {
+      ifIdle: true,
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('codex-catalog-restore-openai-gpt-5.6-sol')).toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('codex-catalog-restore-openai-gpt-5.6-sol'))
+    await waitFor(() =>
+      expect(deleteLocalCodexModelCatalogOverrideMock).toHaveBeenCalledWith('gpt-5.6-sol')
+    )
   })
 
   test('waits for a provider selection before showing model fields', async () => {
@@ -968,11 +1107,11 @@ describe('ConnectionsSettingsPage', () => {
   })
 
   test.each([
-    ['minimax', 'https://api.minimaxi.com/anthropic'],
-    ['minimax-global', 'https://api.minimax.io/anthropic'],
+    ['minimax', 'https://api.minimaxi.com/anthropic', 'https://api.minimaxi.com'],
+    ['minimax-global', 'https://api.minimax.io/anthropic', 'https://api.minimax.io'],
   ] as const)(
     'configures %s through the managed Anthropic-compatible profile',
-    async (providerProfileId, baseUrl) => {
+    async (providerProfileId, baseUrl, modelsBaseUrl) => {
       api.getAllDevices.mockResolvedValue([localDevice()])
       const originalFetch = globalThis.fetch
       const fetchMock = vi.fn().mockResolvedValue(
@@ -1007,8 +1146,8 @@ describe('ConnectionsSettingsPage', () => {
         await userEvent.click(screen.getByTestId('local-model-save-button'))
 
         expect(fetchMock).toHaveBeenCalledWith(
-          `${baseUrl}/v1/models`,
-          expect.objectContaining({ headers: { 'X-Api-Key': 'test-key' } })
+          `${modelsBaseUrl}/v1/models`,
+          expect.objectContaining({ headers: { Authorization: 'Bearer test-key' } })
         )
         const stored = JSON.parse(localStorage.getItem('wework.localModelSettings.v1') ?? '[]')
         expect(stored[0]).toMatchObject({
@@ -1185,12 +1324,15 @@ describe('ConnectionsSettingsPage', () => {
         'anthropic-messages'
       )
       expect(screen.getByTestId('local-model-request-path-input')).toHaveValue('/v1/messages')
-      await userEvent.type(
-        screen.getByTestId('local-model-url-input'),
-        'https://api.kimi.com/coding/'
-      )
-      await userEvent.type(screen.getByTestId('local-model-id-input'), 'kimi-for-coding')
-      await userEvent.type(screen.getByTestId('local-model-api-key-input'), 'local-secret')
+      fireEvent.change(screen.getByTestId('local-model-url-input'), {
+        target: { value: 'https://api.kimi.com/coding/' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-id-input'), {
+        target: { value: 'kimi-for-coding' },
+      })
+      fireEvent.change(screen.getByTestId('local-model-api-key-input'), {
+        target: { value: 'local-secret' },
+      })
       await userEvent.click(screen.getByTestId('local-model-test-button'))
 
       expect(await screen.findByTestId('local-model-test-result')).toHaveTextContent('模型连接正常')
@@ -1617,6 +1759,23 @@ describe('ConnectionsSettingsPage', () => {
     expect(screen.queryByText('Local Claude Device')).not.toBeInTheDocument()
     expect(screen.getByText('远程设备')).toBeInTheDocument()
     expect(screen.queryByTestId('connection-more-button-remote-docker')).not.toBeInTheDocument()
+  })
+
+  test('shows device Git configuration after the cloud and remote device list', async () => {
+    api.getAllDevices.mockResolvedValue([
+      cloudDevice({ device_id: 'cloud-claude', name: 'Cloud Claude Device' }),
+      remoteDevice({ device_id: 'remote-docker', name: 'Remote Alias' }),
+    ])
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    const deviceList = await screen.findByText('Cloud Claude Device')
+    const gitSyncSection = await screen.findByTestId('git-device-sync-section')
+    expect(
+      deviceList.compareDocumentPosition(gitSyncSection) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(gitSyncSection).toHaveTextContent('gitlab · git.example.com')
+    expect(screen.getByRole('option', { name: 'Remote Alias · remote' })).toBeInTheDocument()
   })
 
   test('does not show the current app backend registration in cloud connections', async () => {

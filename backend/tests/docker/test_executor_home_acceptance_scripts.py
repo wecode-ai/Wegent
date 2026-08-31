@@ -4,8 +4,10 @@
 
 """Executable contracts for target-environment persistence acceptance."""
 
+import json
 import os
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -13,6 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 PROBE = ROOT / "scripts" / "acceptance" / "executor-home-persistence-probe.sh"
+RPC_PROBE = ROOT / "scripts" / "acceptance" / "executor-rpc-probe.py"
 REMOTE_DOCKER_ACCEPTANCE = (
     ROOT / "scripts" / "acceptance" / "remote-device-worktree-persistence.sh"
 )
@@ -353,6 +356,65 @@ def test_remote_docker_acceptance_fails_explicitly_without_docker():
     assert "Docker CLI not found" in result.stderr
 
 
+def _write_delayed_fake_executor(path: Path) -> None:
+    path.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import sys
+            import threading
+            import time
+
+            request = json.loads(sys.stdin.readline())
+
+            def respond():
+                time.sleep(0.2)
+                print(
+                    json.dumps(
+                        {
+                            "type": "response",
+                            "id": request["id"],
+                            "ok": True,
+                            "result": {"async": True},
+                        }
+                    ),
+                    flush=True,
+                )
+
+            threading.Thread(target=respond, daemon=True).start()
+            for _line in sys.stdin:
+                pass
+            """
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def test_rpc_probe_keeps_stdin_open_until_async_response(tmp_path: Path):
+    executor = tmp_path / "delayed-executor.py"
+    _write_delayed_fake_executor(executor)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RPC_PROBE),
+            str(executor),
+            "device-stable-1",
+            "runtime.worktrees.prepare",
+            "{}",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"async": True}
+
+
 def test_acceptance_scripts_are_valid_shell_and_cover_required_lifecycle():
     for script in (PROBE, REMOTE_DOCKER_ACCEPTANCE):
         subprocess.run(["bash", "-n", str(script)], check=True)
@@ -368,6 +430,9 @@ def test_acceptance_scripts_are_valid_shell_and_cover_required_lifecycle():
         "initialize_runtime_identity",
         "Docker volume identity changed",
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED=true",
+        "executor-rpc-probe.py",
+        "executor-persistence-json.py",
+        '--mount "type=bind,src=$SCRIPT_DIR,dst=$PROBE_TARGET_DIR,readonly"',
     ):
         assert required_contract in docker_script
 

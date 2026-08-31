@@ -7,15 +7,30 @@ import { MessageList } from './MessageList'
 import { AttachmentDownloadProvider } from './AttachmentDownloadProvider'
 import '@/i18n'
 
-const tauriCoreMock = vi.hoisted(() => ({
-  convertFileSrc: vi.fn((path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`),
+const desktopHostMock = vi.hoisted(() => ({
   invoke: vi.fn(),
-  isTauri: vi.fn(() => false),
 }))
+const electronLocalFileMock = vi.hoisted(() => ({
+  read: vi.fn().mockResolvedValue(Uint8Array.from([1, 2, 3])),
+}))
+const runtimeMock = vi.hoisted(() => ({ electron: false }))
 const openExternalUrlMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 const requestEmbeddedBrowserOpenMock = vi.hoisted(() => vi.fn(() => true))
 
-vi.mock('@tauri-apps/api/core', () => tauriCoreMock)
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: (...args: unknown[]) => desktopHostMock.invoke(...args),
+}))
+vi.mock('@/desktop/inlineVisualization', () => ({
+  readInlineVisualizationHtml: (...args: unknown[]) => desktopHostMock.invoke(...args),
+}))
+vi.mock('@/lib/electron-local-file', () => ({
+  readElectronLocalFile: (...args: unknown[]) => electronLocalFileMock.read(...args),
+}))
+vi.mock('@/lib/runtime-environment', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/runtime-environment')>()),
+  isDesktopRuntime: () => runtimeMock.electron,
+  isElectronRuntime: () => runtimeMock.electron,
+}))
 vi.mock('@/lib/external-links', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/external-links')>()),
   openExternalUrl: openExternalUrlMock,
@@ -26,7 +41,8 @@ vi.mock('@/lib/embedded-browser', () => ({
 
 describe('MessageList', () => {
   test('renders a generated Codex inline visualization from the changed workspace file', async () => {
-    tauriCoreMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValueOnce('<div>折线图</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -75,13 +91,14 @@ describe('MessageList', () => {
         'blob:workspace-visualization'
       )
     )
-    expect(tauriCoreMock.invoke).toHaveBeenCalledWith('read_inline_visualization_html', {
-      path: '/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html',
-    })
+    expect(desktopHostMock.invoke).toHaveBeenCalledWith(
+      '/Users/dev/workspace/.codex/visualizations/2026/07/23/thread-1/weekly-values-line-chart.html'
+    )
   })
 
   test('renders a ChatGPT visualize content reference from its absolute path', async () => {
-    tauriCoreMock.invoke.mockResolvedValueOnce('<div>可视化内容</div>')
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValueOnce('<div>可视化内容</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:chatgpt-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -114,7 +131,8 @@ describe('MessageList', () => {
   })
 
   test('renders a ChatGPT visualize content reference from the Wework attachment draft', async () => {
-    tauriCoreMock.invoke.mockResolvedValueOnce('<div>看板内容</div>')
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValueOnce('<div>看板内容</div>')
     vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:wework-attachment-visualization')
     vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
 
@@ -450,8 +468,8 @@ describe('MessageList', () => {
     expect(screen.getByTestId('message-assistant').style.containIntrinsicSize).toBe('')
   })
 
-  test('does not use message row content visibility in the Tauri app', () => {
-    tauriCoreMock.isTauri = vi.fn(() => true)
+  test('does not use message row content visibility in the desktop app', () => {
+    runtimeMock.electron = true
     const getSelectionSpy = vi.spyOn(document, 'getSelection')
 
     try {
@@ -459,9 +477,9 @@ describe('MessageList', () => {
         <MessageList
           messages={[
             {
-              id: 'assistant-tauri-contained',
+              id: 'assistant-desktop-contained',
               role: 'assistant',
-              content: 'Tauri text selection should stay native.',
+              content: 'Desktop text selection should stay native.',
               status: 'done',
               createdAt: '2026-06-11T10:00:01Z',
             },
@@ -470,7 +488,7 @@ describe('MessageList', () => {
       )
 
       const article = screen.getByTestId('message-assistant')
-      const paragraph = screen.getByText('Tauri text selection should stay native.')
+      const paragraph = screen.getByText('Desktop text selection should stay native.')
       expect(article.className).not.toContain('[content-visibility:auto]')
       expect(article.style.getPropertyValue('contain-intrinsic-size')).toBe('')
 
@@ -487,15 +505,18 @@ describe('MessageList', () => {
   })
 
   test('windows oversized streaming Markdown before mounting every chunk', () => {
-    tauriCoreMock.isTauri = vi.fn(() => true)
+    runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
-      constructor() {}
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
       observe = vi.fn()
       disconnect = vi.fn()
       unobserve = vi.fn()
       takeRecords = vi.fn(() => [])
       root = null
-      rootMargin = '800px 0px'
+      rootMargin = '1600px 0px'
       thresholds = [0]
     }
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
@@ -522,7 +543,39 @@ describe('MessageList', () => {
     expect(chunks.length).toBeGreaterThan(2)
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
+
+    act(() => {
+      intersectionCallbacks.forEach(callback =>
+        callback(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    })
+
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -1205,9 +1258,10 @@ describe('MessageList', () => {
     expect(screen.getByText('计划已生成。')).toBeInTheDocument()
   })
 
-  test('downloads explicit plan blocks through the Tauri native command', async () => {
-    tauriCoreMock.isTauri = vi.fn(() => true)
-    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/test/Downloads/plan.md')
+  test('downloads explicit plan blocks through the Electron renderer', async () => {
+    runtimeMock.electron = true
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:plan')
 
     render(
       <MessageList
@@ -1223,7 +1277,7 @@ describe('MessageList', () => {
                 id: 'plan-1',
                 subtaskId: 11,
                 type: 'plan',
-                content: '# Native plan\n\n- Save through Tauri.',
+                content: '# Native plan\n\n- Save through Electron.',
                 status: 'done',
                 createdAt: Date.parse('2026-06-11T10:00:00Z'),
               },
@@ -1236,11 +1290,10 @@ describe('MessageList', () => {
     await userEvent.click(screen.getByTestId('assistant-plan-download-button'))
 
     await waitFor(() => {
-      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('save_text_file_to_downloads', {
-        filename: 'plan.md',
-        content: '# Native plan\n\n- Save through Tauri.',
-      })
+      expect(createObjectUrl).toHaveBeenCalledWith(expect.any(Blob))
+      expect(click).toHaveBeenCalledOnce()
     })
+    expect(desktopHostMock.invoke).not.toHaveBeenCalled()
   })
 
   test('renders streaming plan blocks as an assistant plan card', () => {
@@ -1729,11 +1782,10 @@ describe('MessageList', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
-    tauriCoreMock.convertFileSrc = vi.fn(
-      (path: string) => `asset://localhost/${path.replace(/^\/+/, '')}`
-    )
-    tauriCoreMock.invoke = vi.fn()
-    tauriCoreMock.isTauri = vi.fn(() => false)
+    runtimeMock.electron = false
+    desktopHostMock.invoke.mockReset()
+    electronLocalFileMock.read.mockReset()
+    electronLocalFileMock.read.mockResolvedValue(Uint8Array.from([1, 2, 3]))
     openExternalUrlMock.mockClear()
     localStorage.clear()
     URL.createObjectURL = originalCreateObjectUrl
@@ -2566,6 +2618,56 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/repo/docs/zh/managing-tasks.md')
   })
 
+  test('decodes URL-encoded assistant file paths before opening the workspace file panel', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-file-link',
+            role: 'assistant',
+            content:
+              '[startup-splash.png](/Users/dev/Library/Application%20Support/Wework/startup-splash.png)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(
+      '/Users/dev/Library/Application Support/Wework/startup-splash.png'
+    )
+  })
+
+  test('decodes an encoded relative file path before extracting its line number', () => {
+    const onOpenWorkspaceFile = vi.fn()
+    render(
+      <MessageList
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        messages={[
+          {
+            id: 'assistant-encoded-relative-file-link',
+            role: 'assistant',
+            content: '[README file.md](README%20file.md:1)',
+            status: 'done',
+            createdAt: '2026-08-25T08:00:01.000Z',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('README file.md', {
+      lineStart: 1,
+      lineEnd: undefined,
+    })
+  })
+
   test('routes assistant folder links to the workspace directory panel', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -2613,48 +2715,6 @@ describe('MessageList', () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled()
   })
 
-  test('treats local filesystem paths encoded as Tauri URLs as file links', () => {
-    const onOpenWorkspaceFile = vi.fn()
-    render(
-      <MessageList
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-        messages={[
-          {
-            id: 'assistant-tauri-file-link',
-            role: 'assistant',
-            content: '[report](tauri://localhost/Users/dev/workspace/report.md)',
-            status: 'done',
-            createdAt: '2026-07-22T08:00:00.000Z',
-          },
-        ]}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('/Users/dev/workspace/report.md')
-  })
-
-  test('opens Tauri-encoded local HTML paths in the Wework built-in browser', () => {
-    render(
-      <MessageList
-        messages={[
-          {
-            id: 'assistant-tauri-html-file-link',
-            role: 'assistant',
-            content: '[trend](tauri://localhost/Users/dev/workspace/trend.html)',
-            status: 'done',
-            createdAt: '2026-07-22T08:00:00.000Z',
-          },
-        ]}
-      />
-    )
-
-    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-
-    expect(requestEmbeddedBrowserOpenMock).toHaveBeenCalledWith('/Users/dev/workspace/trend.html')
-  })
-
   test('removes angle brackets from assistant file link destinations', () => {
     const onOpenWorkspaceFile = vi.fn()
     render(
@@ -2683,37 +2743,50 @@ describe('MessageList', () => {
     )
   })
 
-  test('passes assistant file link line numbers to open-file actions', async () => {
+  test('passes assistant file link line numbers to open-file actions', () => {
+    vi.useFakeTimers()
     const onOpenWorkspaceFile = vi.fn()
-    render(
-      <MessageList
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-        messages={[
-          {
-            id: 'assistant-file-line-link',
-            role: 'assistant',
-            content:
-              '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
-            status: 'done',
-            createdAt: '2026-06-24T08:00:01.000Z',
-          },
-        ]}
-      />
-    )
+    try {
+      render(
+        <MessageList
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          messages={[
+            {
+              id: 'assistant-file-line-link',
+              role: 'assistant',
+              content:
+                '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
+              status: 'done',
+              createdAt: '2026-06-24T08:00:01.000Z',
+            },
+          ]}
+        />
+      )
 
-    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveTextContent(
-      'references/github-pr-flow.md (line 18)'
-    )
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveClass(
-      'max-w-[min(36rem,calc(100vw-3rem))]',
-      'break-all'
-    )
-    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
-      lineStart: 18,
-      lineEnd: undefined,
-    })
+      const link = screen.getByTestId('assistant-markdown-link')
+      const tooltipTrigger = link.parentElement as HTMLElement
+      expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+      expect(screen.queryByTestId('assistant-markdown-link-tooltip')).not.toBeInTheDocument()
+
+      fireEvent.pointerEnter(tooltipTrigger)
+      act(() => {
+        vi.advanceTimersByTime(700)
+      })
+
+      const tooltip = screen.getByTestId('assistant-markdown-link-tooltip')
+      expect(tooltip).toHaveTextContent('references/github-pr-flow.md (line 18)')
+      expect(tooltip).toHaveClass('fixed', 'z-system-popover')
+      expect(document.body).toContainElement(tooltip)
+      expect(link).not.toContainElement(tooltip)
+
+      fireEvent.click(link)
+      expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
+        lineStart: 18,
+        lineEnd: undefined,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('renders assistant file links with extension-specific Codex-style icons', () => {
@@ -2749,7 +2822,7 @@ describe('MessageList', () => {
           {
             id: 'assistant-inline-code',
             role: 'assistant',
-            content: 'Use `.env` and `pnpm run tauri:build` for local configuration.',
+            content: 'Use `.env` and `pnpm run desktop:build` for local configuration.',
             status: 'done',
             createdAt: '2026-06-24T08:00:01.000Z',
           },
@@ -2762,7 +2835,7 @@ describe('MessageList', () => {
     expect(inlineCodes).toHaveLength(2)
     expect(inlineCodes[0]).toHaveTextContent('.env')
     expect(inlineCodes[0]).toHaveClass('rounded', 'bg-muted')
-    expect(inlineCodes[1]).toHaveTextContent('pnpm run tauri:build')
+    expect(inlineCodes[1]).toHaveTextContent('pnpm run desktop:build')
     expect(inlineCodes[1]).toHaveClass('rounded', 'bg-muted')
   })
 
@@ -3325,8 +3398,10 @@ describe('MessageList', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  test('renders local path image attachment previews through Tauri asset URLs', async () => {
+  test('renders local path image attachment previews through Electron file reads', async () => {
+    runtimeMock.electron = true
     vi.stubGlobal('fetch', vi.fn())
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:electron-local-image')
 
     const attachment: Attachment = {
       id: -1,
@@ -3356,7 +3431,10 @@ describe('MessageList', () => {
 
     expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
       'src',
-      'asset://localhost/var/folders/tmp/codex-clipboard/screenshot.png'
+      'blob:electron-local-image'
+    )
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith(
+      '/var/folders/tmp/codex-clipboard/screenshot.png'
     )
     expect(screen.getByTestId('message-hover-region')).toHaveClass('w-full', 'max-w-full')
     expect(screen.getByTestId('user-message-content').parentElement).toHaveClass('max-w-[80%]')
@@ -3373,7 +3451,9 @@ describe('MessageList', () => {
   })
 
   test('restores historical image previews from persisted local paths', async () => {
+    runtimeMock.electron = true
     vi.stubGlobal('fetch', vi.fn())
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:electron-historical-image')
 
     const attachment: Attachment = {
       id: -1,
@@ -3403,15 +3483,19 @@ describe('MessageList', () => {
 
     expect(await screen.findByTestId('message-image-preview')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/me/.wework/workspace/attachments/draft/42/historical.png'
+      'blob:electron-historical-image'
+    )
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith(
+      '/Users/me/.wework/workspace/attachments/draft/42/historical.png'
     )
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  test('downloads local path image attachments through the Tauri native command', async () => {
+  test('downloads local path image attachments from Electron file bytes', async () => {
+    runtimeMock.electron = true
     vi.stubGlobal('fetch', vi.fn())
-    tauriCoreMock.isTauri = vi.fn(() => true)
-    tauriCoreMock.invoke = vi.fn().mockResolvedValue('/Users/crystal/Downloads/screenshot.png')
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:electron-image-download')
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
 
     const attachment: Attachment = {
       id: -1,
@@ -3444,11 +3528,12 @@ describe('MessageList', () => {
     await userEvent.click(screen.getByTestId('attachment-image-download'))
 
     await waitFor(() => {
-      expect(tauriCoreMock.invoke).toHaveBeenCalledWith('download_local_file_to_downloads', {
-        sourcePath: '/var/folders/tmp/codex-clipboard/screenshot.png',
-        filename: 'screenshot.png',
-      })
+      expect(click).toHaveBeenCalledOnce()
     })
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith(
+      '/var/folders/tmp/codex-clipboard/screenshot.png'
+    )
+    expect(desktopHostMock.invoke).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
   })
 
@@ -3497,6 +3582,9 @@ describe('MessageList', () => {
   })
 
   test('renders Codex local image file mentions as user image previews after refresh', async () => {
+    runtimeMock.electron = true
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:electron-codex-image')
+
     render(
       <MessageList
         messages={[
@@ -3520,7 +3608,10 @@ describe('MessageList', () => {
 
     expect(await screen.findByTestId('message-local-image-preview')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/yunpeng7/.wework/workspace/attachments/10406026969952/0/image.png'
+      'blob:electron-codex-image'
+    )
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith(
+      '/Users/yunpeng7/.wework/workspace/attachments/10406026969952/0/image.png'
     )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
     expect(screen.queryByText(/Files mentioned by the user/)).not.toBeInTheDocument()
@@ -3627,8 +3718,9 @@ describe('MessageList', () => {
     expect(screen.queryByText(/My request for Codex/)).not.toBeInTheDocument()
   })
 
-  test('does not render raw local image paths when Tauri file conversion is unavailable', () => {
-    tauriCoreMock.convertFileSrc = undefined as unknown as typeof tauriCoreMock.convertFileSrc
+  test('does not render raw local image paths when Electron file reading fails', async () => {
+    runtimeMock.electron = true
+    electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
     render(
       <MessageList
@@ -3651,11 +3743,16 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
-  test('hides Codex local image previews when the converted file URL fails to load', async () => {
+  test('hides Codex local image previews when the Electron file read fails', async () => {
+    runtimeMock.electron = true
+    electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
+
     render(
       <MessageList
         messages={[
@@ -3677,13 +3774,15 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.error(await screen.findByTestId('message-local-image-preview'))
-
-    expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    await waitFor(() =>
+      expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
+    )
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
-  test('does not create Tauri asset previews for transient Codex clipboard images', () => {
+  test('does not read transient Codex clipboard images through Electron', () => {
+    runtimeMock.electron = true
+
     render(
       <MessageList
         messages={[
@@ -3707,9 +3806,7 @@ describe('MessageList', () => {
 
     expect(screen.queryByTestId('message-local-image-preview')).not.toBeInTheDocument()
     expect(screen.queryByTestId('message-codex-file-mention')).not.toBeInTheDocument()
-    expect(tauriCoreMock.convertFileSrc).not.toHaveBeenCalledWith(
-      expect.stringContaining('codex-clipboard-c73483f7')
-    )
+    expect(electronLocalFileMock.read).not.toHaveBeenCalled()
     expect(screen.getByTestId('user-message-content')).toHaveTextContent('分析下这个图片')
   })
 
@@ -3744,7 +3841,9 @@ describe('MessageList', () => {
     expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
-  test('renders assistant markdown local image paths through Tauri asset URLs', () => {
+  test('renders assistant markdown local image paths as file URLs', async () => {
+    runtimeMock.electron = true
+
     render(
       <MessageList
         messages={[
@@ -3759,9 +3858,9 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute(
+    expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
       'src',
-      'asset://localhost/Users/yunpeng7/Pictures/result.png'
+      'file:///Users/yunpeng7/Pictures/result.png'
     )
     expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
   })
@@ -4133,6 +4232,38 @@ describe('MessageList', () => {
     expect(screen.getByTestId('copy-message-success-icon')).toBeInTheDocument()
     fireEvent.transitionEnd(hoverActions, { propertyName: 'opacity' })
     expect(screen.getByTestId('copy-message-icon')).toBeInTheDocument()
+  })
+
+  test('uses the Electron host clipboard instead of the browser clipboard', async () => {
+    runtimeMock.electron = true
+    desktopHostMock.invoke.mockResolvedValue(undefined)
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    stubClipboardWriteText(writeText)
+
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'electron-copy',
+            role: 'user',
+            content: '复制到系统剪贴板',
+            status: 'done',
+            createdAt: '2026-05-25T15:08:00.000+08:00',
+          },
+        ]}
+      />
+    )
+
+    fireEvent.pointerEnter(screen.getByTestId('message-hover-region'))
+    await userEvent.click(screen.getByTestId('copy-message-button'))
+
+    await waitFor(() =>
+      expect(desktopHostMock.invoke).toHaveBeenCalledWith('clipboard.writeText', {
+        text: '复制到系统剪贴板',
+      })
+    )
+    expect(writeText).not.toHaveBeenCalled()
+    expect(await screen.findByTestId('copy-message-success-icon')).toBeInTheDocument()
   })
 
   test('shows edit action only for the final completed user turn and submits edited text', async () => {
@@ -5129,7 +5260,7 @@ describe('MessageList', () => {
     expect(screen.getByText('读取 file-3.ts')).toBeInTheDocument()
   })
 
-  test('keeps process text even when it matches the final assistant content', () => {
+  test('does not render process text that duplicates the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
       subtaskId: 1,
@@ -5154,9 +5285,9 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('final-processing-toggle'))
-    expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
-    expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
+    expect(screen.getAllByText('这是最终回答。')).toHaveLength(1)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {

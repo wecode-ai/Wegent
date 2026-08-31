@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import type { Dispatch } from 'react'
 import {
   checkoutProjectBranch,
@@ -53,6 +53,8 @@ interface UseWorkbenchProjectActionsOptions {
   executorClient: ExecutorClient
   services: WorkbenchServices
   refreshWorkLists: RefreshWorkLists
+  updateLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest) => number | null
+  rollbackLocalRuntimeTaskPinned: (request: RuntimeTaskPinRequest, requestId: number | null) => void
   markRuntimeProjectRemoved: (
     projectId: number,
     workspace?: { deviceId: string; workspacePath: string }
@@ -117,11 +119,15 @@ export function useWorkbenchProjectActions({
   executorClient,
   services,
   refreshWorkLists,
+  updateLocalRuntimeTaskPinned,
+  rollbackLocalRuntimeTaskPinned,
   markRuntimeProjectRemoved,
   invalidateRemoteProjectSync,
   clearRemoteProjectSyncRemoval,
   enqueueRemoteProjectStateMutation,
 }: UseWorkbenchProjectActionsOptions) {
+  const runtimeTaskPinMutationTailsRef = useRef(new Map<string, Promise<void>>())
+
   const createProject = useCallback(
     async (data: CreateProjectRequest, options: ProjectMutationOptions = {}) => {
       const project = await services.projectApi.createProject(data)
@@ -136,6 +142,43 @@ export function useWorkbenchProjectActions({
       return project
     },
     [dispatch, refreshWorkLists, services.projectApi, user.id]
+  )
+
+  const createLocalRuntimeProject = useCallback(
+    async (data: { deviceId: string; name: string; roots: string[] }) => {
+      const response = await executorClient.runtime.upsertLocalRuntimeProject({
+        ...data,
+        projectKey: crypto.randomUUID(),
+        runtime: 'codex',
+      })
+      if (!response.accepted) {
+        throw new Error(response.error || 'Failed to create local project')
+      }
+      response.roots.forEach(clearRemoteProjectSyncRemoval)
+      await refreshWorkLists()
+      return {
+        id: runtimeProjectUiId({
+          key: response.projectKey,
+          stateDeviceId: response.deviceId,
+          name: response.name,
+        }),
+        name: response.name,
+        runtimeProjectKey: response.projectKey,
+        config: {
+          mode: 'workspace' as const,
+          execution: {
+            targetType: 'local' as const,
+            deviceId: response.deviceId,
+          },
+          workspace: {
+            source: 'local_path' as const,
+            localPath: response.roots[0],
+          },
+        },
+        tasks: [],
+      }
+    },
+    [clearRemoteProjectSyncRemoval, executorClient, refreshWorkLists]
   )
 
   const createGitWorkspaceProject = useCallback(
@@ -502,17 +545,30 @@ export function useWorkbenchProjectActions({
 
   const setRuntimeTaskPinned = useCallback(
     async (data: RuntimeTaskPinRequest) => {
-      dispatch({ type: 'runtime_task_pin_changed', ...data })
+      const key = `${data.deviceId}\0${data.threadId}`
+      const previousMutation = runtimeTaskPinMutationTailsRef.current.get(key) ?? Promise.resolve()
+      const mutation = previousMutation
+        .catch(() => undefined)
+        .then(async () => {
+          const requestId = updateLocalRuntimeTaskPinned(data)
+          try {
+            await executorClient.runtime.setRuntimeTaskPinned(data)
+          } catch (error) {
+            rollbackLocalRuntimeTaskPinned(data, requestId)
+            throw error
+          }
+          await refreshWorkLists()
+        })
+      runtimeTaskPinMutationTailsRef.current.set(key, mutation)
       try {
-        await executorClient.runtime.setRuntimeTaskPinned(data)
-        await refreshWorkLists()
-        dispatch({ type: 'runtime_task_pin_changed', ...data })
-      } catch (error) {
-        dispatch({ type: 'runtime_task_pin_changed', ...data, pinned: !data.pinned })
-        throw error
+        await mutation
+      } finally {
+        if (runtimeTaskPinMutationTailsRef.current.get(key) === mutation) {
+          runtimeTaskPinMutationTailsRef.current.delete(key)
+        }
       }
     },
-    [dispatch, executorClient, refreshWorkLists]
+    [executorClient, refreshWorkLists, rollbackLocalRuntimeTaskPinned, updateLocalRuntimeTaskPinned]
   )
 
   const getDeviceHomeDirectory = useCallback(
@@ -716,6 +772,7 @@ export function useWorkbenchProjectActions({
 
   return {
     createProject,
+    createLocalRuntimeProject,
     createGitWorkspaceProject,
     prepareDeviceWorkspace,
     deleteDeviceWorkspace,

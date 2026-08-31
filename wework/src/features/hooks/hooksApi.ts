@@ -1,4 +1,4 @@
-import { requestLocalExecutor } from '@/tauri/localExecutor'
+import { requestLocalExecutor } from '@/desktop/localExecutor'
 import type { HookDraft, HookRunSummary, ResolvedHookPlugin } from './hooksTypes'
 
 export const hooksApi = {

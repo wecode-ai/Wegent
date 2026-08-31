@@ -30,7 +30,7 @@ import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { openExternalUrl } from '@/lib/external-links'
 import { isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
-import { isTauriRuntime } from '@/lib/runtime-environment'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
 import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
@@ -53,6 +53,7 @@ import {
   useOptionalAppearance,
 } from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
+import { DeviceGitSyncSection } from './DeviceGitSyncSection'
 import { DeviceActionButton } from './DeviceActionButton'
 import {
   createSettingsDeviceApi,
@@ -60,11 +61,15 @@ import {
   createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
-import { CORE_WORKBENCH_SETTINGS } from '@/plugin-runtime/core-settings-data'
 import {
-  type WorkbenchSettingsContribution,
-  useActiveWorkbenchSettings,
-} from '@/plugin-runtime/settings'
+  resolveDshSettingsPath,
+  type WeworkDshSettingsPage,
+} from '@/features/dsh-runtime/dshSettings'
+import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
+import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 
 const CloudDesktopDeviceAction = cloudDesktopExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
@@ -80,15 +85,10 @@ interface ConnectionsSettingsPageProps {
 
 function getSettingsNavFromPath(
   path: string,
-  contributions: readonly WorkbenchSettingsContribution[]
+  contributions: readonly WeworkDshSettingsPage[]
 ): string {
   const normalizedPath = stripAppBasePath(path)
-  return (
-    contributions.find(
-      contribution =>
-        contribution.path === normalizedPath || contribution.aliases?.includes(normalizedPath)
-    )?.key ?? 'general'
-  )
+  return resolveDshSettingsPath(normalizedPath, contributions)?.id ?? 'general'
 }
 
 function StatusPill({ status }: { status: DeviceInfo['status'] }) {
@@ -1030,10 +1030,12 @@ function CloudModelsSection({ cloudConnection }: { cloudConnection: CloudSetting
   )
 }
 
-function ConnectionsDeviceSettingsPage({
+export function ConnectionsDeviceSettingsPage({
   autoOpenAddCloudDeviceDialog = false,
+  showHeader = true,
 }: {
   autoOpenAddCloudDeviceDialog?: boolean
+  showHeader?: boolean
 }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
@@ -1092,7 +1094,9 @@ function ConnectionsDeviceSettingsPage({
     return (
       <>
         <SettingsPage>
-          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+          {showHeader ? (
+            <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+          ) : null}
 
           <section className="rounded-lg border border-border bg-background p-5">
             <div className="flex items-start justify-between gap-4">
@@ -1153,7 +1157,9 @@ function ConnectionsDeviceSettingsPage({
   return (
     <>
       <SettingsPage>
-        <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+        {showHeader ? (
+          <SettingsPageHeader title={t('workbench.connections_title', '云端连接')} />
+        ) : null}
 
         <section
           data-testid="cloud-connection-status-card"
@@ -1260,6 +1266,12 @@ function ConnectionsDeviceSettingsPage({
               )}
             </div>
           </div>
+
+          <DeviceGitSyncSection
+            devices={devices}
+            devicesLoading={loading}
+            onRefreshDevices={fetchDevices}
+          />
         </section>
       </SettingsPage>
 
@@ -1289,10 +1301,10 @@ export function ConnectionsSettingsPage({
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
   const { sidebarWidth, handleResizeStart } = useResizableSidebar()
-  const isDesktopRuntime = isTauriRuntime()
-  const registeredSettings = useActiveWorkbenchSettings()
-  const settingsContributions: readonly WorkbenchSettingsContribution[] =
-    registeredSettings.length > 0 ? registeredSettings : CORE_WORKBENCH_SETTINGS
+  const isDesktopRuntime = isElectronRuntime()
+  const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
+    WEWORK_DSH_SLOTS.settingsPage
+  )
   const visibleSettingsNavItems = settingsContributions.filter(
     item =>
       (!item.experimental || experimentalFeaturesEnabled) && (!item.desktopOnly || isDesktopRuntime)
@@ -1303,10 +1315,10 @@ export function ConnectionsSettingsPage({
   const [activeNav, setActiveNav] = useState(() =>
     getSettingsNavFromPath(window.location.pathname, settingsContributions)
   )
-  const effectiveActiveNav = visibleSettingsNavItems.some(item => item.key === activeNav)
+  const effectiveActiveNav = visibleSettingsNavItems.some(item => item.id === activeNav)
     ? activeNav
-    : (visibleSettingsNavItems.find(item => item.key === 'general')?.key ??
-      visibleSettingsNavItems[0]?.key ??
+    : (visibleSettingsNavItems.find(item => item.id === 'general')?.id ??
+      visibleSettingsNavItems[0]?.id ??
       'general')
 
   useEffect(() => {
@@ -1319,12 +1331,12 @@ export function ConnectionsSettingsPage({
 
   const openCloudSettings = useCallback(() => {
     setActiveNav('connections')
-    const path = settingsContributions.find(item => item.key === 'connections')?.path
+    const path = settingsContributions.find(item => item.id === 'connections')?.path
     navigateTo(path ?? '/settings/connections')
   }, [settingsContributions])
   const activeContribution =
-    settingsContributions.find(item => item.key === effectiveActiveNav) ??
-    settingsContributions.find(item => item.key === 'general')
+    settingsContributions.find(item => item.id === effectiveActiveNav) ??
+    settingsContributions.find(item => item.id === 'general')
 
   return (
     <div
@@ -1369,7 +1381,7 @@ export function ConnectionsSettingsPage({
             const showCategory =
               item.category && visibleSettingsNavItems[index - 1]?.category !== item.category
             return (
-              <div key={item.key}>
+              <div key={item.id}>
                 {showCategory && (
                   <div
                     data-testid={`settings-category-${item.category}`}
@@ -1383,24 +1395,29 @@ export function ConnectionsSettingsPage({
                 )}
                 <button
                   type="button"
-                  data-testid={`settings-nav-${item.key}`}
+                  data-testid={`settings-nav-${item.id}`}
                   onClick={() => {
-                    setActiveNav(item.key)
+                    setActiveNav(item.id)
                     navigateTo(item.path)
                   }}
                   className={[
                     'flex min-h-[31px] w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm font-medium',
-                    effectiveActiveNav === item.key
+                    effectiveActiveNav === item.id
                       ? 'bg-[rgb(var(--color-sidebar-active))] text-text-primary'
                       : 'text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))]',
                   ].join(' ')}
                 >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate">{t(`workbench.${item.labelKey}`, item.label)}</span>
+                  {(() => {
+                    const Icon = resolveDshSettingsIcon(item.icon)
+                    return <Icon className="h-4 w-4 shrink-0" />
+                  })()}
+                  <span className="truncate">
+                    {t(`workbench.${item.labelKey ?? item.id}`, item.label)}
+                  </span>
                   {item.experimental ? (
                     <ExperimentalBadge
                       className="ml-auto"
-                      testId={`settings-nav-${item.key}-experimental-badge`}
+                      testId={`settings-nav-${item.id}-experimental-badge`}
                     />
                   ) : null}
                 </button>
@@ -1424,21 +1441,34 @@ export function ConnectionsSettingsPage({
           background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
         )}
       >
-        {activeContribution?.render ? (
-          activeContribution.render({
-            services,
-            devices,
-            onBack,
-            onOpenCloudSettings: openCloudSettings,
-            onOpenRuntimeTask,
-            onRefreshWorkLists,
-          })
-        ) : (
-          <ConnectionsDeviceSettingsPage
-            key={shouldAutoOpenAddCloudDeviceDialog ? 'add-device' : 'connections'}
+        {activeContribution?.module ? (
+          <DshSettingsSurface
+            page={activeContribution}
+            services={services}
+            devices={devices}
+            onBack={onBack}
+            onOpenCloudSettings={openCloudSettings}
+            onOpenRuntimeTask={onOpenRuntimeTask}
+            onRefreshWorkLists={onRefreshWorkLists}
             autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
           />
-        )}
+        ) : activeContribution ? (
+          <DshSlotSurface
+            className="contents"
+            entryId={activeContribution.id}
+            props={{
+              services,
+              devices,
+              onBack,
+              onOpenCloudSettings: openCloudSettings,
+              onOpenRuntimeTask,
+              onRefreshWorkLists,
+              autoOpenAddCloudDeviceDialog: shouldAutoOpenAddCloudDeviceDialog,
+            }}
+            slot={WEWORK_DSH_SLOTS.settingsPage}
+            testId={`dsh-settings-surface-${activeContribution.id}`}
+          />
+        ) : null}
       </main>
     </div>
   )

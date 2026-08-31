@@ -256,7 +256,7 @@ Run the cloud-device feature E2E from the repository root:
 pnpm --filter wework e2e:desktop:cloud-features
 ```
 
-This scenario starts a real backend, Redis, cloud-device executor, and Tauri
+This scenario starts a real backend, Redis, cloud-device executor, and Electron
 application. It verifies cloud project tasks, Goal auto-continuation and unread
 state, busy-turn Goal handoff, and the local/cloud model protocol matrix. On
 failure, use the reported `wework/test-results/desktop-e2e/<run-id>/` directory
@@ -308,6 +308,12 @@ CI reliability depends on these invariants:
   wait for each target element before reading attributes or asserting state.
   Visible final text does not imply that associated disclosure controls or
   timelines have mounted.
+- After a page reload, task switch, or injected lifecycle/transcript event,
+  desktop E2E must not wait only for sidebar, composer, or debug state. Before
+  reading a virtualized transcript or asserting text occurrence counts, wait
+  for the expected conversation text to appear in a page snapshot, then retain
+  exact occurrence assertions so fixed delays or reruns cannot hide missing or
+  duplicated messages.
 - Wework release-note lookups for GitHub commit authors retry transient API or
   TLS failures a limited number of times with exponential backoff. The release
   job must still fail after retries are exhausted instead of silently omitting
@@ -334,15 +340,15 @@ runs may restore the default-branch cache, but they do not save another copy:
   OpenCode, Claude Code, and Kimi Code share the integrity-locked npm install
   defined by `.github/claude-code-cli/package-lock.json`.
 - Rust unit tests, the Windows check, release and snapshot binaries, and the
-  macOS memory gate use sccache. The `main` warmup runs the same desktop
-  `--build-only` flow on `macos-14`; non-`main` jobs access the shared compiler
-  cache in read-only mode.
+  macOS memory gate use sccache. The `main` warmup runs the same Electron
+  desktop build on `macos-14`; non-`main` jobs access the shared compiler cache
+  in read-only mode.
 - Wework Desktop Core E2E retains its `main`-owned Cargo target cache because
   several desktop jobs must reuse the same complete binary output.
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
-- Outside Wework E2E, Executor and Tauri system dependency installers first
+- Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.
 

@@ -10,7 +10,6 @@ declare -A changed=(
   [knowledge_engine]=false
   [frontend]=false
   [wework]=false
-  [wework_rust]=false
   [wegent_cli]=false
   [platform_e2e]=false
   [wework_e2e]=false
@@ -30,6 +29,7 @@ classify_path() {
     .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
       .github/workflows/ci-cache-warmup.yml | \
+      .github/workflows/publish-base-image.yml | \
       .github/workflows/publish-image.yml | \
       .github/workflows/snapshot-image.yml | \
       .github/workflows/wework-app.yml | \
@@ -47,6 +47,7 @@ classify_path() {
       .github/scripts/archive-executor-e2e-runtime.sh | \
       .github/scripts/archive-frontend-e2e-build.sh | \
       .github/scripts/free-runner-disk-space-if-needed.sh | \
+      .github/scripts/resolve-executor-e2e-runtime.sh | \
       .github/scripts/restore-executor-e2e-runtime.sh | \
       .github/scripts/restore-frontend-e2e-build.sh | \
       .github/scripts/start-frontend-e2e-server.sh)
@@ -59,7 +60,6 @@ classify_path() {
     .github/workflows/wework-e2e.yml | docker/wework-e2e/* | \
       .github/scripts/archive-wework-core-e2e-build.sh | \
       .github/scripts/classify-wework-desktop-e2e.sh | \
-      .github/scripts/install-wework-tauri-system-dependencies.sh | \
       .github/scripts/restore-wework-core-e2e-build.sh)
       changed[wework_e2e]=true
       ;;
@@ -104,11 +104,6 @@ classify_path() {
       changed[platform_e2e]=true
       changed[wework_e2e]=true
       ;;
-    wework/src-tauri/*)
-      changed[wework]=true
-      changed[wework_rust]=true
-      changed[wework_e2e]=true
-      ;;
     wework/*)
       changed[wework]=true
       changed[wework_e2e]=true
@@ -135,6 +130,6 @@ else
 fi
 
 output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-for key in backend executor executor_manager shared knowledge_engine frontend wework wework_rust wegent_cli platform_e2e wework_e2e; do
+for key in backend executor executor_manager shared knowledge_engine frontend wework wegent_cli platform_e2e wework_e2e; do
   printf '%s=%s\n' "$key" "${changed[$key]}" >> "$output_file"
 done

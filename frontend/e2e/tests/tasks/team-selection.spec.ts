@@ -334,18 +334,16 @@ test.describe('Team Selection', () => {
 
     test('should restore from localStorage when navigating to new chat', async ({ page }) => {
       // Set preferred team
-      await page.goto('/chat')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
       await page.evaluate(() => {
         localStorage.setItem('wegent_last_team_id_chat', '1')
       })
 
       // Navigate to a task
-      await page.goto('/chat?taskId=999')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat?taskId=999', { waitUntil: 'domcontentloaded' })
 
       // Navigate back to new chat
-      await page.goto('/chat')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Team should be restored from localStorage
       // Verify by checking localStorage was read (hard to verify UI without mock)
@@ -415,9 +413,8 @@ test.describe('Team Selection', () => {
         localStorage.setItem('wegent_last_team_id_chat', 'invalid')
       })
 
-      // Reload to apply the invalid localStorage value
-      await page.reload()
-      await page.waitForLoadState('domcontentloaded')
+      // Optimized images may keep the load event pending; this case only needs DOM readiness.
+      await page.reload({ waitUntil: 'domcontentloaded' })
 
       // Page should handle gracefully and select first available team
       const pageLoaded = await page.title()
@@ -444,17 +441,15 @@ test.describe('Team Selection', () => {
     })
 
     test('should handle rapid task switching without crash', async ({ page }) => {
-      await page.goto('/chat')
-      await page.waitForLoadState('domcontentloaded')
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Simulate rapid task switching
-      await page.goto('/chat?taskId=1')
-      await page.goto('/chat?taskId=2')
-      await page.goto('/chat?taskId=3')
-      await page.goto('/chat')
+      await page.goto('/chat?taskId=1', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat?taskId=2', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat?taskId=3', { waitUntil: 'domcontentloaded' })
+      await page.goto('/chat', { waitUntil: 'domcontentloaded' })
 
       // Page should not crash
-      await page.waitForLoadState('domcontentloaded')
       const pageLoaded = await page.title()
       expect(pageLoaded).toBeTruthy()
     })

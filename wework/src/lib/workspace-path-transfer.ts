@@ -1,9 +1,10 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauriRuntime } from './runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isDesktopRuntime, isElectronRuntime } from './runtime-environment'
 import type { NativeWorkspacePath } from './native-workspace-path-picker'
-import { readDroppedFiles } from '@/tauri/droppedFiles'
+import { readDroppedFiles } from '@/desktop/droppedFiles'
 
 const FILE_URI_CLIPBOARD_TYPES = ['text/uri-list', 'public.file-url'] as const
+export const WORKSPACE_PATH_DRAG_TYPE = 'application/x-wework-workspace-paths'
 const IMAGE_EXTENSIONS = new Set([
   'apng',
   'avif',
@@ -15,6 +16,69 @@ const IMAGE_EXTENSIONS = new Set([
   'svg',
   'webp',
 ])
+
+function isNativeWorkspacePath(value: unknown): value is NativeWorkspacePath {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<NativeWorkspacePath>
+  return typeof candidate.path === 'string' && typeof candidate.isDirectory === 'boolean'
+}
+
+export function writeWorkspacePathDragData(
+  dataTransfer: DataTransfer,
+  entries: NativeWorkspacePath[]
+): void {
+  dataTransfer.setData(WORKSPACE_PATH_DRAG_TYPE, JSON.stringify(entries))
+}
+
+export function readWorkspacePathDragData(
+  dataTransfer: DataTransfer
+): NativeWorkspacePath[] | null {
+  if (!hasWorkspacePathDragData(dataTransfer)) return null
+
+  try {
+    const value: unknown = JSON.parse(dataTransfer.getData(WORKSPACE_PATH_DRAG_TYPE))
+    if (!Array.isArray(value) || !value.every(isNativeWorkspacePath)) return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+export function hasWorkspacePathDragData(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types ?? []).includes(WORKSPACE_PATH_DRAG_TYPE)
+}
+
+declare global {
+  interface Window {
+    weworkElectronFiles?: {
+      getPathForFile: (file: File) => string
+    }
+  }
+}
+
+function electronDataTransferFilePaths(dataTransfer: DataTransfer): string[] {
+  if (!isElectronRuntime() || typeof window === 'undefined') return []
+  const getPathForFile = window.weworkElectronFiles?.getPathForFile
+  if (!getPathForFile) return []
+
+  const paths: string[] = []
+  for (const file of Array.from(dataTransfer.files)) {
+    try {
+      const path = getPathForFile(file).trim()
+      if (path && !paths.includes(path)) paths.push(path)
+    } catch {
+      // Synthetic files and browser-created blobs do not have native paths.
+    }
+  }
+  return paths
+}
+
+function dataTransferFallbackPaths(dataTransfer: DataTransfer): string[] {
+  return [
+    ...electronDataTransferFilePaths(dataTransfer),
+    ...readClipboardFileUriPaths(dataTransfer),
+  ].filter((path, index, paths) => paths.indexOf(path) === index)
+}
 
 export function fileUrlToPath(value: string): string | null {
   try {
@@ -51,26 +115,24 @@ export function readClipboardFileUriPaths(dataTransfer: DataTransfer): string[] 
 export async function readNativeClipboardWorkspacePaths(
   clipboardData: DataTransfer
 ): Promise<NativeWorkspacePath[]> {
-  if (!isTauriRuntime()) return []
-
-  return invoke<NativeWorkspacePath[]>('read_clipboard_workspace_paths', {
-    fallbackPaths: readClipboardFileUriPaths(clipboardData),
+  const fallbackPaths = dataTransferFallbackPaths(clipboardData)
+  return invokeDesktopHost<NativeWorkspacePath[]>('clipboard.readWorkspacePaths', {
+    fallbackPaths,
   })
 }
 
 export async function readNativeDroppedWorkspacePaths(
   dataTransfer: DataTransfer
 ): Promise<NativeWorkspacePath[]> {
-  if (!isTauriRuntime()) return []
-
-  return invoke<NativeWorkspacePath[]>('read_dropped_workspace_paths', {
-    fallbackPaths: readClipboardFileUriPaths(dataTransfer),
+  const fallbackPaths = dataTransferFallbackPaths(dataTransfer)
+  return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', {
+    paths: fallbackPaths,
   })
 }
 
 export async function inspectNativeWorkspacePaths(paths: string[]): Promise<NativeWorkspacePath[]> {
-  if (!isTauriRuntime() || paths.length === 0) return []
-  return invoke<NativeWorkspacePath[]>('inspect_workspace_paths', { paths })
+  if (paths.length === 0) return []
+  return invokeDesktopHost<NativeWorkspacePath[]>('filesystem.inspectPaths', { paths })
 }
 
 export function isWorkspaceImagePath(path: string): boolean {
@@ -118,15 +180,18 @@ export interface ResolvedWorkspacePathTransfer {
 
 export async function resolveDataTransferWorkspacePaths(
   dataTransfer: DataTransfer,
-  source: 'clipboard' | 'drop',
-  workspaceSource?: string | null
+  source: 'clipboard' | 'drop'
 ): Promise<ResolvedWorkspacePathTransfer> {
+  const draggedWorkspacePaths = readWorkspacePathDragData(dataTransfer)
+  if (draggedWorkspacePaths) {
+    return {
+      attachmentFiles: [],
+      referenceEntries: draggedWorkspacePaths,
+    }
+  }
+
   const files = Array.from(dataTransfer.files)
-  if (
-    !isTauriRuntime() ||
-    workspaceSource === 'remote' ||
-    (files.length > 0 && files.every(isWorkspaceImageFile))
-  ) {
+  if (!isDesktopRuntime() || (files.length > 0 && files.every(isWorkspaceImageFile))) {
     return { attachmentFiles: files, referenceEntries: [] }
   }
 
@@ -142,7 +207,7 @@ export async function resolveDataTransferWorkspacePaths(
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)
     return {
-      attachmentFiles: files.filter(isWorkspaceImageFile),
+      attachmentFiles: files,
       referenceEntries: [],
     }
   }

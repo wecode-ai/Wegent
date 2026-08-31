@@ -33,10 +33,10 @@ vi.mock('@/api/http', () => ({
   })),
 }))
 
-vi.mock('@/tauri/localExecutor', () => ({
+vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: mocks.connect,
   disconnectLocalExecutorFromBackend: mocks.disconnect,
-  ensureLocalExecutorStarted: mocks.ensure,
+  ensureLocalExecutorAvailable: mocks.ensure,
   requestLocalExecutor: mocks.request,
 }))
 

@@ -243,7 +243,8 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
     project_index
         .projects()
         .iter()
-        .map(|project| RuntimeWorkspaceLink {
+        .enumerate()
+        .map(|(project_sidebar_order, project)| RuntimeWorkspaceLink {
             // A device workspace represents one project on one device. Its additional
             // writable roots belong in project_roots; expanding them into workspaces
             // makes two projects that share a root collapse into the same path group.
@@ -258,6 +259,7 @@ fn codex_project_workspaces(project_index: &CodexGlobalProjectIndex) -> Vec<Runt
             project_kind: project.kind.clone(),
             project_source: project.source.clone(),
             project_roots: project.roots.clone(),
+            project_sidebar_order: Some(project_sidebar_order),
             project_pinned: project.pinned,
             project_pinned_order: project.pinned_order,
             project_active: project.active,
@@ -351,6 +353,7 @@ fn runtime_event_request_from_link(link: &RuntimeTaskLink) -> ExecutionRequest {
         prompt: Value::String(link.title.clone()),
         ..ExecutionRequest::default()
     };
+    set_runtime_task_title(&mut request, &link.title);
     if !link.project_plugin_ids.is_empty() {
         request.extra.insert(
             "project_plugin_ids".to_owned(),

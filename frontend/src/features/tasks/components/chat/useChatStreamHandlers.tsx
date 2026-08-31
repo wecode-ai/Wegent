@@ -44,6 +44,7 @@ import type {
 import type { ContextItem, ExternalKnowledgeContext } from '@/types/context'
 import type { ArtifactNodeContext } from '@/types/knowledge-artifact'
 import type { SkillRef } from '../../hooks/useSkillSelector'
+import { getFirstSearchParam } from '@/lib/search-params'
 import {
   buildDingTalkKnowledgeRef,
   normalizeSelectedExternalKnowledgeRefs,
@@ -300,6 +301,10 @@ export function useChatStreamHandlers({
   const projectId = searchParams?.get('projectId')
     ? Number(searchParams.get('projectId'))
     : undefined
+  const conversationGroupId = searchParams?.get('conversationGroupId')
+    ? Number(searchParams.get('conversationGroupId'))
+    : undefined
+  const newTaskProjectId = projectId ?? conversationGroupId
   const projectConfig = useMemo(() => {
     if (!projectId) return null
     const project = projects.find(p => p.id === projectId)
@@ -713,8 +718,8 @@ export function useChatStreamHandlers({
         artifact_context: sendOptions?.artifactContext,
         contexts: contextItems.length > 0 ? contextItems : undefined,
         device_id: effectiveDeviceId,
-        // Project association for workspace project conversations
-        project_id: currentTaskId ? undefined : projectId,
+        // Associate new tasks with either a workspace project or a conversation group.
+        project_id: currentTaskId ? undefined : newTaskProjectId,
         additional_skills:
           snapshotAdditionalSkills && snapshotAdditionalSkills.length > 0
             ? snapshotAdditionalSkills
@@ -743,7 +748,15 @@ export function useChatStreamHandlers({
             onTaskCreated(completedTaskId)
           }
 
-          if (completedTaskId && !currentTaskId) {
+          const routeTaskId = Number(
+            getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
+          )
+          if (completedTaskId && routeTaskId !== completedTaskId) {
+            console.info('[useChatStreamHandlers][task-route] Repairing task id', {
+              route_task_id: Number.isFinite(routeTaskId) && routeTaskId > 0 ? routeTaskId : null,
+              resolved_task_id: completedTaskId,
+              pathname: pathname ?? null,
+            })
             if (taskType === 'knowledge' && knowledgeBaseId) {
               navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
             } else if (taskType === 'task' && !pathname?.startsWith('/devices')) {
@@ -758,11 +771,15 @@ export function useChatStreamHandlers({
               router.push(`/devices/chat?${params.toString()}`)
             } else {
               const params = new URLSearchParams(Array.from(searchParams.entries()))
+              params.delete('conversationGroupId')
               params.set('taskId', String(completedTaskId))
               router.push(`?${params.toString()}`)
             }
+          }
+
+          if (completedTaskId && !currentTaskId) {
             refreshTasks()
-            if (projectId) {
+            if (newTaskProjectId) {
               refreshProjects()
             }
           }
@@ -793,7 +810,6 @@ export function useChatStreamHandlers({
       taskType,
       selectedDocumentIds,
       knowledgeBaseId,
-      t,
       selectedTeam?.id,
       currentTaskId,
       selectedTaskDetail,
@@ -811,6 +827,7 @@ export function useChatStreamHandlers({
       navigateToKnowledgeTask,
       refreshTasks,
       projectId,
+      newTaskProjectId,
       refreshProjects,
       markTaskAsViewed,
       handleSendError,
@@ -1097,7 +1114,7 @@ export function useChatStreamHandlers({
         sendOptions
       )
 
-      if (canQueueMessage && activeTaskId) {
+      if (canQueueMessage && activeTaskId && !sendOptions?.interactiveFormAnswer) {
         const mergeTarget = [...activeTaskQueue]
           .reverse()
           .find(queuedMessage => queuedMessage.status === 'queued')
@@ -1501,7 +1518,16 @@ export function useChatStreamHandlers({
                 onTaskCreated(completedTaskId)
               }
 
-              if (completedTaskId && !currentTaskId) {
+              const routeTaskId = Number(
+                getFirstSearchParam(searchParams, ['taskId', 'task_id', 'taskid'])
+              )
+              if (completedTaskId && routeTaskId !== completedTaskId) {
+                console.info('[useChatStreamHandlers][task-route] Repairing task id', {
+                  route_task_id:
+                    Number.isFinite(routeTaskId) && routeTaskId > 0 ? routeTaskId : null,
+                  resolved_task_id: completedTaskId,
+                  pathname: pathname ?? null,
+                })
                 if (taskType === 'knowledge' && knowledgeBaseId) {
                   navigateToKnowledgeTask(completedTaskId, knowledgeBaseId)
                 } else {
@@ -1509,6 +1535,9 @@ export function useChatStreamHandlers({
                   params.set('taskId', String(completedTaskId))
                   router.push(`?${params.toString()}`)
                 }
+              }
+
+              if (completedTaskId && !currentTaskId) {
                 refreshTasks()
                 if (projectId) {
                   refreshProjects()

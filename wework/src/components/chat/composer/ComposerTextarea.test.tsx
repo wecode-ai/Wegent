@@ -15,6 +15,7 @@ import {
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
 import { clearComposerAppsSnapshot, resetComposerAppsMemory } from './composerAppsSnapshot'
 import { ComposerTextarea } from './ComposerTextarea'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 const nativeWorkspacePickerMocks = vi.hoisted(() => ({
   open: vi.fn(),
@@ -661,7 +662,7 @@ describe('ComposerTextarea', () => {
     expect(videoIcon).toHaveTextContent('W')
   })
 
-  test('preloads callable plugins before the slash menu opens', async () => {
+  test('loads callable plugins when the slash menu opens', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onListLocalApps = vi.fn().mockResolvedValue([GITHUB_PLUGIN])
 
@@ -679,7 +680,7 @@ describe('ComposerTextarea', () => {
       />
     )
 
-    await waitFor(() => expect(onListLocalApps).toHaveBeenCalledTimes(1))
+    expect(onListLocalApps).not.toHaveBeenCalled()
     expect(screen.queryByTestId('slash-command-menu')).not.toBeInTheDocument()
 
     const editor = screen.getByTestId('chat-message-input') as HTMLElement & { value: string }
@@ -1142,14 +1143,14 @@ describe('ComposerTextarea', () => {
     expect(screen.queryByTestId('composer-path-chip-preview-png')).not.toBeInTheDocument()
   })
 
-  test('drops local files and folders as path references without uploading them', async () => {
+  test('drops Finder files as path references in remote workspaces without uploading them', async () => {
     const textareaRef = createRef<HTMLElement>()
     const onPasteFiles = vi.fn()
     const workspaceTarget: WorkspaceTarget = {
-      deviceId: 'local-device',
+      deviceId: 'remote-device',
       path: '/workspace/project',
       source: 'project',
-      workspaceSource: 'local',
+      workspaceSource: 'remote',
     }
     nativeClipboardPathMocks.resolve.mockResolvedValue({
       attachmentFiles: [],
@@ -1206,7 +1207,91 @@ describe('ComposerTextarea', () => {
       )
     })
     expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledOnce()
+    expect(nativeClipboardPathMocks.resolve).toHaveBeenCalledWith(dropEvent.dataTransfer, 'drop')
     expect(onPasteFiles).not.toHaveBeenCalled()
+  })
+
+  test('inserts Wework selected text drops at the current composer selection', async () => {
+    const textareaRef = createRef<HTMLElement>()
+
+    function Harness() {
+      const [value, setValue] = useState('existing draft')
+      return (
+        <ComposerTextarea
+          value={value}
+          onChange={setValue}
+          onSubmit={vi.fn()}
+          canSend={false}
+          placeholder="Message"
+          rows={2}
+          textareaRef={textareaRef}
+          className="min-h-12"
+        />
+      )
+    }
+
+    render(<Harness />)
+    const editor = screen.getByTestId('chat-message-input')
+    const dropEvent = new Event('drop', {
+      bubbles: true,
+      cancelable: true,
+    }) as DragEvent
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        files: [],
+        items: [],
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) =>
+          type === 'text/plain' ? 'export const selected = true' : 'true',
+      },
+    })
+
+    fireEvent(editor, dropEvent)
+
+    await waitFor(() => {
+      const paragraphs = editor.querySelectorAll('p')
+      expect(paragraphs[0]).toHaveTextContent('export const selected = true')
+      expect(paragraphs[1]).toHaveTextContent('existing draft')
+    })
+    expect(dropEvent.defaultPrevented).toBe(true)
+  })
+
+  test('does not process selected text drops while disabled', () => {
+    const textareaRef = createRef<HTMLElement>()
+    const onChange = vi.fn()
+
+    render(
+      <ComposerTextarea
+        value="keep this draft"
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        canSend={false}
+        disabled
+        placeholder="Message"
+        rows={2}
+        textareaRef={textareaRef}
+        className="min-h-12"
+      />
+    )
+    const editor = screen.getByTestId('chat-message-input')
+    const dropEvent = new Event('drop', {
+      bubbles: true,
+      cancelable: true,
+    }) as DragEvent
+    Object.defineProperty(dropEvent, 'dataTransfer', {
+      value: {
+        files: [],
+        items: [],
+        types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+        getData: (type: string) => (type === 'text/plain' ? 'ignored text' : 'true'),
+      },
+    })
+
+    fireEvent(editor, dropEvent)
+
+    expect(dropEvent.defaultPrevented).toBe(true)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(editor).toHaveTextContent('keep this draft')
   })
 
   test('shows the cloud space entries in the @ menu when cloud is enabled', async () => {

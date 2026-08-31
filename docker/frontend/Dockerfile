@@ -9,6 +9,7 @@ WORKDIR /app
 
 # Copy dependency files and postinstall scripts
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/chat-core/package.json ./packages/chat-core/package.json
 COPY frontend/package.json ./frontend/package.json
 COPY frontend/scripts ./frontend/scripts
@@ -54,7 +55,7 @@ ENV HUSKY=0
 WORKDIR /app/frontend
 RUN corepack enable \
     && corepack prepare pnpm@11.7.0 --activate \
-    && pnpm run build
+    && pnpm --config.verify-deps-before-run=false run build
 
 # ---- Production Stage ----
 FROM node:22-slim AS runner

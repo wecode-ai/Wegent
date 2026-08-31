@@ -10,7 +10,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex, Weak,
+        Arc, Mutex, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -18,7 +18,7 @@ use std::{
 use chrono::Local;
 use futures_util::{stream, StreamExt};
 use serde_json::{json, Map, Value};
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AsyncMutex, Semaphore};
 use tokio::time::sleep;
 
 use crate::{
@@ -44,6 +44,68 @@ use crate::{
 };
 
 const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
+const DEFAULT_RESTORE_STARTUP_CONCURRENCY: usize = 2;
+const RESTORE_STARTUP_CONCURRENCY_ENV: &str = "WEGENT_RUNTIME_RESTORE_CONCURRENCY";
+const RESTORED_TURN_MARKER: &str = "wegent_restore_after_restart";
+const RESTORE_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
+
+enum RestoreStartupState {
+    Waiting {
+        _permit: tokio::sync::OwnedSemaphorePermit,
+    },
+    Active,
+    TimedOut,
+    Finished,
+}
+
+struct RestoreStartupGate {
+    state: Mutex<RestoreStartupState>,
+}
+
+impl RestoreStartupGate {
+    fn new(permit: tokio::sync::OwnedSemaphorePermit) -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(RestoreStartupState::Waiting { _permit: permit }),
+        })
+    }
+
+    fn try_activate(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::Active;
+        true
+    }
+
+    fn try_timeout(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if !matches!(*state, RestoreStartupState::Waiting { .. }) {
+            return false;
+        }
+        *state = RestoreStartupState::TimedOut;
+        true
+    }
+
+    fn finish(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("restore startup state lock should not be poisoned");
+        if matches!(
+            *state,
+            RestoreStartupState::Waiting { .. } | RestoreStartupState::Active
+        ) {
+            *state = RestoreStartupState::Finished;
+        }
+    }
+}
 
 mod archives;
 mod automation_rpc;
@@ -53,6 +115,7 @@ mod collection;
 mod fork_transfer;
 mod hooks;
 mod notifications;
+mod plugin_install;
 mod queries;
 mod robot_queue_rpc;
 mod sidebar;
@@ -84,13 +147,18 @@ use super::{
     notification_mapping::{codex_stream_debug_enabled, set_codex_stream_debug_enabled},
     response::{
         archived_conversations_response, codex_thread_has_in_progress_turn,
-        codex_thread_in_progress_turn_id, runtime_status_is_running, search_result_item,
-        workspace_response, RuntimeTaskLink, RuntimeWorkspaceLink, SearchResultMatch,
+        codex_thread_in_progress_turn_id, codex_thread_terminal_task_status,
+        runtime_status_is_running, search_result_item, workspace_response, RuntimeTaskLink,
+        RuntimeWorkspaceLink, SearchResultMatch,
     },
     runtime_handle_messages::{
-        append_runtime_handle_message, append_runtime_handle_user_message_presentation,
-        cached_messages, clear_runtime_handle_messages, set_runtime_handle_messages,
-        user_message_presentations,
+        append_completed_transcript_messages, append_runtime_handle_message,
+        append_runtime_handle_user_message_presentation, append_unique_transcript_messages,
+        bind_runtime_handle_user_message_presentation_to_turn, cached_messages,
+        clear_completed_transcript_messages, clear_runtime_handle_messages,
+        clear_transcript_snapshot_messages, completed_transcript_messages,
+        set_runtime_handle_messages, set_transcript_snapshot_messages,
+        transcript_snapshot_messages, user_message_presentations,
     },
     store::{runtime_work_dir, RuntimeWorkStore},
     transcript::{
@@ -101,8 +169,9 @@ use super::{
     util::{
         apply_runtime_payload_metadata, bool_field, cloud_project_id, execution_request, id_field,
         infer_workspace_kind, integer_field, is_codex_context_compaction_item_type, item_id,
-        item_type, normalize_device_id, normalize_workspace_path, now_ms, prompt_text,
-        restore_cloud_project_id, restore_origin, runtime_task_id, string_field,
+        item_type, normalize_device_id, normalize_runtime_goal_timestamps,
+        normalize_workspace_path, now_ms, prompt_text, restore_cloud_project_id, restore_origin,
+        runtime_task_id, runtime_task_title, set_runtime_task_title, string_field,
         timestamp_ms_field, workspace_group_path, workspace_path,
     },
     worktrees::{WorktreeManager, WorktreeSettingsPatch},
@@ -115,6 +184,7 @@ const PENDING_THREAD_EVENT_ROUTE_PREFIX: &str = "pending:";
 const ACTIVE_CODEX_TURN_WAIT_ATTEMPTS: usize = 20;
 const ACTIVE_CODEX_TURN_WAIT_MS: u64 = 50;
 const CODEX_TRANSCRIPT_PAGE_SIZE: usize = 40;
+const PROVIDER_STATE_RECONCILIATION_TIMEOUT: Duration = Duration::from_millis(500);
 const PROVIDER_TURN_INTERRUPT_WAIT_ATTEMPTS: usize = 100;
 const CONTEXT_COMPACTION_WAIT_ATTEMPTS: usize = 600;
 const CONTEXT_COMPACTION_WAIT_MS: u64 = 200;
@@ -134,6 +204,22 @@ const DEFAULT_MAX_CONCURRENT_TASKS: usize = 10;
 const MIN_MAX_CONCURRENT_TASKS: usize = 1;
 const MAX_MAX_CONCURRENT_TASKS: usize = 20;
 
+fn restore_startup_concurrency(max_concurrent_tasks: usize) -> usize {
+    let configured = env::var(RESTORE_STARTUP_CONCURRENCY_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok());
+    normalized_restore_startup_concurrency(configured, max_concurrent_tasks)
+}
+
+fn normalized_restore_startup_concurrency(
+    configured: Option<usize>,
+    max_concurrent_tasks: usize,
+) -> usize {
+    configured
+        .unwrap_or(DEFAULT_RESTORE_STARTUP_CONCURRENCY)
+        .clamp(1, max_concurrent_tasks.max(1))
+}
+
 fn worktree_error_code(error: &str) -> &'static str {
     [
         "worktree_source_missing",
@@ -143,7 +229,6 @@ fn worktree_error_code(error: &str) -> &'static str {
         "worktree_git_common_dir_unwritable",
         "worktree_ref_not_found",
         "worktree_target_conflict",
-        "worktree_device_mismatch",
         "worktree_persistent_storage_unverified",
     ]
     .into_iter()
@@ -162,7 +247,6 @@ struct SpawnTurnRequest {
     fork_thread_id: Option<String>,
     fork_thread_path: Option<String>,
     resume_thread_id: Option<String>,
-    initial_thread_name: Option<String>,
     initial_thread_goal: Option<Value>,
 }
 
@@ -276,9 +360,7 @@ fn standalone_chat_workspace_path(
         return None;
     }
     let segment = workspace_segment(local_task_id);
-    let path = home_dir()
-        .join("Documents")
-        .join("Codex")
+    let path = standalone_workspace_root()
         .join(Local::now().format("%Y-%m-%d").to_string())
         .join(segment);
     if let Err(error) = fs::create_dir_all(&path) {
@@ -289,6 +371,13 @@ fn standalone_chat_workspace_path(
         return None;
     }
     Some(path.display().to_string())
+}
+
+fn standalone_workspace_root() -> PathBuf {
+    env::var_os("WEGENT_STANDALONE_WORKSPACE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home_dir().join("Documents").join("Codex"))
 }
 
 fn is_standalone_chat_workspace(request: &ExecutionRequest) -> bool {
@@ -333,18 +422,30 @@ struct CodexModelProviderInfo {
 }
 
 fn current_codex_model_provider_from_config(config_response: &Value) -> CodexModelProviderInfo {
+    let configured_provider = crate::agents::configured_inference_model_provider();
+    current_codex_model_provider(config_response, &configured_provider)
+}
+
+fn current_codex_model_provider(
+    config_response: &Value,
+    configured_provider: &str,
+) -> CodexModelProviderInfo {
     let config = config_response
         .get("config")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let current_provider = string_from_map(&config, "modelProvider")
+    let runtime_provider = string_from_map(&config, "modelProvider")
         .or_else(|| string_from_map(&config, "model_provider"))
         .filter(|provider| {
             provider != crate::server::codex_model_catalog::PROVIDER_ID
                 && provider != "wework-catalog"
-        })
-        .unwrap_or_else(crate::agents::configured_inference_model_provider);
+        });
+    let current_provider = if configured_provider != CODEX_OFFICIAL_PROVIDER_ID {
+        configured_provider.to_owned()
+    } else {
+        runtime_provider.unwrap_or_else(|| configured_provider.to_owned())
+    };
     let display_name = config
         .get("model_providers")
         .or_else(|| config.get("modelProviders"))
@@ -440,11 +541,11 @@ pub struct RuntimeWorkRpcHandler {
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
+    restore_startup_semaphore: Arc<Semaphore>,
     turn_queue_operation: Arc<AsyncMutex<()>>,
     turn_queue_path: Arc<PathBuf>,
     preparing_worktree_turns: Arc<Mutex<HashMap<String, PreparingWorktreeTurn>>>,
-    active_turn_cancellations: Arc<Mutex<HashMap<String, ActiveTurnCancellation>>>,
-    active_codex_turns: Arc<Mutex<HashMap<String, ActiveCodexTurn>>>,
+    active_local_executions: Arc<Mutex<HashMap<String, ActiveLocalExecution>>>,
     active_codex_transcript_items: Arc<Mutex<HashMap<String, ActiveCodexTranscriptItems>>>,
     active_request_user_inputs: Arc<Mutex<HashMap<String, ActiveRequestUserInput>>>,
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
@@ -467,10 +568,18 @@ pub struct RuntimeWorkRpcHandler {
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
 }
 
-#[derive(Default)]
 struct CodexRuntimeProxyConfig {
     initialized: bool,
     proxy_url: Option<String>,
+}
+
+impl Default for CodexRuntimeProxyConfig {
+    fn default() -> Self {
+        Self {
+            initialized: true,
+            proxy_url: None,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -479,13 +588,14 @@ struct WorktreeReconciliationState {
     last_attempt: Option<Instant>,
 }
 
-struct ActiveTurnCancellation {
+struct ActiveLocalExecution {
     execution_id: u64,
     stop_requested: bool,
     stop_acknowledged: bool,
     managed_worktree_path: Option<PathBuf>,
     cancel: oneshot::Sender<()>,
     stopped: oneshot::Receiver<()>,
+    codex_turn: Option<ActiveCodexTurn>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -508,6 +618,7 @@ struct ActiveCodexTurn {
 
 #[derive(Clone)]
 struct ActiveCodexTranscriptItems {
+    thread_id: String,
     turn_id: String,
     items: Vec<Value>,
 }
@@ -596,6 +707,26 @@ impl RuntimeWorkRpcHandler {
                 log_executor_event("runtime turn queue restore failed", &[("error", error)]);
                 VecDeque::new()
             });
+        for turn in &mut queued_turns {
+            turn.request
+                .extra
+                .insert(RESTORED_TURN_MARKER.to_owned(), Value::Bool(true));
+        }
+        let restored_turn_count = queued_turns.len();
+        let restore_startup_concurrency =
+            restore_startup_concurrency(runtime_settings.max_concurrent_tasks);
+        if restored_turn_count > 0 {
+            log_executor_event(
+                "runtime persisted turn startup ramp configured",
+                &[
+                    ("restored_turn_count", restored_turn_count.to_string()),
+                    (
+                        "restore_startup_concurrency",
+                        restore_startup_concurrency.to_string(),
+                    ),
+                ],
+            );
+        }
         let removed_worktree_turn_count =
             turns::remove_worktree_turns_after_restart(&worktrees, &mut queued_turns);
         if removed_worktree_turn_count > 0 {
@@ -619,11 +750,11 @@ impl RuntimeWorkRpcHandler {
                 runtime_settings.max_concurrent_tasks,
                 queued_turns,
             ))),
+            restore_startup_semaphore: Arc::new(Semaphore::new(restore_startup_concurrency)),
             turn_queue_operation: Arc::new(AsyncMutex::new(())),
             turn_queue_path: Arc::new(turn_queue_path),
             preparing_worktree_turns: Arc::new(Mutex::new(HashMap::new())),
-            active_turn_cancellations: Arc::new(Mutex::new(HashMap::new())),
-            active_codex_turns: Arc::new(Mutex::new(HashMap::new())),
+            active_local_executions: Arc::new(Mutex::new(HashMap::new())),
             active_codex_transcript_items: Arc::new(Mutex::new(HashMap::new())),
             active_request_user_inputs: Arc::new(Mutex::new(HashMap::new())),
             supervisor_evaluating: Arc::new(Mutex::new(HashSet::new())),
@@ -722,16 +853,20 @@ impl RuntimeWorkRpcHandler {
     async fn dispatch(&self, method: &str, payload: Value) -> Result<Value, AppIpcError> {
         if !matches!(
             method,
-            "runtime.worktrees.capabilities" | "runtime.worktrees.preflight"
+            "runtime.tasks.running_count"
+                | "runtime.worktrees.capabilities"
+                | "runtime.worktrees.preflight"
         ) && self.reconcile_worktrees_once().await
         {
             self.resume_persisted_turns().await;
         }
         match method {
             "runtime.tasks.list" => self.list_tasks().await,
+            "runtime.tasks.running_count" => Ok(self.running_task_count()),
             "runtime.tasks.search" => self.search_tasks(payload).await,
             "runtime.tasks.transcript" => self.transcript(payload).await,
             "runtime.tasks.create" => self.create_task(payload).await,
+            "runtime.text.generate" => self.generate_text(payload).await,
             "runtime.tasks.fork_at_turn" => self.fork_task_at_turn(payload).await,
             "runtime.tasks.send" => self.send_message(payload).await,
             "runtime.tasks.interrupt_and_send" => self.interrupt_and_send(payload).await,
@@ -779,10 +914,21 @@ impl RuntimeWorkRpcHandler {
             "runtime.codex.models.list" => self.list_codex_models(payload).await,
             "runtime.codex.ensure_started" => self.ensure_codex_started().await,
             "runtime.codex.catalog.custom.write" => self.write_custom_codex_catalog(payload).await,
+            "runtime.codex.catalog.overrides.read" => {
+                self.read_codex_model_overrides(payload).await
+            }
+            "runtime.codex.catalog.overrides.write" => {
+                self.write_codex_model_override(payload).await
+            }
+            "runtime.codex.catalog.overrides.delete" => {
+                self.delete_codex_model_override(payload).await
+            }
             "runtime.codex.instructions.read" => self.read_codex_instructions().await,
             "runtime.codex.instructions.write" => self.write_codex_instructions(payload).await,
             "runtime.codex.personality.read" => self.read_codex_personality().await,
             "runtime.codex.personality.write" => self.write_codex_personality(payload).await,
+            "runtime.codex.plugin.install_local_first" => self.install_local_plugin(payload).await,
+            "runtime.codex.plugin.uninstall_local" => self.uninstall_local_plugin(payload).await,
             "runtime.codex.rate_limits.read" => self.read_codex_rate_limits().await,
             "runtime.codex.runtime_config.update" => {
                 self.update_codex_runtime_config(payload).await
@@ -862,6 +1008,11 @@ impl RuntimeWorkRpcHandler {
             )),
         }
     }
+}
+
+fn codex_app_server_restart_gate() -> &'static AsyncMutex<()> {
+    static GATE: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| AsyncMutex::new(()))
 }
 
 include!("handler/helpers.rs");

@@ -25,7 +25,6 @@ from app.schemas.base_role import BaseRole
 from app.schemas.project_chat import (
     LoopItemExecutionCancel,
     LoopItemExecutionClaim,
-    LoopItemExecutionDeviceClaim,
     LoopItemExecutionDispatchFailed,
     LoopItemExecutionDispatchIntent,
     LoopItemExecutionDispatchUnknown,
@@ -34,6 +33,7 @@ from app.schemas.project_chat import (
     LoopItemExecutionRuntimeStart,
     LoopItemExecutionView,
 )
+from app.schemas.runtime_profile import ExecutionRuntimeSelect
 from app.services.cloud_projects.access import require_cloud_project_role
 from app.services.device.capacity import get_runtime_capacity_sync
 from app.services.loop_item_executions.service import (
@@ -44,6 +44,7 @@ from app.services.loop_item_executions.service import (
     execution_display_state,
     loop_item_execution_service,
 )
+from app.services.runtime_profiles import runtime_profile_service
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,11 @@ def _require_project_execution(
 
 
 def _execution_view(
-    db: Session, row: object, *, include_runtime_payload: bool = False
+    db: Session,
+    row: object,
+    *,
+    viewer_user_id: int | None = None,
+    include_runtime_payload: bool = False,
 ) -> LoopItemExecutionView:
     item = db.get(LoopItem, row.loop_item_id)
     agent = db.get(ProjectChatAgent, row.agent_id) if row.agent_id else None
@@ -122,6 +127,7 @@ def _execution_view(
             "team_id": row.optional_team_id,
             "backend_task_id": row.optional_backend_task_id,
             "automation_run_id": row.automation_run_id,
+            "executor_owner_user_id": _optional_user_id(row.executor_owner_user_id),
             "assigner_user_id": row.assigner_user_id,
             "execution_environment": row.execution_environment,
             "execution_device_id": _optional_text(row.execution_device_id),
@@ -154,6 +160,16 @@ def _execution_view(
             "runtime_device_id": _optional_text(row.runtime_device_id),
             "runtime_task_id": _optional_text(row.runtime_task_id),
             "agent_max_concurrent_executions": agent_max_concurrent_executions,
+            "runtime_profile_id": row.runtime_selection.get("runtime_profile_id"),
+            "runtime_source": row.runtime_selection.get("runtime_source"),
+            "can_select_runtime": (
+                viewer_user_id is not None
+                and row.executor_owner_user_id == viewer_user_id
+                and row.status in {"waiting_runtime", "queued"}
+            ),
+            "waiting_runtime_reason": (
+                row.execution_note if row.status == "waiting_runtime" else None
+            ),
             "runtime_payload": (
                 loop_item_execution_service.build_runtime_payload(
                     db,
@@ -167,6 +183,38 @@ def _execution_view(
             "updated_at": row.updated_at,
         }
     )
+
+
+@router.put(
+    "/{project_id}/executions/{execution_id}/runtime",
+    response_model=LoopItemExecutionView,
+)
+def select_execution_runtime(
+    project_id: int,
+    execution_id: int,
+    values: ExecutionRuntimeSelect,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> LoopItemExecutionView:
+    require_cloud_project_role(
+        db, project_id, current_user.id, BaseRole.RestrictedAnalyst
+    )
+    row = _require_project_execution(
+        db, project_id=project_id, execution_id=execution_id
+    )
+    if row.executor_owner_user_id != current_user.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only the Runtime owner can configure this execution",
+        )
+    selected = runtime_profile_service.select_execution(
+        db,
+        execution_id=execution_id,
+        user_id=current_user.id,
+        profile_id=values.runtime_profile_id,
+        version=values.version,
+    )
+    return _execution_view(db, selected, viewer_user_id=current_user.id)
 
 
 @router.get(
@@ -187,6 +235,7 @@ def list_executions(
     rows = loop_item_execution_service.list_queue(
         db,
         project_id=str(project_id),
+        viewer_user_id=current_user.id,
         agent_id=agent_id,
         assigner_user_id=assigner_user_id,
         status_filter=status,
@@ -283,72 +332,6 @@ def claim_execution(
                 assigner_filter=values.assigner_user_id,
             )
     return _claimed_execution_view(db, row) if row else None
-
-
-@claim_router.post(
-    "/loop-item-executions/claim-my-next",
-    response_model=Optional[LoopItemExecutionView],
-)
-def claim_my_next_execution(
-    values: LoopItemExecutionDeviceClaim,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-) -> Optional[LoopItemExecutionView]:
-    """Device-scoped claim used by the creator's local App puller.
-
-    Finds the next queued local run for any robot bound to the caller's device
-    and returns it with a just-in-time runtime request. Runtime heartbeat
-    capacity and the atomic CAS keep multiple routes from over-claiming.
-    """
-
-    capacity = get_runtime_capacity_sync(
-        db,
-        owner_user_id=current_user.id,
-        device_id=values.execution_device_id,
-    )
-    if capacity is None:
-        return None
-    lock_key = f"robot_exec:{current_user.id}:runtime:{capacity.runtime_instance_id}"
-    with distributed_lock.acquire_context(
-        f"robot_exec_owner:{current_user.id}", expire_seconds=30
-    ) as owner_acquired:
-        if not owner_acquired:
-            return None
-        with distributed_lock.acquire_context(
-            lock_key, expire_seconds=30
-        ) as device_acquired:
-            if not device_acquired:
-                return None
-            row = loop_item_execution_service.claim_next_for_device(
-                db,
-                execution_device_id=values.execution_device_id,
-                environment="local",
-                runtime_instance_id=capacity.runtime_instance_id,
-                device_capacity=capacity.limit,
-                runtime_active=capacity.active,
-                runtime_active_task_ids=capacity.active_task_ids,
-                lease_seconds=values.lease_seconds,
-                owner_user_id=current_user.id,
-            )
-            if row is None:
-                row = loop_item_execution_service.claim_next_unbound_local(
-                    db,
-                    owner_user_id=current_user.id,
-                    execution_device_id=values.execution_device_id,
-                    runtime_instance_id=capacity.runtime_instance_id,
-                    device_capacity=capacity.limit,
-                    runtime_active=capacity.active,
-                    runtime_active_task_ids=capacity.active_task_ids,
-                    lease_seconds=values.lease_seconds,
-                )
-    if row is None:
-        return None
-    if row.executor_owner_user_id != current_user.id:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            "Claimed Wework execution belongs to another user",
-        )
-    return _claimed_execution_view(db, row)
 
 
 def _claimed_execution_view(

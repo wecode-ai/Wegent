@@ -407,6 +407,10 @@ may reveal on hover/focus but must remain keyboard accessible.
   screenshot-matched review artifacts must use that width.
 - Sidebar rows are `30px` high with a `10px` radius, `8px–10px` horizontal
   padding, `14px` text, and an ordinary `16px` icon.
+- Leading status icons may occupy reserved indentation only when their negative
+  offset is fully contained by the row's left padding. Keep icons in the normal
+  flex flow for shallow pinned and top-level task rows so the glyph and its hit
+  target remain inside the sidebar viewport.
 - Priority task entries are selectable two-line data rows rather than compact
   navigation rows. They use a `48px` minimum height so the title and `12px–14px`
   source metadata remain readable.
@@ -656,6 +660,9 @@ must not discard entered data without warning. Do not stack modal dialogs.
   validation, or persistent system feedback.
 - Open on keyboard focus as well as hover and dismiss on blur, pointer exit, or
   Escape.
+- A focusable row retaining focus after activation must not keep its hover card
+  open unless that card explicitly opens on focus or focus has moved into its
+  interactive content.
 - Use the shared `Tooltip` component for compact controls instead of the native
   HTML `title` attribute. Icon-only controls must keep a localized
   `aria-label`; controls that currently have neither a visible label nor a
@@ -864,7 +871,7 @@ implementation and WCAG conflict.
 - File paths, terminals, permissions, and external applications reflect the
   actual current environment.
 - Keep pane resize and open/close motion stable under window zoom.
-- Verify changes through the isolated real-Tauri flow in `AGENTS.md`, never a
+- Verify changes through the isolated real-Electron flow in `AGENTS.md`, never a
   personal Wework window.
 
 ## 13. Implementation and review contract
@@ -895,7 +902,7 @@ For each material UI change, review:
 - Do keyboard behavior, accessible names, focus restoration, reduced motion,
   long translations, and constrained widths work?
 - Are light and dark themes both correct?
-- Was the affected flow verified in the isolated real Tauri application with a
+- Was the affected flow verified in the isolated real Electron application with a
   screenshot of the final normal state and any critical transient state?
 
 When a screenshot feels wrong, compare it in this order: composition, surface

@@ -17,6 +17,7 @@ from app.models.kind import Kind
 from app.models.plugin_marketplace import PluginDeviceInstallation, PluginRelease
 from app.models.user import User
 from app.schemas.device import DeviceCapabilitySyncResponse, DeviceCapabilitySyncResult
+from app.services.device.runtime_route import RuntimeRouteError, runtime_route_resolver
 from app.services.device_service import device_service
 from app.services.plugin_device_installation_service import (
     plugin_device_installation_service,
@@ -174,11 +175,6 @@ class DeviceCapabilitySyncService:
         mode: str = "merge",
     ) -> DeviceCapabilitySyncResponse:
         """Resolve selected capabilities and send them to one online device."""
-        runtime_device_id = await self._resolve_user_device_runtime_id(
-            db,
-            user_id=user.id,
-            device_id=device_id,
-        )
         payload = self.resolve_payload(
             db,
             user=user,
@@ -189,10 +185,9 @@ class DeviceCapabilitySyncService:
             mcp_ids=mcp_ids,
             mode=mode,
         )
-        payload["device_id"] = runtime_device_id
         result = await self._dispatch_payload_or_raise(
             user_id=user.id,
-            device_id=runtime_device_id,
+            device_id=device_id,
             payload=payload,
         )
         return self._aggregate_response([result], skipped=0, mode=mode)
@@ -261,35 +256,48 @@ class DeviceCapabilitySyncService:
         timeout_seconds: int = SYNC_TIMEOUT_SECONDS,
     ) -> DeviceCapabilitySyncResult:
         """Push an already-built desired payload to one online device."""
-        online_info = await device_service.get_device_online_info(user_id, device_id)
-        socket_id = online_info.get("socket_id") if online_info else None
-        if not socket_id:
+        try:
+            route = await runtime_route_resolver.resolve(
+                user_id=user_id,
+                submitted_device_id=device_id,
+            )
+        except RuntimeRouteError as exc:
             logger.info(
-                "Skipping capability sync for offline device: user_id=%s device_id=%s",
+                "Skipping capability sync without Runtime route: user_id=%s "
+                "device_id=%s code=%s",
                 user_id,
                 device_id,
+                exc.code,
             )
             return DeviceCapabilitySyncResult(
                 device_id=device_id,
                 success=False,
-                error="device is offline",
+                error=(
+                    "device not found or access denied"
+                    if exc.code == "device_not_found"
+                    else "device is offline"
+                ),
             )
 
+        dispatch_payload = {**payload, "device_id": route.runtime_device_id}
         try:
             logger.info(
-                "Sending capability sync: user_id=%s device_id=%s socket_id=%s mode=%s skill_names=%s plugin_names=%s mcp_names=%s",
+                "Sending capability sync: user_id=%s logical_device_id=%s "
+                "runtime_device_id=%s socket_id=%s mode=%s skill_names=%s "
+                "plugin_names=%s mcp_names=%s",
                 user_id,
                 device_id,
-                socket_id,
-                payload.get("mode"),
-                [item.get("name") for item in payload.get("skills") or []],
-                [item.get("name") for item in payload.get("plugins") or []],
-                [item.get("name") for item in payload.get("mcps") or []],
+                route.runtime_device_id,
+                route.socket_id,
+                dispatch_payload.get("mode"),
+                [item.get("name") for item in dispatch_payload.get("skills") or []],
+                [item.get("name") for item in dispatch_payload.get("plugins") or []],
+                [item.get("name") for item in dispatch_payload.get("mcps") or []],
             )
             response = await get_sio().call(
                 SYNC_EVENT,
-                payload,
-                to=socket_id,
+                dispatch_payload,
+                to=route.socket_id,
                 namespace=SYNC_NAMESPACE,
                 timeout=timeout_seconds,
             )
@@ -367,33 +375,13 @@ class DeviceCapabilitySyncService:
             raise DeviceCapabilityResolutionError(
                 "Device is offline. Start the local executor and retry.", 409
             )
-        if not result.success:
-            raise DeviceCapabilitySyncError(result.error or "Capability sync failed")
-        return result
-
-    async def _resolve_user_device_runtime_id(
-        self,
-        db: Session,
-        *,
-        user_id: int,
-        device_id: str,
-    ) -> str:
-        if not device_service.get_device_by_device_id(db, user_id, device_id):
+        if result.error == "device not found or access denied":
             raise DeviceCapabilityResolutionError(
                 "Device not found or access denied", 404
             )
-
-        devices = await device_service.get_all_devices(db, user_id)
-        device = next(
-            (item for item in devices if str(item.get("device_id") or "") == device_id),
-            None,
-        )
-        runtime_device_id = self._extract_device_id(device or {})
-        if not runtime_device_id:
-            raise DeviceCapabilityResolutionError(
-                "Device runtime is unavailable. Refresh devices and retry.", 409
-            )
-        return runtime_device_id
+        if not result.success:
+            raise DeviceCapabilitySyncError(result.error or "Capability sync failed")
+        return result
 
     def _load_enabled_installed_skills(
         self,

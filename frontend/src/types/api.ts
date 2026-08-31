@@ -101,6 +101,8 @@ export interface Bot {
   skill_refs?: Record<string, SkillRefMeta>
   preload_skills?: string[] // Skills to preload into system prompt
   preload_skill_refs?: Record<string, SkillRefMeta>
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string | null
   is_active: boolean
   created_at: string
   updated_at: string
@@ -186,6 +188,10 @@ export interface Team {
   is_mix_team?: boolean // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both' // Recommended usage mode (for QuickAccess)
   bind_mode?: TaskType[] // Allowed modes for this team
+  mode_spec?: {
+    allowedModelCategories: string[]
+    hiddenVideoParams?: string[]
+  } | null
   icon?: string // Icon ID from preset icon library
   quick_phrases?: string[] // Launcher phrases that prefill the chat input
   inputPlaceholder?: TeamInputPlaceholder | null
@@ -513,25 +519,7 @@ export interface TaskViewStatusMap {
   [taskId: string]: TaskViewStatus
 }
 
-// Clarification Types
-export interface ClarificationOption {
-  value: string
-  label: string
-  recommended?: boolean
-}
-
-export interface ClarificationQuestion {
-  question_id: string
-  question_text: string
-  question_type: 'single_choice' | 'multiple_choice' | 'text_input'
-  options?: ClarificationOption[]
-}
-
-export interface ClarificationData {
-  type: 'clarification'
-  questions: ClarificationQuestion[]
-}
-
+// Clarification answer summary types
 export interface ClarificationAnswer {
   question_id: string
   question_text: string
@@ -654,6 +642,7 @@ export interface Attachment {
   file_extension: string
   created_at: string
   truncation_info?: TruncationInfo | null
+  cover_url?: string | null
   local_preview_url?: string
 }
 
@@ -900,6 +889,9 @@ export interface ProjectTask {
   task_id: number
   task_title: string
   task_status: TaskStatus
+  device_id?: string | null
+  execution_workspace_source?: string | null
+  execution_workspace_path?: string | null
   is_group_chat: boolean
   project_id: number
   updated_at?: string | null

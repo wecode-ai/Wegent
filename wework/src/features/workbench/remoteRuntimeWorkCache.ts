@@ -10,15 +10,60 @@ import type {
   RuntimeWorkListResponse,
 } from '@/types/api'
 import { EMPTY_RUNTIME_WORK, mergeRuntimeWorkLists } from './workbenchCloudStatus'
-import { normalizeRuntimeTaskSummary } from './runtimeTaskLifecycle/projection'
 
-const REMOTE_RUNTIME_WORK_CACHE_VERSION = 1
-const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v1'
+const REMOTE_RUNTIME_WORK_CACHE_VERSION = 2
+const REMOTE_RUNTIME_WORK_CACHE_KEY_PREFIX = 'wework.workbench.remoteRuntimeWork.v2'
+
+type PersistedRuntimeTask = Pick<
+  RuntimeTaskSummary,
+  | 'taskId'
+  | 'threadId'
+  | 'workspacePath'
+  | 'workspaceKind'
+  | 'worktreeId'
+  | 'gitInfo'
+  | 'title'
+  | 'runtime'
+  | 'createdAt'
+  | 'updatedAt'
+  | 'pinned'
+  | 'pinnedOrder'
+  | 'sidebarOrder'
+>
+
+type CachedRuntimeTaskProjection = PersistedRuntimeTask & {
+  cachedProjection: true
+}
+
+interface PersistedRuntimeDeviceWorkspace {
+  id?: number | null
+  projectId?: number | null
+  deviceId: string
+  deviceName?: string | null
+  workspacePath: string
+  workspaceKind?: string | null
+  worktreeId?: string | null
+  label?: string | null
+  repoUrl?: string | null
+  repoRootFingerprint?: string | null
+  mapped?: boolean
+  tasks: PersistedRuntimeTask[]
+}
+
+interface PersistedRuntimeProjectWork {
+  project: RuntimeProjectRef
+  deviceWorkspaces: PersistedRuntimeDeviceWorkspace[]
+}
+
+interface PersistedRuntimeWorkList {
+  projects: PersistedRuntimeProjectWork[]
+  chats: PersistedRuntimeDeviceWorkspace[]
+}
 
 interface RemoteRuntimeWorkCacheEnvelope {
   version: typeof REMOTE_RUNTIME_WORK_CACHE_VERSION
   updatedAt: number
-  runtimeWork: RuntimeWorkListResponse
+  runtimeWork: PersistedRuntimeWorkList
 }
 
 function cacheKey(userId: number): string {
@@ -49,16 +94,6 @@ function nullableNumberValue(value: unknown): number | null | undefined {
 
 function booleanValue(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
-}
-
-function runtimeTurnStatusValue(value: unknown): RuntimeTaskSummary['turnStatus'] | undefined {
-  if (value === null) return null
-  return value === 'inProgress' ||
-    value === 'completed' ||
-    value === 'interrupted' ||
-    value === 'failed'
-    ? value
-    : undefined
 }
 
 function sanitizeProjectRoot(value: unknown): RuntimeProjectRoot | null {
@@ -113,6 +148,9 @@ function sanitizeProjectRef(value: unknown): RuntimeProjectRef | null {
       ? { stateDeviceId: nullableStringValue(project.stateDeviceId) }
       : {}),
     ...(roots ? { roots } : {}),
+    ...(nullableNumberValue(project.sidebarOrder) !== undefined
+      ? { sidebarOrder: nullableNumberValue(project.sidebarOrder) }
+      : {}),
     ...(booleanValue(project.pinned) !== undefined ? { pinned: booleanValue(project.pinned) } : {}),
     ...(nullableNumberValue(project.pinnedOrder) !== undefined
       ? { pinnedOrder: nullableNumberValue(project.pinnedOrder) }
@@ -150,7 +188,7 @@ function sanitizeGitInfo(value: unknown): Record<string, unknown> | null | undef
   return Object.keys(gitInfo).length > 0 ? gitInfo : undefined
 }
 
-function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary | null {
+function parsePersistedTask(value: unknown, workspacePath: string): PersistedRuntimeTask | null {
   const task = recordValue(value)
   const taskId = stringValue(task.taskId)
   const title = stringValue(task.title)
@@ -158,12 +196,11 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
   if (!taskId || !title || !runtime) return null
 
   const gitInfo = sanitizeGitInfo(task.gitInfo)
-  return normalizeRuntimeTaskSummary({
+  return {
     taskId,
     title,
-    runtime,
+    runtime: runtime as RuntimeTaskSummary['runtime'],
     workspacePath: stringValue(task.workspacePath) ?? workspacePath,
-    running: false,
     ...(nullableStringValue(task.threadId) !== undefined
       ? { threadId: nullableStringValue(task.threadId) }
       : {}),
@@ -180,18 +217,6 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
     ...(typeof task.updatedAt === 'string' || typeof task.updatedAt === 'number'
       ? { updatedAt: task.updatedAt }
       : {}),
-    ...(typeof task.completedAt === 'string' || typeof task.completedAt === 'number'
-      ? { completedAt: task.completedAt }
-      : {}),
-    ...(stringValue(task.threadStatus) !== undefined
-      ? { threadStatus: stringValue(task.threadStatus) }
-      : {}),
-    ...(runtimeTurnStatusValue(task.turnStatus) !== undefined
-      ? { turnStatus: runtimeTurnStatusValue(task.turnStatus) }
-      : {}),
-    ...(booleanValue(task.continuable) !== undefined
-      ? { continuable: booleanValue(task.continuable) }
-      : {}),
     ...(booleanValue(task.pinned) !== undefined ? { pinned: booleanValue(task.pinned) } : {}),
     ...(nullableNumberValue(task.pinnedOrder) !== undefined
       ? { pinnedOrder: nullableNumberValue(task.pinnedOrder) }
@@ -199,13 +224,14 @@ function sanitizeTask(value: unknown, workspacePath: string): RuntimeTaskSummary
     ...(nullableNumberValue(task.sidebarOrder) !== undefined
       ? { sidebarOrder: nullableNumberValue(task.sidebarOrder) }
       : {}),
-    ...(nullableStringValue(task.status) !== undefined
-      ? { status: nullableStringValue(task.status) }
-      : {}),
-  })
+  }
 }
 
-function sanitizeWorkspace(value: unknown): RuntimeDeviceWorkspace | null {
+function hydratePersistedTask(task: PersistedRuntimeTask): CachedRuntimeTaskProjection {
+  return { ...task, cachedProjection: true }
+}
+
+function parsePersistedWorkspace(value: unknown): PersistedRuntimeDeviceWorkspace | null {
   const workspace = recordValue(value)
   const deviceId = stringValue(workspace.deviceId)
   const workspacePath = stringValue(workspace.workspacePath)
@@ -213,17 +239,13 @@ function sanitizeWorkspace(value: unknown): RuntimeDeviceWorkspace | null {
 
   const tasks = Array.isArray(workspace.tasks)
     ? workspace.tasks
-        .map(task => sanitizeTask(task, workspacePath))
-        .filter((task): task is RuntimeTaskSummary => task !== null)
+        .map(task => parsePersistedTask(task, workspacePath))
+        .filter((task): task is PersistedRuntimeTask => task !== null)
     : []
 
   return {
     deviceId,
     workspacePath,
-    available: false,
-    deviceStatus: 'offline',
-    workspaceSource: 'remote',
-    remoteHostId: stringValue(workspace.remoteHostId) ?? deviceId,
     tasks,
     ...(nullableNumberValue(workspace.id) !== undefined
       ? { id: nullableNumberValue(workspace.id) }
@@ -255,34 +277,61 @@ function sanitizeWorkspace(value: unknown): RuntimeDeviceWorkspace | null {
   }
 }
 
-function sanitizeProjectWork(value: unknown): RuntimeProjectWork | null {
+function hydratePersistedWorkspace(
+  workspace: PersistedRuntimeDeviceWorkspace
+): RuntimeDeviceWorkspace {
+  return {
+    ...workspace,
+    available: false,
+    deviceStatus: 'offline',
+    workspaceSource: 'remote',
+    remoteHostId: workspace.deviceId,
+    tasks: workspace.tasks.map(hydratePersistedTask),
+  }
+}
+
+function parsePersistedProjectWork(value: unknown): PersistedRuntimeProjectWork | null {
   const projectWork = recordValue(value)
   const project = sanitizeProjectRef(projectWork.project)
   if (!project) return null
   const deviceWorkspaces = Array.isArray(projectWork.deviceWorkspaces)
     ? projectWork.deviceWorkspaces
-        .map(sanitizeWorkspace)
-        .filter((workspace): workspace is RuntimeDeviceWorkspace => workspace !== null)
+        .map(parsePersistedWorkspace)
+        .filter((workspace): workspace is PersistedRuntimeDeviceWorkspace => workspace !== null)
     : []
   return {
     project,
     deviceWorkspaces,
-    totalTasks: deviceWorkspaces.reduce((total, workspace) => total + workspace.tasks.length, 0),
   }
 }
 
-export function createRemoteRuntimeWorkCacheSnapshot(value: unknown): RuntimeWorkListResponse {
+function parsePersistedRuntimeWork(value: unknown): PersistedRuntimeWorkList {
   const runtimeWork = recordValue(value)
   const projects = Array.isArray(runtimeWork.projects)
     ? runtimeWork.projects
-        .map(sanitizeProjectWork)
-        .filter((project): project is RuntimeProjectWork => project !== null)
+        .map(parsePersistedProjectWork)
+        .filter((project): project is PersistedRuntimeProjectWork => project !== null)
     : []
   const chats = Array.isArray(runtimeWork.chats)
     ? runtimeWork.chats
-        .map(sanitizeWorkspace)
-        .filter((workspace): workspace is RuntimeDeviceWorkspace => workspace !== null)
+        .map(parsePersistedWorkspace)
+        .filter((workspace): workspace is PersistedRuntimeDeviceWorkspace => workspace !== null)
     : []
+  return { projects, chats }
+}
+
+function hydratePersistedRuntimeWork(
+  persistedRuntimeWork: PersistedRuntimeWorkList
+): RuntimeWorkListResponse {
+  const projects: RuntimeProjectWork[] = persistedRuntimeWork.projects.map(project => {
+    const deviceWorkspaces = project.deviceWorkspaces.map(hydratePersistedWorkspace)
+    return {
+      project: project.project,
+      deviceWorkspaces,
+      totalTasks: deviceWorkspaces.reduce((total, workspace) => total + workspace.tasks.length, 0),
+    }
+  })
+  const chats = persistedRuntimeWork.chats.map(hydratePersistedWorkspace)
   return {
     projects,
     chats,
@@ -292,13 +341,17 @@ export function createRemoteRuntimeWorkCacheSnapshot(value: unknown): RuntimeWor
   }
 }
 
+export function createRemoteRuntimeWorkCacheSnapshot(value: unknown): RuntimeWorkListResponse {
+  return hydratePersistedRuntimeWork(parsePersistedRuntimeWork(value))
+}
+
 export function readCachedRemoteRuntimeWork(userId: number): RuntimeWorkListResponse {
   try {
     const raw = window.localStorage.getItem(cacheKey(userId))
     if (!raw) return EMPTY_RUNTIME_WORK
     const envelope = recordValue(JSON.parse(raw))
     if (envelope.version !== REMOTE_RUNTIME_WORK_CACHE_VERSION) return EMPTY_RUNTIME_WORK
-    return createRemoteRuntimeWorkCacheSnapshot(envelope.runtimeWork)
+    return hydratePersistedRuntimeWork(parsePersistedRuntimeWork(envelope.runtimeWork))
   } catch {
     return EMPTY_RUNTIME_WORK
   }
@@ -309,21 +362,20 @@ export function writeCachedRemoteRuntimeWork(
   runtimeWork: RuntimeWorkListResponse,
   devices?: DeviceInfo[]
 ): RuntimeWorkListResponse {
-  const snapshot = withCachedDeviceLabels(
-    createRemoteRuntimeWorkCacheSnapshot(runtimeWork),
-    devices
+  const persistedRuntimeWork = parsePersistedRuntimeWork(
+    withCachedDeviceLabels(runtimeWork, devices)
   )
   const envelope: RemoteRuntimeWorkCacheEnvelope = {
     version: REMOTE_RUNTIME_WORK_CACHE_VERSION,
     updatedAt: Date.now(),
-    runtimeWork: snapshot,
+    runtimeWork: persistedRuntimeWork,
   }
   try {
     window.localStorage.setItem(cacheKey(userId), JSON.stringify(envelope))
   } catch {
     // The current runtime work remains available when persistent storage is unavailable.
   }
-  return snapshot
+  return hydratePersistedRuntimeWork(persistedRuntimeWork)
 }
 
 function runtimeWorkspaces(runtimeWork: RuntimeWorkListResponse): RuntimeDeviceWorkspace[] {

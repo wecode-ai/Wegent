@@ -76,9 +76,9 @@ impl EventSink for ClaudeRuntimeEventSink {
     fn send(&self, event: EventEnvelope) -> Self::SendFuture {
         let active = self
             .handler
-            .active_turn_cancellations
+            .active_local_executions
             .lock()
-            .expect("active turn cancellation map lock should not be poisoned");
+            .expect("active local execution map lock should not be poisoned");
         if !active.get(&self.local_task_id).is_some_and(|control| {
             control.execution_id == self.execution_id && !control.stop_requested
         }) {
@@ -196,13 +196,17 @@ impl RuntimeWorkRpcHandler {
             fork_thread_id: None,
             fork_thread_path: None,
             resume_thread_id: None,
-            initial_thread_name: None,
             initial_thread_goal: None,
         })
         .await
     }
 
-    pub(super) fn start_claude_turn(&self, local_task_id: String, request: ExecutionRequest) {
+    pub(super) fn start_claude_turn(
+        &self,
+        local_task_id: String,
+        request: ExecutionRequest,
+        restore_startup: Option<Arc<RestoreStartupGate>>,
+    ) {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id = match self.start_local_task_execution(
@@ -220,6 +224,13 @@ impl RuntimeWorkRpcHandler {
                 return;
             }
         };
+        if let Some(restore_startup) = restore_startup.as_ref() {
+            self.schedule_restore_startup_timeout(
+                local_task_id.clone(),
+                execution_id,
+                Arc::clone(restore_startup),
+            );
+        }
         let handler = self.clone();
         tokio::spawn(async move {
             let _stopped_turn_guard = StoppedTurnGuard::new(stopped_tx);
@@ -236,6 +247,24 @@ impl RuntimeWorkRpcHandler {
                 request: request.clone(),
                 transcript: Arc::clone(&transcript),
             };
+            if let Some(restore_startup) = restore_startup.as_ref() {
+                if !restore_startup.try_activate() {
+                    if let Some(token) = model_proxy_token.as_deref() {
+                        local_model_proxy::unregister_harness(token);
+                    }
+                    return;
+                }
+                log_executor_event(
+                    "runtime restored turn reached active state",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
+            if !handler.is_current_local_task_execution(&local_task_id, execution_id) {
+                if let Some(token) = model_proxy_token.as_deref() {
+                    local_model_proxy::unregister_harness(token);
+                }
+                return;
+            }
             let _ = sink
                 .send(builder.response_created(Some("ClaudeCode")))
                 .await;
@@ -321,7 +350,7 @@ impl RuntimeWorkRpcHandler {
                         "cancelled",
                         Some(message),
                     );
-                    handler.finish_local_task(&local_task_id, execution_id, None, "cancelled");
+                    handler.settle_cancelled_local_task_execution(&local_task_id, execution_id);
                     handler.emit_claude_runtime_event(
                         &local_task_id,
                         &request,
@@ -336,6 +365,9 @@ impl RuntimeWorkRpcHandler {
             }
             if let Some(token) = model_proxy_token {
                 local_model_proxy::unregister_harness(&token);
+            }
+            if let Some(restore_startup) = restore_startup.as_ref() {
+                restore_startup.finish();
             }
         });
     }
@@ -375,6 +407,14 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(source) = request.extra.get("source") {
             payload["payload"]["source"] = source.clone();
+        }
+        if matches!(
+            event_type,
+            "response.completed" | "response.failed" | "response.incomplete" | "error"
+        ) {
+            if let Some(title) = runtime_task_title(request) {
+                payload["payload"]["taskTitle"] = Value::String(title);
+            }
         }
         let _ = event_tx.send(payload);
     }
@@ -627,9 +667,9 @@ mod tests {
 
         {
             let mut active = handler
-                .active_turn_cancellations
+                .active_local_executions
                 .lock()
-                .expect("active turn cancellation map lock");
+                .expect("active local execution map lock");
             let control = active.get_mut("task-1").expect("active Claude turn");
             control.stop_requested = true;
         }

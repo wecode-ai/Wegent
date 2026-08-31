@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 
+import { localHarnessCliPath, localHarnessCliVersion } from '../modules/local-harness-cli.mjs'
 import {
   responseCompleted,
   responseCreated,
@@ -19,12 +18,8 @@ const ACTIVE_WORKSPACE_WORKBENCH_SELECTOR = `${ACTIVE_WORKSPACE_TAB_SELECTOR} ${
 const COMPOSER_SELECTOR = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"][contenteditable="true"]`
 const ACTIVE_PROJECT_WORK_BUTTON = `${ACTIVE_WORKSPACE_WORKBENCH_SELECTOR} [data-testid="project-work-button"]`
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
-const CLAUDE_BINARY = join(
-  REPOSITORY_ROOT,
-  '.github',
-  'claude-code-cli',
-  'node_modules',
-  '.bin',
+const CLAUDE_BINARY = localHarnessCliPath(
+  join(REPOSITORY_ROOT, '.github', 'claude-code-cli', 'node_modules', '.bin'),
   'claude'
 )
 const MODEL_LABEL = 'Desktop E2E DeepSeek Pro Vision Main'
@@ -48,8 +43,6 @@ const LOCAL_ARTIFACT = 'claude-local-e2e.txt'
 const LOCAL_ARTIFACT_CONTENT = 'WEWORK_CLAUDE_LOCAL_ARTIFACT'
 const REMOTE_ARTIFACT = 'claude-remote-e2e.txt'
 const REMOTE_ARTIFACT_CONTENT = 'WEWORK_CLAUDE_REMOTE_ARTIFACT'
-const execFileAsync = promisify(execFile)
-
 function sse(response, events) {
   response.writeHead(200, {
     'cache-control': 'no-cache',
@@ -151,27 +144,36 @@ async function waitForNewTaskRow(control, knownRows, timeoutMs) {
 
 async function waitForTaskIdle(control, taskRowTestId, timeoutMs) {
   const taskId = taskRowTestId.slice('runtime-local-task-row-'.length)
-  const runningSelector =
-    `${ACTIVE_WORKSPACE_TAB_SELECTOR} ` + `[data-testid="runtime-local-task-running-${taskId}"]`
   const startedAt = Date.now()
+  let stableSince = null
+  let lastStatus = null
   let lastError = null
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      if (
-        Number(
-          await control.command('getElementCount', runningSelector, {
-            visible: true,
-          })
-        ) === 0
-      ) {
-        return
+      const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      lastStatus = snapshot.pane?.status ?? null
+      const ready =
+        snapshot.workbench?.currentRuntimeTask?.taskId === taskId &&
+        lastStatus?.isBusy === false &&
+        lastStatus.canSendQueuedMessage === true
+      if (ready) {
+        stableSince ??= Date.now()
+        if (Date.now() - stableSince >= 500) return
+      } else {
+        stableSince = null
       }
     } catch (error) {
+      stableSince = null
       lastError = error
     }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw lastError ?? new Error(`Claude Code task ${taskId} did not become visibly idle`)
+  throw (
+    lastError ??
+    new Error(
+      `Claude Code task ${taskId} did not become ready for follow-up: ${JSON.stringify(lastStatus)}`
+    )
+  )
 }
 
 async function configureClaude(control, executablePath, version, timeoutMs) {
@@ -179,6 +181,9 @@ async function configureClaude(control, executablePath, version, timeoutMs) {
   await control.command('click', '[data-testid="settings-menu-button"]')
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (!snapshot.testIds.includes('settings-nav-harnesses')) {
+    await control.command('waitFor', '[data-testid="general-experimental-features-toggle"]', {
+      timeoutMs,
+    })
     await control.command('click', '[data-testid="general-experimental-features-toggle"]')
     await control.command('waitFor', '[data-testid="settings-nav-harnesses"]', { timeoutMs })
   }
@@ -240,6 +245,12 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     timeoutMs,
   })
+  await control.command('waitFor', '[data-testid^="project-row-"]', {
+    text: 'claude-remote-workspace',
+    stableMs: 1000,
+    timeoutMs,
+    visible: true,
+  })
   let remoteProjectRow = null
   await waitFor(
     async () => {
@@ -264,12 +275,11 @@ async function createRemoteProject(control, workspacePath, timeoutMs, captureScr
     timeoutMs
   )
   assert.ok(remoteProjectRow, 'The remote Claude project identity was unavailable')
-  await control.command('clickDescendantInElementWithText', '[data-testid^="project-row-"]', {
-    text: 'claude-remote-workspace',
-    target: '[data-testid="project-new-conversation-button"]',
-    timeoutMs,
-    visible: true,
-  })
+  await control.command(
+    'clickWhenEnabled',
+    `[data-testid="${remoteProjectRow}"] [data-testid="project-new-conversation-button"]`,
+    { timeoutMs }
+  )
   await control.command('waitFor', ACTIVE_PROJECT_WORK_BUTTON, {
     text: 'claude-remote-workspace',
     stableMs: 300,
@@ -336,12 +346,18 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   await access(CLAUDE_BINARY, constants.X_OK)
-  const { stdout } = await execFileAsync(CLAUDE_BINARY, ['--version'])
-  const claudeVersion = stdout.trim().split('\n')[0]
-  const localClaudeAlias = join(resultDir, 'local-claude')
+  const claudeVersion = await localHarnessCliVersion(CLAUDE_BINARY)
+  const localClaudeAlias = join(
+    resultDir,
+    process.platform === 'win32' ? 'local-claude.cmd' : 'local-claude'
+  )
   const remoteWorkspacePath = join(resultDir, 'claude-remote-workspace')
   await rm(localClaudeAlias, { force: true })
-  await symlink(CLAUDE_BINARY, localClaudeAlias)
+  if (process.platform === 'win32') {
+    await writeFile(localClaudeAlias, `@echo off\r\ncall "${CLAUDE_BINARY}" %*\r\n`, 'utf8')
+  } else {
+    await symlink(CLAUDE_BINARY, localClaudeAlias)
+  }
   await mkdir(remoteWorkspacePath, { recursive: true })
   await writeFile(join(remoteWorkspacePath, 'README.md'), '# Claude remote E2E\n', 'utf8')
 
@@ -477,12 +493,12 @@ export async function createDesktopScenario({
         LOCAL_INITIAL_COMPLETION,
         runtimeTimeoutMs
       )
+      await waitForTaskIdle(control, localTaskRow, runtimeTimeoutMs)
       assert.equal(
         (await readFile(join(workspacePath, LOCAL_ARTIFACT), 'utf8')).trim(),
         LOCAL_ARTIFACT_CONTENT,
         'The local Claude Code executor did not create its artifact'
       )
-      await waitForTaskIdle(control, localTaskRow, runtimeTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: LOCAL_FOLLOW_UP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -540,6 +556,7 @@ export async function createDesktopScenario({
         REMOTE_INITIAL_COMPLETION,
         runtimeTimeoutMs
       )
+      await waitForTaskIdle(control, remoteTaskRow, runtimeTimeoutMs)
       await captureScreenshot(control, 'claude-runtime-remote-completed.png')
       assert.equal(
         (await readFile(join(remoteWorkspacePath, REMOTE_ARTIFACT), 'utf8')).trim(),
@@ -567,7 +584,6 @@ export async function createDesktopScenario({
         'The remote executor did not log its Claude Code command',
         runtimeTimeoutMs
       )
-      await waitForTaskIdle(control, remoteTaskRow, runtimeTimeoutMs)
       await control.command('fill', COMPOSER_SELECTOR, { value: REMOTE_FOLLOW_UP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
       await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -594,7 +610,14 @@ export async function createDesktopScenario({
           `The real Claude Code CLI did not send ${prompt}`
         )
       }
-      await rm(localClaudeAlias, { force: true })
+    },
+
+    async cleanup() {
+      await rm(localClaudeAlias, {
+        force: true,
+        maxRetries: process.platform === 'win32' ? 20 : 0,
+        retryDelay: 100,
+      })
     },
   }
 }

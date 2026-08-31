@@ -3,7 +3,11 @@ import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthGate } from '@/features/plugins/useLocalConnectorAuthGate'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { ProjectWorkBar } from '@/components/chat/composer/ProjectWorkBar'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
@@ -119,6 +123,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     workspaceFileApi,
   } = useWorkbenchPaneContext()
   const { t } = useTranslation('common')
+  const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
+  const openPluginCenterAction = actions.find(action => action.id === 'plugin-center.open') ?? null
   const activeItem = 'chat'
   const taskReminders = runtimeTaskReminders ?? EMPTY_RUNTIME_TASK_REMINDERS
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -212,8 +218,8 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           retryFailedMessageAfterModelSelect()
         }
       : undefined,
-    onModelSelectorOpenChange: open => {
-      if (!open) pendingModelRetryRef.current = null
+    onModelSelectorOpenChange: (open, closeReason) => {
+      if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
     },
     onRefineTrialPrompt: refinePluginTrialPrompt,
   }
@@ -293,7 +299,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
           setSettingsOpen(false)
           navigateTo('/')
         }}
-        onOpenPlugins={() => navigateTo('/plugins')}
+        onOpenPlugins={
+          openPluginCenterAction ? () => executeDshAction(openPluginCenterAction) : undefined
+        }
       />
     )
   }
@@ -412,7 +420,19 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
               className="h-full"
               scrollerClassName={isCreatingWorktree ? 'pt-16' : 'pb-28 pt-16'}
               contentFooter={
-                isCreatingWorktree ? <WorktreeCreationStatus className="py-8" /> : undefined
+                isCreatingWorktree ? (
+                  <WorktreeCreationStatus className="py-8" />
+                ) : (
+                  <PluginWorkspaceConversationResult
+                    taskId={currentRuntimeTask?.taskId}
+                    workspacePath={currentRuntimeTask?.workspacePath}
+                    messages={paneMessages}
+                    waiting={paneSession.status.isWaitingForAssistantIndicator}
+                    onSendAction={(message, additionalContext) =>
+                      paneSession.send(message, { additionalContext })
+                    }
+                  />
+                )
               }
               devices={state.devices}
               onRetryFailedMessage={message => {

@@ -29,6 +29,7 @@ import {
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
   listenEmbeddedBrowserAgentState,
+  listenEmbeddedBrowserAnnotationRequests,
   listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
@@ -49,8 +50,10 @@ import {
   resolveEmbeddedBrowserAgentApproval,
   setEmbeddedBrowserAgentControlPaused,
   setEmbeddedBrowserBounds,
+  setEmbeddedBrowserDeviceMetrics,
   setEmbeddedBrowserZoom,
   type EmbeddedBrowserAgentStateEvent,
+  type EmbeddedBrowserAnnotationRequest,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
@@ -58,6 +61,7 @@ import {
   type EmbeddedBrowserNavigationError,
   type EmbeddedBrowserOcclusionChange,
   type EmbeddedBrowserOpenRequest,
+  type EmbeddedBrowserPageState,
 } from '@/lib/embedded-browser'
 import {
   readEmbeddedBrowserDownloadSnapshot,
@@ -107,8 +111,11 @@ import type {
   PageAnnotationDto,
 } from '@/types/browser-annotation'
 import { browserSnapshotToContexts } from '@/lib/browser-annotation-context'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
+const BROWSER_ANNOTATION_STATE_INTERVAL_MS = 100
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
 const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
 const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
@@ -126,6 +133,11 @@ interface BrowserOcclusionState {
   documentOverlayOccluded: boolean
   generation: number
   overlayIds: Set<string>
+}
+
+interface AnnotationEntry {
+  mode?: EmbeddedBrowserAnnotationRequest['mode']
+  point?: { x: number; y: number }
 }
 
 type BrowserOcclusionAction =
@@ -171,6 +183,7 @@ function browserOcclusionReducer(
 
 export interface WorkspaceBrowserPanelProps {
   active: boolean
+  hideToolbar?: boolean
   label?: string
   browserTabId?: string
   openRequest?: EmbeddedBrowserOpenRequest | null
@@ -326,6 +339,7 @@ function observeElementIfPresent(observer: ResizeObserver, element: Element | nu
 
 export function WorkspaceBrowserTabPanel({
   active,
+  hideToolbar = false,
   label = 'workspace-browser',
   browserTabId = label,
   openRequest,
@@ -343,13 +357,22 @@ export function WorkspaceBrowserTabPanel({
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
+  const electronRuntime = isElectronRuntime()
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
   const currentUrlRef = useRef<string | null>(null)
+  const pendingNavigationUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
+  const addressInputRef = useRef<HTMLInputElement | null>(null)
   const addressEditingRef = useRef(false)
   const annotationModeRef = useRef(false)
+  const annotationFlowRef = useRef<EmbeddedBrowserAnnotationRequest['mode']>('batch')
+  const quickAnnotationBaselineRef = useRef<{
+    pageSessionId: string
+    revision: number
+    annotationCount: number
+  } | null>(null)
   const annotationCleanupPromiseRef = useRef<Promise<void> | null>(null)
   const annotationInjectionOwnerRef = useRef<number | null>(null)
   const annotationRequestGenerationRef = useRef(0)
@@ -415,6 +438,7 @@ export function WorkspaceBrowserTabPanel({
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const deviceFitScaleRef = useRef(1)
+  const browserBoundsSyncGenerationRef = useRef(0)
   const [zoomPercent, setZoomPercent] = useState(BROWSER_ZOOM_DEFAULT_PERCENT)
   const zoomPercentRef = useRef(BROWSER_ZOOM_DEFAULT_PERCENT)
   const [findOpen, setFindOpen] = useState(false)
@@ -628,7 +652,7 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     const listener = listenEmbeddedBrowserCloseRequests(event => {
       if (!activeRef.current || event.label !== currentLabelRef.current) return
-      if (nativeLabelRef.current && event.nativeLabel !== nativeLabelRef.current) {
+      if (event.nativeLabel !== nativeLabelRef.current) {
         console.info(
           '[Wework] Embedded browser close ignored',
           JSON.stringify({
@@ -650,6 +674,7 @@ export function WorkspaceBrowserTabPanel({
       onNativeLabelChange?.(null)
       onDownloadActivityChange?.(false)
       currentUrlRef.current = null
+      pendingNavigationUrlRef.current = null
       activePageUrlRef.current = null
       annotationModeRef.current = false
       pageStateRequestGenerationRef.current += 1
@@ -699,10 +724,14 @@ export function WorkspaceBrowserTabPanel({
 
   const updatePageUrl = useCallback(
     (url: string | null) => {
+      const pendingNavigationUrl = pendingNavigationUrlRef.current
+      if (pendingNavigationUrl && url && url !== pendingNavigationUrl) return
       activePageUrlRef.current = url
       setPageUrl(url)
       if (url) {
-        if (!addressEditingRef.current) setAddress(url)
+        if (!addressEditingRef.current && document.activeElement !== addressInputRef.current) {
+          setAddress(url)
+        }
         onTitleChange?.(getFallbackBrowserTitle(url))
         onFaviconChange?.(getFallbackFaviconUrl(url))
         return
@@ -715,7 +744,42 @@ export function WorkspaceBrowserTabPanel({
   )
 
   useEffect(() => {
-    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+    async function reconcilePageState(expectedNativeLabel: string): Promise<void> {
+      const annotationGeneration = annotationRequestGenerationRef.current
+      let annotationSessionActive = false
+      try {
+        annotationSessionActive = await evalEmbeddedBrowserJson<boolean>(
+          `(() => {
+            const annotation = window.__WEWORK_BROWSER_ANNOTATION__
+            return Boolean(
+              annotation?.scope?.browserTabId === ${JSON.stringify(browserTabId)} &&
+              annotation.scope.url === window.location.href
+            )
+          })()`,
+          label
+        )
+      } catch {
+        // A real navigation can replace the document while this check is running.
+      }
+      if (
+        !mountedRef.current ||
+        !annotationModeRef.current ||
+        annotationRequestGenerationRef.current !== annotationGeneration ||
+        nativeLabelRef.current !== expectedNativeLabel
+      ) {
+        return
+      }
+      if (annotationSessionActive) return
+      try {
+        const pageState = await readEmbeddedBrowserPageState(label)
+        if (!mountedRef.current || pageState.nativeLabel !== expectedNativeLabel) return
+        applyPageState(pageState, true)
+      } catch (error) {
+        console.error('Failed to reconcile embedded browser page state:', error)
+      }
+    }
+
+    function applyPageState(pageState: EmbeddedBrowserPageState, authoritative: boolean): void {
       if (pageState.label && pageState.label !== currentLabelRef.current) return
       if (nativeLabelRef.current && pageState.nativeLabel !== nativeLabelRef.current) return
       applyNativePageStatus(pageState)
@@ -728,6 +792,10 @@ export function WorkspaceBrowserTabPanel({
         activePageUrlRef.current &&
         nextUrl !== activePageUrlRef.current
       ) {
+        if (!authoritative) {
+          void reconcilePageState(pageState.nativeLabel)
+          return
+        }
         annotationSnapshotRef.current = null
         annotationRequestGenerationRef.current += 1
         annotationModeRef.current = false
@@ -737,11 +805,18 @@ export function WorkspaceBrowserTabPanel({
         setOriginalViewHeld(false)
         void evalEmbeddedBrowser('window.__WEWORK_BROWSER_ANNOTATION__?.suspend?.() ?? true', label)
       }
+      if (nextUrl && pendingNavigationUrlRef.current === nextUrl) {
+        pendingNavigationUrlRef.current = null
+      }
       updatePageUrl(nextUrl)
       if (nextUrl) {
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
         onFaviconChange?.(getFallbackFaviconUrl(nextUrl))
       }
+    }
+
+    const listener = listenEmbeddedBrowserPageStateChanges(pageState => {
+      applyPageState(pageState, false)
     })
     if (!listener) return undefined
     let disposed = false
@@ -761,10 +836,13 @@ export function WorkspaceBrowserTabPanel({
       disposed = true
       unlisten?.()
     }
-  }, [applyNativePageStatus, label, onFaviconChange, onTitleChange, updatePageUrl])
+  }, [applyNativePageStatus, browserTabId, label, onFaviconChange, onTitleChange, updatePageUrl])
 
   const syncEmbeddedBrowserBounds = useCallback(
     async (visible = active) => {
+      const generation = browserBoundsSyncGenerationRef.current + 1
+      browserBoundsSyncGenerationRef.current = generation
+      const isCurrent = () => browserBoundsSyncGenerationRef.current === generation
       if (
         !embeddedBrowserAvailable ||
         !nativeBrowserOpenRef.current ||
@@ -774,14 +852,14 @@ export function WorkspaceBrowserTabPanel({
       }
       const host = browserHostRef.current
       if (!host) {
-        if (!visible) {
+        if (!visible && isCurrent()) {
           await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
         }
         return
       }
       const bounds = getElementBounds(host)
       if (!bounds) {
-        if (!visible) {
+        if (!visible && isCurrent()) {
           await setEmbeddedBrowserBounds({ x: 0, y: 0, width: 1, height: 1 }, false, label)
         }
         return
@@ -789,14 +867,14 @@ export function WorkspaceBrowserTabPanel({
       const nativeVisible =
         visible &&
         !navigationError &&
-        (!embeddedBrowserOccludedRef.current || !occlusionSnapshotReadyRef.current)
+        (electronRuntime ||
+          !embeddedBrowserOccludedRef.current ||
+          !occlusionSnapshotReadyRef.current)
       const deviceState = deviceToolbarRef.current
       const placement = deviceState.isEnabled
         ? computeDeviceViewportPlacement(bounds, deviceState, zoomPercentRef.current)
         : null
-      const nativeZoomScale = placement
-        ? placement.scale
-        : zoomPercentToScaleFactor(zoomPercentRef.current)
+      const nativeZoomScale = placement ? 1 : zoomPercentToScaleFactor(zoomPercentRef.current)
       if (placement) {
         deviceFitScaleRef.current = placement.fitScale
         const hostRect = host.getBoundingClientRect()
@@ -819,19 +897,39 @@ export function WorkspaceBrowserTabPanel({
             ? current
             : nextVisualRect
         )
+        if (!isCurrent()) return
         await setEmbeddedBrowserBounds(placement.webviewBounds, nativeVisible, label)
+        if (!isCurrent()) return
       } else {
         deviceFitScaleRef.current = 1
         setDeviceVisualRect(current => (current === null ? current : null))
+        if (!isCurrent()) return
+        await setEmbeddedBrowserDeviceMetrics(null, label)
+        if (!isCurrent()) return
         await setEmbeddedBrowserBounds(bounds, nativeVisible, label)
+        if (!isCurrent()) return
       }
-      // The native webview zoom carries the page zoom; in device mode the
-      // placement already folds it into the combined fit scale.
+      // Regular pages use Electron zoom. Device mode keeps Electron zoom at 1
+      // because setZoomFactor changes the emulated CSS viewport; CDP metrics
+      // applies the combined fit and page zoom through its image scale instead.
       await setEmbeddedBrowserZoom(nativeZoomScale, label).catch(error => {
         console.error('Failed to apply embedded browser zoom:', error)
       })
+      if (!isCurrent()) return
+      // Electron applies zoom to the CSS viewport. Reassert device metrics
+      // after zoom so window.innerWidth/innerHeight remain the selected preset.
+      if (placement) {
+        await setEmbeddedBrowserDeviceMetrics(
+          {
+            width: deviceState.width,
+            height: deviceState.height,
+            scale: placement.scale,
+          },
+          label
+        )
+      }
     },
-    [active, embeddedBrowserAvailable, label, navigationError]
+    [active, electronRuntime, embeddedBrowserAvailable, label, navigationError]
   )
 
   const hideEmbeddedBrowser = useCallback(async () => {
@@ -897,51 +995,57 @@ export function WorkspaceBrowserTabPanel({
     })
     annotationRequestGenerationRef.current += 1
     annotationModeRef.current = false
+    annotationFlowRef.current = 'batch'
+    quickAnnotationBaselineRef.current = null
     setAnnotationMode(false)
     setOriginalViewHeld(false)
     void suspendAnnotationLayer(label)
   }, [currentUrl, label, pendingCommentContextCount, suspendAnnotationLayer])
 
-  const enterAnnotationMode = useCallback(async () => {
-    logBrowserAnnotation('enter annotation mode requested', {
-      label,
-      active,
-      currentUrl,
-      embeddedBrowserAvailable,
-      nativeBrowserOpen: nativeBrowserOpenRef.current,
-    })
-    if (
-      internalDesktopPage ||
-      !embeddedBrowserAvailable ||
-      !nativeBrowserOpenRef.current ||
-      !currentUrl
-    ) {
-      logBrowserAnnotation('enter annotation mode skipped', {
+  const enterAnnotationMode = useCallback(
+    async (request: AnnotationEntry = {}) => {
+      const mode = request.mode ?? 'batch'
+      logBrowserAnnotation('enter annotation mode requested', {
         label,
         active,
         currentUrl,
+        mode,
         embeddedBrowserAvailable,
         nativeBrowserOpen: nativeBrowserOpenRef.current,
       })
-      return
-    }
-    const requestGeneration = annotationRequestGenerationRef.current + 1
-    annotationRequestGenerationRef.current = requestGeneration
-    try {
-      const pendingCleanup = annotationCleanupPromiseRef.current
-      if (pendingCleanup) {
-        await pendingCleanup
-      }
       if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
+        internalDesktopPage ||
+        !embeddedBrowserAvailable ||
+        !nativeBrowserOpenRef.current ||
+        !currentUrl
       ) {
+        logBrowserAnnotation('enter annotation mode skipped', {
+          label,
+          active,
+          currentUrl,
+          embeddedBrowserAvailable,
+          nativeBrowserOpen: nativeBrowserOpenRef.current,
+        })
         return
       }
-      annotationInjectionOwnerRef.current = requestGeneration
-      await evalEmbeddedBrowser(
-        createBrowserAnnotationInjectionScript({
+      annotationFlowRef.current = mode
+      quickAnnotationBaselineRef.current = null
+      const requestGeneration = annotationRequestGenerationRef.current + 1
+      annotationRequestGenerationRef.current = requestGeneration
+      try {
+        const pendingCleanup = annotationCleanupPromiseRef.current
+        if (pendingCleanup) {
+          await pendingCleanup
+        }
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          return
+        }
+        annotationInjectionOwnerRef.current = requestGeneration
+        const injectionScript = createBrowserAnnotationInjectionScript({
           browserTabId,
           uiFontSize: appearance.uiFontSize,
           isDark: resolveAppearanceMode(appearance.mode) === 'dark',
@@ -979,60 +1083,132 @@ export function WorkspaceBrowserTabPanel({
               'border-width': t('workbench.browser_annotation_adjustment_border-width'),
             },
           },
-        }),
-        label
-      )
+        })
+        const quickBaseline =
+          mode === 'quick'
+            ? await evalEmbeddedBrowserJson<BrowserAnnotationSnapshot | null>(
+                `(() => {
+                  ${injectionScript}
+                  return window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.() ?? null
+                })()`,
+                label
+              )
+            : null
+        if (mode !== 'quick') {
+          await evalEmbeddedBrowser(injectionScript, label)
+        }
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+          return
+        }
+        if (
+          activePageUrlRef.current &&
+          cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
+        ) {
+          exitAnnotationMode()
+          return
+        }
+        if (mode === 'quick') {
+          if (quickBaseline?.scope.browserTabId !== browserTabId) {
+            logBrowserAnnotation('quick annotation baseline unavailable', {
+              label,
+              browserTabId,
+              baselineBrowserTabId: quickBaseline?.scope.browserTabId ?? null,
+            })
+            throw new Error('Quick annotation baseline is unavailable')
+          }
+          quickAnnotationBaselineRef.current = {
+            pageSessionId: quickBaseline.scope.pageSessionId,
+            revision: quickBaseline.revision,
+            annotationCount: quickBaseline.annotations.length,
+          }
+          annotationSnapshotRef.current = {
+            pageSessionId: quickBaseline.scope.pageSessionId,
+            revision: quickBaseline.revision,
+          }
+        }
+        if (request.point && Number.isFinite(request.point.x) && Number.isFinite(request.point.y)) {
+          await evalEmbeddedBrowser(
+            `window.__WEWORK_BROWSER_ANNOTATION__?.openAt?.(${request.point.x}, ${request.point.y}) ?? false`,
+            label
+          )
+        }
+        annotationEmptyPollLogCountRef.current = 0
+        annotationModeRef.current = true
+        setAnnotationMode(true)
+        logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
+      } catch (error) {
+        if (
+          !mountedRef.current ||
+          currentLabelRef.current !== label ||
+          annotationRequestGenerationRef.current !== requestGeneration
+        ) {
+          await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
+          return
+        }
+        annotationInjectionOwnerRef.current = null
+        console.error('Failed to enter embedded browser annotation mode:', error)
+        logBrowserAnnotation('enter annotation mode failed', {
+          label,
+          currentUrl,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        setStatus('error')
+        setError(t('workbench.browser_annotation_failed'))
+      }
+    },
+    [
+      active,
+      appearance.mode,
+      appearance.uiFontSize,
+      currentUrl,
+      cleanupInvalidatedAnnotationRequest,
+      embeddedBrowserAvailable,
+      exitAnnotationMode,
+      internalDesktopPage,
+      label,
+      browserTabId,
+      t,
+    ]
+  )
+
+  useEffect(() => {
+    const listener = listenEmbeddedBrowserAnnotationRequests(request => {
       if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
+        !activeRef.current ||
+        request.label !== currentLabelRef.current ||
+        request.nativeLabel !== nativeLabelRef.current
       ) {
-        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
         return
       }
-      if (
-        activePageUrlRef.current &&
-        cloudDesktopExtension.isInternalPageUrl(activePageUrlRef.current)
-      ) {
-        exitAnnotationMode()
-        return
-      }
-      annotationEmptyPollLogCountRef.current = 0
-      annotationModeRef.current = true
-      setAnnotationMode(true)
-      logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
-    } catch (error) {
-      if (
-        !mountedRef.current ||
-        currentLabelRef.current !== label ||
-        annotationRequestGenerationRef.current !== requestGeneration
-      ) {
-        await cleanupInvalidatedAnnotationRequest(requestGeneration, label)
-        return
-      }
-      annotationInjectionOwnerRef.current = null
-      console.error('Failed to enter embedded browser annotation mode:', error)
-      logBrowserAnnotation('enter annotation mode failed', {
-        label,
-        currentUrl,
-        error: error instanceof Error ? error.message : String(error),
+      void enterAnnotationMode({
+        mode: request.mode,
+        point: { x: request.x, y: request.y },
       })
-      setStatus('error')
-      setError(t('workbench.browser_annotation_failed'))
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser annotation requests:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
     }
-  }, [
-    active,
-    appearance.mode,
-    appearance.uiFontSize,
-    currentUrl,
-    cleanupInvalidatedAnnotationRequest,
-    embeddedBrowserAvailable,
-    exitAnnotationMode,
-    internalDesktopPage,
-    label,
-    browserTabId,
-    t,
-  ])
+  }, [enterAnnotationMode])
 
   useEffect(() => {
     if (
@@ -1135,6 +1311,9 @@ export function WorkspaceBrowserTabPanel({
         logBrowserAnnotation('exit annotation mode for internal desktop page', { label })
         exitAnnotationMode()
       }
+      if (!pageState.isLoading && nextUrl && pendingNavigationUrlRef.current === nextUrl) {
+        pendingNavigationUrlRef.current = null
+      }
       updatePageUrl(nextUrl)
       if (nextUrl) {
         onTitleChange?.(pageState.title || getFallbackBrowserTitle(nextUrl))
@@ -1218,6 +1397,7 @@ export function WorkspaceBrowserTabPanel({
           setInvalidTlsCertificate(pageState.invalidTlsCertificate ?? null)
           nativeBrowserOpenRef.current = true
           updatePageUrl(pageState.url || openingUrl)
+          pendingNavigationUrlRef.current = null
           schedulePostOpenBoundsSync(activeRef.current)
           applyNativePageStatus(pageState)
           return true
@@ -1286,6 +1466,7 @@ export function WorkspaceBrowserTabPanel({
           activeOpenRequestIdRef.current = null
         }
         updatePageUrl(requestId ? openingUrl : pageState.url || openingUrl)
+        if (!requestId) pendingNavigationUrlRef.current = null
         await revealHiddenBrowser(visible)
         schedulePostOpenBoundsSync(activeRef.current)
         applyNativePageStatus(pageState)
@@ -1357,6 +1538,7 @@ export function WorkspaceBrowserTabPanel({
         nativeBrowserOpenRef.current = true
         setCurrentUrl(pageState.url)
         updatePageUrl(pageState.url)
+        pendingNavigationUrlRef.current = null
         if (pageState.title) {
           onTitleChange?.(pageState.title)
         }
@@ -1559,6 +1741,16 @@ export function WorkspaceBrowserTabPanel({
         } else {
           contexts.forEach(context => onAddCodeComment?.(context))
         }
+        const quickBaseline = quickAnnotationBaselineRef.current
+        if (
+          annotationFlowRef.current === 'quick' &&
+          quickBaseline &&
+          snapshot.scope.pageSessionId === quickBaseline.pageSessionId &&
+          snapshot.revision > quickBaseline.revision &&
+          snapshot.annotations.length > quickBaseline.annotationCount
+        ) {
+          exitAnnotationMode()
+        }
       } catch (error) {
         if (cancelled) return
         console.error('Failed to consume embedded browser annotations:', error)
@@ -1571,7 +1763,7 @@ export function WorkspaceBrowserTabPanel({
 
     const intervalId = window.setInterval(() => {
       void consumeAnnotations()
-    }, 500)
+    }, BROWSER_ANNOTATION_STATE_INTERVAL_MS)
     void consumeAnnotations()
 
     return () => {
@@ -1585,6 +1777,7 @@ export function WorkspaceBrowserTabPanel({
     annotationMode,
     browserTabId,
     embeddedBrowserAvailable,
+    exitAnnotationMode,
     internalDesktopPage,
     label,
     onAddCodeComment,
@@ -1592,18 +1785,32 @@ export function WorkspaceBrowserTabPanel({
   ])
 
   const holdOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    if (event.nativeEvent.isTrusted) {
+      try {
+        event.currentTarget.setPointerCapture?.(event.pointerId)
+      } catch {
+        // The native pointer may already have been released.
+      }
+    }
     setOriginalViewHeld(true)
   }, [])
   const releaseOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // The pointer may already have been released by the native host.
     }
     setOriginalViewHeld(false)
   }, [])
   const cancelOriginalView = useCallback((event: PointerEvent<HTMLButtonElement>) => {
-    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // The pointer may already have been released by the native host.
     }
     setOriginalViewHeld(false)
   }, [])
@@ -1762,12 +1969,16 @@ export function WorkspaceBrowserTabPanel({
   useLayoutEffect(() => {
     embeddedBrowserOccludedRef.current = embeddedBrowserOccluded
     occlusionSnapshotGenerationRef.current = browserOcclusion.generation
-    occlusionSnapshotReadyRef.current = !embeddedBrowserOccluded
-  }, [browserOcclusion.generation, embeddedBrowserOccluded])
+    occlusionSnapshotReadyRef.current = electronRuntime || !embeddedBrowserOccluded
+  }, [browserOcclusion.generation, electronRuntime, embeddedBrowserOccluded])
 
   const syncOcclusionState = useCallback(
     async (generation: number) => {
       if (!mountedRef.current) return
+      if (electronRuntime) {
+        await syncEmbeddedBrowserBounds(active)
+        return
+      }
       if (!activeRef.current || !embeddedBrowserOccludedRef.current) {
         await syncEmbeddedBrowserBounds(active)
         return
@@ -1825,7 +2036,7 @@ export function WorkspaceBrowserTabPanel({
         }
       }
     },
-    [active, label, syncEmbeddedBrowserBounds]
+    [active, electronRuntime, label, syncEmbeddedBrowserBounds]
   )
 
   useEffect(() => {
@@ -1858,7 +2069,6 @@ export function WorkspaceBrowserTabPanel({
 
   const runBrowserCommand = useCallback(
     async (command: () => Promise<void>) => {
-      if (!currentUrl) return
       try {
         await command()
         await refreshPageState()
@@ -1868,16 +2078,16 @@ export function WorkspaceBrowserTabPanel({
         setError(t('workbench.browser_control_failed'))
       }
     },
-    [currentUrl, refreshPageState, t]
+    [refreshPageState, t]
   )
 
   const reloadCurrentUrl = useCallback(
     (url: string) => {
       setNavigationError(null)
-      if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) {
+      if (!embeddedBrowserAvailable) {
         setCurrentUrl(null)
         window.setTimeout(() => setCurrentUrl(url), 0)
-        setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+        setStatus('ready')
         return
       }
 
@@ -1889,6 +2099,8 @@ export function WorkspaceBrowserTabPanel({
         return
       }
 
+      setStatus('loading')
+      setError(null)
       void runBrowserCommand(() => reloadEmbeddedBrowser(label))
     },
     [embeddedBrowserAvailable, label, runBrowserCommand]
@@ -1896,7 +2108,7 @@ export function WorkspaceBrowserTabPanel({
 
   const openBrowserUrl = useCallback(
     (rawUrl: string) => {
-      const nextUrl = normalizeBrowserUrl(rawUrl, window.location.href)
+      const nextUrl = normalizeBrowserUrl(rawUrl)
       if (!nextUrl) {
         setStatus('error')
         setError(t('workbench.browser_invalid_url'))
@@ -1911,6 +2123,7 @@ export function WorkspaceBrowserTabPanel({
         certificate && haveSameOrigin(certificate.url, nextUrl) ? certificate : null
       )
       pageStateRequestGenerationRef.current += 1
+      pendingNavigationUrlRef.current = nextUrl
 
       if (annotationMode && nextUrl !== activePageUrl) {
         exitAnnotationMode()
@@ -1918,6 +2131,7 @@ export function WorkspaceBrowserTabPanel({
 
       if (nextUrl === activePageUrl) {
         updatePageUrl(nextUrl)
+        pendingNavigationUrlRef.current = null
         reloadCurrentUrl(nextUrl)
         return
       }
@@ -1926,8 +2140,10 @@ export function WorkspaceBrowserTabPanel({
 
       if (embeddedBrowserAvailable && nativeBrowserOpenRef.current) {
         setStatus('loading')
-        void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(() => {
+        void runBrowserCommand(() => navigateEmbeddedBrowser(nextUrl, label)).then(async () => {
+          pendingNavigationUrlRef.current = null
           setCurrentUrl(nextUrl)
+          await refreshPageState()
           track('browser_navigation_completed', { runtime: 'embedded' })
         })
         return
@@ -1935,6 +2151,7 @@ export function WorkspaceBrowserTabPanel({
 
       setCurrentUrl(nextUrl)
       setStatus(embeddedBrowserAvailable ? 'loading' : 'ready')
+      if (!embeddedBrowserAvailable) pendingNavigationUrlRef.current = null
       track('browser_navigation_completed', { runtime: 'fallback' })
     },
     [
@@ -1943,6 +2160,7 @@ export function WorkspaceBrowserTabPanel({
       embeddedBrowserAvailable,
       exitAnnotationMode,
       label,
+      refreshPageState,
       reloadCurrentUrl,
       runBrowserCommand,
       t,
@@ -1986,10 +2204,11 @@ export function WorkspaceBrowserTabPanel({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    addressEditingRef.current = false
     const urlInput = event.currentTarget.elements.namedItem('url') as HTMLInputElement | null
+    const submittedAddress = urlInput?.value ?? address
+    openBrowserUrl(submittedAddress)
+    addressEditingRef.current = false
     urlInput?.blur()
-    openBrowserUrl(address)
   }
 
   const handleReload = () => {
@@ -2209,15 +2428,16 @@ export function WorkspaceBrowserTabPanel({
     [scheduleEmbeddedBrowserBoundsSync]
   )
 
-  // Re-apply the remembered page zoom after the webview reloads or is
-  // recreated (native zoom resets on a fresh webview).
+  // Re-apply the complete browser viewport after the webview reloads or is
+  // recreated. Device mode must restore bounds, zoom, and CDP metrics as one
+  // ordered operation; restoring zoom alone changes the emulated CSS viewport.
   useEffect(() => {
     if (status !== 'ready') return
     if (zoomPercentRef.current === BROWSER_ZOOM_DEFAULT_PERCENT && deviceFitScaleRef.current === 1)
       return
     if (!embeddedBrowserAvailable || !nativeBrowserOpenRef.current) return
-    void setEmbeddedBrowserZoom(deviceFitScaleRef.current, label).catch(() => undefined)
-  }, [status, embeddedBrowserAvailable, label])
+    scheduleEmbeddedBrowserBoundsSync(activeRef.current)
+  }, [status, embeddedBrowserAvailable, scheduleEmbeddedBrowserBoundsSync])
 
   const updateDeviceToolbar = useCallback(
     (patch: Partial<BrowserDeviceToolbarState>) => {
@@ -2288,7 +2508,9 @@ export function WorkspaceBrowserTabPanel({
       startWidth: current.width,
       startHeight: current.height,
     }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    if (event.nativeEvent.isTrusted) {
+      event.currentTarget.setPointerCapture(event.pointerId)
+    }
   }, [])
 
   const handleDeviceResizeMove = useCallback(
@@ -2312,7 +2534,9 @@ export function WorkspaceBrowserTabPanel({
     const drag = deviceResizeStateRef.current
     if (!drag || drag.pointerId !== event.pointerId) return
     deviceResizeStateRef.current = null
-    event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.nativeEvent.isTrusted && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
   }, [])
 
   // --- Toolbar keyboard shortcuts (Cmd/Ctrl+F) ---
@@ -2407,7 +2631,7 @@ export function WorkspaceBrowserTabPanel({
             </span>
           ) : null}
         </div>
-      ) : (
+      ) : hideToolbar ? null : (
         <div className="relative flex h-11 shrink-0 items-center gap-1.5 border-b border-border bg-background px-2">
           <BrowserToolbarButton
             testId="workspace-browser-back-button"
@@ -2435,6 +2659,7 @@ export function WorkspaceBrowserTabPanel({
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
             <input
+              ref={addressInputRef}
               name="url"
               data-testid="workspace-browser-url-input"
               value={address}
@@ -2518,6 +2743,11 @@ export function WorkspaceBrowserTabPanel({
                   label: '',
                   testId: 'workspace-browser-more-separator-actions',
                   separator: true,
+                },
+                {
+                  label: t('workbench.browser_history'),
+                  testId: 'workspace-browser-history-item',
+                  onSelect: () => navigateTo('/settings/browser/history'),
                 },
                 {
                   label: t('workbench.browser_clear_data'),
@@ -2834,9 +3064,16 @@ export function WorkspaceBrowserTabPanel({
             )}
             aria-label={t('workbench.browser')}
           >
-            {active &&
-            embeddedBrowserOccluded &&
-            occlusionSnapshot?.generation === browserOcclusion.generation ? (
+            {electronRuntime ? (
+              <ElectronEmbeddedBrowserView
+                active={active}
+                interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
+                label={label}
+                visualRect={deviceVisualRect}
+              />
+            ) : active &&
+              embeddedBrowserOccluded &&
+              occlusionSnapshot?.generation === browserOcclusion.generation ? (
               <img
                 data-testid="workspace-browser-occlusion-snapshot"
                 src={occlusionSnapshot.url}

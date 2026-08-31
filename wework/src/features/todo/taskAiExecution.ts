@@ -26,6 +26,7 @@ export interface TaskAiRuntimeBridge {
         cloudProjectId: string
         loopItemId: string
         rootCommentId?: string
+        projectStore: CloudProject['project_store']
       }
       executionModel?: {
         modelId?: string | null
@@ -41,6 +42,9 @@ export interface TaskAiRuntimeBridge {
       deviceId?: string | null
       attachments?: Attachment[]
       onError?: (error: string) => void
+      prepareRuntimeTask?: (
+        address: RuntimeTaskAddress
+      ) => void | (() => void | Promise<void>) | Promise<void | (() => void | Promise<void>)>
       onRuntimeTaskOptimisticOpen?: (address: RuntimeTaskAddress) => void | Promise<void>
     }
   ) => Promise<RuntimeTaskAddress | false>
@@ -85,10 +89,9 @@ export interface StartTaskAiRunInput {
   trigger?: ProjectChatMessage
   autoRetry?: boolean
   messages: ProjectChatMessage[]
-  /** Model list from the same source as the task composer; used to resolve the
-   * agent's configured model name back to its full runtime configuration. */
+  /** Model list retained for the caller contract; Runtime selection owns defaults. */
   models?: UnifiedModel[]
-  /** Per-comment model override; falls back to the agent's configured model. */
+  /** Per-comment model selection. */
   selectedModel?: UnifiedModel | null
   selectedModelOptions?: ModelOptions
   /** When replying to an existing AI message, continue the executor session of
@@ -162,7 +165,6 @@ export async function startTaskAiRun({
   trigger,
   autoRetry,
   messages,
-  models,
   selectedModel,
   selectedModelOptions,
   replyTo,
@@ -209,24 +211,17 @@ export async function startTaskAiRun({
       },
     })
   }
-  const commentModel = selectedModel ?? null
-  const resolvedAgentModel = agent.model
-    ? (models?.find(model => model.name === agent.model) ?? null)
+  const executionModel = selectedModel
+    ? selectedModelExecutionFields(selectedModel, selectedModelOptions ?? {})
     : null
-  const resolvedModel = commentModel ?? resolvedAgentModel
-  const executionModel = resolvedModel
-    ? selectedModelExecutionFields(resolvedModel, selectedModelOptions ?? {})
-    : agent.model
-      ? { modelId: agent.model, modelType: null, modelOptions: {} }
-      : null
-  const modelSelection = resolvedModel
+  const modelSelection = selectedModel
     ? {
-        modelName: resolvedModel.name,
-        modelType: resolvedModel.type,
+        modelName: selectedModel.name,
+        modelType: selectedModel.type,
         options: selectedModelOptions ?? {},
       }
     : null
-  const usedModel = executionModel?.modelId ?? agent.model ?? undefined
+  const usedModel = executionModel?.modelId
   const additionalContext: RuntimeAdditionalContext = {
     ...projectSpaceChatRuntimeContext(project),
     projectChatTask: {
@@ -370,6 +365,7 @@ export async function startTaskAiRun({
       type: 'board_comment',
       cloudProjectId: String(project.id),
       loopItemId: String(task.id),
+      projectStore: project.project_store,
       ...(threadRootId || trigger?.messageId
         ? { rootCommentId: threadRootId ?? trigger?.messageId }
         : {}),
@@ -388,9 +384,16 @@ export async function startTaskAiRun({
           },
         }
       : additionalContext,
+    prepareRuntimeTask: async nextAddress => {
+      const deliveryApi = services.deliveryApi
+      if (!deliveryApi) {
+        throw new Error('项目空间任务绑定服务不可用')
+      }
+      await deliveryApi.bindTask(task.id, nextAddress, task.title)
+      return () => deliveryApi.unbindTask(task.id, nextAddress)
+    },
     onError,
     onRuntimeTaskOptimisticOpen: async nextAddress => {
-      await services.deliveryApi?.bindTask(task.id, nextAddress, task.title)
       responseRef.current = await startTaskAiResponse(client, {
         projectId: project.id,
         taskId: task.id,

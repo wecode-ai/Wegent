@@ -4,7 +4,7 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   type AppPreferences,
-} from '@/tauri/appPreferences'
+} from '@/desktop/appPreferences'
 import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
@@ -17,7 +17,7 @@ import {
 } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { getRuntimeTaskNotificationText } from './runtimeTaskNotificationContent'
 import { sendSystemNotification } from './runtimeTaskSystemNotifications'
-import { isMainWindowFocused, subscribeMainWindowFocus } from '@/tauri/windowFocus'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import type {
   RuntimeTaskLifecycleStore,
   RuntimeTaskLifecycleStoreSnapshot,
@@ -188,7 +188,12 @@ export function useRuntimeTaskReminders({
         taskId: item.task.taskId,
         title: item.task.title,
       })
-      void getRuntimeTaskNotificationText(item).then(sendSystemNotification)
+      void getRuntimeTaskNotificationText(item).then(notification =>
+        sendSystemNotification({
+          ...notification,
+          address: item.address,
+        })
+      )
     }
   }, [
     itemsByKey,

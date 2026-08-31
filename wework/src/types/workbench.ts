@@ -105,6 +105,8 @@ export interface QueuedWorkbenchMessage {
   content: string
   status: QueuedMessageStatus
   deliveryMode?: 'message' | 'guidance'
+  awaitingTurnStart?: boolean
+  awaitingGuidanceAcceptance?: boolean
   createdAt: string
   error?: string
   notice?: string
@@ -245,7 +247,6 @@ export interface CloudWorkStatus {
 
 export interface WorkbenchState {
   user: User | null
-  defaultTeam: Team | null
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork: RuntimeWorkListResponse | null

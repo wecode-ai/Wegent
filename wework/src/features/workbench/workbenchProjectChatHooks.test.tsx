@@ -78,6 +78,50 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.models).toEqual([codexModel, localModel]))
   })
 
+  test('ignores an older model reload that settles after the latest request', async () => {
+    const initialModel: UnifiedModel = { name: 'initial-model', type: 'runtime' }
+    const recoveredModel: UnifiedModel = { name: 'recovered-model', type: 'runtime' }
+    let rejectStaleReload: ((reason: Error) => void) | undefined
+    let resolveRecoveredReload: ((value: { data: UnifiedModel[] }) => void) | undefined
+    const staleReload = new Promise<{ data: UnifiedModel[] }>((_resolve, reject) => {
+      rejectStaleReload = reject
+    })
+    const recoveredReload = new Promise<{ data: UnifiedModel[] }>(resolve => {
+      resolveRecoveredReload = resolve
+    })
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [initialModel] })
+        .mockReturnValueOnce(staleReload)
+        .mockReturnValueOnce(recoveredReload),
+    }
+    const { result } = renderHook(() => useWorkbenchModels({ api, locked: false }))
+
+    await waitFor(() => expect(result.current.models).toEqual([initialModel]))
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+    await waitFor(() => expect(api.listModels).toHaveBeenCalledTimes(3))
+
+    await act(async () => {
+      rejectStaleReload?.(new Error('stale reload failed'))
+      await staleReload.catch(() => undefined)
+    })
+    expect(result.current.models).toEqual([initialModel])
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.error).toBeNull()
+
+    await act(async () => {
+      resolveRecoveredReload?.({ data: [recoveredModel] })
+      await recoveredReload
+    })
+    await waitFor(() => expect(result.current.models).toEqual([recoveredModel]))
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.error).toBeNull()
+  })
+
   test('refreshes the selected model metadata while preserving supported options', async () => {
     const originalModel: UnifiedModel = {
       name: 'local-model:api-sol',
@@ -133,6 +177,65 @@ describe('workbench project chat hooks', () => {
     await waitFor(() => expect(result.current.selectedModel).toBe(refreshedModel))
     expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
     expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
+  test('preserves a task composer override when the model catalog refreshes', async () => {
+    const projectModel: UnifiedModel = {
+      name: 'project-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const overrideModel: UnifiedModel = {
+      name: 'override-model',
+      type: 'runtime',
+      config: {
+        weworkModelKind: 'codex-provider',
+        ui: {
+          family: 'codex-provider',
+          reasoningEfforts: ['low', 'medium', 'high'],
+        },
+      },
+    }
+    const refreshedProjectModel = { ...projectModel, displayName: 'Project Model Updated' }
+    const refreshedOverrideModel = { ...overrideModel, displayName: 'Override Model Updated' }
+    const api = {
+      listModels: vi
+        .fn()
+        .mockResolvedValueOnce({ data: [projectModel, overrideModel] })
+        .mockResolvedValueOnce({ data: [refreshedProjectModel, refreshedOverrideModel] }),
+    }
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: 'new-task:project:7',
+        persistSelection: false,
+        selectionConfig: {
+          modelName: projectModel.name,
+          modelType: projectModel.type,
+          options: { reasoning: 'medium' },
+        },
+      })
+    )
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(projectModel))
+    act(() => {
+      result.current.setSelectedModel(overrideModel)
+      result.current.setSelectedModelOption('reasoning', 'high')
+    })
+
+    act(() => {
+      window.dispatchEvent(new CustomEvent(LOCAL_MODEL_SETTINGS_CHANGED_EVENT))
+    })
+
+    await waitFor(() => expect(result.current.selectedModel).toBe(refreshedOverrideModel))
+    expect(result.current.selectedModelOptions).toEqual({ reasoning: 'high' })
   })
 
   test('falls back to the refreshed model default when the selected option is removed', async () => {
@@ -584,6 +687,47 @@ describe('workbench project chat hooks', () => {
     expect(result.current.selectedModelOptions).toEqual({})
   })
 
+  test('does not replace an unavailable configured task model with the default model', async () => {
+    const deepseekModel: UnifiedModel = {
+      name: 'deepseek-v4-flash-responses(公网)',
+      type: 'public',
+    }
+    const api = {
+      listModels: vi.fn().mockResolvedValue({ data: [deepseekModel] }),
+    }
+    const onSelectionChange = vi.fn()
+
+    const { result } = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        persistSelection: false,
+        selectionConfig: {
+          modelName: 'gpt-5.6-sol',
+          modelType: 'runtime',
+        },
+        defaultSelectionConfig: () => ({
+          modelName: deepseekModel.name,
+          modelType: deepseekModel.type,
+        }),
+        fallbackWhenConfiguredModelUnavailable: false,
+        onSelectionChange,
+      })
+    )
+
+    await waitFor(() => expect(result.current.models).toEqual([deepseekModel]))
+    expect(result.current.selectedModel).toBeNull()
+    expect(result.current.isSelectionReady).toBe(false)
+    expect(result.current.isConfiguredModelUnavailable).toBe(true)
+
+    act(() => result.current.setSelectedModel(deepseekModel))
+
+    expect(result.current.selectedModel).toEqual(deepseekModel)
+    expect(result.current.isSelectionReady).toBe(true)
+    expect(result.current.isConfiguredModelUnavailable).toBe(false)
+    expect(onSelectionChange).not.toHaveBeenCalled()
+  })
+
   test('persists options when using the default model selection', async () => {
     const gptModel: UnifiedModel = {
       name: 'overseas-gpt-5.4',
@@ -649,7 +793,7 @@ describe('workbench project chat hooks', () => {
     }
 
     const { result, rerender } = renderHook(
-      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, teamId: 2, locked }),
+      ({ locked }: { locked: boolean }) => useWorkbenchSkills({ api, locked }),
       { initialProps: { locked: false } }
     )
 
@@ -714,6 +858,73 @@ describe('workbench project chat hooks', () => {
     expect(result.current.attachments).toEqual([])
   })
 
+  test('shows an immediate image preview while persistence finishes', async () => {
+    const attachment: Attachment = {
+      id: -42,
+      filename: 'clipboard.png',
+      file_size: 5,
+      mime_type: 'image/png',
+      status: 'ready',
+      file_extension: '.png',
+      created_at: '2026-08-29T00:00:00.000Z',
+      local_path: '/tmp/clipboard.png',
+    }
+    let finishUpload: ((attachment: Attachment) => void) | undefined
+    const upload = vi.fn(
+      () =>
+        new Promise<Attachment>(resolve => {
+          finishUpload = resolve
+        })
+    )
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:clipboard')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    const { result } = renderHook(() =>
+      useWorkbenchAttachments({
+        uploadAttachment: upload,
+        deleteAttachment: vi.fn(),
+      })
+    )
+    const file = new File(['image'], attachment.filename, { type: attachment.mime_type })
+
+    let uploadPromise: Promise<void> | undefined
+    act(() => {
+      uploadPromise = result.current.handleFileSelect(file)
+    })
+
+    await waitFor(() => {
+      expect(result.current.uploadingFiles.values().next().value).toEqual({
+        file,
+        progress: 0,
+        previewUrl: 'blob:clipboard',
+      })
+    })
+    expect(result.current.attachments).toEqual([])
+    expect(result.current.isAttachmentReadyToSend).toBe(false)
+
+    await act(async () => {
+      finishUpload?.(attachment)
+      await uploadPromise
+    })
+
+    expect(result.current.attachments).toEqual([
+      {
+        ...attachment,
+        local_preview_url: 'blob:clipboard',
+      },
+    ])
+    expect(result.current.uploadingFiles.size).toBe(0)
+    expect(createObjectUrl).toHaveBeenCalledWith(file)
+    expect(revokeObjectUrl).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.resetAttachments()
+    })
+
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:clipboard')
+    createObjectUrl.mockRestore()
+    revokeObjectUrl.mockRestore()
+  })
+
   test('keeps attachments isolated between composer scopes', async () => {
     const attachment: Attachment = {
       id: 46,
@@ -740,7 +951,9 @@ describe('workbench project chat hooks', () => {
       )
     })
 
-    expect(result.current.stateByScope['left-pane']?.attachments).toEqual([attachment])
+    expect(result.current.stateByScope['left-pane']?.attachments).toEqual([
+      expect.objectContaining(attachment),
+    ])
     expect(result.current.attachments).toEqual([])
   })
 

@@ -62,7 +62,6 @@ docker=false
 executor_rust=false
 node=false
 python=false
-wework_rust=false
 wework_target=false
 EOF
 )
@@ -71,9 +70,14 @@ assert_warmup_case "workflow change" "$warmup_all_true" \
   ".github/workflows/ci-cache-warmup.yml"
 
 node_only="${warmup_all_false/node=false/node=true}"
-assert_warmup_case "pnpm lock" "$node_only" "pnpm-lock.yaml"
+node_and_wework_target="${node_only/wework_target=false/wework_target=true}"
+assert_warmup_case "pnpm lock" "$node_and_wework_target" "pnpm-lock.yaml"
 assert_warmup_case "workspace manifest" "$node_only" "pnpm-workspace.yaml"
 assert_warmup_case "Wework manifest" "$node_only" "wework/package.json"
+assert_warmup_case "Wework Electron manifest" "$node_and_wework_target" \
+  "wework/electron/package.json"
+assert_warmup_case "Wework Electron lock" "$node_and_wework_target" \
+  "wework/electron/pnpm-lock.yaml"
 assert_warmup_case "Claude CLI lock" "$node_only" \
   ".github/claude-code-cli/package-lock.json"
 
@@ -85,15 +89,77 @@ executor_lock="${executor_lock/executor_rust=false/executor_rust=true}"
 executor_lock="${executor_lock/wework_target=false/wework_target=true}"
 assert_warmup_case "executor lock" "$executor_lock" "executor/Cargo.lock"
 
+docker_only="${warmup_all_false/docker=false/docker=true}"
+assert_warmup_case "Executor E2E resolver" "$docker_only" \
+  ".github/scripts/resolve-executor-e2e-runtime.sh"
+
+assert_executor_runtime_resolution() {
+  local name="$1"
+  local manifest_fixture="$2"
+  local expected_base_digest="$3"
+  local temp_dir
+  local output_file
+  local pinned_base_image
+  local expected_runtime_digest
+
+  temp_dir="$(mktemp -d)"
+  output_file="$temp_dir/output"
+  cat > "$temp_dir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$#" -ne 6 ||
+  "$1" != "buildx" ||
+  "$2" != "imagetools" ||
+  "$3" != "inspect" ||
+  "$5" != "--format" ||
+  "$6" != "{{json .Manifest}}" ]]; then
+  printf 'Unexpected docker invocation: %q ' "$@" >&2
+  printf '\n' >&2
+  exit 1
+fi
+
+printf '%s\n' "${DOCKER_MANIFEST_FIXTURE:?}"
+EOF
+  chmod +x "$temp_dir/docker"
+
+  PATH="$temp_dir:$PATH" \
+    BASE_IMAGE="ghcr.io/wecode-ai/base:test" \
+    SOURCE_DIGEST="source-digest" \
+    GITHUB_REPOSITORY_OWNER="WECODE-AI" \
+    GITHUB_OUTPUT="$output_file" \
+    DOCKER_MANIFEST_FIXTURE="$manifest_fixture" \
+    "$script_dir/resolve-executor-e2e-runtime.sh"
+
+  pinned_base_image="ghcr.io/wecode-ai/base:test@$expected_base_digest"
+  expected_runtime_digest="$(
+    printf '%s\n%s\n' "source-digest" "$pinned_base_image" |
+      sha256sum |
+      cut -d ' ' -f 1
+  )"
+  if ! grep -Fxq "base-image=$pinned_base_image" "$output_file" ||
+    ! grep -Fxq \
+      "image=ghcr.io/wecode-ai/wegent-e2e-claudecode-executor:$expected_runtime_digest" \
+      "$output_file"; then
+    printf 'Executor runtime resolution failed: %s\n' "$name" >&2
+    cat "$output_file" >&2
+    rm -rf "$temp_dir"
+    exit 1
+  fi
+  rm -rf "$temp_dir"
+}
+
+assert_executor_runtime_resolution "multi-platform image" \
+  '{"digest":"sha256:index","manifests":[{"digest":"sha256:arm64","platform":{"os":"linux","architecture":"arm64"}},{"digest":"sha256:amd64","platform":{"os":"linux","architecture":"amd64"}}]}' \
+  "sha256:amd64"
+assert_executor_runtime_resolution "single-platform image" \
+  '{"digest":"sha256:single","mediaType":"application/vnd.oci.image.manifest.v1+json"}' \
+  "sha256:single"
+
 desktop_image="${warmup_all_false/docker=false/docker=true}"
 desktop_image="${desktop_image/wework_target=false/wework_target=true}"
 assert_warmup_case "Wework desktop image" "$desktop_image" \
   "docker/wework-e2e/desktop.Dockerfile"
-
-wework_lock="${warmup_all_false/wework_rust=false/wework_rust=true}"
-wework_lock="${wework_lock/wework_target=false/wework_target=true}"
-assert_warmup_case "Wework lock" "$wework_lock" \
-  "wework/src-tauri/Cargo.lock"
 
 pr_workflows=(
   lint.yml
@@ -180,14 +246,20 @@ fi
 
 macos_warmup_section="$(
   sed -n \
-    '/^  warm-wework-macos-rust:/,/^  prepare-wework-desktop-image:/p' \
+    '/^  warm-wework-macos-electron:/,/^  prepare-wework-desktop-image:/p' \
     "$warmup_workflow"
 )"
-if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Rust Cache'* ]] ||
+if [[ "$macos_warmup_section" != *'name: Warm Wework macOS Electron Build Cache'* ]] ||
   [[ "$macos_warmup_section" != *'runs-on: macos-14'* ]] ||
+  [[ "$macos_warmup_section" != *"needs.changes.outputs.wework_target == 'true'"* ]] ||
   [[ "$macos_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
-  [[ "$macos_warmup_section" != *'task-flow.e2e.mjs --build-only'* ]]; then
-  fail "Wework macOS memory builds must be prewarmed with the shared sccache"
+  [[ "$macos_warmup_section" != *'wework-electron-app-v1-'* ]] ||
+  [[ "$macos_warmup_section" != *'pnpm-store-v2-'* ]] ||
+  [[ "$macos_warmup_section" != *"'wework/electron/pnpm-lock.yaml'"* ]] ||
+  [[ "$macos_warmup_section" != *'executor/target'* ]] ||
+  [[ "$macos_warmup_section" != *'~/Library/Caches/electron'* ]] ||
+  [[ "$macos_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]]; then
+  fail "Wework macOS Electron builds must be prewarmed with the shared build cache"
 fi
 
 if grep -R -q 'type=gha' \
@@ -211,8 +283,9 @@ if ! grep -Fq 'node-24-workspace-v2-${{ hashFiles(' "$node_action" ||
   ! grep -Fq "$workspace_manifests" "$node_action" ||
   ! grep -Fq 'frontend/public/fonts' "$node_action" ||
   ! grep -Fq 'default: "false"' "$node_action" ||
-  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action"; then
-  fail "Node dependencies and generated fonts must share a read-only-by-default cache"
+  ! grep -Fq "if: inputs.setup-toolchain == 'true'" "$node_action" ||
+  grep -Fq 'restore-keys:' "$node_action"; then
+  fail "Node dependencies must use an exact, read-only-by-default workspace cache"
 fi
 
 # Shell source is matched literally in workflow source.
@@ -307,6 +380,14 @@ if ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
   ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -F -- '--env E2E_CLAUDE_MODEL_SERVER_URL' >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F \
+      'E2E_CLAUDE_EXECUTOR_IMAGE: ${{ needs.build-executor-e2e-runtime.outputs.artifact == '\''true'\'' && '\''wegent/e2e-claudecode-executor:latest'\'' || needs.build-executor-e2e-runtime.outputs.image }}' \
+      >/dev/null ||
+  ! sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
+    "$workflow_dir/e2e-tests.yml" |
+    grep -F -- '--env E2E_CLAUDE_EXECUTOR_IMAGE' >/dev/null ||
   sed -n '/^  executor-e2e-tests:/,/^  merge-reports:/p' \
     "$workflow_dir/e2e-tests.yml" |
     grep -E 'install-playwright-(browser|system-deps)' >/dev/null ||
@@ -335,7 +416,7 @@ wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
 if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   ! grep -Fq 'file: docker/wework-e2e/desktop.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
-  grep -Eq 'playwright (install|install-deps)|install-wework-tauri-system-dependencies' \
+  grep -Eq 'playwright (install|install-deps)' \
     "$wework_workflow"; then
   fail "Wework E2E must consume its immutable dependency image without runtime installs"
 fi
@@ -355,10 +436,10 @@ fi
 
 # GitHub expressions are matched literally in workflow source.
 # shellcheck disable=SC2016
-wework_target_key='wework-desktop-e2e-v3-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/src-tauri/Cargo.lock'\'') }}'
+wework_target_key='wework-electron-e2e-v1-${{ hashFiles('\''docker/wework-e2e/desktop.Dockerfile'\'') }}-${{ hashFiles('\''executor/Cargo.lock'\'', '\''wework/electron/package.json'\'', '\''wework/electron/pnpm-lock.yaml'\'', '\''pnpm-lock.yaml'\'') }}'
 if ! grep -Fq "$wework_target_key" "$workflow_dir/wework-e2e.yml" ||
   ! grep -Fq "$wework_target_key" "$warmup_workflow"; then
-  fail "Wework E2E and warmup must share the desktop Cargo target cache"
+  fail "Wework E2E and warmup must share the Electron build cache"
 fi
 
 desktop_warmup_section="$(
@@ -372,9 +453,10 @@ if [[ "$desktop_warmup_section" != *'image: ${{ needs.prepare-wework-desktop-ima
   [[ "$desktop_warmup_section" != *'HOME: /root'* ]] ||
   [[ "$desktop_warmup_section" != *'uses: ./.github/actions/setup-sccache'* ]] ||
   [[ "$desktop_warmup_section" != *'executor/target'* ]] ||
-  [[ "$desktop_warmup_section" != *'wework/src-tauri/target'* ]] ||
-  [[ "$desktop_warmup_section" =~ install-wework-tauri-system-dependencies|dtolnay/rust-toolchain ]]; then
-  fail "Wework desktop Rust warmup must use target and sccache inside the E2E container"
+  [[ "$desktop_warmup_section" != *'~/.cache/electron'* ]] ||
+  [[ "$desktop_warmup_section" != *'pnpm --filter wework ai:verify:electron:build'* ]] ||
+  [[ "$desktop_warmup_section" =~ dtolnay/rust-toolchain ]]; then
+  fail "Wework desktop Electron warmup must use shared build caches inside the E2E container"
 fi
 
 printf 'CI cache policy tests passed\n'

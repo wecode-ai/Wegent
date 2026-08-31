@@ -26,6 +26,21 @@ const mockListFakeNodes = jest.fn()
 
 const mockT = (key: string, fallback?: string | Record<string, unknown>) =>
   typeof fallback === 'string' ? fallback : key
+
+Object.defineProperty(window, 'matchMedia', {
+  writable: true,
+  value: jest.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
+})
+
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: mockT }),
 }))
@@ -258,16 +273,11 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     )
   })
 
-  it('pages through all external nodes when opening a knowledge base', async () => {
-    mockListFakeNodes.mockImplementation((_knowledgeBaseId: string, params?: { offset?: number }) =>
-      Promise.resolve({
-        items:
-          params?.offset === 0
-            ? Array.from({ length: 500 }, (_, index) => makeFakeDocument(index))
-            : [makeFakeDocument(500)],
-        has_more: params?.offset === 0,
-      })
-    )
+  it('renders external nodes when opening a knowledge base', async () => {
+    mockListFakeNodes.mockResolvedValue({
+      items: [makeFakeDocument(1)],
+      has_more: false,
+    })
 
     render(
       <ContextSelector
@@ -296,18 +306,12 @@ describe('external knowledge source registry — ContextSelector (conversation)'
 
     await waitFor(() =>
       expect(
-        screen.getByTestId('knowledge-picker-external-node-document:doc-500')
+        screen.getByTestId('knowledge-picker-external-node-document:doc-1')
       ).toBeInTheDocument()
     )
-    expect(mockListFakeNodes).toHaveBeenNthCalledWith(
-      1,
+    expect(mockListFakeNodes).toHaveBeenCalledWith(
       'lib-1',
       expect.objectContaining({ recursive: true, limit: 500, offset: 0 })
-    )
-    expect(mockListFakeNodes).toHaveBeenNthCalledWith(
-      2,
-      'lib-1',
-      expect.objectContaining({ recursive: true, limit: 500, offset: 500 })
     )
   })
 
@@ -354,7 +358,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
       [
         expect.objectContaining({
           type: 'external_knowledge',
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
           name: 'Fake Lib',
           ref: {
             provider: FAKE_PROVIDER,
@@ -422,7 +426,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
         }),
       ])
     )
@@ -435,7 +439,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1:document:document:doc-2',
+          id: 'external:fake-provider:explicit:organization:lib-1:document:document:doc-2',
           ref: expect.objectContaining({
             name: 'Fake Lib',
             target_type: 'document',
@@ -451,7 +455,7 @@ describe('external knowledge source registry — ContextSelector (conversation)'
     await waitFor(() =>
       expect(onChange).toHaveBeenLastCalledWith([
         expect.objectContaining({
-          id: 'external:fake-provider:explicit:lib-1',
+          id: 'external:fake-provider:explicit:organization:lib-1:knowledge_base:source',
           ref: expect.not.objectContaining({ target_type: 'document' }),
         }),
       ])
@@ -517,6 +521,79 @@ describe('external knowledge source registry — ContextSelector (conversation)'
 
     fireEvent.click(folderSelection)
     await waitFor(() => expect(onChange).toHaveBeenLastCalledWith([]))
+  })
+
+  it('opens and selects whole-KB-only external sources without a document loader', async () => {
+    const onReplaceContexts = jest.fn()
+    registerExternalKnowledgeSource(FAKE_PROVIDER, {
+      providerId: FAKE_PROVIDER,
+      label: 'Fake Provider',
+      capabilities: {
+        supportsKnowledgeBaseSelection: true,
+        supportsDocumentSelection: false,
+        supportsDocumentTree: false,
+        supportsScopedRetrieval: false,
+      },
+      scopes: [
+        {
+          key: 'organization',
+          label: 'Organization',
+          icon: 'organization',
+        },
+      ],
+      listKnowledgeBases: mockListFakeKnowledgeBases,
+      toRef: kb => ({
+        provider: FAKE_PROVIDER,
+        mode: 'explicit',
+        id: kb.knowledge_base_id,
+        name: kb.knowledge_base_name,
+        scope: kb.scope ?? undefined,
+      }),
+    })
+
+    render(
+      <ContextSelector
+        open={true}
+        onOpenChange={jest.fn()}
+        selectedContexts={[]}
+        onSelect={jest.fn()}
+        onDeselect={jest.fn()}
+        onReplaceContexts={onReplaceContexts}
+      >
+        <button>trigger</button>
+      </ContextSelector>
+    )
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`)
+      ).toBeInTheDocument()
+    )
+    fireEvent.click(screen.getByTestId(`knowledge-picker-source-external:${FAKE_PROVIDER}`))
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-scope-organization'))
+    fireEvent.click(await screen.findByTestId('knowledge-picker-external-kb-lib-1'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-picker-document-column')).toHaveTextContent('Fake Lib')
+      expect(screen.getByTestId('knowledge-picker-document-column')).toHaveTextContent(
+        'picker.emptyDocuments'
+      )
+    })
+    expect(mockListFakeNodes).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByTestId('knowledge-picker-external-kb-select-lib-1'))
+    expect(onReplaceContexts).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          type: 'external_knowledge',
+          ref: expect.objectContaining({
+            provider: FAKE_PROVIDER,
+            id: 'lib-1',
+          }),
+        }),
+      ]
+    )
   })
 
   it('opens external knowledge bases without selecting them when whole-KB selection is unsupported', async () => {

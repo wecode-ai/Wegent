@@ -130,6 +130,163 @@ async fn app_ipc_routes_codex_app_server_request() {
 }
 
 #[tokio::test]
+async fn app_ipc_initializes_the_bundled_plugin_marketplace() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("bundled-plugins/wework-personal");
+    let executor_home = root.path().join("executor-home");
+    fs::create_dir_all(source.join(".agents/plugins")).unwrap();
+    fs::create_dir_all(source.join(".claude-plugin")).unwrap();
+    fs::create_dir_all(source.join("plugins/smart-app-builder")).unwrap();
+    fs::write(
+        source.join(".agents/plugins/marketplace.json"),
+        r#"{"plugins":[{"name":"smart-app-builder","policy":{"installation":"INSTALLED_BY_DEFAULT"}},{"name":"wework-space"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        source.join(".claude-plugin/marketplace.json"),
+        r#"{"plugins":[{"name":"wework-space"},{"name":"smart-app-builder"}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        source.join("plugins/smart-app-builder/README.md"),
+        "builder",
+    )
+    .unwrap();
+    let _source = EnvGuard::set(
+        "WEGENT_BUNDLED_PLUGIN_MARKETPLACE_DIR",
+        &source.display().to_string(),
+    );
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+
+    let result = AppIpcServer::new()
+        .dispatch("executor.plugins.initialize_bundled_marketplace", json!({}))
+        .await
+        .unwrap();
+
+    let destination = executor_home.join("capabilities/bundled-marketplaces/wework-personal");
+    assert_eq!(result["id"], "wework-personal");
+    assert_eq!(result["path"], destination.display().to_string());
+    assert_eq!(result["pluginCount"], 2);
+    assert_eq!(result["defaultPluginNames"], json!(["smart-app-builder"]));
+    assert_eq!(
+        fs::read_to_string(destination.join("plugins/smart-app-builder/README.md")).unwrap(),
+        "builder"
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_initializes_a_blank_codex_home() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let executor_home = root.path().join("executor-home");
+    let codex_home = executor_home.join("codex");
+    let native_home = root.path().join("native-codex");
+    fs::create_dir_all(&native_home).unwrap();
+    fs::write(native_home.join("config.toml"), "# native marker\n").unwrap();
+    let _executor_home =
+        EnvGuard::set("WEGENT_EXECUTOR_HOME", &executor_home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+    let _e2e = EnvGuard::set("VITE_WEWORK_E2E", "true");
+    let _native_home = EnvGuard::set(
+        "WEWORK_E2E_NATIVE_CODEX_HOME",
+        &native_home.display().to_string(),
+    );
+
+    let server = AppIpcServer::new();
+    let status = server
+        .dispatch("executor.codex_home.status", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(status["shouldPromptMigration"], true);
+
+    let initialized = server
+        .dispatch(
+            "executor.codex_home.initialize",
+            json!({
+                "migrateNativeHome": false,
+                "remoteAppsEnabled": true
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(initialized["shouldPromptMigration"], false);
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert!(!config.contains("native marker"));
+    assert!(config.contains("apps = true"));
+}
+
+#[tokio::test]
+async fn app_ipc_routes_local_first_plugin_install_as_runtime_rpc() {
+    let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginInstallRuntimeHandler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-local-plugin",
+                "method": "runtime.codex.plugin.install_local_first",
+                "params": {
+                    "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                    "pluginName": "example-plugin"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "type": "response",
+            "id": "req-local-plugin",
+            "ok": true,
+            "result": {
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }
+        })
+    );
+}
+
+#[tokio::test]
+async fn app_ipc_routes_local_plugin_uninstall_as_runtime_rpc() {
+    let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginUninstallRuntimeHandler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-local-plugin-uninstall",
+                "method": "runtime.codex.plugin.uninstall_local",
+                "params": {
+                    "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                    "pluginName": "example-plugin"
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        response,
+        json!({
+            "type": "response",
+            "id": "req-local-plugin-uninstall",
+            "ok": true,
+            "result": {
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }
+        })
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_manages_local_projects_and_nested_todos() {
     let _lock = env_lock().await;
     let executor_home = tempfile::tempdir().unwrap();
@@ -271,6 +428,64 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(projects[0]["id"], "default-work-items");
     assert_eq!(projects[0]["name"], "我的任务");
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
+}
+
+#[tokio::test]
+async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let reconciliations = Arc::new(Mutex::new(0));
+    let server = AppIpcServer::new().with_runtime_work_handler(ProjectionRuntimeHandler {
+        reconciliations: Arc::clone(&reconciliations),
+    });
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Runtime",
+                "project_key": "BOUND",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Track running task"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "device_id": "local-device",
+                    "task_id": "runtime-running-1",
+                    "task_title": "Track running task"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch("todos.list", json!({"project_id": project["id"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(*reconciliations.lock().unwrap(), 2);
 }
 
 #[tokio::test]
@@ -993,6 +1208,12 @@ async fn app_ipc_lists_codex_skills_from_runtime_directories() {
 
 #[tokio::test]
 async fn app_ipc_resolves_review_and_git_device_commands() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
     let command_handler = CaptureCommandHandler::default();
     let seen_request = Arc::clone(&command_handler.seen_request);
     let server = AppIpcServer::new().with_command_handler(command_handler);
@@ -1005,7 +1226,7 @@ async fn app_ipc_resolves_review_and_git_device_commands() {
                 "method": "device.execute_command",
                 "params": {
                     "command_key": "git_diff",
-                    "path": "/tmp/project"
+                    "path": workspace.path().display().to_string()
                 }
             })
             .to_string(),
@@ -1237,6 +1458,72 @@ impl DeviceCommandHandler for JsonCaptureCommandHandler {
             CommandResult::ok(json!({"ok": true}).to_string())
         })
     }
+}
+
+#[tokio::test]
+async fn app_ipc_does_not_spawn_git_for_plain_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-plain-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], false);
+    assert_eq!(
+        response["result"]["error"],
+        "Workspace is not a Git repository"
+    );
+    assert!(seen_request.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn app_ipc_routes_git_inspection_for_repository_workspaces() {
+    let workspace = tempfile::tempdir().unwrap();
+    let git_dir = workspace.path().join(".git");
+    fs::create_dir_all(git_dir.join("objects")).unwrap();
+    fs::create_dir_all(git_dir.join("refs")).unwrap();
+    fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+
+    let command_handler = JsonCaptureCommandHandler::default();
+    let seen_request = Arc::clone(&command_handler.seen_request);
+    let server = AppIpcServer::new().with_command_handler(command_handler);
+
+    let response = server
+        .handle_line(
+            &json!({
+                "type": "request",
+                "id": "req-repository-workspace-git",
+                "method": "device.execute_command",
+                "params": {
+                    "command_key": "git_branch",
+                    "path": workspace.path().display().to_string()
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["success"], true);
+    let request = seen_request.lock().unwrap().clone().unwrap();
+    assert_eq!(request.argv, ["git", "branch", "--show-current"]);
 }
 
 #[tokio::test]
@@ -1491,6 +1778,11 @@ async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
     assert_eq!(ready["event"], "executor.ready");
     assert_eq!(ready["payload"]["device_id"], "device-1");
     assert_eq!(ready["payload"]["ready"], true);
+    assert_eq!(ready["payload"]["protocol_version"], 1);
+    assert!(ready["payload"]["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.tasks")));
 
     writer
         .write_all(
@@ -1521,6 +1813,87 @@ async fn app_ipc_stdio_serves_ready_event_and_responses_until_input_closes() {
         .expect("stdio server should stop after stdin closes")
         .expect("stdio server task should join")
         .is_ok());
+}
+
+#[tokio::test]
+async fn app_ipc_describes_the_versioned_desktop_protocol() {
+    let server = AppIpcServer::new()
+        .with_device_id("device-1")
+        .with_runtime_instance_id("runtime-1");
+
+    let description = server
+        .dispatch("executor.protocol.describe", json!({}))
+        .await
+        .unwrap();
+
+    assert_eq!(description["protocol_version"], 1);
+    assert_eq!(description["device_id"], "device-1");
+    assert_eq!(description["runtime_instance_id"], "runtime-1");
+    assert_eq!(description["features"]["structured_errors"], true);
+    assert_eq!(description["features"]["event_resume"], true);
+    assert!(description["transports"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("stdio-ndjson")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.worktrees")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("codex.app_server_request")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("runtime.*")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses.list")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses.prepare_launch")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.plugins.initialize_bundled_marketplace")));
+    for method in [
+        "executor.plugins.import_package.preview",
+        "executor.plugins.import_package",
+        "executor.plugins.import_package.finalize",
+        "executor.plugins.import_package.rollback",
+        "executor.plugins.links.list",
+        "executor.plugins.links.link",
+        "executor.plugins.links.unlink",
+        "executor.plugins.personal.delete",
+    ] {
+        assert!(description["renderer_methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(method)));
+    }
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.initialize")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.harnesses")));
+    assert!(description["capabilities"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.plugins")));
+    assert!(!description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.protocol.describe")));
 }
 
 fn unique_dir(label: &str) -> std::path::PathBuf {
@@ -1564,6 +1937,27 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct ProjectionRuntimeHandler {
+    reconciliations: Arc<Mutex<usize>>,
+}
+
+impl RuntimeWorkHandler for ProjectionRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async { Ok(json!({})) })
+    }
+
+    fn reconcile_bound_task_statuses<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            *self.reconciliations.lock().unwrap() += 1;
         })
     }
 }
@@ -1616,6 +2010,58 @@ impl RuntimeWorkHandler for CodexRuntimeHandler {
                 })
             );
             Ok(json!({"marketplaces": []}))
+        })
+    }
+}
+
+struct LocalPluginInstallRuntimeHandler;
+
+impl RuntimeWorkHandler for LocalPluginInstallRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "runtime.codex.plugin.install_local_first",
+                    "payload": {
+                        "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                        "pluginName": "example-plugin"
+                    }
+                })
+            );
+            Ok(json!({
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }))
+        })
+    }
+}
+
+struct LocalPluginUninstallRuntimeHandler;
+
+impl RuntimeWorkHandler for LocalPluginUninstallRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            assert_eq!(
+                data,
+                json!({
+                    "method": "runtime.codex.plugin.uninstall_local",
+                    "payload": {
+                        "marketplacePath": "/tmp/wework-personal/.agents/plugins/marketplace.json",
+                        "pluginName": "example-plugin"
+                    }
+                })
+            );
+            Ok(json!({
+                "pluginKey": "example-plugin@wework-personal",
+                "localCommitted": true
+            }))
         })
     }
 }

@@ -10,8 +10,16 @@ const testState = vi.hoisted(() => ({
   terminalInstances: [] as Array<{
     rows: number
     cols: number
+    buffer: { active: { viewportY: number } }
     emitData: (data: string) => void
+    clearSelection: ReturnType<typeof vi.fn>
+    getSelection: ReturnType<typeof vi.fn>
+    getSelectionPosition: ReturnType<typeof vi.fn>
+    hasSelection: ReturnType<typeof vi.fn>
     onData: ReturnType<typeof vi.fn>
+    onResize: ReturnType<typeof vi.fn>
+    onScroll: ReturnType<typeof vi.fn>
+    onSelectionChange: ReturnType<typeof vi.fn>
     onTitleChange: ReturnType<typeof vi.fn>
     write: ReturnType<typeof vi.fn>
     writeln: ReturnType<typeof vi.fn>
@@ -63,11 +71,19 @@ vi.mock('@xterm/xterm', () => ({
     const terminal = {
       rows: 24,
       cols: 80,
+      buffer: { active: { viewportY: 0 } },
       emitData: (data: string) => dataHandlers.forEach(handler => handler(data)),
+      clearSelection: vi.fn(),
+      getSelection: vi.fn(() => ''),
+      getSelectionPosition: vi.fn(() => undefined),
+      hasSelection: vi.fn(() => false),
       onData: vi.fn((handler: (data: string) => void) => {
         dataHandlers.push(handler)
         return { dispose: vi.fn() }
       }),
+      onResize: vi.fn(() => ({ dispose: vi.fn() })),
+      onScroll: vi.fn(() => ({ dispose: vi.fn() })),
+      onSelectionChange: vi.fn(() => ({ dispose: vi.fn() })),
       onTitleChange: vi.fn(() => ({ dispose: vi.fn() })),
       write: vi.fn(),
       writeln: vi.fn(),

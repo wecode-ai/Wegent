@@ -1,6 +1,6 @@
 import { ChevronRight, FileText, Loader2, MessageSquare, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { Attachment } from '@/types/api'
+import type { Attachment, AttachmentUploadProgress } from '@/types/api'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import {
   getAttachmentTextPreview,
@@ -8,12 +8,13 @@ import {
   isImageAttachment,
   isTextAttachment,
 } from '@/lib/attachments'
+import { isWorkspaceImageFile } from '@/lib/workspace-path-transfer'
 import { AttachmentImagePreview } from '../AttachmentImagePreview'
 import { CodeCommentPreview } from '../CodeCommentPreview'
 
 interface AttachmentBadgesProps {
   attachments: Attachment[]
-  uploadingFiles: Map<string, { file: File; progress: number }>
+  uploadingFiles: Map<string, AttachmentUploadProgress>
   errors: Map<string, string>
   codeComments?: CodeCommentContext[]
   onRemoveAttachment: (attachmentId: number) => void
@@ -89,7 +90,7 @@ function TextAttachmentCard({
   return (
     <div
       data-testid="attachment-badge"
-      className="relative inline-flex h-[72px] max-w-full items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm sm:max-w-[420px]"
+      className="relative inline-flex h-[72px] max-w-[min(420px,100%)] items-center gap-3 rounded-[20px] border border-border bg-muted px-3 pr-8 text-left shadow-sm"
     >
       <span
         data-testid="attachment-text-icon"
@@ -240,17 +241,32 @@ export function AttachmentBadges({
           />
         )
       )}
-      {Array.from(uploadingFiles.entries()).map(([fileId, upload]) => (
-        <span
-          key={fileId}
-          data-testid="uploading-attachment-badge"
-          className="inline-flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary"
-        >
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-          <span className="min-w-0 truncate">{upload.file.name}</span>
-          <span className="shrink-0 text-text-muted">{upload.progress}%</span>
-        </span>
-      ))}
+      {Array.from(uploadingFiles.entries()).map(([fileId, upload]) =>
+        isWorkspaceImageFile(upload.file) && upload.previewUrl ? (
+          <div
+            key={fileId}
+            data-testid="pending-image-attachment"
+            className="h-20 w-20 shrink-0 overflow-hidden rounded-xl"
+          >
+            <img
+              data-testid="pending-image-attachment-preview"
+              src={upload.previewUrl}
+              alt={upload.file.name}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : (
+          <span
+            key={fileId}
+            data-testid="uploading-attachment-badge"
+            className="inline-flex max-w-[220px] items-center gap-2 rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary"
+          >
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+            <span className="min-w-0 truncate">{upload.file.name}</span>
+            <span className="shrink-0 text-text-muted">{upload.progress}%</span>
+          </span>
+        )
+      )}
       {Array.from(errors.entries()).map(([fileId, error]) => (
         <span
           key={fileId}

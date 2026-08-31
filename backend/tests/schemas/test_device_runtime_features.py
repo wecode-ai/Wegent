@@ -9,7 +9,14 @@ from app.schemas.device import DeviceHeartbeatPayload, DeviceInfo
 
 def _runtime_features():
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
+        "runtimeTaskCreate": {
+            "schemaVersions": [1, 2],
+            "features": {
+                "goal": True,
+                "supervisor": True,
+            },
+        },
         "worktrees": {
             "version": 1,
             "managed": True,
@@ -37,6 +44,9 @@ def test_heartbeat_runtime_features_use_independent_contract():
     assert payload.capabilities["skills"] == [{"name": "review"}]
     assert payload.runtime_features is not None
     assert payload.runtime_features.worktrees is not None
+    assert payload.runtime_features.runtime_task_create is not None
+    assert payload.runtime_features.runtime_task_create.schema_versions == [1, 2]
+    assert payload.runtime_features.runtime_task_create.features["goal"] is True
     assert payload.runtime_features.worktrees.deferred_prepare is True
     assert payload.runtime_features.worktrees.persistent_storage_verified is True
     assert payload.runtime_features.model_dump(by_alias=True) == _runtime_features()

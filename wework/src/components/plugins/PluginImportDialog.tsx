@@ -2,9 +2,11 @@ import { AlertTriangle, Archive, CheckCircle2, Download, Loader2, Upload, X } fr
 import { useEffect, useRef, useState } from 'react'
 import type {
   LocalCodexPluginApi,
+  LocalPluginImportCompletion,
   LocalPluginImportIssue,
   LocalPluginImportPreview,
 } from '@/api/local/codexPlugins'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
 
 function issueGuidance(
@@ -54,11 +56,11 @@ function issueGuidance(
     ),
     mcp_manifest_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     mcp_path_invalid: t(
       'workbench.plugins_import_issue_mcp',
-      '.mcp.json 必须是合法 JSON，并包含 mcpServers 对象。'
+      '.mcp.json 必须是合法的 MCP server map，或包含 mcp_servers / mcpServers 对象。'
     ),
     skill_manifest_invalid: t(
       'workbench.plugins_import_issue_skill_manifest',
@@ -150,7 +152,7 @@ export function PluginImportDialog({
 }: {
   pluginApi: LocalCodexPluginApi
   onCancel: () => void
-  onImported: () => void
+  onImported: (result: LocalPluginImportCompletion) => void
 }) {
   const { t } = useTranslation('common')
   const closeRef = useRef<HTMLButtonElement>(null)
@@ -168,18 +170,20 @@ export function PluginImportDialog({
   }, [])
 
   async function choosePackage() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      filters: [{ name: 'Wework plugin ZIP', extensions: ['zip'] }],
-    })
-    if (typeof selected !== 'string') return
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePaths: string[] }>(
+      'dialog.open',
+      {
+        properties: ['openFile'],
+        filters: [{ name: 'Wework plugin ZIP', extensions: ['zip'] }],
+      }
+    )
+    const packagePath = selected.filePaths[0]
+    if (selected.canceled || !packagePath) return
     setAnalyzing(true)
     setError(null)
     setRiskConfirmed(false)
     try {
-      setPreview(await pluginApi.previewPluginImport(selected))
+      setPreview(await pluginApi.previewPluginImport(packagePath))
     } catch (previewError) {
       setPreview(null)
       setError(previewErrorGuidance(previewError, t))
@@ -189,17 +193,19 @@ export function PluginImportDialog({
   }
 
   async function downloadExample() {
-    const { save } = await import('@tauri-apps/plugin-dialog')
-    const destination = await save({
-      defaultPath: 'wework-plugin-example.zip',
-      filters: [{ name: 'ZIP', extensions: ['zip'] }],
-    })
-    if (!destination) return
+    const selected = await invokeDesktopHost<{ canceled: boolean; filePath: string | null }>(
+      'dialog.save',
+      {
+        defaultPath: 'wework-plugin-example.zip',
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+      }
+    )
+    if (selected.canceled || !selected.filePath) return
     setSavingExample(true)
     setError(null)
     setSavedExamplePath('')
     try {
-      setSavedExamplePath(await pluginApi.savePluginExample(destination))
+      setSavedExamplePath(await pluginApi.savePluginExample(selected.filePath))
     } catch (saveError) {
       console.warn('[Wework] failed to save plugin example', saveError)
       setError(
@@ -215,8 +221,8 @@ export function PluginImportDialog({
     setImporting(true)
     setError(null)
     try {
-      await pluginApi.importPluginPackage(preview, preview.existing)
-      onImported()
+      const imported = await pluginApi.importPluginPackage(preview, preview.existing)
+      onImported(imported)
     } catch (importError) {
       console.warn('[Wework] plugin package import failed', importError)
       setError(importErrorGuidance(importError, t))

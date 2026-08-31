@@ -4,6 +4,10 @@
 
 use super::*;
 
+const MAX_STREAM_FILE_CHANGE_DIFF_BYTES: usize = 128 * 1024;
+const TRUNCATED_DIFF_SUFFIX: &str =
+    "\n... [diff truncated; full patch is stored in the artifact]\n";
+
 pub(super) fn file_changes(value: &Value) -> Option<Value> {
     value
         .get("fileChanges")
@@ -87,7 +91,9 @@ pub(super) fn merge_file_changes(existing: Option<Value>, next: Value) -> Option
     if combined_diff.is_empty() {
         current_object.remove("diff");
     } else {
+        let (combined_diff, truncated) = limit_stream_diff(&combined_diff);
         current_object.insert("diff".to_owned(), Value::String(combined_diff));
+        current_object.insert("diff_truncated".to_owned(), Value::Bool(truncated));
     }
 
     Some(current)
@@ -261,10 +267,29 @@ fn file_changes_summary(
     });
     if let Some(diff) = diff {
         if let Some(object) = summary.as_object_mut() {
+            let (diff, truncated) = limit_stream_diff(&diff);
             object.insert("diff".to_owned(), Value::String(diff));
+            object.insert("diff_truncated".to_owned(), Value::Bool(truncated));
         }
     }
     Some(summary)
+}
+
+fn limit_stream_diff(diff: &str) -> (String, bool) {
+    if diff.len() <= MAX_STREAM_FILE_CHANGE_DIFF_BYTES {
+        return (diff.to_owned(), false);
+    }
+
+    let suffix_bytes = TRUNCATED_DIFF_SUFFIX.len();
+    let max_prefix_bytes = MAX_STREAM_FILE_CHANGE_DIFF_BYTES.saturating_sub(suffix_bytes);
+    let mut boundary = max_prefix_bytes.min(diff.len());
+    while boundary > 0 && !diff.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let mut limited = String::with_capacity(MAX_STREAM_FILE_CHANGE_DIFF_BYTES);
+    limited.push_str(&diff[..boundary]);
+    limited.push_str(TRUNCATED_DIFF_SUFFIX);
+    (limited, true)
 }
 
 fn file_change_from_codex_change(change: &Value, workspace_path: &str) -> Option<Value> {
@@ -653,7 +678,20 @@ fn diff_git_path(prefix: &str, path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{diff_stats, diff_with_file_header};
+    use super::{
+        diff_stats, diff_with_file_header, limit_stream_diff, MAX_STREAM_FILE_CHANGE_DIFF_BYTES,
+        TRUNCATED_DIFF_SUFFIX,
+    };
+
+    #[test]
+    fn limits_streamed_diffs_without_splitting_utf8() {
+        let diff = "改".repeat(MAX_STREAM_FILE_CHANGE_DIFF_BYTES);
+        let (limited, truncated) = limit_stream_diff(&diff);
+
+        assert!(truncated);
+        assert!(limited.len() <= MAX_STREAM_FILE_CHANGE_DIFF_BYTES);
+        assert!(limited.ends_with(TRUNCATED_DIFF_SUFFIX));
+    }
 
     #[test]
     fn normalizes_marker_like_whole_file_content() {

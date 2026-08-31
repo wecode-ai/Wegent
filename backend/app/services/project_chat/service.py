@@ -34,9 +34,20 @@ from app.schemas.project_chat import (
     ProjectChatMessageView,
     ProjectChatSend,
     ProjectChatSubscribe,
+    ProjectChatWorkspaceBinding,
+    ProjectChatWorkspaceBindingView,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_unread import advance_content_revision
+from app.services.project_chat.workspace_binding import (
+    WORKSPACE_BINDING_METADATA_KEY,
+    adapt_legacy_workspace_binding,
+    normalize_workspace_binding,
+    read_agent_workspace_binding,
+    write_workspace_binding,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +98,7 @@ TASK_AI_STATE_KEY = "ai_state"
 TASK_AI_RUNNING_LEASE_SECONDS = 10 * 60
 EXECUTION_STATE_KEY = "execution_state"
 EXECUTION_UPDATED_AT_KEY = "execution_updated_at"
+PENDING_LOOP_ITEM_CHANGES_KEY = "project_chat_pending_loop_item_changes"
 _EXECUTION_STATE_FROM_AI_STATUS = {
     "running": "running",
     "completed": "completed",
@@ -98,12 +110,16 @@ BOT_VISIBILITY_KEY = "visibility"
 BOT_EXECUTION_ENVIRONMENT_KEY = "execution_environment"
 BOT_EXECUTION_MODE_KEY = "execution_mode"
 BOT_MAX_CONCURRENT_EXECUTIONS_KEY = "max_concurrent_executions"
+BOT_WORKSPACE_POLICY_KEY = "workspace_policy"
 BOT_RUNTIME_KEY = "runtime"
 BOT_WEGENT_TEAM_ID_KEY = "wegent_team_id"
+BOT_RUNTIME_PROFILE_ID_KEY = "default_runtime_profile_id"
+BOT_PLUGINS_KEY = "plugins"
 BOT_DEFAULT_VISIBILITY = "creator_admin"
 BOT_DEFAULT_EXECUTION_ENVIRONMENT = "local"
 BOT_DEFAULT_EXECUTION_MODE = "auto"
 BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS = 1
+BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
 
 
@@ -113,6 +129,14 @@ def bot_max_concurrent_executions(row: ProjectChatAgent) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 20:
         return value
     return BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
+
+
+def bot_workspace_policy(row: ProjectChatAgent) -> str:
+    metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    value = metadata.get(BOT_WORKSPACE_POLICY_KEY)
+    return (
+        value if value in {"project", "git_worktree"} else BOT_DEFAULT_WORKSPACE_POLICY
+    )
 
 
 def bot_config(row: ProjectChatAgent) -> dict[str, object]:
@@ -130,9 +154,14 @@ def bot_config(row: ProjectChatAgent) -> dict[str, object]:
             BOT_EXECUTION_MODE_KEY, BOT_DEFAULT_EXECUTION_MODE
         ),
         "execution_device_id": row.device_id,
+        "default_runtime_profile_id": metadata.get(BOT_RUNTIME_PROFILE_ID_KEY),
+        "plugins": metadata.get(BOT_PLUGINS_KEY, []),
         "model": metadata.get("model"),
+        "model_type": metadata.get("model_type"),
+        "model_options": metadata.get("model_options", {}),
         "execution_prompt": metadata.get("system_prompt", ""),
         "max_concurrent_executions": bot_max_concurrent_executions(row),
+        "workspace_policy": bot_workspace_policy(row),
     }
 
 
@@ -143,6 +172,24 @@ class ProjectChatWriteResult:
 
 
 class ProjectChatService:
+    @staticmethod
+    def _queue_loop_item_change(db: Session, item: LoopItem) -> None:
+        pending = db.info.setdefault(PENDING_LOOP_ITEM_CHANGES_KEY, set())
+        pending.add(item.id)
+
+    def _commit(self, db: Session) -> None:
+        pending = set(db.info.pop(PENDING_LOOP_ITEM_CHANGES_KEY, set()))
+        db.commit()
+        for item_id in pending:
+            item = db.get(LoopItem, item_id)
+            if item is not None:
+                publish_loop_item_changed(
+                    db,
+                    item=item,
+                    reason="project_chat",
+                    actor_user_id=0,
+                )
+
     """Read and append messages in a project's single shared chat."""
 
     def list_agents(
@@ -184,13 +231,58 @@ class ProjectChatService:
             from app.services.project_automation_domain import runnable_wegent_team
 
             runnable_wegent_team(db, user_id, request.wegent_team_id)
-        else:
-            self._validate_execution_device(
-                db,
-                user_id=user_id,
-                environment=request.execution_environment,
-                execution_device_id=request.execution_device_id,
+        elif request.default_runtime_profile_id:
+            from app.services.runtime_profiles import runtime_profile_service
+
+            runtime_profile_service.require_owned(
+                db, request.default_runtime_profile_id, user_id
             )
+        workspace_binding = ProjectChatWorkspaceBindingView(
+            type="standalone",
+            status="ready",
+        )
+        if request.runtime == "codex":
+            workspace_binding = (
+                normalize_workspace_binding(
+                    db,
+                    user_id=user_id,
+                    environment=request.execution_environment,
+                    execution_device_id=str(request.execution_device_id or ""),
+                    binding=request.workspace_binding,
+                )
+                if request.workspace_binding is not None
+                else adapt_legacy_workspace_binding(
+                    db,
+                    user_id=user_id,
+                    environment=request.execution_environment,
+                    execution_device_id=str(request.execution_device_id or ""),
+                    local_project_id=request.local_project_id,
+                )
+            )
+            if workspace_binding.status != "ready":
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Historical project binding is ambiguous; select an exact workspace",
+                )
+        metadata = {
+            "runtime": request.runtime,
+            BOT_WEGENT_TEAM_ID_KEY: request.wegent_team_id,
+            "model": request.model,
+            "model_type": request.model_type,
+            "model_options": request.model_options,
+            "system_prompt": request.system_prompt,
+            BOT_VISIBILITY_KEY: request.visibility,
+            BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
+            BOT_EXECUTION_MODE_KEY: request.execution_mode,
+            BOT_MAX_CONCURRENT_EXECUTIONS_KEY: request.max_concurrent_executions,
+            BOT_WORKSPACE_POLICY_KEY: request.workspace_policy,
+            BOT_RUNTIME_PROFILE_ID_KEY: request.default_runtime_profile_id,
+            BOT_PLUGINS_KEY: [
+                plugin.model_dump(by_alias=True) for plugin in request.plugins
+            ],
+        }
+        if request.runtime == "codex":
+            metadata = write_workspace_binding(metadata, workspace_binding)
         row = ProjectChatAgent(
             cloud_project_id=project_id,
             title=request.name,
@@ -203,21 +295,12 @@ class ProjectChatService:
                 request.execution_device_id if request.runtime == "codex" else None
             ),
             local_project_id=(
-                request.local_project_id if request.runtime == "codex" else None
+                workspace_binding.project_id if request.runtime == "codex" else None
             ),
-            metadata_json={
-                "runtime": request.runtime,
-                BOT_WEGENT_TEAM_ID_KEY: request.wegent_team_id,
-                "model": request.model,
-                "system_prompt": request.system_prompt,
-                BOT_VISIBILITY_KEY: request.visibility,
-                BOT_EXECUTION_ENVIRONMENT_KEY: request.execution_environment,
-                BOT_EXECUTION_MODE_KEY: request.execution_mode,
-                BOT_MAX_CONCURRENT_EXECUTIONS_KEY: request.max_concurrent_executions,
-            },
+            metadata_json=metadata,
         )
         db.add(row)
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db)
 
@@ -257,51 +340,109 @@ class ProjectChatService:
             runnable_wegent_team(db, row.created_by_user_id or user_id, team_id)
             row.device_id = None
             row.local_project_id = None
+            metadata[BOT_RUNTIME_PROFILE_ID_KEY] = None
+            metadata.pop(WORKSPACE_BINDING_METADATA_KEY, None)
         metadata[BOT_RUNTIME_KEY] = runtime
         metadata[BOT_WEGENT_TEAM_ID_KEY] = team_id if runtime == "wegent" else None
-        if "model" in request.model_fields_set:
-            metadata["model"] = request.model
+        if "default_runtime_profile_id" in request.model_fields_set:
+            profile_id = request.default_runtime_profile_id
+            if profile_id is not None:
+                from app.services.runtime_profiles import runtime_profile_service
+
+                runtime_profile_service.require_owned(
+                    db, profile_id, row.created_by_user_id or user_id
+                )
+            metadata[BOT_RUNTIME_PROFILE_ID_KEY] = profile_id
         if request.system_prompt is not None:
             metadata["system_prompt"] = request.system_prompt
+        if request.plugins is not None:
+            metadata[BOT_PLUGINS_KEY] = [
+                plugin.model_dump(by_alias=True) for plugin in request.plugins
+            ]
         if request.capability_description is not None:
             row.description = request.capability_description.strip()
-        if runtime == "codex" and request.execution_device_id is not None:
-            self._validate_execution_device(
-                db,
-                user_id=row.created_by_user_id or user_id,
-                environment=(
-                    request.execution_environment
-                    or metadata.get(BOT_EXECUTION_ENVIRONMENT_KEY)
-                    or BOT_DEFAULT_EXECUTION_ENVIRONMENT
-                ),
-                execution_device_id=request.execution_device_id,
-            )
-            row.device_id = request.execution_device_id
         if request.visibility is not None:
             metadata[BOT_VISIBILITY_KEY] = request.visibility
-        if runtime == "codex" and request.execution_environment is not None:
-            if row.device_id:
-                self._validate_execution_device(
-                    db,
-                    user_id=row.created_by_user_id or user_id,
-                    environment=request.execution_environment,
-                    execution_device_id=row.device_id,
-                )
-            metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
         if request.execution_mode is not None:
             metadata[BOT_EXECUTION_MODE_KEY] = request.execution_mode
         if request.max_concurrent_executions is not None:
             metadata[BOT_MAX_CONCURRENT_EXECUTIONS_KEY] = (
                 request.max_concurrent_executions
             )
-        if runtime == "codex" and "local_project_id" in request.model_fields_set:
-            row.local_project_id = request.local_project_id
+        if request.workspace_policy is not None:
+            metadata[BOT_WORKSPACE_POLICY_KEY] = request.workspace_policy
+        if runtime == "codex":
+            if "execution_device_id" in request.model_fields_set:
+                row.device_id = request.execution_device_id
+            if "model" in request.model_fields_set:
+                metadata["model"] = request.model
+            if "model_type" in request.model_fields_set:
+                metadata["model_type"] = request.model_type
+            if "model_options" in request.model_fields_set:
+                metadata["model_options"] = request.model_options or {}
+            if "execution_environment" in request.model_fields_set:
+                metadata[BOT_EXECUTION_ENVIRONMENT_KEY] = request.execution_environment
+            environment = str(
+                metadata.get(BOT_EXECUTION_ENVIRONMENT_KEY)
+                or BOT_DEFAULT_EXECUTION_ENVIRONMENT
+            )
+            device_id = str(row.device_id or "")
+            if "workspace_binding" in request.model_fields_set:
+                binding_input = (
+                    request.workspace_binding
+                    or ProjectChatWorkspaceBinding(type="standalone")
+                )
+                binding = normalize_workspace_binding(
+                    db,
+                    user_id=row.created_by_user_id or user_id,
+                    environment=environment,
+                    execution_device_id=device_id,
+                    binding=binding_input,
+                )
+            elif "local_project_id" in request.model_fields_set:
+                binding = adapt_legacy_workspace_binding(
+                    db,
+                    user_id=row.created_by_user_id or user_id,
+                    environment=environment,
+                    execution_device_id=device_id,
+                    local_project_id=request.local_project_id,
+                )
+                if binding.status != "ready":
+                    raise HTTPException(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "Historical project binding is ambiguous; select an exact workspace",
+                    )
+            else:
+                raw_binding = metadata.get(WORKSPACE_BINDING_METADATA_KEY)
+                if isinstance(raw_binding, dict):
+                    binding = normalize_workspace_binding(
+                        db,
+                        user_id=row.created_by_user_id or user_id,
+                        environment=environment,
+                        execution_device_id=device_id,
+                        binding=ProjectChatWorkspaceBinding.model_validate(raw_binding),
+                    )
+                else:
+                    binding = adapt_legacy_workspace_binding(
+                        db,
+                        user_id=row.created_by_user_id or user_id,
+                        environment=environment,
+                        execution_device_id=device_id,
+                        local_project_id=row.local_project_id,
+                    )
+                    if binding.status != "ready":
+                        raise HTTPException(
+                            status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "Robot workspace must be rebound to the selected device",
+                        )
+            metadata = write_workspace_binding(metadata, binding)
+            row.local_project_id = binding.project_id
         row.metadata_json = metadata
         if request.status is not None:
             row.status = request.status
         row.updated_by_user_id = user_id
         row.version += 1
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db)
 
@@ -345,7 +486,7 @@ class ProjectChatService:
         for row in rows:
             reconciled = self._reconcile_ai_run_projection(db, row=row) or reconciled
         if reconciled:
-            db.commit()
+            self._commit(db)
             for row in rows:
                 db.refresh(row)
         return [self.to_view(row) for row in rows]
@@ -413,7 +554,15 @@ class ProjectChatService:
             status="completed",
         )
         db.add(row)
-        db.commit()
+        if request.task_id:
+            item = db.get(LoopItem, request.task_id)
+            if item is not None:
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
+                item.version += 1
+                self._queue_loop_item_change(db, item)
+        self._commit(db)
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row), created=True)
 
@@ -510,7 +659,7 @@ class ProjectChatService:
                     prompt=request.prompt,
                     user_id=user_id,
                 )
-                db.commit()
+                self._commit(db)
             db.refresh(existing)
             return self.to_view(existing)
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
@@ -565,7 +714,7 @@ class ProjectChatService:
                 prompt=request.prompt,
                 user_id=user_id,
             )
-            db.commit()
+            self._commit(db)
         except IntegrityError:
             # A concurrent opener (runtime event upsert vs transport start
             # report) inserted the activity message first. Reuse it instead of
@@ -676,7 +825,7 @@ class ProjectChatService:
         )
         try:
             db.add(row)
-            db.commit()
+            self._commit(db)
         except IntegrityError:
             db.rollback()
             existing = (
@@ -851,7 +1000,7 @@ class ProjectChatService:
                 agent=None,
                 status_value="running",
             )
-            db.commit()
+            self._commit(db)
             db.refresh(row)
             return (
                 self.to_view(row).model_copy(
@@ -899,7 +1048,7 @@ class ProjectChatService:
             )
         else:
             return None
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row), "snapshot"
 
@@ -1061,7 +1210,7 @@ class ProjectChatService:
             content=content,
             error=error,
         )
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row)
 
@@ -1258,7 +1407,7 @@ class ProjectChatService:
             existing.metadata_json = metadata
             existing.status = "completed"
             existing.message_type = "text"
-        db.commit()
+        self._commit(db)
         db.refresh(existing)
         return self.to_view(existing), "snapshot"
 
@@ -1325,8 +1474,8 @@ class ProjectChatService:
             .first()
         )
 
-    @staticmethod
     def _set_task_ai_state(
+        self,
         db: Session,
         *,
         row: ProjectChatMessage,
@@ -1433,6 +1582,9 @@ class ProjectChatService:
             task_metadata[EXECUTION_STATE_KEY] = execution_state
             task_metadata[EXECUTION_UPDATED_AT_KEY] = now.isoformat()
         task_metadata[TASK_AI_STATE_KEY] = next_state
+        if previous_state.get("status") != status_value:
+            task_metadata = advance_content_revision(task_metadata)
+            self._queue_loop_item_change(db, task)
         task.metadata_json = task_metadata
         task.version += 1
         logger.debug(
@@ -1569,6 +1721,47 @@ class ProjectChatService:
         task.sort_order = 0
         task.version += 1
 
+        ProjectChatService._sync_issue_workflow_from_completed_task(
+            db,
+            task=task,
+        )
+
+    @staticmethod
+    def _sync_issue_workflow_from_completed_task(
+        db: Session,
+        *,
+        task: LoopItem,
+    ) -> None:
+        """Keep a secondary workflow projection from aborting finalization."""
+
+        metadata = task.metadata_json if isinstance(task.metadata_json, dict) else {}
+        plan = metadata.get("workflow_plan")
+        if (
+            not task.parent_id
+            or not isinstance(plan, dict)
+            or not str(plan.get("run_id") or "")
+        ):
+            return
+        # Flush the activity and task truth before opening the projection
+        # savepoint. A failure in these primary writes must still abort the
+        # caller's transaction.
+        db.flush()
+        from app.services.issue_workflow_planning import (
+            issue_workflow_planning_service,
+        )
+
+        try:
+            with db.begin_nested():
+                issue_workflow_planning_service.sync_from_child(
+                    db,
+                    child_id=task.id,
+                )
+        except Exception:
+            logger.exception(
+                "[ProjectChat] Issue workflow projection failed task_id=%s",
+                task.id,
+            )
+
     def fail_agent_response(
         self,
         db: Session,
@@ -1625,7 +1818,7 @@ class ProjectChatService:
             status_value="failed",
             error=request.error,
         )
-        db.commit()
+        self._commit(db)
         db.refresh(row)
         return self.to_view(row)
 
@@ -1758,6 +1951,22 @@ class ProjectChatService:
 
             creator = db.get(User, row.created_by_user_id)
             created_by_user_name = creator.user_name if creator else None
+        workspace_binding = (
+            read_agent_workspace_binding(db, agent=row)
+            if db is not None
+            else ProjectChatWorkspaceBindingView(
+                type=(
+                    "legacy_project"
+                    if int(row.local_project_id or 0) > 0
+                    else "standalone"
+                ),
+                status=(
+                    "needs_rebind" if int(row.local_project_id or 0) > 0 else "ready"
+                ),
+                projectId=row.local_project_id or None,
+                deviceId=row.device_id or None,
+            )
+        )
         return ProjectChatAgentView(
             id=row.id,
             project_id=row.cloud_project_id,
@@ -1769,6 +1978,16 @@ class ProjectChatService:
                 else None
             ),
             model=config.get("model") if isinstance(config.get("model"), str) else None,
+            model_type=(
+                config.get("model_type")
+                if config.get("model_type") in {"public", "user", "group", "runtime"}
+                else None
+            ),
+            model_options=(
+                dict(config["model_options"])
+                if isinstance(config.get("model_options"), dict)
+                else {}
+            ),
             system_prompt=(
                 config.get("execution_prompt")
                 if isinstance(config.get("execution_prompt"), str)
@@ -1782,10 +2001,22 @@ class ProjectChatService:
             ),
             execution_mode=config.get("execution_mode") or BOT_DEFAULT_EXECUTION_MODE,
             execution_device_id=row.device_id or None,
-            local_project_id=row.local_project_id or None,
+            workspace_binding=workspace_binding,
+            local_project_id=workspace_binding.project_id,
             max_concurrent_executions=int(
                 config.get("max_concurrent_executions")
                 or BOT_DEFAULT_MAX_CONCURRENT_EXECUTIONS
+            ),
+            workspace_policy=str(
+                config.get("workspace_policy") or BOT_DEFAULT_WORKSPACE_POLICY
+            ),
+            default_runtime_profile_id=(
+                str(config["default_runtime_profile_id"])
+                if config.get("default_runtime_profile_id")
+                else None
+            ),
+            plugins=(
+                config["plugins"] if isinstance(config.get("plugins"), list) else []
             ),
             created_by_user_id=row.created_by_user_id,
             created_by_user_name=created_by_user_name,

@@ -19,8 +19,16 @@ export function reduceRuntimeTaskLifecycle(
         terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
-      const snapshotConfirmsAutonomousTurn =
-        isRuntimeTaskConfirmedActive(event.task) && state.turnOutcome === null
+      const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
+      const snapshotRevivesSettledTaskWithoutIntent =
+        Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
+        isRuntimeTaskConfirmedActive(event.task) &&
+        state.goalStatus !== null &&
+        state.goalStatus !== 'active' &&
+        state.expectedExecutorRunning !== true
+      if (snapshotRevivesSettledTaskWithoutIntent) {
+        return state
+      }
       if (
         transitionMismatch &&
         !queuedStatus &&
@@ -70,13 +78,15 @@ export function reduceRuntimeTaskLifecycle(
       }
 
     case 'send_accepted':
-      return {
-        ...state,
-        executionPhase: 'running',
-        turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
-        turnOutcome: null,
-        expectedExecutorRunning: true,
-      }
+      return state.expectedExecutorRunning === true
+        ? {
+            ...state,
+            executionPhase: 'running',
+            turnPhase: state.turnPhase === 'streaming' ? 'streaming' : 'awaiting',
+            turnOutcome: null,
+            expectedExecutorRunning: true,
+          }
+        : state
 
     case 'send_rejected': {
       const executorAlreadyConfirmed =
@@ -147,12 +157,10 @@ export function reduceRuntimeTaskLifecycle(
       }
       return {
         ...state,
-        executionPhase: state.goalStatus === 'active' ? state.executionPhase : 'idle',
         turnPhase: 'idle',
         turnOutcome: event.outcome ?? state.turnOutcome,
         activeTurnId: null,
-        expectedExecutorRunning:
-          state.goalStatus === 'active' ? state.expectedExecutorRunning : false,
+        expectedExecutorRunning: null,
       }
     }
 

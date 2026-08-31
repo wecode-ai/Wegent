@@ -60,6 +60,12 @@ class TestFileExtensionHelpers:
         assert _build_filename("document", "txt") == "document.txt"
         assert _build_filename("my-file", ".md") == "my-file.md"
 
+    def test_build_filename_fits_attachment_column(self):
+        filename = _build_filename("长" * 500, "md")
+
+        assert len(filename) == 255
+        assert filename.endswith(".md")
+
 
 class TestKnowledgeOrchestrator:
     """Tests for KnowledgeOrchestrator class."""
@@ -343,7 +349,9 @@ class TestKnowledgeOrchestrator:
                 return_value=(profile, 1, {"status": "valid", "fallback_reason": None}),
             ),
             patch.object(orchestrator, "get_default_retriever") as mock_get_retriever,
-            patch.object(orchestrator, "get_default_embedding_model") as mock_get_embedding,
+            patch.object(
+                orchestrator, "get_default_embedding_model"
+            ) as mock_get_embedding,
         ):
             result = orchestrator._resolve_retrieval_config(
                 db=mock_db,
@@ -627,7 +635,11 @@ class TestKnowledgeOrchestrator:
     ):
         """Test read_document_content returns the paginated raw content payload."""
         document = SimpleNamespace(
-            id=9, name="roadmap", kind_id=77, index_status="success"
+            id=9,
+            name="roadmap",
+            kind_id=77,
+            index_status="success",
+            source_type="file",
         )
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
@@ -722,7 +734,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content maps stable missing-document error codes."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -752,7 +764,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content raises when the reader returns no rows."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -776,7 +788,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content surfaces reader access errors unchanged."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -808,7 +820,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test read_document_content rejects incomplete reader payloads."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         with patch(
@@ -844,7 +856,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail maps paged content and async summary."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         paged = SimpleNamespace(
             document_id=9,
             name="roadmap",
@@ -905,7 +917,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail still validates access when payload sections are disabled."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
 
         with patch.object(
             orchestrator,
@@ -944,7 +956,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test summary-only detail requests still enforce document authorization."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         summary_service = MagicMock()
@@ -977,7 +989,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail normalizes summary objects via model_dump."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         mock_db.query.return_value.filter.return_value.first.return_value = document
 
         summary_result = Mock()
@@ -1011,7 +1023,7 @@ class TestKnowledgeOrchestrator:
         self, orchestrator, mock_db, mock_user
     ):
         """Test get_document_detail treats non-zero offsets as truncated content."""
-        document = SimpleNamespace(id=9, name="roadmap", kind_id=77)
+        document = SimpleNamespace(id=9, name="roadmap", kind_id=77, source_type="file")
         paged = SimpleNamespace(
             document_id=9,
             name="roadmap",

@@ -10,15 +10,29 @@ Wework includes an opt-in frontend performance diagnostics switch for investigat
 
 For everyday development, `pnpm --filter wework dev:mac` uses the release app's Executor Home by default, so projects and tasks are shared with the locally installed release Wework. Each Wework process still communicates with its own executor child through stdio, preventing endpoint collisions or attachment to another executor. Use `pnpm --filter wework dev:mac -- --executor-isolation` when projects and tasks must be isolated temporarily.
 
-`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Tauri identifier, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
+`ai:verify` and desktop E2E do not use that shared default. They explicitly create a temporary Executor Home, projects directory, device ID, and unique Electron app-data namespace, isolating tasks, projects, application data, and the single-instance lock from release and other verification sessions.
 
 Development instances share one Cargo target directory by default so executor source changes can reuse incremental build artifacts. Set `WEGENT_DISABLE_SHARED_CARGO_TARGET=1` to use the project's default target directory when investigating shared build-cache issues.
 
 ## Diagnosing Startup Time
 
-The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Tauri starts a new sidecar directly and does not discover or attach to an existing executor.
+The desktop startup screen waits only for the local executor to report ready through stdout; debug builds do not delay the workbench to finish an animation cycle. On a cold start, Electron starts a new sidecar directly and does not discover or attach to an existing executor.
 
 When the startup screen remains visible, align `Frontend logging initialized` in the frontend log with `app IPC stdio ready` in the executor log. The interval primarily measures local executor cold startup. Later entries such as `runtime work list finished` identify workbench data-loading time. Do not mistake a background cloud synchronization timeout for the local startup gate.
+
+### First-Paint Gates and Idle Work
+
+The workbench first paint depends only on the local executor being available. It does not wait for the Codex app-server, plugin marketplace synchronization, or scans of directories eligible for cleanup. Features that need Codex start it on demand; maintenance such as plugin auto-updates, bundled marketplace preparation, and temporary-image cleanup runs through one renderer idle-task scheduler.
+
+An idle task starts only when all of these conditions hold:
+
+- The workbench first paint is available.
+- There has been no recent keyboard, pointer, touch, or wheel input, and the renderer receives a sufficiently large idle-callback slice.
+- CPU utilization, available memory, and system idle time sampled by the Electron main process remain below the configured pressure limits.
+
+Pending requests with the same task ID are coalesced, and idle tasks start serially. New user input postpones work that has not started, and a failed pressure probe prevents execution. The scheduler only decides when work may begin; a task must not perform synchronous heavy work on the renderer main thread. File scanning and copying belongs in the Executor blocking pool, directory cleanup uses asynchronous I/O in the Electron main process, and network synchronization remains asynchronous.
+
+After first paint, the bundled plugin marketplace computes a deterministic content SHA-256. When `.wework-content-sha256` in the destination matches the current content, Wework skips the copy. Changed content is replaced through a staging directory, and the hash participates in the Codex local-marketplace registration key. Bundled plugins therefore refresh after a Wework upgrade without recopied content on every launch of the same version.
 
 ## Diagnosing Runtime Task Creation
 
@@ -76,7 +90,7 @@ Debug Panel snapshots include a lightweight memory summary for the active runtim
 - Queued messages, guidance messages, code-comment context count, and transcript range state.
 - The raw `running` value from the runtime work list and the running state derived by the pane.
 
-Snapshots only include summaries. They do not copy full command output, raw Codex events, or full transcript content into the Debug Panel. When raw payloads are needed, inspect executor logs or Web Inspector samples instead of moving large text through the frontend snapshot path.
+Snapshots only include summaries. They do not copy full command output, raw Codex events, or full transcript content into the Debug Panel. When raw payloads are needed, inspect executor logs or DevTools samples instead of moving large text through the frontend snapshot path.
 
 ## Runtime Transcript and List Payloads
 
@@ -92,7 +106,9 @@ Codex filters `<codex_internal_context>` from history APIs, so Wework must prese
 
 The desktop workbench caches at most 10 ordinary panes and evicts them in least-recently-used order. An inactive pane that is no longer running releases transcript messages, historical DOM, pagination ranges, navigation indexes, and processing expansion state; returning to it reloads from the original runtime transcript.
 
-Tauri conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. While the user remains at the bottom, the virtualizer uses `anchorTo: 'end'` to follow the list end. After the user scrolls upward, it must switch to `anchorTo: 'start'` so streaming row growth cannot make TanStack Virtual keep rewriting the scroll position. Scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. An active streaming message must remain in the virtual range even when it is outside the visible range and overscan, so its growth continues to reach TanStack Virtual's measurement pipeline; otherwise, replacing its estimated height with its real height when it remounts can corrupt the historical reading position. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
+Electron conversations use one `@tanstack/react-virtual` message-row virtualizer for every conversation size instead of switching implementations at a message-count threshold. While the user remains at the bottom, the virtualizer uses `anchorTo: 'end'` to follow the list end. After the user scrolls upward, it must switch to `anchorTo: 'start'` so streaming row growth cannot make TanStack Virtual keep rewriting the scroll position. Scroll snapshots are consistently represented as the distance from the viewport bottom to the list bottom. Its shared `ResizeObserver` measures mounted message rows. An active streaming message must remain in the virtual range even when it is outside the visible range and overscan, so its growth continues to reach TanStack Virtual's measurement pipeline; otherwise, replacing its estimated height with its real height when it remounts can corrupt the historical reading position. While the user remains at the bottom, height changes preserve the end distance. After the user scrolls upward, the list instead records the first visible text scroll anchor and its viewport offset, then restores that text anchor when streaming content is remeasured. This keeps bottom-follow behavior without allowing the text being read to drift upward during streaming. The rendered range keeps 2 rows of overscan on each side. Message rows no longer use `IntersectionObserver` as a second windowing layer; an individual oversized Markdown response retains independent chunk windowing to bound the DOM inside one visible message. Chunks whose rich Markdown is not mounted retain lightweight plain text so rapid scrolling cannot expose a height-only blank region. Remaining `IntersectionObserver` usage covers independent behavior such as bottom-follow state and attachment previews.
+
+A single assistant message may contain many tool blocks and be split into multiple `ToolBlocksDisplay` segments. Derived data that depends on the complete message, such as file-edit durations, must be computed once at message scope and then mapped into each display segment; each segment must not rescan the complete message. Use an empty-result fast path when the corresponding display blocks are absent, and avoid creating split arrays or sets while matching every block's tool name.
 
 Each conversation stores only a bounded TanStack measurement snapshot alongside its distance-from-bottom scroll snapshot. Changes to this path must cover short and long conversations, streaming bottom-follow behavior, continuous measurement of offscreen streaming messages, text-anchor stability after scrolling upward, historical-position restoration, reopen after switching away, forced mounting for turn navigation, and cache eviction when a task is archived.
 
@@ -118,6 +134,8 @@ WEGENT_CODEX_STREAM_MAPPING_DEBUG=1  # enable runtime work cache/emit mapping de
 
 Wework separates high-frequency executor text deltas from the visible Markdown cadence. Message state still receives and retains the complete content in real time, while `AssistantMarkdown` uses a lightweight buffer to advance visible text on browser frames. It catches up adaptively when the backlog grows, then retains a small character reserve and drains it slowly near the tail to smooth executor bursts and short delivery gaps. The renderer immediately aligns with complete content when streaming ends, content is replaced, or an update is not append-only, preserving final-message correctness.
 
+Live process-text, thinking, and plan block updates carry only `content_delta`; they must not resend cumulative `content` after every delta or at the completion boundary. A completion update normally carries only `status: done`. If the provider completion snapshot contains only an unstreamed suffix, the executor sends that suffix as one final delta. Wework coalesces consecutive updates for the same block within a browser animation frame before updating React state, preventing quadratic IPC copying and rendering pressure during long-running tasks. Streaming block updates are droppable bulk events: terminal events retain priority under app IPC backpressure, and transcript reconciliation restores authoritative content. The Electron main process must not write every `response.*` delta to stdout; a synchronous console write can block the Browser main thread and all window input when a terminal or parent process does not consume output promptly.
+
 Streaming messages skip full Pretext height measurement and use a stable offscreen intrinsic height. Completed messages are measured precisely and cached. Height lookup first uses the message object and width, avoiding repeated full-text hashes for unchanged historical messages during every stream update. Stable props and memo boundaries also keep the composer, workspace actions, right workspace, and bottom terminal from rerendering for every text delta.
 
 While the bottom Terminal panel is being resized, height updates are coalesced to browser animation frames and height transitions are disabled. This prevents high-frequency pointer events from causing excessive React updates and Terminal layout work. Releasing the pointer must commit the final height and restore the transitions used when opening or closing the panel.
@@ -126,7 +144,7 @@ Distinguish these cases when investigating streaming stalls:
 
 - The frame rate is stable but output alternates between fast and slow: inspect stream `message` event intervals. Executor batching or network/IPC delivery gaps are usually responsible.
 - Long frames, dense style recalculation, or Markdown parsing appear: check whether code bypasses the text buffer, destabilizes Streamdown component references, or reintroduces per-character DOM animation.
-- GC time is unexpectedly high: verify whether Web Inspector has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
+- GC time is unexpectedly high: verify whether DevTools has **Heap Allocations** enabled. That instrument can significantly amplify GC during longer recordings and should be disabled when diagnosing interaction smoothness alone.
 
 Streaming-buffer unit tests live in `wework/src/components/chat/useBufferedStreamingText.test.ts`. Changes to the reserve or advance rate must continue to cover Unicode boundaries, non-append updates, and immediate alignment when streaming ends.
 
@@ -144,19 +162,19 @@ The latest 300 events are kept in memory and exposed through `window.__WEWORK_PE
 
 ## Capturing Evidence
 
-Release builds compile Tauri Web Inspector support by default, while the main WebView remains non-inspectable so its native WebKit context menu does not contain Inspect Element. When the user selects **Open Web Inspector** from the hidden **Developer Commands** menu, the native command dynamically enables `WKWebView.isInspectable` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. The built-in browser is a separate WebView and retains right-click Inspect Element. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit Inspector support. To open it automatically for a local diagnostic launch, use:
+Release builds compile Electron DevTools support by default, while the main WebView remains non-inspectable so its native Chromium context menu does not contain Inspect Element. When the user selects **Open DevTools** from the hidden **Developer Commands** menu, the native command dynamically enables `webContents.openDevTools()` and opens the Inspector. This command is independent of the Performance Diagnostics switch and requires macOS 13.3 or newer. Built-in-browser child WebViews enable Inspector only in debug builds. On macOS, the Inspector is forcibly detached before its frontend is first shown, so F12 opens a separate window without docking, resetting the child dimensions, or covering the workbench. Release builds disable the child-WebView Inspector through an explicit build cfg. Set `WEWORK_RELEASE_DEVTOOLS=0` when a distribution must omit main-WebView Inspector support. To open the main-WebView Inspector automatically for a local diagnostic launch, use:
 
 ```bash
 WEWORK_WEBVIEW_DEVTOOLS=1 /path/to/WeWork.app/Contents/MacOS/WeWork
 ```
 
-After Web Inspector opens, run this when the app becomes slow:
+After DevTools opens, run this when the app becomes slow:
 
 ```js
 window.__WEWORK_PERF__.snapshot();
 ```
 
-The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents WebKit XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
+The snapshot includes the current URL, page visibility, DOM node count, memory snapshot, navigation timing, resource count, recent events, and Wework process-group data. macOS reparents Chromium XPC processes to PID 1; diagnostics use LaunchServices to associate the current Wework instance with its Web Content, GPU, and Networking processes.
 
 Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS includes shared mappings and reclaimable resident pages and is commonly much larger than actual memory pressure. Prefer `physical_footprint_kib` when investigating leaks or system resource usage, and treat RSS as a secondary residency metric. When comparing multiple snapshots, focus on:
 
@@ -167,7 +185,7 @@ Each process group reports both `rss_kib` and `physical_footprint_kib`. RSS incl
 - Dense `longtask` or `event-loop-lag` events.
 - Repeated `slow-react-commit` events.
 
-The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause WebKit to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by Web Inspector heap snapshots from the steady-state baseline.
+The workbench's full-height sidebar and content-wide top bar should use ordinary semantic backgrounds instead of applying `backdrop-filter` to large persistent surfaces. These filters can cause Chromium to retain additional graphics backing stores for the entire region. When investigating Web Content memory, compare `physical_footprint_kib` before and after the change at the same window size and page state, and exclude the temporary reclaimable high-water mark created by DevTools heap snapshots from the steady-state baseline.
 
 Manual marks can also be added:
 

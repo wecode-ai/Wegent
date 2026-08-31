@@ -83,6 +83,9 @@ class ShutdownManager:
         2. Records shutdown start time
         3. Optionally notifies other workers via Redis
         """
+        from app.core.local_shutdown import mark_local_shutdown
+
+        mark_local_shutdown()
         async with self._lock:
             if self._shutting_down:
                 logger.warning("Shutdown already initiated")
@@ -234,6 +237,9 @@ class ShutdownManager:
 
         WARNING: This should only be used in tests.
         """
+        from app.core.local_shutdown import reset_local_shutdown
+
+        reset_local_shutdown()
         self._shutting_down = False
         self._shutdown_event.clear()
         self._active_streams.clear()

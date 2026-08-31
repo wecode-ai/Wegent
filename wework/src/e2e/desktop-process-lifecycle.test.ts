@@ -4,11 +4,17 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
+  processIsAliveFromLinuxStat: (stat: string) => boolean | null
   processGroupHasLiveMembersFromLinuxStats: (
     stats: string[],
     processGroupId: number
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
+  windowsTaskkillArguments: (processId: number) => string[]
+}
+
+interface LocalHarnessCli {
+  localHarnessCliPath: (binDirectory: string, name: string, platform?: NodeJS.Platform) => string
 }
 
 const ownedProcessGroups = new Set<number>()
@@ -18,6 +24,13 @@ async function loadProcessLifecycle(): Promise<ProcessLifecycle> {
     resolve(import.meta.dirname, '../../e2e/desktop/process-lifecycle.mjs')
   ).href
   return import(/* @vite-ignore */ moduleUrl) as Promise<ProcessLifecycle>
+}
+
+async function loadLocalHarnessCli(): Promise<LocalHarnessCli> {
+  const moduleUrl = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/modules/local-harness-cli.mjs')
+  ).href
+  return import(/* @vite-ignore */ moduleUrl) as Promise<LocalHarnessCli>
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -64,6 +77,15 @@ afterEach(() => {
 })
 
 describe('desktop process lifecycle', () => {
+  test('treats Linux zombie and dead process states as exited', async () => {
+    const { processIsAliveFromLinuxStat } = await loadProcessLifecycle()
+
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) Z 1 321 321 0 -1 0')).toBe(false)
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) X 1 321 321 0 -1 0')).toBe(false)
+    expect(processIsAliveFromLinuxStat('321 (wegent-executor) S 1 321 321 0 -1 0')).toBe(true)
+    expect(processIsAliveFromLinuxStat('invalid stat')).toBeNull()
+  })
+
   test('treats a Linux process group with only zombie members as exited', async () => {
     const { processGroupHasLiveMembersFromLinuxStats } = await loadProcessLifecycle()
     const stats = [
@@ -73,6 +95,23 @@ describe('desktop process lifecycle', () => {
     ]
 
     expect(processGroupHasLiveMembersFromLinuxStats(stats, 321)).toBe(false)
+  })
+
+  test('terminates the complete Windows child process tree', async () => {
+    const { windowsTaskkillArguments } = await loadProcessLifecycle()
+
+    expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
+  })
+
+  test('resolves npm harness shims with the native Windows extension', async () => {
+    const { localHarnessCliPath } = await loadLocalHarnessCli()
+
+    expect(localHarnessCliPath('D:\\repo\\node_modules\\.bin', 'claude', 'win32')).toBe(
+      'D:\\repo\\node_modules\\.bin\\claude.cmd'
+    )
+    expect(localHarnessCliPath('/repo/node_modules/.bin', 'claude', 'linux')).toBe(
+      '/repo/node_modules/.bin/claude'
+    )
   })
 
   test('keeps waiting while a Linux process group has a live member', async () => {
@@ -102,6 +141,35 @@ describe('desktop process lifecycle', () => {
       ).resolves.toBeUndefined()
 
       expect(kill).toHaveBeenCalledWith(-42, 'SIGTERM')
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  test('observes a process that exits while the exit listener is being installed', async () => {
+    const { stopProcessGroup } = await loadProcessLifecycle()
+    const child = {
+      pid: 42,
+      exitCode: null,
+      signalCode: null,
+      once: vi.fn(function (this: { exitCode: number | null }) {
+        this.exitCode = 0
+        return this
+      }),
+      off: vi.fn(),
+    } as unknown as ChildProcess
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === -42 && signal === 0) {
+        const error = Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' })
+        throw error
+      }
+      return true
+    })
+
+    try {
+      await expect(stopProcessGroup(child)).resolves.toBeUndefined()
+      expect(child.once).toHaveBeenCalledWith('exit', expect.any(Function))
+      expect(child.off).toHaveBeenCalledWith('exit', expect.any(Function))
     } finally {
       kill.mockRestore()
     }

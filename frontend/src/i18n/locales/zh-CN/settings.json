@@ -164,6 +164,7 @@
     }
   },
   "bot": {
+    "secondary_llm_model_placeholder": "选择 LLM 模型",
     "allowed_models": {
       "label": "限制可用模型",
       "description": "开启后，用户只能从以下模型中选择",
@@ -172,7 +173,9 @@
     },
     "errors": {
       "default_model_required_when_restrict": "开启限制模型时，必须选择一个默认模型",
-      "default_model_must_be_in_allowed": "默认模型必须在限制模型列表中"
+      "default_model_must_be_in_allowed": "默认模型必须在限制模型列表中",
+      "video_model_required": "请选择视频模型",
+      "secondary_llm_model_required": "请选择用于策划的 LLM 模型"
     }
   },
   "team": {
@@ -212,6 +215,10 @@
       },
       "core": {
         "model_description": "不绑定时使用系统默认模型，可按需指定默认模型。",
+        "video_model_label": "视频模型",
+        "secondary_llm_model_label": "LLM 模型",
+        "secondary_llm_model_description": "选择用于理解需求并调用视频工作流的文本模型。",
+        "video_model_description": "选择传给视频制作工作流的视频模型。",
         "prompt_description": "定义智能体的角色、目标和回答方式。",
         "skills_description": "添加常用技能，让智能体按需调用工具能力。",
         "knowledge_description": "新聊天默认会带上这些知识库，之后仍可在聊天中追加选择。",

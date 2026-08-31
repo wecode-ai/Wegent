@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { chmod, cp, mkdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { extract } from 'tar'
@@ -10,7 +11,7 @@ import { extract } from 'tar'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const weworkDir = resolve(scriptDir, '..')
 const lockPath = join(weworkDir, 'codex-binaries.lock.json')
-const outputRoot = join(weworkDir, 'src-tauri', 'binaries', 'codex')
+const outputRoot = join(weworkDir, 'resources', 'binaries', 'codex')
 const legacyCacheRoot = join(weworkDir, 'node_modules', '.cache', 'wework-codex')
 const DOWNLOAD_ATTEMPTS = 3
 const DOWNLOAD_RETRY_DELAY_MS = 1_000
@@ -220,6 +221,26 @@ async function findLegacyTarball(paths) {
   return existingPaths.find(Boolean)
 }
 
+export async function resolveCodexLegalSources(
+  codexRepo,
+  bundledLicense,
+  bundledNotice,
+  pathExistsImpl = pathExists
+) {
+  const sourceLicensePath = codexRepo ? join(codexRepo, 'LICENSE') : null
+  const sourceNoticePath = codexRepo ? join(codexRepo, 'NOTICE') : null
+  return {
+    license:
+      sourceLicensePath && (await pathExistsImpl(sourceLicensePath))
+        ? sourceLicensePath
+        : bundledLicense,
+    notice:
+      sourceNoticePath && (await pathExistsImpl(sourceNoticePath))
+        ? sourceNoticePath
+        : bundledNotice,
+  }
+}
+
 async function ensureTarballIntegrity(tarballPath, entry, target) {
   const actualIntegrity = await integrityFile(tarballPath)
   if (actualIntegrity === entry.integrity) return
@@ -295,19 +316,16 @@ async function copyLegalFiles() {
   const codexRepo = process.env.CODEX_SOURCE_DIR
   const legalDir = join(outputRoot, 'legal')
   const repoRoot = resolve(weworkDir, '..')
+  const bundledLicense = join(repoRoot, 'LICENSES', 'Apache-2.0.txt')
   const bundledNotice = join(weworkDir, 'third_party', 'codex', 'NOTICE')
+  const bundledRatatuiLicense = join(weworkDir, 'third_party', 'codex', 'RATATUI-LICENSE.txt')
   await rm(join(outputRoot, '.resource-placeholder'), { force: true })
+  await rm(legalDir, { recursive: true, force: true })
   await mkdir(legalDir, { recursive: true })
-  if (codexRepo && (await pathExists(join(codexRepo, 'LICENSE')))) {
-    await cp(join(codexRepo, 'LICENSE'), join(legalDir, 'LICENSE'))
-    if (await pathExists(join(codexRepo, 'NOTICE'))) {
-      await cp(join(codexRepo, 'NOTICE'), join(legalDir, 'NOTICE'))
-    }
-    return
-  }
-
-  await cp(join(repoRoot, 'LICENSE'), join(legalDir, 'LICENSE'))
-  await cp(bundledNotice, join(legalDir, 'NOTICE'))
+  const sources = await resolveCodexLegalSources(codexRepo, bundledLicense, bundledNotice)
+  await cp(sources.license, join(legalDir, 'LICENSE'))
+  await cp(sources.notice, join(legalDir, 'NOTICE'))
+  await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
 async function main() {
@@ -319,9 +337,7 @@ async function main() {
     await import('node:fs/promises').then(fs => fs.readFile(lockPath, 'utf8'))
   )
   const envTarget = normalizeTarget(
-    process.env.WEWORK_CODEX_TARGET ||
-      process.env.TAURI_TARGET_TRIPLE ||
-      process.env.CARGO_BUILD_TARGET
+    process.env.WEWORK_CODEX_TARGET || process.env.CARGO_BUILD_TARGET
   )
   const requestedTarget = normalizeTarget(args.target) || envTarget || hostTarget()
   const targets = args.all

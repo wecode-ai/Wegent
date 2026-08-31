@@ -6,6 +6,7 @@
 
 This module provides MCP servers for Wegent Backend with these endpoints:
 - /mcp/system - System-level tools (silent_exit) automatically injected into all tasks
+- /mcp/cards/sse - Public CardBlock creation tools
 - /mcp/knowledge - Knowledge MCP module root
   - /mcp/knowledge/sse - Knowledge MCP streamable HTTP transport endpoint
 - /mcp/knowledge-external - Trusted external knowledge integration MCP root
@@ -71,6 +72,8 @@ SUBSCRIPTION_MCP_MOUNT_PATH = "/mcp/subscription"
 SUBSCRIPTION_MCP_TRANSPORT_PATH = "/sse"
 IMAGE_MCP_MOUNT_PATH = "/mcp/image"
 IMAGE_MCP_TRANSPORT_PATH = "/sse"
+CARDS_MCP_MOUNT_PATH = "/mcp/cards"
+CARDS_MCP_TRANSPORT_PATH = "/sse"
 VIDEO_MCP_MOUNT_PATH = "/mcp/video"
 VIDEO_MCP_TRANSPORT_PATH = "/sse"
 WEWORK_SPACE_MCP_MOUNT_PATH = "/mcp/wework-space"
@@ -591,13 +594,24 @@ video_mcp_server = FastMCP(
     streamable_http_path="/",
     transport_security=_build_transport_security_settings(),
 )
+cards_mcp_server = FastMCP(
+    "wegent-cards-mcp",
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+    transport_security=_build_transport_security_settings(),
+)
 _image_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_image_request_token_info", default=None)
+)
+_cards_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
+    contextvars.ContextVar("_cards_request_token_info", default=None)
 )
 _video_request_token_info: contextvars.ContextVar[Optional[TaskTokenInfo]] = (
     contextvars.ContextVar("_video_request_token_info", default=None)
 )
 _image_tools_registered = False
+_cards_tools_registered = False
 _video_tools_registered = False
 
 
@@ -611,6 +625,18 @@ def ensure_image_tools_registered() -> None:
     count = register_tools_to_server(image_mcp_server, "image")
     logger.info("[MCP:Image] Registered %s tools", count)
     _image_tools_registered = True
+
+
+def ensure_cards_tools_registered() -> None:
+    global _cards_tools_registered
+    if _cards_tools_registered:
+        return
+    from app.mcp_server.tool_registry import register_tools_to_server
+    from app.mcp_server.tools import cards  # noqa: F401
+
+    count = register_tools_to_server(cards_mcp_server, "cards")
+    logger.info("[MCP:Cards] Registered %s tools", count)
+    _cards_tools_registered = True
 
 
 def ensure_video_tools_registered() -> None:
@@ -692,6 +718,16 @@ _IMAGE_MCP_SPEC = McpAppSpec(
     log_prefix="Image",
 )
 
+_CARDS_MCP_SPEC = McpAppSpec(
+    name="cards",
+    service_name="wegent-cards-mcp",
+    mount_path=CARDS_MCP_MOUNT_PATH,
+    transport_path=CARDS_MCP_TRANSPORT_PATH,
+    server=cards_mcp_server,
+    token_context=_cards_request_token_info,
+    log_prefix="Cards",
+)
+
 _VIDEO_MCP_SPEC = McpAppSpec(
     name="video",
     service_name="wegent-video-mcp",
@@ -720,6 +756,7 @@ MCP_APP_SPECS = (
     _PROMPT_OPTIMIZATION_MCP_SPEC,
     _SUBSCRIPTION_MCP_SPEC,
     _IMAGE_MCP_SPEC,
+    _CARDS_MCP_SPEC,
     _VIDEO_MCP_SPEC,
     _WEWORK_SPACE_MCP_SPEC,
 )
@@ -731,6 +768,7 @@ MCP_CONTEXT_SERVER_NAMES = frozenset(
         "prompt_optimization",
         "subscription",
         "image",
+        "cards",
         "video",
         "wework_space",
     }
@@ -797,6 +835,8 @@ def _build_mcp_app(spec: McpAppSpec) -> Starlette:
         ensure_subscription_tools_registered()
     elif spec.name == "image":
         ensure_image_tools_registered()
+    elif spec.name == "cards":
+        ensure_cards_tools_registered()
     elif spec.name == "video":
         ensure_video_tools_registered()
     elif spec.name == "wework_space":

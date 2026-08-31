@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
+from app.core.session_token import is_user_session_payload
 from app.models.api_key import KEY_TYPE_PERSONAL, KEY_TYPE_SERVICE, APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
@@ -283,7 +284,7 @@ def verify_token(token: str) -> Dict[str, Any]:
         payload = jwt.decode(
             token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
         )
-        if payload.get("scope") is not None:
+        if not is_user_session_payload(payload):
             raise credentials_exception
         username: str = payload.get("sub")
         if username is None:
@@ -386,11 +387,12 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
             payload = jwt.decode(
                 token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
             )
-            if payload.get("scope") is not None:
+            if not is_user_session_payload(payload):
                 if is_telemetry_enabled():
                     span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
                     span.set_attribute(
-                        SpanAttributes.AUTH_FAILURE_REASON, "scoped_token_rejected"
+                        SpanAttributes.AUTH_FAILURE_REASON,
+                        "non_session_token_rejected",
                     )
                 return None
             username: str = payload.get("sub")

@@ -85,11 +85,11 @@ export function HarnessAppLaunchSurface({ launch }: HarnessAppLaunchSurfaceProps
     },
     {
       id: 'loadingApp',
-      label: t('workbench.harness_apps_phase_loading', '加载应用'),
+      label: t('workbench.harness_apps_phase_loading', '加载工作台'),
     },
     {
       id: 'startingApp',
-      label: t('workbench.harness_apps_phase_starting', '启动应用'),
+      label: t('workbench.harness_apps_phase_starting', '启动工作台'),
     },
   ] as const
   const activePhaseIndex = phases.findIndex(phase => phase.id === launch.phase)

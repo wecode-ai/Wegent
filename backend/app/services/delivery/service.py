@@ -32,6 +32,7 @@ from app.schemas.delivery import (
     DeliveryFulfillment,
     LoopItemTaskBind,
 )
+from app.schemas.issue_workflow import workflow_node_execution_mode
 from app.services.delivery.access import require_loop_item_access
 from app.services.delivery.storage import (
     DeliveryStorage,
@@ -40,6 +41,7 @@ from app.services.delivery.storage import (
 )
 from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import write_status_change
+from app.services.loop_item_unread import advance_content_revision
 
 MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 MAX_CHAT_BYTES = 10 * 1024 * 1024
@@ -350,6 +352,9 @@ class DeliveryService:
                     source_binding.workflow_node_id,
                 )
                 item.current_delivery_id = delivery.id
+                item.metadata_json = advance_content_revision(
+                    item.metadata_json, actor_user_id=user_id
+                )
                 item.version += 1
                 db.commit()
                 db.refresh(delivery)
@@ -380,6 +385,9 @@ class DeliveryService:
             item.status = "completed"
             item.current_delivery_id = delivery.id
             item.completed_at = now
+            item.metadata_json = advance_content_revision(
+                item.metadata_json, actor_user_id=user_id
+            )
             item.version += 1
             db.commit()
             db.refresh(delivery)
@@ -549,13 +557,13 @@ class DeliveryService:
         )
         if (
             node is None
-            or not node.get("automation_rule_id")
+            or workflow_node_execution_mode(node) != "robot"
             or node.get("status") != "awaiting_deliverables"
             or missing_requirement_ids(db, node)
         ):
             return
         node["status"] = "completed"
-        apply_workflow_nodes(item, workflow=workflow, nodes=nodes)
+        apply_workflow_nodes(db, item, workflow=workflow, nodes=nodes)
 
     @staticmethod
     def fulfillment_values(delivery: Delivery) -> list[dict[str, Any]]:

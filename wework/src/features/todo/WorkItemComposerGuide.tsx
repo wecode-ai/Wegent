@@ -2,7 +2,7 @@ import { ArrowUpRight, Check, ChevronDown, LayoutDashboard, ListChecks, X } from
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
-import { useAnchoredPortalMenu } from '@/components/chat/composer/useAnchoredPortalMenu'
+import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { useOutsideClick } from '@/components/chat/composer/useOutsideClick'
 import type { ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -15,7 +15,6 @@ interface WorkItemComposerGuideProps {
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
   currentTask?: RuntimeTaskAddress | null
-  bindingPending?: boolean
   goalPresent?: boolean
   integrated?: boolean
   toolbar?: boolean
@@ -52,7 +51,6 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
-  bindingPending = false,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -132,11 +130,9 @@ function WorkItemComposerGuideContent({
         ? `${taskCount} 个任务${otherTaskCount ? `，还有 ${otherTaskCount} 个` : ''}`
         : null
 
-  const title = bindingPending
-    ? t('workbench.work_item_label', '工作空间')
-    : resolvedItem
-      ? `${resolvedItem.title} · ${statusLabel}${taskSummary ? ` · ${taskSummary}` : ''}`
-      : (project?.name ?? t('workbench.default_work_item_board', '我的任务'))
+  const title = resolvedItem
+    ? `${resolvedItem.title} · ${statusLabel}${taskSummary ? ` · ${taskSummary}` : ''}`
+    : (project?.name ?? t('workbench.default_work_item_board', '我的任务'))
 
   if (resolvedItem) {
     return (
@@ -246,23 +242,9 @@ function WorkItemComposerGuideContent({
           className={toolbar ? 'h-4 w-4 shrink-0' : 'h-4 w-4 shrink-0 text-primary'}
           aria-hidden="true"
         />
-        {bindingPending ? (
-          <>
-            <span className="shrink-0 font-medium text-text-primary">
-              {t('workbench.work_item_label', '工作空间')}
-            </span>
-            <span
-              data-testid="work-item-guide-summary-pending"
-              className="min-w-0 truncate text-xs text-text-muted"
-            >
-              · {t('workbench.work_item_binding_pending', '正在关联')}
-            </span>
-          </>
-        ) : (
-          <span className={toolbar ? 'min-w-0 truncate' : 'min-w-0 truncate font-medium'}>
-            {project?.name ?? t('workbench.default_work_item_board', '我的任务')}
-          </span>
-        )}
+        <span className={toolbar ? 'min-w-0 truncate' : 'min-w-0 truncate font-medium'}>
+          {project?.name ?? t('workbench.default_work_item_board', '我的任务')}
+        </span>
         <ChevronDown
           className={toolbar ? 'h-4 w-4 shrink-0' : 'ml-auto h-4 w-4 shrink-0 text-text-muted'}
           aria-hidden="true"

@@ -123,6 +123,12 @@ describe('useWorkbenchCloudProjectContext', () => {
     })
 
     expect(submission?.cloudProjectId).toBe(cloudProject.id)
+    expect(submission?.origin).toEqual({
+      type: 'board_task',
+      projectStore: cloudProject.project_store,
+      cloudProjectId: cloudProject.id,
+      loopItemId: item.id,
+    })
     expect(submission?.additionalContext?.cloudCollaboration.value).toContain(
       `Current task: ${item.id} — ${item.title}.`
     )
@@ -482,32 +488,75 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
   })
 
-  test('does not block submission when the default work-item lookup stalls', async () => {
-    vi.useFakeTimers()
-    try {
-      const localApi = {
-        listCloudProjects: vi.fn(() => new Promise<never>(() => {})),
-      }
-      const services = {
-        projectSpaceApis: {
-          local: localApi,
-          defaultLocation: 'local',
-        },
-      } as unknown as WorkbenchServices
-      const { result } = renderCloudContext(services)
-      let submission: Awaited<ReturnType<typeof result.current.prepareSubmission>> | undefined
-
-      const pendingSubmission = result.current.prepareSubmission('继续发送')
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1_500)
-        submission = await pendingSubmission
-      })
-
-      expect(submission?.cloudProjectId).toBeUndefined()
-      expect(submission?.additionalContext).toBeUndefined()
-    } finally {
-      vi.useRealTimers()
+  test('submits synchronously and joins a default project after its background lookup resolves', async () => {
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
     }
+    const trackedItem = loopItem(defaultBoard.id)
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    let resolveLocalProjects: ((value: { items: CloudProject[] }) => void) | undefined
+    const localApi = {
+      listCloudProjects: vi.fn(
+        () =>
+          new Promise<{ items: CloudProject[] }>(resolve => {
+            resolveLocalProjects = resolve
+          })
+      ),
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      trackProjectTask: vi.fn().mockResolvedValue({ item: trackedItem }),
+    }
+    const cloudApi = {
+      listCloudProjects: vi.fn(() => new Promise<never>(() => {})),
+      findCloudContextForTask: vi.fn(() => new Promise<never>(() => {})),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        cloud: cloudApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result, rerender } = renderHook(
+      ({ currentRuntimeTask }: { currentRuntimeTask: RuntimeTaskAddress | null }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: null,
+          services,
+          userId: 1,
+        }),
+      { initialProps: { currentRuntimeTask: null } }
+    )
+
+    const submission = result.current.prepareSubmission('继续发送')
+
+    expect(submission.cloudProjectId).toBeUndefined()
+    expect(submission.additionalContext).toBeUndefined()
+
+    act(() => submission.onRuntimeTaskCreated(runtimeTask))
+    rerender({ currentRuntimeTask: runtimeTask })
+    await waitFor(() => expect(localApi.listCloudProjects).toHaveBeenCalledOnce())
+    await act(async () => resolveLocalProjects?.({ items: [defaultBoard] }))
+
+    await waitFor(() =>
+      expect(localApi.trackProjectTask).toHaveBeenCalledWith(
+        defaultBoard.id,
+        runtimeTask,
+        '继续发送',
+        '继续发送'
+      )
+    )
   })
 
   test('recovers when the first context lookup races with default-board binding', async () => {

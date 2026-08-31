@@ -117,6 +117,16 @@ transport is rebuilt, recovery for a persisted Codex thread must call
 running state; code must not continue inferring them from pre-disconnect
 in-memory events.
 
+The provider transcript reader must not run concurrently with an active Codex
+turn. After a successful idle read of the latest transcript page, the executor
+persists that page's message snapshot scoped to the thread ID. A transcript
+response during execution merges that snapshot with pending user messages,
+settled messages, and active stream messages, deduplicating by message ID.
+This keeps historical assistant replies visible when a new turn starts after a
+WebView or executor rebuild. A thread ID change must clear both the completed
+message cache and transcript snapshot so messages cannot cross thread
+boundaries.
+
 When the first message carries a pending Goal seed, both the send entry point
 and pane initialization must write the seed status into
 `RuntimeTaskLifecycleStore` immediately. An asynchronous `runtime.goal.get`
@@ -124,6 +134,13 @@ may return no Goal before persistence completes; while the seed still belongs
 to the current task, that empty result must not clear the lifecycle Goal
 status. This lets an active Goal continue to constrain task lifecycle even
 when stream settlement races ahead of Goal persistence.
+
+When restoring a runtime task from the URL, the pane may initially know only
+the device ID and task ID before the task list hydrates its workspace, thread,
+and runtime fields. Goal and transcript loading must run again after that
+address hydration, while both addresses still belong to the same stable task
+identity. Rehydration must not create a new conversation or replay turn
+lifecycle events that were already processed.
 
 ### Claude Code Conversation Executor
 
@@ -185,6 +202,13 @@ task with state captured before the request began. **New chat** clears only the
 current chat pane. It does not archive or delete the previous task, which must
 remain under its project and be reopenable. The environment popover must list
 and copy every project root, not only the primary root.
+
+The local task inventory in My Work comes from `runtimeWork`, but its running
+and queued groups must read the same `RuntimeTaskLifecycleStore` snapshot as the
+sidebar. The sidebar spinner, composer, and My Work must not independently
+infer lifecycle state from `RuntimeTaskSummary.running`, transcript data, or
+messages; an asynchronous task-list snapshot could otherwise project a task
+that is still running into a completed or action-required group.
 
 These rules apply only to local Codex projects. Remote and cloud tasks retain
 their existing single-workspace selection semantics; local multi-root support
@@ -269,7 +293,7 @@ The mode pill's cancel button appears only on hover and is absolutely positioned
 
 `BufferedChatInput` preserves a pane-level draft during editing and submission, while the external `value` remains the source of truth for the confirmed draft. After a non-empty draft is submitted, the local empty state must be associated with the expected empty external value instead of the text that was just submitted. Otherwise, returning the same text from a queue or guidance row for editing is mistaken for stale draft state and the composer remains empty. Changes to this path must cover the regression sequence “submit text → external value clears → edit the queued row to restore the same text.”
 
-When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. Confirmation must synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
+When a user submits new input while the message queue is paused, they can preserve or clear the existing queue. Preserving it sends the new input first and then resumes the queued messages. The queue must remain paused until the lifecycle Store confirms that the new turn entered streaming or already produced a terminal outcome. The latter covers fast executions whose start and settlement are batched into one React commit: waiting only for an active snapshot can leave the queue paused forever, while resuming as soon as the send request returns can let a stale idle snapshot submit the preserved queue concurrently with the new turn. Confirmation must also synchronously clear both the live ProseMirror composer and the external draft state instead of waiting only for `BufferedChatInput`'s debounced update; otherwise, submitted text can remain visible in the composer.
 
 ## Referenced Conversation Context
 
@@ -358,9 +382,11 @@ After inserting guidance, the message area must scroll to the bottom and briefly
 
 The right workspace **Temporary chat** feature starts a short side conversation next to the current local Codex thread. It is not a fork and it is not a normal runtime task shown in the left task list:
 
+- Creating a new runtime task from either the project-space board task modal or the project-space task tab must call `useProjectRuntimeTaskComposer` and then follow the same `createProjectRuntimeTask` path. `TemporaryChatPanel` constructs one optimistic user message with a stable id and passes that same message object into the creation path. `sendPreparedRuntimeMessage` owns forwarding the id to the executor and writing the message to `runtimeConversationCache`. Entry components must not append the first message independently, or the live UI can retain both the local message and the transcript message until refresh.
 - Each temporary chat tab has an independent `chat:<id>` instance id, so the right workspace can hold multiple temporary chats at the same time.
 - Before a runtime thread exists, `TemporaryChatPanel` uses the instance id as its `conversationKey`. After creation, pane workspace state retains the tab's runtime address and `runtimeConversationCache` restores its live message projection. Temporary threads do not support `thread/turns/list`, so a main-conversation switch that unmounts and remounts the panel cannot depend on transcript loading to recover content.
 - Attachment selection, upload progress, and errors are also isolated per temporary-chat instance and must not reuse the main composer attachment state. The first message passes that instance's attachments explicitly to `createTemporaryRuntimeTask`.
+- Every successfully sent or optimistically displayed user message must retain its persisted attachment references, including the first message, regular follow-ups, and queued sends. Clearing composer attachments only resets the current input state and must not remove sent attachments from the message list; local `blob:` preview URLs must be converted to recoverable local paths.
 - When a temporary chat is the only open right-workspace tab, the panel defaults to a compact `420px` width. Opening another workspace tab restores the general split default, while a user-resized width remains authoritative.
 - The first message calls `createTemporaryRuntimeTask`, creating an `ephemeral` runtime task with the current main thread as `sideSource`. This task does not enter the left task list and does not navigate the main pane.
 - Follow-up messages must continue the already loaded temporary thread. The Codex app-server path uses `direct_thread_id` and calls `turn/start` directly; it must not use the normal `resume_thread_id` / `thread/resume` path, because temporary threads do not have rollout mappings and would otherwise fail with `no rollout found`.
@@ -372,7 +398,7 @@ The right workspace **Temporary chat** feature starts a short side conversation 
 
 Maintenance rule: do not add UI fallbacks that insert temporary chats into the left task list, and do not fabricate rollout records for temporary threads in the executor. The primary path is `ephemeral + sideSource + direct_thread_id`.
 
-After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real-Tauri scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
+After changing this path, run `pnpm --filter wework e2e:desktop --segment temporary-chat`. The independent real Electron scenario holds an assistant response open, asserts that a regular follow-up stays above the Thinking indicator, switches the main conversation, and verifies that both temporary-chat user messages are restored after switching back. It writes screenshots for each critical stage to `wework/test-results/desktop-e2e/<run-id>/`.
 
 ## Top-Level Page Transitions
 
@@ -394,6 +420,26 @@ panel actions, right-workspace title, and feedback entry.
 The desktop workbench caches up to 20 regular panes so messages, composer drafts, and local UI state survive switches between parallel tasks. Once the limit is exceeded, inactive panes are evicted in least-recently-used order. Panes for running tasks and panes with pinned terminals remain mounted outside the regular cache limit until the task finishes or the terminal is unpinned. Maintain this boundary through the existing `CachedWorkbenchPaneStack` LRU and pinning mechanisms; do not add a second pane cache in the layout.
 
 The message area stores each task's reading position by `conversationKey`. During a task switch, restoration realigns the saved message anchor throughout the layout stabilization window; programmatic `scroll` events in that window must not overwrite the snapshot. An explicit wheel or touch gesture must cancel restoration immediately. Changes to this path must cover the real desktop flow “scroll to the middle of a long response → switch to another task → switch back” and retain screenshots from before the switch, after the switch, and after restoration.
+
+## Project Task Status Synchronization
+
+After a Wework runtime task is bound to a project-space task, the frontend keeps exactly one status synchronization path:
+
+1. `RuntimeTaskLifecycleStore` produces the lifecycle snapshot for the current runtime task.
+2. `WorkbenchProvider` converts that snapshot into `runtimeTaskTrackingStatus` and calls `reconcileProjectTaskTrackingStatus`.
+3. `reconcileProjectTaskTrackingStatus` derives one target status from the bound task's current status and execution status, then updates it through the project-space storage owner.
+4. The fixed Task tab is the only UI owner of this synchronization path. Changing the bound task reruns the same reconciler and must not write status directly.
+
+Running execution maps to `in_progress`. Terminal outcomes such as success, failure, and cancellation map to `in_review` for user confirmation. Archiving also reuses the same reconciler for final convergence. Backend runtime event projection owns project automation workflow status, so the renderer must not issue a separate status PATCH that competes with it.
+
+The following paths are obsolete and must not be restored:
+
+- scanning and replaying task status during renderer startup;
+- exposing replay RPCs such as `runtime.tasks.status.replay` in Wework, Backend, or Executor;
+- letting the renderer write cloud workflow status through `cloud-context/status`;
+- letting boards, detail views, or other tabs infer and write task status from local messages or runtime lists.
+
+After changing this path, run `pnpm --filter wework e2e:desktop -- --segment task-status-sync`. This real Electron checkpoint binds the fixed task and verifies that a running task appears only in the In Progress column, then appears only in the Awaiting Confirmation column after execution settles.
 
 ## Audit Result
 

@@ -102,13 +102,13 @@ graph TB
 
 ### Architecture Layers
 
-| Layer | Responsibilities | Core Technologies |
-|-------|-----------------|-------------------|
-| **Management Platform Layer** | User interaction, resource management, API services, chat processing | Next.js 15, FastAPI, React 19, Chat Shell |
-| **Data Layer** | Data persistence, cache management, async task scheduling | MySQL 9.4, Redis 7, Celery |
-| **Execution Layer** | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC |
-| **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
-| **Knowledge Layer** | Knowledge base management, RAG retrieval, vectorization, document format conversion | KnowledgeOrchestrator, Embedding, Doc Converter |
+| Layer                         | Responsibilities                                                                      | Core Technologies                               |
+| ----------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| **Management Platform Layer** | User interaction, resource management, API services, chat processing                  | Next.js 15, FastAPI, React 19, Chat Shell       |
+| **Data Layer**                | Data persistence, cache management, async task scheduling                             | MySQL 9.4, Redis 7, Celery                      |
+| **Execution Layer**           | Task scheduling, container orchestration, resource isolation, local device management | Docker, Rust Executor, WebSocket, App IPC       |
+| **Agent Layer**               | AI capabilities, code execution, chat processing, external API integration            | Claude Code, Agno, Dify                         |
+| **Knowledge Layer**           | Knowledge base management, RAG retrieval, vectorization, document format conversion   | KnowledgeOrchestrator, Embedding, Doc Converter |
 
 ---
 
@@ -117,12 +117,14 @@ graph TB
 ### 1. 🌐 Frontend
 
 **Responsibilities**:
+
 - Provide user interface for resource definition and management
 - Implement task creation, monitoring, and result display
 - Provide real-time interaction and status updates
 - Manage local devices and executors
 
 **Technology Stack**:
+
 - **Framework**: Next.js 15 (App Router)
 - **UI Library**: React 19, shadcn/ui
 - **Styling**: Tailwind CSS 3.4
@@ -131,6 +133,7 @@ graph TB
 - **Icons**: Heroicons, Tabler Icons, Lucide React
 
 **Core Features**:
+
 - 🎨 Configuration-driven UI with YAML visualization
 - 🔄 Real-time task status updates (WebSocket)
 - 🌍 Multi-language support (Chinese/English)
@@ -139,6 +142,7 @@ graph TB
 - 💭 Thinking process visualization
 
 **Key File Structure**:
+
 ```
 frontend/src/
 ├── app/              # Next.js App Router
@@ -160,19 +164,20 @@ frontend/src/
 
 **Feature Modules**:
 
-| Module | Purpose |
-|--------|---------|
-| **tasks** | Task creation, chat, group chat, workbench |
-| **devices** | Local device management, executor guide |
-| **knowledge** | Knowledge base, documents, permissions |
-| **settings** | Agent, model, shell, skill configuration |
-| **feed** | Subscription market, trigger management |
+| Module        | Purpose                                    |
+| ------------- | ------------------------------------------ |
+| **tasks**     | Task creation, chat, group chat, workbench |
+| **devices**   | Local device management, executor guide    |
+| **knowledge** | Knowledge base, documents, permissions     |
+| **settings**  | Agent, model, shell, skill configuration   |
+| **feed**      | Subscription market, trigger management    |
 
 ---
 
 ### 2. ⚙️ Backend
 
 **Responsibilities**:
+
 - Implement declarative API for resource CRUD operations
 - Manage user authentication and authorization
 - Coordinate execution layer for task scheduling
@@ -181,6 +186,7 @@ frontend/src/
 - Manage local device connections
 
 **Technology Stack**:
+
 - **Framework**: FastAPI 0.68+
 - **ORM**: SQLAlchemy 2.0
 - **Database Driver**: PyMySQL
@@ -191,6 +197,7 @@ frontend/src/
 - **Async Tasks**: Celery
 
 **Core Features**:
+
 - 🚀 High-performance async API
 - 🔒 JWT-based authentication
 - 📝 Complete CRUD operation support
@@ -201,6 +208,7 @@ frontend/src/
 - 📱 Local device management (Device Provider)
 
 **API Design**:
+
 ```
 /api/v1/
 ├── /ghosts          # Ghost resource management
@@ -219,17 +227,18 @@ frontend/src/
 
 **Service Layer Architecture**:
 
-| Service | Responsibility |
-|---------|----------------|
-| **KindService** | Unified CRD resource management |
+| Service                   | Responsibility                                          |
+| ------------------------- | ------------------------------------------------------- |
+| **KindService**           | Unified CRD resource management                         |
 | **KnowledgeOrchestrator** | Knowledge management entry point (REST API + MCP tools) |
-| **DeviceService** | Local device management |
-| **ChatService** | Chat processing and RAG |
-| **SubtaskService** | Subtask management |
-| **GroupService** | Multi-tenant group management |
-| **UserService** | User management |
+| **DeviceService**         | Local device management                                 |
+| **ChatService**           | Chat processing and RAG                                 |
+| **SubtaskService**        | Subtask management                                      |
+| **GroupService**          | Multi-tenant group management                           |
+| **UserService**           | User management                                         |
 
 **Key Dependencies**:
+
 ```python
 FastAPI >= 0.68.0      # Web framework
 SQLAlchemy >= 2.0.28   # ORM
@@ -245,6 +254,7 @@ celery >= 5.0          # Async tasks
 ### 3. 💬 Chat Shell (Conversation Engine)
 
 **Responsibilities**:
+
 - Provide lightweight AI conversation engine
 - Support multiple LLM models (Anthropic, OpenAI, Google)
 - Manage conversation context and session storage
@@ -252,6 +262,7 @@ celery >= 5.0          # Async tasks
 - Support knowledge base retrieval augmentation (RAG)
 
 **Technology Stack**:
+
 - **Framework**: FastAPI
 - **Agent Framework**: LangGraph + LangChain
 - **LLM**: Anthropic, OpenAI, Google Gemini
@@ -260,13 +271,14 @@ celery >= 5.0          # Async tasks
 
 **Three Deployment Modes**:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **HTTP** | Standalone HTTP service `/v1/response` | Production |
-| **Package** | Python package, imported by Backend | Monolithic deployment |
-| **CLI** | Command-line interactive interface | Development/Testing |
+| Mode        | Description                            | Use Case              |
+| ----------- | -------------------------------------- | --------------------- |
+| **HTTP**    | Standalone HTTP service `/v1/response` | Production            |
+| **Package** | Python package, imported by Backend    | Monolithic deployment |
+| **CLI**     | Command-line interactive interface     | Development/Testing   |
 
 **Core Features**:
+
 - 🤖 Multi-LLM support (Anthropic, OpenAI, Google)
 - 🛠️ MCP tool integration (Model Context Protocol)
 - 📚 Dynamic skill loading
@@ -275,6 +287,7 @@ celery >= 5.0          # Async tasks
 - 📈 OpenTelemetry integration
 
 **Module Structure**:
+
 ```
 chat_shell/chat_shell/
 ├── main.py           # FastAPI application entry
@@ -304,6 +317,7 @@ chat_shell/chat_shell/
 ### 4. 💯 Executor Manager
 
 **Responsibilities**:
+
 - Manage Executor lifecycle
 - Task queue and scheduling
 - Resource allocation and rate limiting
@@ -311,6 +325,7 @@ chat_shell/chat_shell/
 - Support multiple deployment modes
 
 **Technology Stack**:
+
 - **Language**: Python
 - **Container Management**: Docker SDK
 - **Networking**: Docker bridge network
@@ -318,12 +333,13 @@ chat_shell/chat_shell/
 
 **Deployment Modes**:
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Docker** | Use Docker SDK to manage local containers | Standard deployment |
-| **Local Device** | Connect to local device for execution | Development environment |
+| Mode             | Description                               | Use Case                |
+| ---------------- | ----------------------------------------- | ----------------------- |
+| **Docker**       | Use Docker SDK to manage local containers | Standard deployment     |
+| **Local Device** | Connect to local device for execution     | Development environment |
 
 **Core Features**:
+
 - 🎯 Maximum concurrent task control (default: 5)
 - 🔧 Dynamic port allocation (10001-10100)
 - 🐳 Docker container orchestration
@@ -331,11 +347,12 @@ chat_shell/chat_shell/
 - 📱 Local device support
 
 **Configuration Parameters**:
+
 ```yaml
-MAX_CONCURRENT_TASKS: 5              # Maximum concurrent tasks
-EXECUTOR_PORT_RANGE_MIN: 10001      # Port range start
-EXECUTOR_PORT_RANGE_MAX: 10100      # Port range end
-NETWORK: wegent-network              # Docker network
+MAX_CONCURRENT_TASKS: 5 # Maximum concurrent tasks
+EXECUTOR_PORT_RANGE_MIN: 10001 # Port range start
+EXECUTOR_PORT_RANGE_MAX: 10100 # Port range end
+NETWORK: wegent-network # Docker network
 EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 ```
 
@@ -344,12 +361,14 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 ### 5. 🚀 Executor
 
 **Responsibilities**:
+
 - Provide isolated sandbox environment
 - Execute agent tasks
 - Manage workspace and code repositories
 - Report execution results
 
 **Technology Stack**:
+
 - **Container**: Docker
 - **Executor**: Rust (`executor/`)
 - **Runtime**: Claude Code, Agno, Dify
@@ -357,20 +376,20 @@ EXECUTOR_IMAGE: wegent-executor:latest # Executor image
 
 **Agent Types**:
 
-| Agent | Type | Description |
-|-------|------|-------------|
-| **ClaudeCode** | local_engine | Claude Code SDK, supports Git, MCP, Skills |
-| **Agno** | local_engine | Multi-agent collaboration, SQLite session management |
-| **Dify** | external_api | Proxy to Dify platform |
-| **ImageValidator** | validator | Custom base image validation |
+| Agent              | Type         | Description                                          |
+| ------------------ | ------------ | ---------------------------------------------------- |
+| **ClaudeCode**     | local_engine | Claude Code SDK, supports Git, MCP, Skills           |
+| **Agno**           | local_engine | Multi-agent collaboration, SQLite session management |
+| **Dify**           | external_api | Proxy to Dify platform                               |
+| **ImageValidator** | validator    | Custom base image validation                         |
 
-Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Tauri app IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
+Rust executor is the only executor runtime implementation. Backend Chat shell work may still use an in-process path, while other tasks run through standalone/local executor. In Wework packaged App local-first mode, the app does not start a local Backend; it calls the executor sidecar directly over Electron IPC. Codex runtime control uses `codex app-server --stdio` JSON-RPC to create, continue, read, archive, and rename threads. The executor stores only the local task index and the required `localTaskId -> threadId` mapping.
 
 When Claude Code resumes an interactive-form session, the executor treats a defer as stale resume output only when it has the same `tool_use_id` as the form being answered and is still an interactive-form tool. A later form with a different `tool_use_id` is a new clarification request; even if that response also contains text, the executor must proxy it to the interactive MCP and wait for user input instead of discarding it as stale.
 
 Before attachments enter Codex, the executor converts them by type: images become local image inputs, text attachments include a bounded preview and their complete local path, and binary attachments such as ZIP or PDF include their filename, MIME type, size, and local path. Codex can therefore locate a file even when the user sends an attachment without message text. These contexts are mutually exclusive by type so image and text attachments are not injected twice.
 
-Image conversion may create temporary `*.model-input.*` files that exist only for model consumption; those paths must not become persistent Wework message attachment URLs. When restoring user messages from the Codex transcript, the executor prefers the original attachment path retained in the file-mention context or local runtime handle. Temporary model inputs are used only during inference, so historical messages, task switching, and reopened tasks continue to render the original image after temporary files are cleaned up.
+Image conversion may create temporary `*.model-input.*` files that exist only for model consumption; those paths must not become persistent Wework message attachment URLs. Renderer-created `blob:` URLs are likewise valid only for the current page lifecycle. Whenever an attachment has a `local_path`, the executor must normalize `local_preview_url` to that path both when writing the local runtime handle and when restoring the transcript, rather than persisting a `blob:` URL. When restoring user messages from the Codex transcript, the executor prefers the original attachment path retained in the file-mention context or local runtime handle. Temporary model inputs are used only during inference, so historical messages, task switching, and reopened tasks continue to render the original image after temporary files are cleaned up or the page reloads.
 
 Codex transcript pagination must preserve strict page boundaries. A user-message presentation retained in the local runtime handle for attachments, references, or supervisor input may join a page only when its client message ID already matches that page or its turn ID or creation time belongs to the page range. `ensureVisible` must never reinsert a message from a newer page into an older page. Before Wework requests an older page or fills a transcript gap, it records the current `scrollHeight` and distance from the bottom, temporarily disables native browser scroll anchoring, and restores the same bottom distance after the paginated content completes layout. Prepending older messages, virtual-list remeasurement, and the sticky bottom composer therefore participate in one deterministic scroll transaction without duplicating messages or moving the composer with the content.
 
@@ -378,7 +397,7 @@ The Codex runtime is separated by responsibility under `executor/src/agents/code
 
 Live Codex agent-message text must be classified by an explicit phase: only `final` or `final_answer` enters the final answer, while `analysis`, `commentary`, and missing phases enter processing first. Missing phases can occur before or after a tool call, so a default final classification must not trigger Wework's final-processing collapse. When a turn ends, the executor uses explicit final text; if a model never sends a phase, it uses the last unphased text as the terminal answer. Transcript restoration follows the same rule and uses later tools or other process items to distinguish unphased processing text from the final answer.
 
-Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Tauri instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
+Wework's built-in browser MCP is provided by the Rust executor's `browser-mcp-server` subcommand and controls the right-side browser through a local bridge address allocated independently for each Electron instance. The packaged app does not require Node.js or a separately deployed browser MCP server, and multiple instances do not share a fixed port.
 
 The project-space `wework_space` MCP is hosted persistently by the Rust executor started with Wework on a dynamically allocated loopback port. Codex receives only that instance's URL, instance credential, and optional ContextGrant; it no longer starts a `space-mcp-server` stdio child. Generic sessions remain unbound, while project or Issue sessions receive default `space_id/item_id` values and scope protection through ContextGrant.
 
@@ -392,7 +411,7 @@ Wework local model calls enter the executor through the Codex Responses protocol
 
 The Codex model catalog's `supports_search_tool` flag means that a model can participate in deferred App discovery; it does not mean that the upstream wire API natively implements `tool_search` or namespace tools. Wework enables this catalog capability for official and custom models so Codex exposes only a compact `tool_search` on the first turn instead of injecting every Remote App schema, then loads the matching App namespace after discovery. The executor independently tracks `native_tool_search` and `native_namespace_tools` at the protocol boundary. GPT 5.4+ cloud models using Responses pass native tool search through unchanged. Model configuration can override the inferred capabilities with `native_tool_search` or `nativeToolSearch` and `native_namespace_tools` or `nativeNamespaceTools`; an explicit `false` disables the corresponding inference. Other Responses, Chat Completions, and Anthropic Messages upstreams receive ordinary function representations of `tool_search` and namespace tools, and the executor restores the original Codex semantics on the response path. When the third-party Responses compatibility bridge converts tool-search call and output items, it removes their type-specific `id` and uses only `call_id` to associate calls with results; native Responses passthrough preserves the native item fields. Third-party models such as DeepSeek and Kimi can therefore use Apps on demand without implementing Codex-specific tools, while ordinary messages avoid the context cost of the complete App tool catalog.
 
-A text-only model can explicitly reference a model that declares image input capability as a vision sidecar. Local-model references come from Wework's device-local model configuration. For a cloud Model CRD, the Wegent web UI writes the reference to `modelConfig.visionSidecarModel`; Wework only parses the referenced model identity and protocol from the Backend's aggregated model, does not edit cloud configuration, and never selects a default from sign-in state or model names. Codex still works with an image-bearing Responses request, but before protocol conversion and the primary request the executor calls the sidecar and replaces each `input_image` in place with a bounded text description. With a configured sidecar, executor generically derives a hidden catalog that adds image input to the current base catalog while preserving all reasoning, tool, context, and compaction capabilities; adding a model requires no sidecar-specific mapping or copied catalog. An unconfigured model keeps its original text-only catalog and makes no extra vision call. The original image is never sent to the text-only primary model. The sidecar supports Responses, Chat Completions, and Anthropic Messages, and its upstream credentials remain inside the executor. The implementation uses a bounded LRU description cache, a process-wide concurrency limit, per-turn image limits, and embedded-data size validation. Timeouts, invalid images, and upstream failures produce an explicit failure description while removing the original image; logs contain only aggregate protocol, count, cache, and timing diagnostics. See [text-model vision delegation](../../architecture/model-vision-delegation.md) for the governed data flow and invariants.
+A text-only model can explicitly reference a model that declares image input capability as a vision sidecar. Local-model references come from Wework's device-local model configuration. For a cloud Model CRD, the Wegent web UI writes the reference to `modelConfig.visionSidecarModel`; Wework only parses the referenced model identity and protocol from the Backend's aggregated model, does not edit cloud configuration, and never selects a default from sign-in state or model names. Codex still works with an image-bearing Responses request, but before protocol conversion and the primary request the executor calls the sidecar and replaces each `input_image` in place with a bounded text description. With a configured sidecar, executor generically derives a hidden catalog that adds image input to the current base catalog while preserving all reasoning, tool, context, and compaction capabilities; adding a model requires no sidecar-specific mapping or copied catalog. An unconfigured model keeps its original text-only catalog and makes no extra vision call. The original image is never sent to the text-only primary model. The sidecar supports Responses, Chat Completions, and Anthropic Messages, and its upstream credentials remain inside the executor. The implementation uses a bounded LRU description cache, a process-wide concurrency limit, per-turn image limits, and embedded-data size validation. Timeouts, invalid images, and upstream failures produce an explicit failure description while removing the original image; logs contain only aggregate protocol, count, cache, and timing diagnostics.
 
 #### Task supervision and runtime readiness
 
@@ -406,6 +425,10 @@ The next scheduled review time is derived from `lastEvaluatedAt + intervalSecond
 
 Wework settles task running state by turn identity rather than by task alone. A provider may replace the provisional subtask ID from the streaming start event with a canonical turn ID in the terminal event; the event adapter must associate those identities and pass the original start ID to the lifecycle state machine. The executor synchronizes in-memory running state when execution ownership changes, and completion of an older execution must not overwrite its replacement. App IPC, the local backend, and the supervisor scheduler must receive the same runtime handler before background workers start; creating a scheduled default handler and replacing it later leaves an orphan scheduler whose auto-corrections are invisible to task listings. Repeated or delayed terminal events from an older turn are ignored idempotently and must not clear a newer active turn, otherwise the sidebar can incorrectly appear idle while a supervisor auto-correction is still running.
 
+A terminal Codex provider turn is an execution fact and the authoritative source for converging local running state. When stop or "send now" observes that the provider is already terminal, the executor settles the matching local execution before continuing the user action. A local stop acknowledgement timeout means only that cleanup did not acknowledge promptly; it must not return a user-facing failure or retain `running` indefinitely. The executor force-settles the current execution as cancelled and preserves outstanding cleanup as the `cleanupPending` diagnostic. Every Codex notification, transcript write, and terminal event must carry and validate the execution generation. A late result from an older generation must not mutate the task, emit a terminal event, or advance its queue.
+
+A Worktree `executionLease` is shared execution evidence between instances, not the task running state itself. Another instance or startup reconciliation may clear the lease for the same execution first, so finishing the current generation when the lease is already absent is idempotent success. Only a lease that explicitly belongs to a different execution is an ownership conflict. The in-memory active execution, provider turn fact, and shared lease must converge under these rules; an instance must not remain running forever merely because the shared file no longer contains its lease.
+
 A Codex fork reconstructs the parent thread's historical request. The `encrypted_content` carried by `reasoning`, `compaction`, `compaction_summary`, `context_compaction`, and `agent_message` items is non-portable state bound to the actual upstream cryptographic context. Even when the logical model and route name remain unchanged, credentials or project context behind a model gateway may be unable to verify ciphertext produced for the parent thread. The executor detects these requests from Codex fork metadata and recursively removes `encrypted_content` only from those historical item types at the fork boundary, while preserving messages, tool calls, tool results, and reasoning summaries. Ordinary continuations do not perform this cleanup, and the executor does not hide upstream failures through retries, fallbacks, or model switching.
 
 Cloud model execution passes `modelConfig.env.model_id` from the Model spec to the executor as a separate Codex catalog model id. When that id matches a model in the official Codex catalog, Codex inherits its complete capability metadata and base instructions. The model gateway continues to use the resource name to locate the cloud Model CRD, so catalog mapping does not alter upstream routing.
@@ -413,6 +436,7 @@ Cloud model execution passes `modelConfig.env.model_id` from the Model spec to t
 `apply_patch` is not a command automatically supplied by the model service or the system shell. Only a Codex model catalog generated for the `custom` or `function` tool profile causes Codex to publish the tool in model requests; callers that invoke the Responses API directly must likewise provide the custom tool definition and grammar in `tools`. The `shell` profile does not publish it. After patch execution fails, the local model proxy preserves the original validation error and adds error-specific grammar guidance, correct Update/Add File examples, and an explicit retry instruction. Native Responses, Chat Completions, and Anthropic Messages conversions must preserve the same correction semantics, while successful results remain unchanged.
 
 **Core Features**:
+
 - 🔒 Fully isolated execution environment
 - 💼 Independent workspace
 - 🔄 Automatic cleanup mechanism (can be preserved with `preserveExecutor`)
@@ -422,6 +446,7 @@ Cloud model execution passes `modelConfig.env.model_id` from the Model spec to t
 - 🪝 [Pre-execute hooks](./pre-execute-hooks.md) for custom task initialization before execution
 
 **Lifecycle**:
+
 ```mermaid
 graph LR
     Created["Created"] --> Running["Running"]
@@ -438,6 +463,7 @@ graph LR
 ### 6. 💾 Database (MySQL)
 
 **Responsibilities**:
+
 - Persistent storage of all resource definitions
 - Manage user data and authentication information
 - Record task execution history
@@ -445,6 +471,7 @@ graph LR
 **Version**: MySQL 9.4
 
 **Core Table Structure**:
+
 ```
 wegent_db/
 ├── kinds            # CRD resources (Ghost, Model, Shell, Bot, Team, Skill, Device)
@@ -459,6 +486,7 @@ wegent_db/
 ```
 
 **Data Model Features**:
+
 - Uses SQLAlchemy ORM
 - Supports transactions and relational queries
 - Automatic timestamp management
@@ -470,6 +498,7 @@ wegent_db/
 ### 7. 🔴 Cache (Redis)
 
 **Responsibilities**:
+
 - Task status caching
 - Session management
 - Temporary real-time data storage
@@ -479,6 +508,7 @@ wegent_db/
 **Version**: Redis 7
 
 **Use Cases**:
+
 - 🔄 Chat task context caching (2-hour expiration)
 - 💻 Code task status caching (2-hour expiration)
 - 🎯 Executor deletion delay control
@@ -490,6 +520,7 @@ wegent_db/
 ### 8. ⚡ Celery (Async Tasks)
 
 **Responsibilities**:
+
 - Knowledge base document indexing (async)
 - Document summary generation
 - Document format conversion (PDF/PPTX → Markdown)
@@ -497,17 +528,17 @@ wegent_db/
 
 **Core Tasks**:
 
-| Task | Purpose |
-|------|---------|
-| `index_document_task` | Document vectorization indexing |
-| `generate_document_summary_task` | Document summary generation |
-| `convert_document_task` | Document format conversion (consumed by Knowledge Doc Converter) |
+| Task                             | Purpose                                                          |
+| -------------------------------- | ---------------------------------------------------------------- |
+| `index_document_task`            | Document vectorization indexing                                  |
+| `generate_document_summary_task` | Document summary generation                                      |
+| `convert_document_task`          | Document format conversion (consumed by Knowledge Doc Converter) |
 
 **Task Queues**:
 
-| Queue | Purpose | Consumer |
-|-------|---------|----------|
-| `celery` (default) | Document indexing, summary generation | Backend Worker |
+| Queue                  | Purpose                                  | Consumer                |
+| ---------------------- | ---------------------------------------- | ----------------------- |
+| `celery` (default)     | Document indexing, summary generation    | Backend Worker          |
 | `knowledge_conversion` | PDF/PPTX document conversion to Markdown | Knowledge Doc Converter |
 
 ---
@@ -515,11 +546,13 @@ wegent_db/
 ### 9. 🎼 KnowledgeOrchestrator
 
 **Responsibilities**:
+
 - Unify knowledge management for REST API and MCP tools
 - Automatically select retriever, embedding model, summary model
 - Coordinate Celery async tasks
 
 **Architecture**:
+
 ```
 Entry Layer (REST/MCP)
     ↓
@@ -531,6 +564,7 @@ Celery Tasks (async processing)
 ```
 
 **Core Features**:
+
 - 🔗 Unified entry point: REST API and MCP tools share the same business logic
 - 🤖 Auto model selection: Task → Team → Bot → Model chain resolution
 - 📚 Multi-scope support: Personal, group, organization knowledge bases
@@ -541,29 +575,32 @@ Celery Tasks (async processing)
 ### 10. 📄 Knowledge Doc Converter
 
 **Responsibilities**:
+
 - Convert PDF/PPTX documents to Markdown via MinerU OCR
 - Upload conversion results to S3 storage
 - Notify Backend of conversion status via callback endpoints
 
 **Technology Stack**:
+
 - **Task Queue**: Celery + Redis
 - **OCR Engine**: MinerU
 - **Object Storage**: S3
 - **Monitoring**: Prometheus (port 9090, multiprocess mode)
 
 **Core Features**:
+
 - 🔧 Standalone Celery Worker listening on the `knowledge_conversion` queue
 - 📊 Prometheus metrics exposure (multiprocess mode)
 - 🔄 Callback-driven async conversion flow
 
 **Internal API**:
 
-| Endpoint | Purpose |
-|----------|---------|
-| `POST /api/internal/conversion/callback/status` | Conversion status callback |
+| Endpoint                                           | Purpose                       |
+| -------------------------------------------------- | ----------------------------- |
+| `POST /api/internal/conversion/callback/status`    | Conversion status callback    |
 | `POST /api/internal/conversion/callback/completed` | Conversion completed callback |
-| `POST /api/internal/conversion/callback/failed` | Conversion failed callback |
-| `GET /api/internal/attachments/{id}/download` | Attachment download |
+| `POST /api/internal/conversion/callback/failed`    | Conversion failed callback    |
+| `GET /api/internal/attachments/{id}/download`      | Attachment download           |
 
 **Document Conversion Flow**:
 
@@ -668,14 +705,14 @@ Core invariants:
 
 ### Communication Protocols
 
-| Communication Type | Protocol | Purpose |
-|-------------------|----------|---------|
-| **Frontend ↔ Backend** | HTTP/HTTPS, WebSocket (Socket.IO) | API calls, real-time chat streaming |
-| **Backend ↔ Database** | MySQL Protocol | Data persistence |
-| **Backend ↔ Redis** | Redis Protocol | Cache operations, Socket.IO adapter |
-| **Backend ↔ Executor Manager** | HTTP | Task scheduling |
-| **Executor Manager ↔ Executor** | Docker API | Container management |
-| **Executor ↔ Agent** | Process invocation | Task execution |
+| Communication Type              | Protocol                          | Purpose                             |
+| ------------------------------- | --------------------------------- | ----------------------------------- |
+| **Frontend ↔ Backend**          | HTTP/HTTPS, WebSocket (Socket.IO) | API calls, real-time chat streaming |
+| **Backend ↔ Database**          | MySQL Protocol                    | Data persistence                    |
+| **Backend ↔ Redis**             | Redis Protocol                    | Cache operations, Socket.IO adapter |
+| **Backend ↔ Executor Manager**  | HTTP                              | Task scheduling                     |
+| **Executor Manager ↔ Executor** | Docker API                        | Container management                |
+| **Executor ↔ Agent**            | Process invocation                | Task execution                      |
 
 ### WebSocket Architecture (Socket.IO)
 
@@ -707,6 +744,7 @@ The chat system uses Socket.IO for bidirectional real-time communication:
 | `task:status` | Task status update |
 
 **Room-based Message Routing**:
+
 - User Room: `user:{user_id}` - For personal notifications
 - Task Room: `task:{task_id}` - For chat streaming and group chat
 
@@ -820,12 +858,14 @@ executor_engines:
 ### 1. Declarative API Design
 
 Following Kubernetes CRD design patterns:
+
 - ✅ Resources defined declaratively in YAML
 - ✅ Clear resource hierarchy
 - ✅ Unified API version management
 - ✅ Separation of status and desired state
 
 **Example**:
+
 ```yaml
 apiVersion: agent.wecode.io/v1
 kind: Bot
@@ -879,6 +919,7 @@ status:
 ### Horizontal Scaling
 
 #### Frontend Scaling
+
 ```yaml
 # Multi-instance deployment
 frontend:
@@ -887,23 +928,26 @@ frontend:
 ```
 
 #### Backend Scaling
+
 ```yaml
 # Stateless design, supports multiple instances
 backend:
   replicas: 5
   session: redis
-  socket_adapter: redis  # Socket.IO multi-instance support
+  socket_adapter: redis # Socket.IO multi-instance support
 ```
 
 #### Chat Shell Scaling
+
 ```yaml
 # Standalone service, supports multiple instances
 chat_shell:
   replicas: 2
-  storage: remote  # Remote storage for multi-instance
+  storage: remote # Remote storage for multi-instance
 ```
 
 #### Executor Scaling
+
 ```yaml
 # Dynamic creation and destruction
 executor_manager:
@@ -914,11 +958,13 @@ executor_manager:
 ### Vertical Scaling
 
 #### Database Optimization
+
 - Read-write separation
 - Index optimization
 - Query caching
 
 #### Redis Optimization
+
 - Memory optimization
 - Persistence strategy
 - Cluster mode
@@ -926,16 +972,19 @@ executor_manager:
 ### Deployment Modes
 
 #### 1. Single-Machine Deployment (Development/Testing)
+
 ```bash
 docker-compose up -d
 ```
 
 **Use Cases**:
+
 - Local development
 - Feature testing
 - Small-scale usage
 
 #### 2. Distributed Deployment (Production)
+
 ```yaml
 architecture:
   frontend: "Multi-instance + Nginx load balancing"
@@ -946,6 +995,7 @@ architecture:
 ```
 
 **Use Cases**:
+
 - Production environment
 - High concurrency requirements
 - Large-scale teams
@@ -962,6 +1012,7 @@ architecture:
 ```
 
 #### 3. Cloud-Native Deployment (Kubernetes)
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -972,28 +1023,30 @@ spec:
   template:
     spec:
       containers:
-      - name: backend
-        image: wegent-backend:latest
+        - name: backend
+          image: wegent-backend:latest
 ```
 
 **Use Cases**:
+
 - Cloud environments
 - Auto-scaling
 - High availability requirements
 
 ### Performance Metrics
 
-| Metric | Target Value | Description |
-|--------|--------------|-------------|
-| **API Response Time** | < 200ms | P95 latency |
-| **Task Startup Time** | < 5s | From creation to execution |
-| **Concurrent Tasks** | 5-100 | Configurable |
-| **Database Connection Pool** | 20 | Default configuration |
-| **WebSocket Connections** | 1000+ | Concurrent online |
+| Metric                       | Target Value | Description                |
+| ---------------------------- | ------------ | -------------------------- |
+| **API Response Time**        | < 200ms      | P95 latency                |
+| **Task Startup Time**        | < 5s         | From creation to execution |
+| **Concurrent Tasks**         | 5-100        | Configurable               |
+| **Database Connection Pool** | 20           | Default configuration      |
+| **WebSocket Connections**    | 1000+        | Concurrent online          |
 
 ### Monitoring and Alerting
 
 #### Key Metrics
+
 - 📊 Task success rate
 - ⏱️ Task execution time
 - 💾 Database performance
@@ -1001,6 +1054,7 @@ spec:
 - 🐳 Container resource usage
 
 #### Log Collection
+
 ```python
 import structlog
 

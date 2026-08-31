@@ -9,17 +9,18 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex as StdMutex,
     },
+    time::Duration,
 };
 
 use serde_json::{json, Value};
-use tokio::{
-    sync::{broadcast, Mutex},
-    task::JoinHandle,
-};
+use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{
     config::device::{ConnectionConfig, DeviceConfig},
-    local::app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
+    local::{
+        app_ipc::{AppIpcError, BackendConnectionHandler, RuntimeWorkHandler},
+        event_stream::ExecutorEventHub,
+    },
     logging::{format_executor_log, write_executor_error_line, write_executor_log_line},
 };
 
@@ -29,7 +30,7 @@ use super::{LocalBackendConfig, LocalBackendRunner, LocalBackendTransport, Socke
 pub struct LocalBackendConnectionController {
     base_config: DeviceConfig,
     runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
-    runtime_event_tx: Option<broadcast::Sender<Value>>,
+    runtime_event_hub: Option<ExecutorEventHub>,
     state: Arc<Mutex<LocalBackendConnectionState>>,
     /// Lightweight snapshot of the current connection shared with the
     /// runtime-work handler so App-IPC task runs can resolve backend
@@ -50,16 +51,16 @@ impl LocalBackendConnectionController {
         Self::start_internal(config, None, None, Arc::new(StdMutex::new(None))).await
     }
 
-    pub async fn start_with_runtime(
+    pub(crate) async fn start_with_runtime(
         config: DeviceConfig,
         runtime_work_handler: Arc<dyn RuntimeWorkHandler>,
-        runtime_event_tx: broadcast::Sender<Value>,
+        runtime_event_hub: ExecutorEventHub,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
         Self::start_internal(
             config,
             Some(runtime_work_handler),
-            Some(runtime_event_tx),
+            Some(runtime_event_hub),
             connection_snapshot,
         )
         .await
@@ -68,7 +69,7 @@ impl LocalBackendConnectionController {
     async fn start_internal(
         mut config: DeviceConfig,
         runtime_work_handler: Option<Arc<dyn RuntimeWorkHandler>>,
-        runtime_event_tx: Option<broadcast::Sender<Value>>,
+        runtime_event_hub: Option<ExecutorEventHub>,
         connection_snapshot: Arc<StdMutex<Option<ConnectionConfig>>>,
     ) -> Self {
         let initial_connection = normalized_connection(&config.connection);
@@ -76,7 +77,7 @@ impl LocalBackendConnectionController {
         let controller = Self {
             base_config: config,
             runtime_work_handler,
-            runtime_event_tx,
+            runtime_event_hub,
             state: Arc::new(Mutex::new(LocalBackendConnectionState::default())),
             connection_snapshot,
             connection_status: Arc::new(AtomicBool::new(false)),
@@ -117,17 +118,17 @@ impl LocalBackendConnectionController {
             let backend_url = connection.backend_url.clone();
             let socket_url = resolved_socket_url(connection);
             let transport = SocketIoTransport::default();
-            let runner = if let (Some(handler), Some(event_tx)) =
-                (&self.runtime_work_handler, &self.runtime_event_tx)
+            let runner = if let (Some(handler), Some(event_hub)) =
+                (&self.runtime_work_handler, &self.runtime_event_hub)
             {
-                LocalBackendRunner::new_with_shared_runtime_work_handler(
+                LocalBackendRunner::new_for_app_sidecar_with_event_hub(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                     handler.clone(),
-                    event_tx.subscribe(),
+                    event_hub.clone(),
                 )
             } else {
-                LocalBackendRunner::new(
+                LocalBackendRunner::new_for_app_sidecar(
                     LocalBackendConfig::from_device_config(config),
                     transport.clone(),
                 )
@@ -201,6 +202,47 @@ impl BackendConnectionHandler for LocalBackendConnectionController {
                 "backend_url": state.connection.as_ref().map(|value| &value.backend_url),
                 "socket_url": state.connection.as_ref().map(resolved_socket_url),
             }))
+        })
+    }
+
+    fn backend_quota<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async move {
+            let connection = {
+                let state = self.state.lock().await;
+                state.connection.clone()
+            }
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "backend_connection_unavailable",
+                    "Backend connection is not configured",
+                )
+            })?;
+            let endpoint = format!(
+                "{}/api/quota/claude/quota",
+                connection.backend_url.trim_end_matches('/')
+            );
+            let response = reqwest::Client::new()
+                .get(endpoint)
+                .bearer_auth(&connection.auth_token)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("backend_quota_unavailable", error.to_string())
+                })?;
+            let status = response.status();
+            let payload = response.json::<Value>().await.map_err(|error| {
+                AppIpcError::new("backend_quota_invalid_response", error.to_string())
+            })?;
+            if !status.is_success() {
+                return Err(AppIpcError::new(
+                    "backend_quota_unavailable",
+                    format!("Backend quota request failed with HTTP {status}"),
+                ));
+            }
+            Ok(payload)
         })
     }
 }
@@ -281,7 +323,9 @@ fn optional_connection_field(
 
 #[cfg(test)]
 mod tests {
+    use axum::{http::HeaderMap, routing::get, Json, Router};
     use serde_json::json;
+    use tokio::net::TcpListener;
 
     use super::{connection_from_params, normalized_connection, LocalBackendConnectionController};
     use crate::{
@@ -320,6 +364,53 @@ mod tests {
             .expect("backend status should be available");
         assert_eq!(status["configured"], true);
         assert_eq!(status["connected"], false);
+    }
+
+    #[tokio::test]
+    async fn reads_backend_quota_without_exposing_the_auth_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/api/quota/claude/quota",
+                    get(|headers: HeaderMap| async move {
+                        assert_eq!(
+                            headers
+                                .get("authorization")
+                                .and_then(|value| value.to_str().ok()),
+                            Some("Bearer wg-token")
+                        );
+                        Json(json!({
+                            "data": {"remaining": 845.21},
+                            "quota_source": "AIGC额度",
+                        }))
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+        let controller = LocalBackendConnectionController::start(DeviceConfig {
+            connection: ConnectionConfig {
+                backend_url: format!("http://{address}"),
+                socket_url: String::new(),
+                auth_token: "wg-token".to_owned(),
+                runtime_auth_token: "runtime-wg-token".to_owned(),
+            },
+            ..DeviceConfig::default()
+        })
+        .await;
+
+        let quota = controller
+            .backend_quota()
+            .await
+            .expect("backend quota should be available");
+
+        assert_eq!(quota["data"]["remaining"], 845.21);
+        assert_eq!(quota["quota_source"], "AIGC额度");
+        server.abort();
     }
 
     #[test]

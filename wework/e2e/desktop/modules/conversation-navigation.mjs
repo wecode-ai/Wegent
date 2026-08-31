@@ -17,6 +17,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   BACKGROUND_GUIDANCE,
+  BACKGROUND_GUIDANCE_CONTINUATION,
   COMPLETION_TEXT,
   COMPOSER_READY_STABILITY_MS,
   DEFAULT_MODEL_ID,
@@ -69,6 +70,11 @@ import {
 } from './shared.mjs'
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
+
+const ACTIVE_TRANSCRIPT_SELECTOR =
+  '[data-workspace-tab-content][aria-hidden="false"] ' +
+  `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+  '[data-testid="desktop-chat-scroll-content"]'
 
 async function waitForActiveTaskIdle(control) {
   const startedAt = Date.now()
@@ -133,10 +139,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: userText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   assert.equal(
     countTextOccurrences(transcriptText, userText),
     1,
@@ -148,10 +151,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: assistantText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedTranscriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const completedTranscriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   const userIndex = completedTranscriptText.indexOf(userText)
   const assistantIndex = completedTranscriptText.indexOf(assistantText)
   assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
@@ -163,10 +163,7 @@ async function assertConversationMessageState(control, { assistantText, userText
 }
 
 async function assertConversationTextOccurrences(control, expectedOccurrences) {
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   for (const [text, expectedCount] of Object.entries(expectedOccurrences)) {
     assert.equal(
       countTextOccurrences(transcriptText, text),
@@ -180,10 +177,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
 }
 
 async function assertConversationTextNotDuplicated(control, texts) {
-  const transcriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-chat-scroll-content"]`
-  )
+  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
   for (const text of texts) {
     const occurrenceCount = countTextOccurrences(transcriptText, text)
     assert.ok(
@@ -338,7 +332,9 @@ async function ensurePlanMode(control) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   if (snapshot.testIds.includes('plan-mode-pill')) return
 
-  await control.command('click', '[data-testid="add-context-button"]')
+  await control.command('clickWhenEnabled', '[data-testid="add-context-button"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('click', '[data-testid="set-plan-mode-button"]')
   await control.command('waitFor', '[data-testid="plan-mode-pill"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -473,8 +469,9 @@ async function verifyBackgroundGuidanceNavigation({
     text: BACKGROUND_GUIDANCE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-file-changes-block"]`
+  const assistantContinuationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
   await control.command('waitFor', assistantContinuationSelector, {
+    text: BACKGROUND_GUIDANCE_CONTINUATION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const activeGuidanceUserMessages = await getElementMetrics(
@@ -702,22 +699,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
+  await control.command('expandProcessingSummaries', 'body')
+  const assistantProcessTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
+  await control.command('waitFor', assistantProcessTextSelector, {
     text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('markElementWithText', '[data-testid="message-assistant"]', {
+  await control.command('markElementWithText', assistantProcessTextSelector, {
     text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
     value: 'guidance-scroll-pre-tool-assistant',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const assistantAfterGuidanceText = await control.command(
+  const assistantTranscriptText = await control.command(
     'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]:not([data-e2e-anchor-id])`
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${assistantProcessTextSelector}`
   )
   assert.equal(
-    assistantAfterGuidanceText.includes(GUIDANCE_SCROLL_PRE_TOOL_TEXT),
-    false,
+    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    1,
     'The final text from before guidance was duplicated after the guidance message'
   )
 
@@ -844,7 +843,7 @@ async function reopenCurrentTurnNavigationTask(
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await restartDesktopApp()
+  const restartedApp = await restartDesktopApp()
   await ensureTaskRowVisible(control, `runtime-local-task-row-${taskId}`)
   await control.command('clickWhenEnabled', `[data-testid="runtime-local-task-row-${taskId}"]`, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -857,29 +856,45 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const activeElementTestId = await control.command('getActiveElementTestId', 'body')
-  assert.equal(
-    activeElementTestId,
-    'chat-message-input',
-    'Opening a conversation from the sidebar did not transfer keyboard focus to the composer'
-  )
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') break
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  if (activeElementTestId !== 'chat-message-input') {
+    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+      control.command('getComposerFocusSnapshot', 'body'),
+      control.command('getWorkbenchDebugSnapshot', 'body'),
+      control.command('getComposerDiagnosticsSnapshot', 'body'),
+    ])
+    throw new Error(
+      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
+        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+        `workbench=${workbenchSnapshot}; ` +
+        `composerDiagnostics=${composerDiagnostics}`
+    )
+  }
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
-    await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    })
-    await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
     const expectedMessageCount = expectedConversationTurnCount * 2
-    const paginationStartedAt = Date.now()
-    let paginatedSnapshot
-    while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-      if (
-        paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
-        paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
-      ) {
-        break
+    let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    if (paginatedSnapshot.pane?.messageSummary.total !== expectedMessageCount) {
+      await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      await control.command('click', '[data-testid="load-older-runtime-transcript-button"]')
+      const paginationStartedAt = Date.now()
+      while (Date.now() - paginationStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
+        paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        if (
+          paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
+          paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+        ) {
+          break
+        }
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
     }
     assert.equal(
       paginatedSnapshot?.pane?.messageSummary.total,
@@ -926,6 +941,7 @@ async function reopenCurrentTurnNavigationTask(
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  return restartedApp
 }
 
 async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
@@ -1290,6 +1306,17 @@ async function verifyLastUserMessageEdit({ composerSelector, control }) {
       !snapshot.testIds.includes('thinking-indicator') &&
       !snapshot.testIds.includes('message-assistant-waiting'),
     'The original response did not settle before editing the last user message'
+  )
+
+  await control.command(
+    'hover',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"] [data-testid="message-hover-region"]`
+  )
+  await control.command('click', '[data-testid="copy-message-button"]')
+  assert.equal(
+    await control.command('getClipboardText', ''),
+    MESSAGE_EDIT_ORIGINAL_PROMPT,
+    'Clicking the user-message copy button did not copy the visible message text'
   )
 
   await control.command(

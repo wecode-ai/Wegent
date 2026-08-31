@@ -39,6 +39,30 @@ export function isNewerWeworkVersion(candidate, current) {
   return compareWeworkVersions(candidate, current) > 0
 }
 
+export function expectedChannelAssetNames(channel) {
+  if (channel !== 'stable' && channel !== 'beta') {
+    throw new Error(`Unsupported Wework update channel: ${channel}`)
+  }
+
+  const electronChannel = channel === 'stable' ? 'latest' : 'beta'
+  return [
+    `${electronChannel}.yml`,
+    `${electronChannel}-mac.yml`,
+    `${channel}-darwin-aarch64.json`,
+    `${channel}-darwin-x86_64.json`,
+    `${channel}-windows-x86_64.json`,
+    `components-${channel}-macos-arm64.json`,
+    `components-${channel}-macos-x64.json`,
+    `components-${channel}-windows-x64.json`,
+    `components-${channel}-linux-x64.json`,
+  ]
+}
+
+export function hasCompleteChannelAssets(assetNames, channel) {
+  const availableAssets = new Set(assetNames)
+  return expectedChannelAssetNames(channel).every(name => availableAssets.has(name))
+}
+
 export async function generateChannelManifests({ sourcePath, outputDirectory, channel }) {
   if (channel !== 'stable' && channel !== 'beta') {
     throw new Error(`Unsupported Wework update channel: ${channel}`)
@@ -83,6 +107,23 @@ async function main() {
     return
   }
 
+  if (command === 'has-complete-channel-assets') {
+    const [assetsPath, channel] = args
+    if (!assetsPath || !channel) {
+      throw new Error(
+        'Usage: update-channel-manifests.mjs has-complete-channel-assets <assets-json> <stable|beta>'
+      )
+    }
+    const payload = JSON.parse(await readFile(assetsPath, 'utf8'))
+    const assets = Array.isArray(payload) ? payload : payload.assets
+    if (!Array.isArray(assets)) {
+      throw new Error(`Expected an asset list in ${assetsPath}`)
+    }
+    const assetNames = assets.map(asset => (typeof asset === 'string' ? asset : asset.name))
+    process.exitCode = hasCompleteChannelAssets(assetNames, channel) ? 0 : 1
+    return
+  }
+
   if (command === 'generate') {
     const [sourcePath, outputDirectory, channel] = args
     if (!sourcePath || !outputDirectory || !channel) {
@@ -94,7 +135,7 @@ async function main() {
     return
   }
 
-  throw new Error('Expected command: is-newer or generate')
+  throw new Error('Expected command: is-newer, has-complete-channel-assets, or generate')
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

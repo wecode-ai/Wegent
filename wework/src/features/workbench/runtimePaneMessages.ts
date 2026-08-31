@@ -430,6 +430,8 @@ export function createRuntimeTaskStreamHandlers(
         blockId: payload.blockId,
         status: payload.status ?? null,
         hasContent: payload.content !== undefined,
+        hasContentDelta: payload.contentDelta !== undefined,
+        contentDeltaLength: payload.contentDelta?.length,
         hasToolInput: payload.toolInput !== undefined,
         hasToolOutput: payload.toolOutput !== undefined,
         hasToolOutputDelta: payload.toolOutputDelta !== undefined,
@@ -454,6 +456,7 @@ export function createRuntimeTaskStreamHandlers(
         blockId: payload.blockId,
         updates: {
           ...(payload.content !== undefined && { content: payload.content }),
+          ...(payload.contentDelta !== undefined && { contentDelta: payload.contentDelta }),
           ...(payload.toolInput !== undefined && { toolInput: payload.toolInput }),
           ...(payload.toolOutput !== undefined && { toolOutput: payload.toolOutput }),
           ...(payload.toolOutputDelta !== undefined && {

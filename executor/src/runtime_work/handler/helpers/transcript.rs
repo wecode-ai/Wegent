@@ -570,37 +570,45 @@ fn attach_user_message_presentations_for_page(
                     ) =>
             {
                 let content = string_field(&presentation, "content").unwrap_or_default();
-                let attachments = presentation
-                    .get("attachments")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
+                let attachments = normalized_attachments(presentation.get("attachments"));
                 if content.trim().is_empty() && attachments.is_empty() {
                     continue;
                 }
                 let created_at =
                     timestamp_ms_field(&presentation, "createdAt").unwrap_or_else(now_ms);
-                let index = messages
-                    .iter()
-                    .position(|message| {
-                        timestamp_ms_field(message, "createdAt")
-                            .is_some_and(|message_at| {
-                                message_at > created_at
-                                    || (message_at == created_at
-                                        && string_field(message, "role").as_deref() != Some("user"))
-                            })
-                    })
-                    .unwrap_or(messages.len());
                 let turn_id = string_field(&presentation, "turnId")
-                    .or_else(|| string_field(&presentation, "turn_id"))
-                    .or_else(|| {
-                        messages[index..].iter().find_map(|message| {
+                    .or_else(|| string_field(&presentation, "turn_id"));
+                let index = match turn_id.as_deref() {
+                    Some(turn_id) => messages
+                        .iter()
+                        .position(|message| {
                             string_field(message, "turnId")
                                 .or_else(|| string_field(message, "turn_id"))
                                 .or_else(|| string_field(message, "subtaskId"))
                                 .or_else(|| string_field(message, "subtask_id"))
+                                .as_deref()
+                                == Some(turn_id)
                         })
-                    });
+                        .unwrap_or(messages.len()),
+                    None => messages
+                        .iter()
+                        .position(|message| {
+                            timestamp_ms_field(message, "createdAt").is_some_and(|message_at| {
+                                message_at > created_at
+                                    || (message_at == created_at
+                                        && string_field(message, "role").as_deref() != Some("user"))
+                            })
+                        })
+                        .unwrap_or(messages.len()),
+                };
+                let turn_id = turn_id.or_else(|| {
+                    messages[index..].iter().find_map(|message| {
+                        string_field(message, "turnId")
+                            .or_else(|| string_field(message, "turn_id"))
+                            .or_else(|| string_field(message, "subtaskId"))
+                            .or_else(|| string_field(message, "subtask_id"))
+                    })
+                });
                 let mut synthetic = json!({
                     "id": client_user_message_id,
                     "clientUserMessageId": client_user_message_id,
@@ -625,11 +633,7 @@ fn attach_user_message_presentations_for_page(
         let message = &mut messages[message_index];
         let content = string_field(message, "content").unwrap_or_default();
         let presentation_content = string_field(&presentation, "content").unwrap_or_default();
-        let attachments = presentation
-            .get("attachments")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let attachments = normalized_attachments(presentation.get("attachments"));
         let references = presentation
             .get("references")
             .and_then(Value::as_array)
@@ -668,17 +672,15 @@ fn presentation_belongs_to_transcript_page(
 
     let presentation_turn_id = string_field(presentation, "turnId")
         .or_else(|| string_field(presentation, "turn_id"));
-    if presentation_turn_id.is_some_and(|presentation_turn_id| {
-        page_messages.iter().any(|message| {
+    if let Some(presentation_turn_id) = presentation_turn_id {
+        return page_messages.iter().any(|message| {
             string_field(message, "turnId")
                 .or_else(|| string_field(message, "turn_id"))
                 .or_else(|| string_field(message, "subtaskId"))
                 .or_else(|| string_field(message, "subtask_id"))
                 .as_deref()
                 == Some(presentation_turn_id.as_str())
-        })
-    }) {
-        return true;
+        });
     }
 
     let Some(created_at) = timestamp_ms_field(presentation, "createdAt") else {
@@ -882,16 +884,20 @@ fn normalized_attachments(value: Option<&Value>) -> Vec<Value> {
                 "local_path",
                 &["local_path", "localPath"],
             );
-            copy_attachment_field_alias(
-                object,
-                &mut normalized,
-                "local_preview_url",
-                &["local_preview_url", "localPreviewUrl"],
-            );
-            if !normalized.contains_key("local_preview_url") {
-                if let Some(local_path) = normalized.get("local_path").cloned() {
-                    normalized.insert("local_preview_url".to_owned(), local_path);
-                }
+            if let Some(local_path) = normalized
+                .get("local_path")
+                .and_then(Value::as_str)
+                .filter(|path| !path.trim().is_empty())
+                .map(|path| Value::String(path.to_owned()))
+            {
+                normalized.insert("local_preview_url".to_owned(), local_path);
+            } else {
+                copy_attachment_field_alias(
+                    object,
+                    &mut normalized,
+                    "local_preview_url",
+                    &["local_preview_url", "localPreviewUrl"],
+                );
             }
             normalized.insert("status".to_owned(), Value::String("ready".to_owned()));
             normalized.insert("created_at".to_owned(), Value::Number(now_ms().into()));

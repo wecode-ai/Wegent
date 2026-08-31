@@ -109,44 +109,24 @@ def test_set_use_user_config_stores_preference(test_db: Session) -> None:
     }
 
 
-def test_set_use_proxy_stores_runtime_preference(test_db: Session) -> None:
-    user = _create_user(
-        test_db,
-        1202,
-        preferences='{"runtime_configs":{"codex":{"use_user_config":true}}}',
-    )
+def test_saving_proxy_enables_runtime_proxy_without_hidden_preference(
+    test_db: Session,
+) -> None:
+    user = _create_user(test_db, 1202)
     user_runtime_config_service.save_proxy_url(
         test_db,
         user=user,
         proxy_url="http://127.0.0.1:7890",
     )
 
-    response = user_runtime_config_service.set_use_user_config(
+    response = user_runtime_config_service.get_execution_config(
         test_db,
-        user=user,
+        user_id=user.id,
         runtime="codex",
-        use_user_config=True,
-        use_proxy=True,
     )
 
-    test_db.refresh(user)
     assert response["use_proxy"] is True
-    assert json.loads(user.preferences) == {
-        "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}},
-    }
-
-
-def test_set_use_proxy_requires_configured_proxy(test_db: Session) -> None:
-    user = _create_user(test_db, 1203)
-
-    with pytest.raises(UserRuntimeConfigError, match="proxy is not configured"):
-        user_runtime_config_service.set_use_user_config(
-            test_db,
-            user=user,
-            runtime="codex",
-            use_user_config=False,
-            use_proxy=True,
-        )
+    assert response["proxy_url"] == "http://127.0.0.1:7890"
 
 
 def test_save_proxy_url_encrypts_and_masks_proxy_config(test_db: Session) -> None:
@@ -169,12 +149,8 @@ def test_save_proxy_url_encrypts_and_masks_proxy_config(test_db: Session) -> Non
     assert decrypt_sensitive_data(encrypted_url) == "http://user:secret@127.0.0.1:7890"
 
 
-def test_clearing_proxy_disables_runtime_proxy_preferences(test_db: Session) -> None:
-    user = _create_user(
-        test_db,
-        108,
-        preferences='{"runtime_configs":{"codex":{"use_user_config":true,"use_proxy":true}}}',
-    )
+def test_clearing_proxy_disables_runtime_proxy(test_db: Session) -> None:
+    user = _create_user(test_db, 108)
     user_runtime_config_service.save_proxy_url(
         test_db,
         user=user,
@@ -187,11 +163,14 @@ def test_clearing_proxy_disables_runtime_proxy_preferences(test_db: Session) -> 
         proxy_url="",
     )
 
-    test_db.refresh(user)
     assert response["configured"] is False
-    assert json.loads(user.preferences) == {
-        "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": False}},
-    }
+    execution_config = user_runtime_config_service.get_execution_config(
+        test_db,
+        user_id=user.id,
+        runtime="codex",
+    )
+    assert execution_config["use_proxy"] is False
+    assert "proxy_url" not in execution_config
 
 
 def test_get_execution_config_includes_proxy_url_when_enabled(
@@ -208,9 +187,7 @@ def test_get_execution_config_includes_proxy_url_when_enabled(
         test_db,
         user_id=106,
         runtime="codex",
-        preferences={
-            "runtime_configs": {"codex": {"use_user_config": True, "use_proxy": True}}
-        },
+        preferences={"runtime_configs": {"codex": {"use_user_config": True}}},
     )
 
     assert response["use_proxy"] is True

@@ -380,6 +380,53 @@ describe('workbenchReducer', () => {
     expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[1].supervisor).toBeUndefined()
   })
 
+  test('updates a pinned project task through the project state device', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: {
+              key: 'local:/workspace/repo',
+              name: 'Repo',
+              stateDeviceId: 'state-device',
+            },
+            deviceWorkspaces: [
+              {
+                deviceId: 'runtime-device',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'runtime-a',
+                    threadId: 'thread-a',
+                    workspacePath: '/workspace/repo',
+                    title: 'Runtime A',
+                    runtime: 'codex' as const,
+                    pinned: false,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 1,
+      },
+    }
+
+    const updated = workbenchReducer(state, {
+      type: 'runtime_task_pinned_updated',
+      request: {
+        deviceId: 'state-device',
+        threadId: 'thread-a',
+        pinned: true,
+      },
+    })
+
+    expect(updated.runtimeWork?.projects[0].deviceWorkspaces[0].tasks[0].pinned).toBe(true)
+  })
+
   test('preserves blank chat draft when returning to standalone chat', () => {
     const state = workbenchReducer(
       {
@@ -425,7 +472,19 @@ describe('workbenchReducer', () => {
         ...initialWorkbenchState,
         standaloneChatKey: 4,
       },
-      { type: 'blank_chat_committed' }
+      { type: 'blank_chat_committed', standaloneChatKey: 4 }
+    )
+
+    expect(state.standaloneChatKey).toBe(5)
+  })
+
+  test('ignores a late blank chat commit after a newer draft scope is active', () => {
+    const state = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        standaloneChatKey: 5,
+      },
+      { type: 'blank_chat_committed', standaloneChatKey: 4 }
     )
 
     expect(state.standaloneChatKey).toBe(5)

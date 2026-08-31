@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppIframe } from './AppIframe'
 
@@ -15,7 +15,8 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   setEmbeddedBrowserBounds: vi.fn().mockResolvedValue(undefined),
 }))
 const runtimeMocks = vi.hoisted(() => ({
-  isTauriRuntime: vi.fn(() => false),
+  isDesktopRuntime: vi.fn(() => false),
+  isElectronRuntime: vi.fn(() => false),
 }))
 
 vi.mock('@/lib/embedded-browser', () => embeddedBrowserMocks)
@@ -23,7 +24,8 @@ vi.mock('@/lib/runtime-environment', () => runtimeMocks)
 
 describe('AppIframe', () => {
   beforeEach(() => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(false)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(false)
+    runtimeMocks.isElectronRuntime.mockReturnValue(false)
     embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockReset()
     embeddedBrowserMocks.evalEmbeddedBrowserJson.mockResolvedValue(true)
@@ -52,7 +54,7 @@ describe('AppIframe', () => {
   })
 
   test('keeps app identity stable when the display title is localized', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -86,6 +88,49 @@ describe('AppIframe', () => {
         true
       )
     )
+    await waitFor(() => expect(screen.queryByText('Loading 智能体...')).not.toBeInTheDocument())
+    boundsSpy.mockRestore()
+  })
+
+  test('uses the runtime label for an Electron workbench webview', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <AppIframe
+        appKey="harness-review"
+        embeddedBrowserLabel="smart-app:review"
+        src="http://localhost:4101"
+        title="Review"
+        workspaceTabId="auxiliary-1"
+      />
+    )
+
+    expect(screen.getByTestId('workspace-browser-electron-webview-placeholder')).toBeInTheDocument()
+    expect(
+      document.querySelector('[data-wework-browser-webview-host-root] webview')
+    ).toHaveAttribute('data-wework-browser-label', 'smart-app:review')
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:4101',
+        { x: 10, y: 20, width: 800, height: 600 },
+        'smart-app:review',
+        false,
+        true
+      )
+    )
+    await waitFor(() => expect(screen.queryByText('Loading Review...')).not.toBeInTheDocument())
     boundsSpy.mockRestore()
   })
 
@@ -111,8 +156,8 @@ describe('AppIframe', () => {
     )
   })
 
-  test('uses a persistent native webview in Tauri', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+  test('uses a persistent native webview in the desktop app', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -146,8 +191,82 @@ describe('AppIframe', () => {
     boundsSpy.mockRestore()
   })
 
+  test('creates the Electron webview host before opening the native app', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    render(
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="fixed-agent"
+      />
+    )
+
+    const webview = document.querySelector('webview')
+    expect(webview).toHaveAttribute('data-wework-browser-label', 'app-wegent-fixed-agent')
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'http://localhost:3000',
+        { x: 10, y: 20, width: 800, height: 600 },
+        'app-wegent-fixed-agent',
+        false,
+        true
+      )
+    )
+    boundsSpy.mockRestore()
+  })
+
+  test('closes an unmounted Electron app only when its native identity still matches', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    runtimeMocks.isElectronRuntime.mockReturnValue(true)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+
+    const { unmount } = render(
+      <AppIframe
+        appKey="harness-app"
+        embeddedBrowserLabel="smart-app:test"
+        src="http://localhost:3000"
+        title="Harness app"
+      />
+    )
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce())
+
+    unmount()
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'smart-app:test',
+        'embedded-browser-native-1'
+      )
+    )
+    boundsSpy.mockRestore()
+  })
+
   test('mounts content-aware native apps in a visible collapsed webview', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -183,7 +302,7 @@ describe('AppIframe', () => {
   })
 
   test('keeps one native webview during the StrictMode effect replay', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -216,7 +335,7 @@ describe('AppIframe', () => {
   })
 
   test('shows an existing native webview without navigating again', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       bottom: 620,
       height: 600,
@@ -271,7 +390,7 @@ describe('AppIframe', () => {
   })
 
   test('hides a native webview that finishes opening after its tab becomes inactive', async () => {
-    runtimeMocks.isTauriRuntime.mockReturnValue(true)
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
     let resolveOpen!: () => void
     embeddedBrowserMocks.openEmbeddedBrowser.mockReturnValueOnce(
       new Promise(resolve => {
@@ -324,5 +443,48 @@ describe('AppIframe', () => {
       )
     )
     boundsSpy.mockRestore()
+  })
+
+  test('does not reveal a reduced-motion native webview after cleanup', async () => {
+    runtimeMocks.isDesktopRuntime.mockReturnValue(true)
+    const frames: FrameRequestCallback[] = []
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => frames.push(callback))
+    const mediaSpy = vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+    } as MediaQueryList)
+    const boundsSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom: 620,
+      height: 600,
+      left: 10,
+      right: 810,
+      top: 20,
+      width: 800,
+      x: 10,
+      y: 20,
+      toJSON: () => ({}),
+    })
+    const { unmount } = render(
+      <AppIframe
+        appKey="wegent"
+        src="http://localhost:3000"
+        title="Wegent"
+        workspaceTabId="agent-reduced-motion"
+      />
+    )
+    await waitFor(() => expect(frames).toHaveLength(1))
+
+    act(() => frames.shift()?.(performance.now()))
+    expect(frames).toHaveLength(1)
+    const callsBeforeCleanup = embeddedBrowserMocks.setEmbeddedBrowserBounds.mock.calls.length
+
+    unmount()
+    act(() => frames.shift()?.(performance.now()))
+
+    expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledTimes(callsBeforeCleanup)
+    boundsSpy.mockRestore()
+    mediaSpy.mockRestore()
+    frameSpy.mockRestore()
   })
 })

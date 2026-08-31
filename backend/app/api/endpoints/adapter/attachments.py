@@ -27,6 +27,7 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse, Response, StreamingResponse
 from jose import JWTError, jwt
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -42,6 +43,7 @@ from app.schemas.subtask_context import (
     TruncationInfo,
 )
 from app.services.attachment.external_storage import (
+    ExternalAttachmentPlayback,
     resolve_external_attachment_playback,
 )
 from app.services.attachment.parser import DocumentParseError, DocumentParser
@@ -173,9 +175,24 @@ async def _stream_external_attachment(
     range_header: Optional[str] = None,
 ) -> Optional[StreamingResponse]:
     """Resolve and stream externally stored media when an adapter handles it."""
+    playback = await _resolve_attachment_playback(context)
+    if playback is None:
+        return None
+    return await _stream_remote_media(
+        playback.url,
+        context.original_filename,
+        default_media_type=playback.media_type,
+        range_header=range_header,
+    )
+
+
+async def _resolve_attachment_playback(
+    context,
+) -> Optional[ExternalAttachmentPlayback]:
+    """Resolve fresh playback metadata through a registered storage adapter."""
     type_data = context.type_data if isinstance(context.type_data, dict) else {}
     try:
-        playback = await asyncio.to_thread(
+        return await asyncio.to_thread(
             resolve_external_attachment_playback,
             type_data=type_data,
             user_id=context.user_id,
@@ -190,15 +207,6 @@ async def _stream_external_attachment(
             status_code=502,
             detail="External media playback URL is unavailable",
         ) from exc
-
-    if playback is None:
-        return None
-    return await _stream_remote_media(
-        playback.url,
-        context.original_filename,
-        default_media_type=playback.media_type,
-        range_header=range_header,
-    )
 
 
 def _create_download_token(attachment_id: int, user: User) -> str:
@@ -586,6 +594,13 @@ async def upload_attachment(
         ) from e
 
 
+class AttachmentPlaybackResponse(BaseModel):
+    """Fresh browser playback information for a media attachment."""
+
+    playback_url: str
+    cover_url: Optional[str] = None
+
+
 @router.get("/{attachment_id}", response_model=AttachmentDetailResponse)
 async def get_attachment(
     attachment_id: int,
@@ -629,6 +644,68 @@ async def get_attachment(
         raise HTTPException(status_code=401, detail="Authentication required")
 
     return AttachmentDetailResponse.from_context(context)
+
+
+def _attachment_cover_url(context) -> Optional[str]:
+    """Return a persisted cover URL when the attachment already has one."""
+    type_data = context.type_data if isinstance(context.type_data, dict) else {}
+    video_metadata = type_data.get("video_metadata")
+    if isinstance(video_metadata, dict) and video_metadata.get("cover_url"):
+        return str(video_metadata["cover_url"])
+    cover_url = type_data.get("cover_url")
+    return str(cover_url) if cover_url else None
+
+
+@router.get(
+    "/{attachment_id}/playback",
+    response_model=AttachmentPlaybackResponse,
+)
+async def get_attachment_playback(
+    attachment_id: int,
+    share_token: Optional[str] = Query(
+        None, description="Share token for public access"
+    ),
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(security.get_current_user_optional),
+) -> AttachmentPlaybackResponse:
+    """Return a fresh direct or proxied URL for browser media playback."""
+    if share_token:
+        if not _validate_share_token_access(db, attachment_id, share_token):
+            raise HTTPException(status_code=403, detail="Share token access denied")
+        context = context_service.get_context_optional(
+            db=db,
+            context_id=attachment_id,
+        )
+        if context is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+    elif current_user:
+        context = _get_attachment_context(db, attachment_id, current_user)
+    else:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    external_playback = await _resolve_attachment_playback(context)
+    if external_playback and external_playback.delivery_mode == "direct":
+        return AttachmentPlaybackResponse(
+            playback_url=external_playback.url,
+            cover_url=external_playback.cover_url or _attachment_cover_url(context),
+        )
+
+    proxy_url = context_service.build_attachment_url(attachment_id)
+    if share_token:
+        proxy_url = f"{proxy_url}?share_token={quote(share_token, safe='')}"
+    else:
+        proxy_url = (
+            f"{proxy_url}?download_token="
+            f"{quote(_create_download_token(attachment_id, current_user), safe='')}"
+        )
+    return AttachmentPlaybackResponse(
+        playback_url=proxy_url,
+        cover_url=(
+            external_playback.cover_url
+            if external_playback and external_playback.cover_url
+            else _attachment_cover_url(context)
+        ),
+    )
 
 
 @router.get("/{attachment_id}/preview", response_model=AttachmentPreviewResponse)
@@ -1040,8 +1117,6 @@ async def get_all_task_attachments(
 # =============================================================================
 # Public Share Link Endpoints
 # =============================================================================
-
-from pydantic import BaseModel
 
 
 class PublicShareLinkResponse(BaseModel):

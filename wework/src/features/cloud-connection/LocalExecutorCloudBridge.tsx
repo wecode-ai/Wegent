@@ -4,7 +4,7 @@ import {
   listWegentInstalledConnectorApps,
 } from '@/api/cloud/connectorApps'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
-import { ensureLocalExecutorStarted, requestLocalExecutor } from '@/tauri/localExecutor'
+import { ensureLocalExecutorAvailable, requestLocalExecutor } from '@/desktop/localExecutor'
 import {
   applyLocalExecutorCloudConnection,
   type LocalExecutorCloudConnection,
@@ -198,7 +198,7 @@ export function LocalExecutorCloudBridge({
         await configureConnectors()
         return
       }
-      await ensureLocalExecutorStarted()
+      await ensureLocalExecutorAvailable()
       await requestLocalExecutor('runtime.connectors.clear', {
         syncRevision: nextConnectorSyncRevision(),
       }).catch(() => undefined)

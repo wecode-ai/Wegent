@@ -53,7 +53,14 @@ fn callback_events_include_validation_id() {
 
 #[test]
 fn response_completed_event_contains_message_output() {
-    let builder = ResponsesEventBuilder::new("1", "2", "gpt-5").with_response_id("resp_done");
+    let executor_session = json!({
+        "agent": "ClaudeCode",
+        "botId": "987",
+        "sessionId": "claude-session-1"
+    });
+    let builder = ResponsesEventBuilder::new("1", "2", "gpt-5")
+        .with_response_id("resp_done")
+        .with_executor_session(Some(executor_session.clone()));
 
     let event = builder.response_completed("finished");
 
@@ -65,12 +72,19 @@ fn response_completed_event_contains_message_output() {
         json!("finished")
     );
     assert_eq!(event.data["response"]["output"][0]["id"], json!("msg_2"));
+    assert_eq!(event.data["response"]["executor_session"], executor_session);
 }
 
 #[test]
 fn response_waiting_for_user_input_event_marks_silent_exit() {
-    let builder =
-        ResponsesEventBuilder::new("1", "2", "claude-sonnet-4").with_response_id("resp_waiting");
+    let executor_session = json!({
+        "agent": "ClaudeCode",
+        "botId": "987",
+        "sessionId": "claude-session-1"
+    });
+    let builder = ResponsesEventBuilder::new("1", "2", "claude-sonnet-4")
+        .with_response_id("resp_waiting")
+        .with_executor_session(Some(executor_session.clone()));
 
     let event = builder.response_waiting_for_user_input("tool_deferred");
 
@@ -87,6 +101,7 @@ fn response_waiting_for_user_input_event_marks_silent_exit() {
         event.data["response"]["silent_exit_reason"],
         json!("waiting_for_user_input")
     );
+    assert_eq!(event.data["response"]["executor_session"], executor_session);
 }
 
 #[test]

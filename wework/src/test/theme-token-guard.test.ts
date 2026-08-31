@@ -31,8 +31,8 @@ const guardedFiles = [
   'components/chat/blocks/ToolBlocksDisplay.tsx',
   'components/plugins/PluginCreateMenu.tsx',
   'components/plugins/PluginsWorkspace.tsx',
-  'pages/PluginManagementPage.tsx',
-  'pages/PluginsPage.tsx',
+  '../dsh/ui-plugin-center/src/PluginManagementPage.tsx',
+  '../dsh/ui-plugin-center/src/PluginsPage.tsx',
 ]
 
 const forbiddenThemeClasses = [
@@ -50,8 +50,8 @@ const zIndexGuardedFiles = [
   'components/layout/DesktopWorkbenchMain.tsx',
   'components/layout/MobileDrawer.tsx',
   'components/layout/MobileWorkbenchLayout.tsx',
-  'pages/PluginManagementPage.tsx',
-  'pages/PluginsPage.tsx',
+  '../dsh/ui-plugin-center/src/PluginManagementPage.tsx',
+  '../dsh/ui-plugin-center/src/PluginsPage.tsx',
 ]
 
 const forbiddenGlobalZIndexClasses = [
@@ -60,6 +60,17 @@ const forbiddenGlobalZIndexClasses = [
 ]
 
 describe('theme token guard', () => {
+  test('styles do not reference the removed background token alias', () => {
+    const guardedStylePaths = [
+      resolve(process.cwd(), 'src/styles/globals.css'),
+      resolve(sourceRoot, 'features/todo/task-detail-layout.css'),
+    ]
+
+    for (const stylePath of guardedStylePaths) {
+      expect(readFileSync(stylePath, 'utf8')).not.toContain('--color-background')
+    }
+  })
+
   test('tailwind exposes semantic surface colors', () => {
     const tailwindConfigPath = resolve(process.cwd(), 'tailwind.config.js')
     const source = readFileSync(tailwindConfigPath, 'utf8').replace(/\r\n/g, '\n')

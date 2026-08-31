@@ -34,7 +34,6 @@ jobs:
       knowledge_engine: ${{ steps.classify.outputs.knowledge_engine }}
       frontend: ${{ steps.classify.outputs.frontend }}
       wework: ${{ steps.classify.outputs.wework }}
-      wework_rust: ${{ steps.classify.outputs.wework_rust }}
       wegent_cli: ${{ steps.classify.outputs.wegent_cli }}
 
     steps:
@@ -71,7 +70,7 @@ jobs:
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         working-directory: ./backend
@@ -155,7 +154,7 @@ jobs:
       - name: Set up Python 3.11 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
         working-directory: ./executor_manager
@@ -177,6 +176,47 @@ jobs:
           flags: executor-manager
           name: executor-manager-coverage
 
+  test-executor-local-auth-platforms:
+    name: Test Executor Local Auth (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.executor == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+
+      - name: Set up sccache
+        uses: ./.github/actions/setup-sccache
+
+      - name: Restore shared executor Cargo sources
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-${{ hashFiles('executor/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-executor-cargo-sources-v3-
+
+      - name: Run local connector auth platform tests
+        working-directory: ./executor
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
+        run: cargo test --all-features --lib runtime_work::local_connector_auth::tests
+
   test-shared:
     name: Test Shared
     needs: changes
@@ -190,7 +230,7 @@ jobs:
       - name: Set up Python 3.10 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         working-directory: ./shared
@@ -238,7 +278,7 @@ jobs:
       - name: Set up Python 3.12 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         working-directory: ./knowledge_engine
@@ -288,10 +328,14 @@ jobs:
           name: frontend-coverage
 
   test-wework:
-    name: Test Wework
+    name: Test Wework (${{ matrix.shard }}/2)
     needs: changes
     if: needs.changes.outputs.wework == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - name: Checkout code
@@ -300,51 +344,20 @@ jobs:
       - name: Set up Node workspace
         uses: ./.github/actions/setup-node-workspace
 
+      - name: Install Wework Electron dependencies
+        run: pnpm --dir wework/electron install --frozen-lockfile
+
       - name: Run wework tests
         env:
           TZ: Asia/Shanghai
-        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests
+        run: pnpm --filter wework exec vitest run --coverage --passWithNoTests --shard=${{ matrix.shard }}/2
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           files: ./wework/coverage/coverage-final.json
           flags: wework
-          name: wework-coverage
-
-  check-wework-windows-rust:
-    name: Check Wework Windows Rust
-    needs: changes
-    if: needs.changes.outputs.wework_rust == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Set up sccache
-        uses: ./.github/actions/setup-sccache
-
-      - name: Restore shared Wework Cargo sources
-        id: wework-cargo-sources-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-${{ hashFiles('wework/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-wework-cargo-sources-v2-
-
-      - name: Check Wework Rust for Windows
-        working-directory: ./wework/src-tauri
-        run: cargo check --locked --target x86_64-pc-windows-msvc
+          name: wework-coverage-${{ matrix.shard }}
 
   test-wegent-cli:
     name: Test wegent CLI
@@ -359,7 +372,7 @@ jobs:
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Restore shared Python dependencies
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
@@ -434,7 +447,7 @@ jobs:
       - name: Set up Python 3.10 and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install backend dependencies
         working-directory: ./backend
@@ -485,7 +498,20 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [changes, test-backend, test-executor, test-executor-manager, test-shared, test-knowledge-engine, test-frontend, test-wework, check-wework-windows-rust, test-wegent-cli, test-wegent-cli-integration]
+    needs:
+      [
+        changes,
+        test-backend,
+        test-executor,
+        test-executor-local-auth-platforms,
+        test-executor-manager,
+        test-shared,
+        test-knowledge-engine,
+        test-frontend,
+        test-wework,
+        test-wegent-cli,
+        test-wegent-cli-integration,
+      ]
     if: always()
 
     steps:
@@ -505,11 +531,11 @@ jobs:
           [[ "${{ needs.changes.result }}" == "success" ]]
           assert_result "${{ needs.changes.outputs.backend }}" "${{ needs.test-backend.result }}" "Backend tests"
           assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor.result }}" "Executor tests"
+          assert_result "${{ needs.changes.outputs.executor }}" "${{ needs.test-executor-local-auth-platforms.result }}" "Executor local auth platform tests"
           assert_result "${{ needs.changes.outputs.executor_manager }}" "${{ needs.test-executor-manager.result }}" "Executor Manager tests"
           assert_result "${{ needs.changes.outputs.shared }}" "${{ needs.test-shared.result }}" "Shared tests"
           assert_result "${{ needs.changes.outputs.knowledge_engine }}" "${{ needs.test-knowledge-engine.result }}" "Knowledge Engine tests"
           assert_result "${{ needs.changes.outputs.frontend }}" "${{ needs.test-frontend.result }}" "Frontend tests"
           assert_result "${{ needs.changes.outputs.wework }}" "${{ needs.test-wework.result }}" "Wework tests"
-          assert_result "${{ needs.changes.outputs.wework_rust }}" "${{ needs.check-wework-windows-rust.result }}" "Wework Windows Rust check"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli.result }}" "wegent CLI tests"
           assert_result "${{ needs.changes.outputs.wegent_cli }}" "${{ needs.test-wegent-cli-integration.result }}" "wegent CLI integration tests"

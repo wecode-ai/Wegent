@@ -1,8 +1,9 @@
-import { Check, ChevronRight, Cloud, Search, X } from 'lucide-react'
+import { Check, Cloud, LogIn, Plus, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useConfiguredKeybinding } from '@/hooks/useConfiguredKeybinding'
+import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   type ModelControlConfig,
@@ -14,21 +15,29 @@ import {
   isModelInterfaceModel,
   normalizeModelOptionValue,
 } from '@/lib/model-ui'
+import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { TOGGLE_MODEL_SELECTOR_COMMAND } from '@/lib/keybindings'
 import type { UnifiedModel } from '@/types/api'
 import { FastModeIcon } from './FastModeIcon'
 import { ModelAdvancedHeader } from './ModelAdvancedHeader'
 import { ModelAutomaticReasoningOption } from './ModelAutomaticReasoningOption'
+import { ModelSelectorFlyout } from './ModelSelectorFlyout'
+import { ModelSelectorMenuRow } from './ModelSelectorMenuRow'
 import { ModelPowerSlider } from './ModelPowerSlider'
 import { ModelResetDefaultRow } from './ModelResetDefaultRow'
 import { ModelSelectorTrigger } from './ModelSelectorTrigger'
 import { ReasoningSlider } from './ReasoningSlider'
-import type { ModelSelectorProps } from './model-selector-types'
+import type { ModelSelectorCloseReason, ModelSelectorProps } from './model-selector-types'
 import {
   handleMobileModelSelectorDialogKeyDown,
   useMobileModelSelectorFocus,
 } from './model-selector-mobile-utils'
+import {
+  getDesktopModelSelectorCollisionPadding,
+  MODEL_SELECTOR_VIEWPORT_MARGIN,
+  MODEL_SELECTOR_VIEWPORT_TOP,
+} from './model-selector-layout'
 import {
   MODEL_SELECTOR_VIEW_CHANGED_EVENT,
   readModelSelectorPowerViewPreference,
@@ -48,16 +57,12 @@ import {
 } from './model-selector-utils'
 import styles from './ModelSelector.module.css'
 
-const MAIN_MENU_WIDTH = 256
-const SUBMENU_WIDTH = 288
-const SUBMENU_GAP = 0
-const VIEWPORT_MARGIN = 16
-const DESKTOP_MENU_VIEWPORT_TOP = 64
+const MAIN_MENU_WIDTH = 224
+const MODEL_SUBMENU_WIDTH = 280
+const CONTROL_SUBMENU_MIN_WIDTH = 180
+const SPEED_SUBMENU_WIDTH = 233
 const MAIN_MENU_TRIGGER_GAP = 8
 const MAIN_MENU_MAX_HEIGHT = 608
-const SUBMENU_RIGHT_OFFSET = MAIN_MENU_WIDTH + SUBMENU_GAP
-const SUBMENU_MAX_HEIGHT = 448
-const SUBMENU_VIEWPORT_VERTICAL_GAP = 128
 const DESKTOP_HIDDEN_CONTROL_IDS = new Set(['collaborationMode'])
 type DesktopSubmenuTarget = { type: 'models' } | { type: 'control'; id: string } | { type: 'none' }
 
@@ -70,8 +75,24 @@ function getDesktopViewportRightBoundary(): number {
   return window.innerWidth
 }
 
+function isDesktopSubmenuTargetActive(
+  current: DesktopSubmenuTarget | null,
+  target: DesktopSubmenuTarget
+): boolean {
+  if (current?.type !== target.type) return false
+  if (current.type === 'control' && target.type === 'control') {
+    return current.id === target.id
+  }
+  return true
+}
+
 function isCloudModel(model: UnifiedModel): boolean {
   return model.provider !== 'local'
+}
+
+function codexProviderId(model: UnifiedModel | null): string | undefined {
+  const providerId = model?.config?.codexProviderId
+  return typeof providerId === 'string' ? providerId : undefined
 }
 
 export function ModelSelector({
@@ -97,21 +118,15 @@ export function ModelSelector({
   const buttonRef = useRef<HTMLButtonElement>(null)
   const desktopMenuWrapperRef = useRef<HTMLDivElement>(null)
   const menuPanelRef = useRef<HTMLDivElement>(null)
-  const submenuPanelRef = useRef<HTMLDivElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null)
-  const modelButtonRef = useRef<HTMLButtonElement>(null)
-  const reasoningButtonRef = useRef<HTMLButtonElement>(null)
-  const speedButtonRef = useRef<HTMLButtonElement>(null)
   const handledOpenSignalRef = useRef<number | undefined>(undefined)
   const [open, setOpen] = useState(false)
+  const [closeReason, setCloseReason] = useState<ModelSelectorCloseReason>('dismiss')
   const [mobileQuery, setMobileQuery] = useState('')
   const [desktopMenuTop, setDesktopMenuTop] = useState(0)
   const [desktopMenuLeft, setDesktopMenuLeft] = useState(0)
   const [desktopMenuMaxHeight, setDesktopMenuMaxHeight] = useState(MAIN_MENU_MAX_HEIGHT)
-  const [submenuOffset, setSubmenuOffset] = useState(0)
-  const [submenuLeft, setSubmenuLeft] = useState(SUBMENU_RIGHT_OFFSET)
-  const [submenuWidth, setSubmenuWidth] = useState<number | undefined>()
   const [activeDesktopSubmenu, setActiveDesktopSubmenu] = useState<DesktopSubmenuTarget | null>(
     null
   )
@@ -119,12 +134,16 @@ export function ModelSelector({
   const [powerSliderInteracting, setPowerSliderInteracting] = useState(false)
   const modelSelectorShortcut = useConfiguredKeybinding(TOGGLE_MODEL_SELECTOR_COMMAND)
   const reportedOpenRef = useRef(open)
+  const desktopFlyoutOpen =
+    open && !isMobile && activeDesktopSubmenu !== null && activeDesktopSubmenu.type !== 'none'
+
+  useEmbeddedBrowserOcclusion('model-selector-flyout', desktopFlyoutOpen)
 
   useEffect(() => {
     if (reportedOpenRef.current === open) return
     reportedOpenRef.current = open
-    onOpenChange?.(open)
-  }, [onOpenChange, open])
+    onOpenChange?.(open, open ? undefined : closeReason)
+  }, [closeReason, onOpenChange, open])
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
   const selectedFamily = selectedModel
     ? inferModelFamily(selectedModel)
@@ -142,12 +161,24 @@ export function ModelSelector({
     buttonRef.current?.click()
   }, [disabled, open, openSignal])
 
-  const closeMenu = useCallback(() => {
-    setOpen(false)
-    setMobileQuery('')
-    setActiveDesktopSubmenu(null)
-    setPowerSliderInteracting(false)
-  }, [setActiveDesktopSubmenu, setMobileQuery, setOpen, setPowerSliderInteracting])
+  const closeMenu = useCallback(
+    (reason: ModelSelectorCloseReason = 'dismiss') => {
+      setCloseReason(reason)
+      setOpen(false)
+      setMobileQuery('')
+      setActiveDesktopSubmenu(null)
+      setPowerSliderInteracting(false)
+    },
+    [setActiveDesktopSubmenu, setCloseReason, setMobileQuery, setOpen, setPowerSliderInteracting]
+  )
+  const openModelSettings = useCallback(() => {
+    closeMenu()
+    navigateTo('/settings/personal/models')
+  }, [closeMenu])
+  const openCloudConnectionSettings = useCallback(() => {
+    closeMenu()
+    navigateTo('/settings/connections')
+  }, [closeMenu])
   const handleSelectModelOption = useCallback(
     (optionId: string, value: string) => {
       onSelectModelOption(optionId, value)
@@ -172,8 +203,8 @@ export function ModelSelector({
     const menuPanel = menuPanelRef.current
     if (!button || !menuPanel) return
 
-    const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
-    const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
+    const viewportTop = MODEL_SELECTOR_VIEWPORT_TOP
+    const viewportBottom = window.innerHeight - MODEL_SELECTOR_VIEWPORT_MARGIN
     const maxAvailableHeight = Math.max(0, viewportBottom - viewportTop)
     const measuredHeight = menuPanel.getBoundingClientRect().height
     const contentHeight = menuPanel.scrollHeight
@@ -188,105 +219,41 @@ export function ModelSelector({
     const clampedTop = Math.round(Math.max(viewportTop, Math.min(preferredTop, maxTop)))
     const menuWidth = menuPanel.getBoundingClientRect().width || MAIN_MENU_WIDTH
     const viewportRight = getDesktopViewportRightBoundary()
-    const maxLeft = viewportRight - VIEWPORT_MARGIN - menuWidth
+    const maxLeft = viewportRight - MODEL_SELECTOR_VIEWPORT_MARGIN - menuWidth
     const preferredLeft = buttonRect.right - menuWidth
-    const clampedLeft = Math.round(Math.max(VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft)))
+    const clampedLeft = Math.round(
+      Math.max(MODEL_SELECTOR_VIEWPORT_MARGIN, Math.min(preferredLeft, maxLeft))
+    )
 
     setDesktopMenuTop(clampedTop)
     setDesktopMenuLeft(clampedLeft)
     setDesktopMenuMaxHeight(menuHeight)
   }, [menuPlacement])
-  const updateSubmenuLayout = useCallback((target: HTMLElement | null) => {
-    if (!target || !menuPanelRef.current) {
-      setSubmenuOffset(0)
-      setSubmenuLeft(SUBMENU_RIGHT_OFFSET)
-      setSubmenuWidth(undefined)
-      return
-    }
-
-    const menuRect = menuPanelRef.current.getBoundingClientRect()
-    const menuTop = menuRect.top
-    const targetTop = target.getBoundingClientRect().top
-    const preferredOffset = Math.round(targetTop - menuTop)
-    const submenuRect = submenuPanelRef.current?.getBoundingClientRect()
-    const submenuScrollHeight = submenuPanelRef.current?.scrollHeight ?? 0
-    const maxSubmenuHeight = Math.min(
-      SUBMENU_MAX_HEIGHT,
-      Math.max(0, window.innerHeight - SUBMENU_VIEWPORT_VERTICAL_GAP)
-    )
-    const measuredSubmenuHeight = submenuRect?.height ?? 0
-    const submenuHeight = Math.min(
-      Math.max(measuredSubmenuHeight, submenuScrollHeight),
-      maxSubmenuHeight
-    )
-
-    if (submenuHeight > 0) {
-      const viewportTop = DESKTOP_MENU_VIEWPORT_TOP
-      const viewportBottom = window.innerHeight - VIEWPORT_MARGIN
-      const maxOffset = viewportBottom - submenuHeight - menuTop
-      const minOffset = viewportTop - menuTop
-      setSubmenuOffset(Math.round(Math.max(minOffset, Math.min(preferredOffset, maxOffset))))
-    } else {
-      setSubmenuOffset(preferredOffset)
-    }
-
-    const measuredMenuWidth = menuRect.width || MAIN_MENU_WIDTH
-    const measuredSubmenuWidth = submenuRect?.width || SUBMENU_WIDTH
-    const rightSideLeft = measuredMenuWidth + SUBMENU_GAP
-    const viewportWidth = getDesktopViewportRightBoundary()
-    const availableRight = viewportWidth - VIEWPORT_MARGIN - menuRect.left - rightSideLeft
-    const availableLeft = menuRect.left - VIEWPORT_MARGIN - SUBMENU_GAP
-    const rightSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableRight))
-    const leftSideWidth = Math.max(0, Math.min(measuredSubmenuWidth, availableLeft))
-
-    const rightSideEdge = menuRect.left + rightSideLeft + measuredSubmenuWidth
-    if (rightSideEdge <= viewportWidth - VIEWPORT_MARGIN) {
-      setSubmenuWidth(undefined)
-      setSubmenuLeft(rightSideLeft)
-      return
-    }
-
-    const leftSideLeft = -(measuredSubmenuWidth + SUBMENU_GAP)
-    if (menuRect.left + leftSideLeft >= VIEWPORT_MARGIN) {
-      setSubmenuWidth(undefined)
-      setSubmenuLeft(leftSideLeft)
-      return
-    }
-
-    if (leftSideWidth >= rightSideWidth) {
-      setSubmenuWidth(Math.round(leftSideWidth))
-      setSubmenuLeft(-Math.round(leftSideWidth + SUBMENU_GAP))
-      return
-    }
-
-    if (rightSideWidth > 0) {
-      setSubmenuWidth(Math.round(rightSideWidth))
-      setSubmenuLeft(rightSideLeft)
-      return
-    }
-
-    const viewportFittedLeft = Math.max(
-      VIEWPORT_MARGIN - menuRect.left,
-      Math.min(
-        rightSideLeft,
-        viewportWidth - VIEWPORT_MARGIN - measuredSubmenuWidth - menuRect.left
-      )
-    )
-    setSubmenuWidth(undefined)
-    setSubmenuLeft(Math.round(viewportFittedLeft))
-  }, [])
   const activateControl = useCallback(
     (controlId: string) => {
-      setActiveDesktopSubmenu({ type: 'control', id: controlId })
+      setActiveDesktopSubmenu(current =>
+        current?.type === 'control' && current.id === controlId
+          ? current
+          : { type: 'control', id: controlId }
+      )
     },
     [setActiveDesktopSubmenu]
   )
   const activateModels = useCallback(() => {
-    setActiveDesktopSubmenu({ type: 'models' })
+    setActiveDesktopSubmenu(current => (current?.type === 'models' ? current : { type: 'models' }))
   }, [setActiveDesktopSubmenu])
   const clearDesktopSubmenu = useCallback(() => {
-    setActiveDesktopSubmenu({ type: 'none' })
+    setActiveDesktopSubmenu(current => (current?.type === 'none' ? current : { type: 'none' }))
   }, [setActiveDesktopSubmenu])
+  const setDesktopSubmenuOpen = useCallback(
+    (target: DesktopSubmenuTarget, nextOpen: boolean) => {
+      setActiveDesktopSubmenu(current => {
+        if (nextOpen) return target
+        return isDesktopSubmenuTargetActive(current, target) ? { type: 'none' } : current
+      })
+    },
+    [setActiveDesktopSubmenu]
+  )
   const activateMobileFamily = useCallback(
     (familyId: string) => {
       setActiveFamilyId(current => (current === familyId ? current : familyId))
@@ -311,7 +278,8 @@ export function ModelSelector({
       if (!(target instanceof Node)) return
       if (
         containerRef.current?.contains(target) ||
-        desktopMenuWrapperRef.current?.contains(target)
+        desktopMenuWrapperRef.current?.contains(target) ||
+        (target instanceof Element && target.closest('[data-model-selector-layer="true"]'))
       ) {
         return
       }
@@ -322,23 +290,6 @@ export function ModelSelector({
     document.addEventListener('pointerdown', handlePointerDown)
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [closeMenu, isMobile, open])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    if (activeDesktopSubmenu?.type === 'models') {
-      updateSubmenuLayout(modelButtonRef.current)
-      return
-    }
-    if (activeDesktopSubmenu?.type === 'control') {
-      const buttonRef =
-        activeDesktopSubmenu.id === 'reasoning'
-          ? reasoningButtonRef.current
-          : speedButtonRef.current
-      updateSubmenuLayout(buttonRef)
-      return
-    }
-    updateSubmenuLayout(null)
-  }, [activeDesktopSubmenu, open, updateSubmenuLayout])
 
   useEffect(() => {
     if (!open || isMobile) return
@@ -418,11 +369,6 @@ export function ModelSelector({
       : null
   const advancedReasoningAvailable = advancedReasoningMode !== null
   const powerViewOpen = advancedOpen && advancedReasoningAvailable
-  const activeControl =
-    activeDesktopSubmenu?.type === 'control'
-      ? desktopControls.find(control => control.id === activeDesktopSubmenu.id)
-      : undefined
-
   useLayoutEffect(() => {
     if (!open || isMobile) return
 
@@ -527,6 +473,7 @@ export function ModelSelector({
   }
 
   function renderControlMenuItem(control: ModelControlConfig) {
+    const target: DesktopSubmenuTarget = { type: 'control', id: control.id }
     const active =
       activeDesktopSubmenu?.type === 'control' && activeDesktopSubmenu.id === control.id
     const selectedOption = selectedControlOption(control, selectedModelOptions)
@@ -537,40 +484,34 @@ export function ModelSelector({
       : control.defaultValue
 
     return (
-      <button
-        ref={control.id === 'reasoning' ? reasoningButtonRef : speedButtonRef}
+      <ModelSelectorFlyout
         key={control.id}
-        type="button"
-        data-testid={`model-control-menu-${control.id}`}
-        onMouseEnter={() => activateControl(control.id)}
-        onPointerEnter={() => activateControl(control.id)}
-        onFocus={() => activateControl(control.id)}
-        onClick={() => activateControl(control.id)}
-        className={[
-          'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
-          active
-            ? 'bg-muted text-text-primary'
-            : 'text-text-secondary hover:bg-muted hover:text-text-primary',
-        ].join(' ')}
+        open={active}
+        onOpenChange={nextOpen => setDesktopSubmenuOpen(target, nextOpen)}
+        collisionPadding={getDesktopModelSelectorCollisionPadding()}
+        contentStyle={{
+          width: control.id === 'speed' ? SPEED_SUBMENU_WIDTH : undefined,
+          minWidth: CONTROL_SUBMENU_MIN_WIDTH,
+        }}
+        anchor={
+          <ModelSelectorMenuRow
+            active={active}
+            label={control.labelKey ? t(control.labelKey, control.label) : control.label}
+            value={selectedLabel}
+            testId={`model-control-menu-${control.id}`}
+            onActivate={() => activateControl(control.id)}
+          />
+        }
       >
-        <span className="min-w-0 flex-1 truncate">
-          {control.labelKey ? t(control.labelKey, control.label) : control.label}
-        </span>
-        <span className="max-w-24 truncate text-text-muted">{selectedLabel}</span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-      </button>
+        {renderControlSection(control, {
+          clearSubmenuOnHover: false,
+          reasoningAsSlider: false,
+        })}
+      </ModelSelectorFlyout>
     )
   }
 
   function renderDesktopModelOptions(modelsToRender: UnifiedModel[], indented = false) {
-    if (modelsToRender.length === 0) {
-      return (
-        <div className="rounded-lg px-3 py-6 text-center text-sm text-text-muted">
-          {t('workbench.no_models', 'No models available')}
-        </div>
-      )
-    }
-
     return modelsToRender.map(model => {
       const selected = model.name === selectedModel?.name && model.type === selectedModel?.type
       const modelDisabled = Boolean(model.compatibilityDisabled)
@@ -582,6 +523,7 @@ export function ModelSelector({
           key={`${model.type}:${model.name}`}
           type="button"
           data-testid={`model-option-${model.name}`}
+          data-model-provider-id={codexProviderId(model)}
           aria-disabled={modelDisabled}
           title={disabledMessage}
           onClick={() => {
@@ -589,9 +531,8 @@ export function ModelSelector({
               onBlockedModelSelect?.(model, disabledMessage)
               return
             }
-            if (handleSelectModel(model) !== false) {
-              closeMenu()
-            }
+            handleSelectModel(model)
+            closeMenu('selection')
           }}
           className={[
             `flex h-8 w-full items-center gap-2 rounded-lg ${indented ? 'pl-5 pr-2' : 'px-2'} text-left text-sm leading-[18px]`,
@@ -623,6 +564,59 @@ export function ModelSelector({
         </button>
       )
     })
+  }
+
+  function renderEmptyModelActions(mobile = false) {
+    return (
+      <div
+        data-testid="model-selector-empty-state"
+        className={cn('space-y-3 px-3 py-4', mobile && 'rounded-2xl bg-surface px-4 py-5')}
+      >
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-text-primary">
+            {t('workbench.no_models', 'No models available')}
+          </p>
+          <p className="text-xs leading-5 text-text-muted">
+            {t(
+              'workbench.no_models_guidance',
+              'Add a custom model, or sign in to Wegent to sync cloud models.'
+            )}
+          </p>
+        </div>
+        <div className={cn('space-y-1', mobile && 'space-y-2')}>
+          <button
+            type="button"
+            data-testid="model-selector-add-custom-model"
+            onClick={openModelSettings}
+            className={cn(
+              'flex w-full items-center gap-2 text-left text-sm font-medium text-text-primary hover:bg-muted',
+              mobile
+                ? 'h-11 rounded-xl border border-border bg-background px-3'
+                : 'h-8 rounded-lg px-2'
+            )}
+          >
+            <Plus className="h-4 w-4 shrink-0 text-text-secondary" />
+            {t('workbench.no_models_add_custom', 'Add custom model')}
+          </button>
+          <button
+            type="button"
+            data-testid="model-selector-login-cloud"
+            onClick={openCloudConnectionSettings}
+            className={cn(
+              'flex w-full items-center gap-2 text-left text-sm font-medium',
+              mobile
+                ? 'h-11 rounded-xl bg-text-primary px-3 text-background'
+                : 'h-8 rounded-lg px-2 text-text-primary hover:bg-muted'
+            )}
+          >
+            <LogIn
+              className={cn('h-4 w-4 shrink-0', mobile ? 'text-background' : 'text-text-secondary')}
+            />
+            {t('workbench.no_models_login_cloud', 'Sign in and sync cloud models')}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   function renderMobileControlSection(control: ModelControlConfig) {
@@ -663,7 +657,7 @@ export function ModelSelector({
 
   function renderMobileSheet() {
     return createPortal(
-      <div className="fixed inset-0 z-modal bg-black/25" onClick={closeMenu}>
+      <div className="fixed inset-0 z-modal bg-black/25" onClick={() => closeMenu()}>
         <div
           ref={mobileMenuRef}
           role="dialog"
@@ -693,7 +687,7 @@ export function ModelSelector({
               ref={mobileCloseButtonRef}
               data-testid="model-selector-close-button"
               aria-label={t('workbench.close_menu')}
-              onClick={closeMenu}
+              onClick={() => closeMenu()}
               className="flex h-11 w-11 items-center justify-center rounded-full bg-surface text-text-primary"
             >
               <X className="h-5 w-5" />
@@ -770,6 +764,7 @@ export function ModelSelector({
                         key={`${model.type}:${model.name}`}
                         type="button"
                         data-testid={`model-option-${model.name}`}
+                        data-model-provider-id={codexProviderId(model)}
                         aria-disabled={modelDisabled}
                         title={disabledMessage}
                         onClick={() => {
@@ -818,9 +813,7 @@ export function ModelSelector({
                   })}
                 </div>
               ) : (
-                <div className="rounded-2xl bg-surface px-4 py-6 text-center text-sm text-text-muted">
-                  {t('workbench.no_models')}
-                </div>
+                renderEmptyModelActions(true)
               )}
             </section>
 
@@ -843,7 +836,7 @@ export function ModelSelector({
             <button
               type="button"
               data-testid="model-selector-confirm-button"
-              onClick={closeMenu}
+              onClick={() => closeMenu()}
               className="h-11 flex-1 rounded-full bg-text-primary text-sm font-semibold text-background"
             >
               {t('workbench.use_current_model')}
@@ -871,7 +864,9 @@ export function ModelSelector({
           <div
             ref={desktopMenuWrapperRef}
             style={{ left: desktopMenuLeft, top: desktopMenuTop }}
-            className={cn('fixed z-system-popover w-64', menuClassName)}
+            data-model-selector-layer="true"
+            data-embedded-browser-occlusion
+            className={cn('fixed z-system-popover w-[224px]', menuClassName)}
           >
             <div
               ref={menuPanelRef}
@@ -879,34 +874,43 @@ export function ModelSelector({
               data-enter-animation="main"
               style={{ maxHeight: desktopMenuMaxHeight }}
               className={cn(
-                'w-64 shrink-0 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
+                'w-[224px] shrink-0 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
                 styles.mainMenu
               )}
             >
-              {!powerViewOpen ? (
+              {desktopModels.length === 0 && renderEmptyModelActions()}
+              {desktopModels.length > 0 && !powerViewOpen ? (
                 <>
                   <div className="space-y-0.5">
-                    <button
-                      ref={modelButtonRef}
-                      type="button"
-                      data-testid="model-control-menu-model"
-                      onMouseEnter={activateModels}
-                      onPointerEnter={activateModels}
-                      onFocus={activateModels}
-                      onClick={activateModels}
-                      className={cn(
-                        'flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm font-normal leading-[18px]',
-                        modelRowActive
-                          ? 'bg-muted text-text-primary'
-                          : 'text-text-secondary hover:bg-muted hover:text-text-primary'
-                      )}
+                    <ModelSelectorFlyout
+                      open={modelRowActive}
+                      onOpenChange={nextOpen => setDesktopSubmenuOpen({ type: 'models' }, nextOpen)}
+                      collisionPadding={getDesktopModelSelectorCollisionPadding()}
+                      contentClassName="min-h-48"
+                      contentStyle={{ width: MODEL_SUBMENU_WIDTH }}
+                      anchor={
+                        <ModelSelectorMenuRow
+                          active={modelRowActive}
+                          label={t('workbench.model_version', '模型')}
+                          value={desktopModelLabel}
+                          testId="model-control-menu-model"
+                          onActivate={activateModels}
+                        />
+                      }
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {t('workbench.model_version', '模型')}
-                      </span>
-                      <span className="max-w-24 truncate text-text-muted">{desktopModelLabel}</span>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-                    </button>
+                      <div className="space-y-0.5 py-0.5">
+                        {familyGroups.length <= 1
+                          ? renderDesktopModelOptions(desktopModels)
+                          : familyGroups.map(group => (
+                              <div key={group.config.id}>
+                                <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
+                                  {group.config.label}
+                                </div>
+                                {renderDesktopModelOptions(group.models, true)}
+                              </div>
+                            ))}
+                      </div>
+                    </ModelSelectorFlyout>
                     {desktopReasoningControl ? (
                       renderControlMenuItem(desktopReasoningControl)
                     ) : (
@@ -941,46 +945,47 @@ export function ModelSelector({
                   <div className="mx-2 my-1 border-t border-border" />
                 </>
               ) : null}
-              {advancedReasoningAvailable ? (
-                <ModelAdvancedHeader
-                  disabled={!reasoningControl}
-                  interacting={powerSliderInteracting}
-                  powerViewOpen={powerViewOpen}
-                  fastModeEnabled={fastModeState.enabled}
-                  showFastModeToggle={fastModeState.available}
-                  onClearSubmenu={clearDesktopSubmenu}
-                  onToggle={() => {
-                    const nextValue = !advancedOpen
-                    setAdvancedOpen(nextValue)
-                    writeModelSelectorPowerViewPreference(nextValue)
-                    setActiveDesktopSubmenu({ type: 'none' })
-                  }}
-                  onToggleFastMode={() => {
-                    handleSelectModelOption('speed', fastModeState.nextValue)
-                  }}
-                />
-              ) : (
-                <ModelResetDefaultRow
-                  disabled={!defaultModel}
-                  onClearSubmenu={clearDesktopSubmenu}
-                  onReset={() => {
-                    if (!defaultModel) return
-                    const defaultOptions = {
-                      reasoning: CODEX_DEFAULT_REASONING_EFFORT,
-                      speed: CODEX_DEFAULT_SPEED,
-                    }
-                    if (onSelectModelAndOptions) {
-                      onSelectModelAndOptions(defaultModel, defaultOptions)
-                    } else {
-                      handleSelectModel(defaultModel)
-                      handleSelectModelOption('reasoning', CODEX_DEFAULT_REASONING_EFFORT)
-                      handleSelectModelOption('speed', CODEX_DEFAULT_SPEED)
-                    }
-                    clearDesktopSubmenu()
-                  }}
-                />
-              )}
-              {powerViewOpen && desktopReasoningControl ? (
+              {desktopModels.length > 0 &&
+                (advancedReasoningAvailable ? (
+                  <ModelAdvancedHeader
+                    disabled={!reasoningControl}
+                    interacting={powerSliderInteracting}
+                    powerViewOpen={powerViewOpen}
+                    fastModeEnabled={fastModeState.enabled}
+                    showFastModeToggle={fastModeState.available}
+                    onClearSubmenu={clearDesktopSubmenu}
+                    onToggle={() => {
+                      const nextValue = !advancedOpen
+                      setAdvancedOpen(nextValue)
+                      writeModelSelectorPowerViewPreference(nextValue)
+                      setActiveDesktopSubmenu({ type: 'none' })
+                    }}
+                    onToggleFastMode={() => {
+                      handleSelectModelOption('speed', fastModeState.nextValue)
+                    }}
+                  />
+                ) : (
+                  <ModelResetDefaultRow
+                    disabled={!defaultModel}
+                    onClearSubmenu={clearDesktopSubmenu}
+                    onReset={() => {
+                      if (!defaultModel) return
+                      const defaultOptions = {
+                        reasoning: CODEX_DEFAULT_REASONING_EFFORT,
+                        speed: CODEX_DEFAULT_SPEED,
+                      }
+                      if (onSelectModelAndOptions) {
+                        onSelectModelAndOptions(defaultModel, defaultOptions)
+                      } else {
+                        handleSelectModel(defaultModel)
+                        handleSelectModelOption('reasoning', CODEX_DEFAULT_REASONING_EFFORT)
+                        handleSelectModelOption('speed', CODEX_DEFAULT_SPEED)
+                      }
+                      clearDesktopSubmenu()
+                    }}
+                  />
+                ))}
+              {desktopModels.length > 0 && powerViewOpen && desktopReasoningControl ? (
                 <div
                   data-testid="model-advanced-panel"
                   data-enter-animation="advanced"
@@ -1009,50 +1014,6 @@ export function ModelSelector({
                 </div>
               ) : null}
             </div>
-
-            {activeControl ? (
-              <div
-                key={`control:${activeControl.id}`}
-                ref={submenuPanelRef}
-                data-testid="model-selector-submenu"
-                data-enter-animation="submenu"
-                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-                className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
-                  styles.submenu
-                )}
-              >
-                {renderControlSection(activeControl, {
-                  clearSubmenuOnHover: false,
-                  reasoningAsSlider: false,
-                })}
-              </div>
-            ) : activeDesktopSubmenu?.type === 'models' ? (
-              <div
-                key="models"
-                ref={submenuPanelRef}
-                data-testid="model-selector-submenu"
-                data-enter-animation="submenu"
-                style={{ top: submenuOffset, left: submenuLeft, width: submenuWidth }}
-                className={cn(
-                  'absolute max-h-[min(28rem,calc(100vh-8rem))] min-h-48 w-72 overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl',
-                  styles.submenu
-                )}
-              >
-                <div className="space-y-0.5 py-0.5">
-                  {familyGroups.length <= 1
-                    ? renderDesktopModelOptions(desktopModels)
-                    : familyGroups.map(group => (
-                        <div key={group.config.id}>
-                          <div className="px-2 pb-0.5 pt-2 text-xs font-medium leading-4 text-text-muted first:pt-0.5">
-                            {group.config.label}
-                          </div>
-                          {renderDesktopModelOptions(group.models, true)}
-                        </div>
-                      ))}
-                </div>
-              </div>
-            ) : null}
           </div>,
           document.body
         )}
@@ -1078,6 +1039,7 @@ export function ModelSelector({
             : t('workbench.model_selector')
         }
         tooltipLabel={t('workbench.model_picker_title', '选择模型')}
+        modelProviderId={codexProviderId(selectedModel)}
         buttonClassName={buttonClassName}
         maxClosedWidth={maxClosedWidth}
         onToggle={() => {
@@ -1085,8 +1047,11 @@ export function ModelSelector({
           setOpen(current => {
             const nextOpen = !current
             if (nextOpen) {
+              setCloseReason('dismiss')
               setActiveDesktopSubmenu({ type: 'none' })
               setPowerSliderInteracting(false)
+            } else {
+              setCloseReason('dismiss')
             }
             return nextOpen
           })

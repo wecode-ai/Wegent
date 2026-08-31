@@ -6,9 +6,7 @@
 
 import hashlib
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -16,18 +14,14 @@ from app.models.api_key import KEY_TYPE_SERVICE, APIKey
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem
 from app.models.user import User
-from app.services.project_automations import project_automation_processor
 
 
 def test_personal_api_key_creates_board_and_task(
     test_client: TestClient,
     test_db: Session,
     test_api_key: tuple[str, APIKey],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     raw_key, api_key = test_api_key
-    process = AsyncMock(return_value=0)
-    monkeypatch.setattr(project_automation_processor, "process", process)
 
     board_response = test_client.post(
         "/api/v1/cloud-projects",
@@ -65,12 +59,6 @@ def test_personal_api_key_creates_board_and_task(
     assert task["tags"] == ["api"]
     assert test_db.get(CloudProject, board["id"]) is not None
     assert test_db.get(LoopItem, task["id"]) is not None
-    process.assert_awaited_once()
-    event = process.await_args.args[1]
-    assert event.event_type == "task.created"
-    assert event.project_id == str(board["id"])
-    assert event.subject_id == task["id"]
-    assert event.actor_user_id == api_key.user_id
 
 
 def test_api_key_task_creation_uses_board_status_validation(

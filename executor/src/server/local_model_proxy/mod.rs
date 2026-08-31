@@ -115,6 +115,21 @@ pub(crate) struct LocalModelProxyUpstream {
 
 pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let upstream_endpoint = upstream
+        .request_url
+        .as_deref()
+        .unwrap_or(upstream.base_url.as_str());
+    let registration_fields = [
+        ("route_scope", route_scope.to_owned()),
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(upstream_endpoint)),
+        ("model_id", upstream.model_id.clone().unwrap_or_default()),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
+    ];
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -147,7 +162,12 @@ pub(crate) fn register_harness(route_scope: &str, mut upstream: LocalModelProxyU
         "harness model proxy registered",
         &[
             ("active_registrations", registry.routes.len().to_string()),
-            ("route_scope", route_scope.to_owned()),
+            registration_fields[0].clone(),
+            registration_fields[1].clone(),
+            registration_fields[2].clone(),
+            registration_fields[3].clone(),
+            registration_fields[4].clone(),
+            registration_fields[5].clone(),
         ],
     );
     token
@@ -299,6 +319,25 @@ pub(crate) fn register_with_vision_sidecar(
     vision_sidecar: Option<VisionSidecarUpstream>,
 ) -> String {
     upstream.api_format = canonical_upstream_api_format(&upstream.api_format);
+    let upstream_endpoint = upstream
+        .request_url
+        .as_deref()
+        .unwrap_or(upstream.base_url.as_str());
+    let registration_fields = [
+        ("route_scope", route_scope.to_owned()),
+        ("api_format", upstream.api_format.clone()),
+        ("upstream", safe_url(upstream_endpoint)),
+        ("model_id", upstream.model_id.clone().unwrap_or_default()),
+        (
+            "routing_model_id",
+            upstream.routing_model_id.clone().unwrap_or_default(),
+        ),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
+    ];
     let mut registry = registry()
         .lock()
         .expect("local model proxy registry should not be poisoned");
@@ -354,7 +393,13 @@ pub(crate) fn register_with_vision_sidecar(
         &[
             ("active_registrations", registry.routes.len().to_string()),
             ("active_references", active_references.to_string()),
-            ("route_scope", route_scope.to_owned()),
+            registration_fields[0].clone(),
+            registration_fields[1].clone(),
+            registration_fields[2].clone(),
+            registration_fields[3].clone(),
+            registration_fields[4].clone(),
+            registration_fields[5].clone(),
+            registration_fields[6].clone(),
         ],
     );
     token
@@ -707,6 +752,11 @@ async fn handle_for_token(
     let mut request_log_fields = vec![
         ("api_format", upstream.api_format.clone()),
         ("upstream", safe_url(&request_url)),
+        ("auth_present", (!upstream.api_key.is_empty()).to_string()),
+        (
+            "default_headers",
+            upstream.default_headers.len().to_string(),
+        ),
         ("body_bytes", request_body.len().to_string()),
         (
             "convert_custom_tools",
@@ -790,9 +840,8 @@ async fn handle_for_token(
         }
         return Ok(response);
     }
-    if !content_type
-        .as_deref()
-        .is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+    if upstream.api_format != "openai-responses"
+        && !is_event_stream_content_type(content_type.as_deref())
     {
         let response_body = upstream_response.bytes().await.map_err(|error| HttpError {
             status: StatusCode::BAD_GATEWAY,
@@ -1732,6 +1781,10 @@ fn detect_upstream_error_code(response_body: &[u8]) -> Option<String> {
     .into_iter()
     .find(|code| text.contains(code))
     .map(str::to_owned)
+}
+
+fn is_event_stream_content_type(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| value.to_ascii_lowercase().contains("text/event-stream"))
 }
 
 fn rate_limit_retry_delay(headers: &reqwest::header::HeaderMap, retry_count: u32) -> Duration {
@@ -4977,7 +5030,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wraps_native_responses_non_sse_response() {
+    async fn streams_native_responses_without_interpreting_content_type() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("upstream listener");
@@ -4988,22 +5041,15 @@ mod tests {
                 Router::new().route(
                     "/responses",
                     post(|| async {
-                        Json(json!({
-                            "id": "resp_non_sse",
-                            "object": "response",
-                            "status": "completed",
-                            "output": [{
-                                "type": "message",
-                                "role": "assistant",
-                                "content": [{"type": "output_text", "text": "hi"}]
-                            }],
-                            "usage": {
-                                "input_tokens": 1,
-                                "output_tokens": 1,
-                                "input_tokens_details": {},
-                                "output_tokens_details": {}
-                            }
-                        }))
+                        (
+                            [(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))],
+                            concat!(
+                                "event: response.created\n",
+                                "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+                                "event: response.completed\n",
+                                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_mislabeled\",\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}]}}\n\n"
+                            ),
+                        )
                     }),
                 ),
             )
@@ -5011,7 +5057,7 @@ mod tests {
             .expect("upstream server");
         });
         let token = register(
-            "native-non-sse-test",
+            "native-mislabeled-sse-test",
             LocalModelProxyUpstream {
                 base_url: format!("http://{address}"),
                 request_url: Some(format!("http://{address}/responses")),
@@ -5038,19 +5084,18 @@ mod tests {
             Bytes::from_static(br#"{"model":"m","input":"hi","stream":true}"#),
         )
         .await
-        .expect("native non-SSE JSON should be wrapped");
+        .expect("native Responses stream should pass through");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE),
-            Some(&HeaderValue::from_static("text/event-stream"))
+            Some(&HeaderValue::from_static("application/json"))
         );
         let body = to_bytes(response.into_body(), usize::MAX)
             .await
-            .expect("wrapped response body");
+            .expect("normalized response body");
         let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("event: response.completed"));
-        assert!(body.contains("resp_non_sse"));
-        assert!(body.contains("input_tokens_details"), "{body}");
+        assert!(body.contains("event: response.completed"), "{body}");
+        assert!(body.contains("resp_mislabeled"), "{body}");
 
         unregister(&token);
         server.abort();

@@ -707,6 +707,7 @@ async def test_local_task_im_source_forwards_stream_event_to_channel_callbacks(
 async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     namespace = device_namespace.DeviceNamespace()
     notifications = []
+    runtime_syncs = []
 
     async def fake_get_session(sid):
         return {"user_id": 7, "device_id": "device-1"}
@@ -724,7 +725,7 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     monkeypatch.setattr(
         device_namespace,
         "_project_chat_runtime_event_sync",
-        lambda *args, **kwargs: None,
+        lambda *args, **kwargs: runtime_syncs.append((args, kwargs)),
     )
 
     result = await namespace.on_runtime_task_updated(
@@ -749,6 +750,30 @@ async def test_runtime_task_updated_event_notifies_im_dispatcher(monkeypatch):
     assert notifications[0]["title"] == "Native Codex task"
     assert notifications[0]["status"] == "done"
     assert notifications[0]["content"] == "Implemented from native Codex"
+    assert runtime_syncs == [
+        (
+            (
+                "device-1",
+                {
+                    "event": "runtime.task.completed",
+                    "payload": {
+                        "taskId": "codex-thread-1",
+                        "localTaskId": "codex-thread-1",
+                        "deviceId": "device-1",
+                        "device_id": "device-1",
+                        "status": "done",
+                        "data": {
+                            "status": "done",
+                            "value": "Implemented from native Codex",
+                        },
+                    },
+                },
+                7,
+                True,
+            ),
+            {},
+        )
+    ]
 
 
 @pytest.mark.asyncio

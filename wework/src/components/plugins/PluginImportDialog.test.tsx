@@ -1,12 +1,15 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { open, save } from '@tauri-apps/plugin-dialog'
 import type { LocalCodexPluginApi, LocalPluginImportPreview } from '@/api/local/codexPlugins'
 import '@/i18n'
 import { PluginImportDialog } from './PluginImportDialog'
 
-vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(), save: vi.fn() }))
+const desktopHostMock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/api/dsh/desktopHost', () => ({
+  invokeDesktopHost: desktopHostMock,
+}))
 
 const validPreview: LocalPluginImportPreview = {
   valid: true,
@@ -27,7 +30,11 @@ const validPreview: LocalPluginImportPreview = {
 function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPluginApi {
   return {
     previewPluginImport: vi.fn().mockResolvedValue(validPreview),
-    importPluginPackage: vi.fn().mockResolvedValue({}),
+    importPluginPackage: vi.fn().mockResolvedValue({
+      pluginName: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+    }),
     savePluginExample: vi.fn().mockResolvedValue('/tmp/wework-plugin-example.zip'),
     ...overrides,
   } as LocalCodexPluginApi
@@ -35,12 +42,14 @@ function pluginApi(overrides: Partial<LocalCodexPluginApi> = {}): LocalCodexPlug
 
 describe('PluginImportDialog', () => {
   beforeEach(() => {
-    vi.mocked(open).mockReset()
-    vi.mocked(save).mockReset()
+    desktopHostMock.mockReset()
   })
 
   test('explains how to fix a ZIP with an extra wrapper directory', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/wrapped.zip')
+    desktopHostMock.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/wrapped.zip'],
+    })
     const api = pluginApi({
       previewPluginImport: vi.fn().mockResolvedValue({
         ...validPreview,
@@ -65,7 +74,10 @@ describe('PluginImportDialog', () => {
   })
 
   test('shows localized guidance for password-protected ZIP files', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/encrypted.zip')
+    desktopHostMock.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/encrypted.zip'],
+    })
     const api = pluginApi({
       previewPluginImport: vi.fn().mockResolvedValue({
         ...validPreview,
@@ -90,8 +102,16 @@ describe('PluginImportDialog', () => {
   })
 
   test('requires trust confirmation before importing executable plugin capabilities', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/example-plugin.zip')
-    const importPluginPackage = vi.fn().mockResolvedValue({})
+    desktopHostMock.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/example-plugin.zip'],
+    })
+    const imported = {
+      pluginName: 'example-plugin',
+      displayName: 'Example Plugin',
+      version: '1.0.0',
+    }
+    const importPluginPackage = vi.fn().mockResolvedValue(imported)
     const onImported = vi.fn()
     const api = pluginApi({ importPluginPackage })
     render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={onImported} />)
@@ -104,11 +124,14 @@ describe('PluginImportDialog', () => {
     await userEvent.click(confirm)
 
     await waitFor(() => expect(importPluginPackage).toHaveBeenCalledWith(validPreview, false))
-    expect(onImported).toHaveBeenCalledOnce()
+    expect(onImported).toHaveBeenCalledWith(imported)
   })
 
   test('does not expose raw installation errors in the localized dialog', async () => {
-    vi.mocked(open).mockResolvedValue('/tmp/example-plugin.zip')
+    desktopHostMock.mockResolvedValue({
+      canceled: false,
+      filePaths: ['/tmp/example-plugin.zip'],
+    })
     const api = pluginApi({
       previewPluginImport: vi.fn().mockResolvedValue({
         ...validPreview,
@@ -128,7 +151,10 @@ describe('PluginImportDialog', () => {
   })
 
   test('saves the bundled example package to the selected path', async () => {
-    vi.mocked(save).mockResolvedValue('/tmp/example.zip')
+    desktopHostMock.mockResolvedValue({
+      canceled: false,
+      filePath: '/tmp/example.zip',
+    })
     const savePluginExample = vi.fn().mockResolvedValue('/tmp/example.zip')
     const api = pluginApi({ savePluginExample })
     render(<PluginImportDialog pluginApi={api} onCancel={vi.fn()} onImported={vi.fn()} />)

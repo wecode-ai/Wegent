@@ -97,14 +97,14 @@ test.describe('Settings - Model Management', () => {
         spec: {
           modelConfig: {
             env: {
-              model: 'openai',
+              model: 'claude',
               model_id: 'vision-model',
               api_key: 'test-api-key-for-e2e',
-              base_url: 'https://vision.example/v1',
+              base_url: 'https://vision.example',
             },
           },
-          protocol: 'openai-responses',
-          apiFormat: 'responses',
+          // Deliberately no spec.protocol: most Model CRDs only declare env.model, so
+          // the sidecar picker has to derive the protocol from the bare runtime family.
           modelType: 'llm',
           isWeworkAvailable: true,
           modelCapabilities: {
@@ -145,7 +145,7 @@ test.describe('Settings - Model Management', () => {
           modelType: 'user',
           namespace: 'default',
           resourceUserId: expect.any(Number),
-          apiFormat: 'openai-responses',
+          apiFormat: 'anthropic-messages',
         })
     } finally {
       for (const modelName of [primaryModelName, visionModelName]) {

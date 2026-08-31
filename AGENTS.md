@@ -4,11 +4,12 @@ Wegent is an AI-native operating system for defining, organizing, and running ag
 
 ## Repository map
 
+<!-- prettier-ignore -->
 | Area | Technology | Responsibility |
 | --- | --- | --- |
 | `backend/` | FastAPI, SQLAlchemy, MySQL | REST API and business logic |
 | `frontend/` | Next.js, React, TypeScript | Main web product |
-| `wework/` | Tauri, Vite, React, TypeScript | Desktop workbench and local coding experience |
+| `wework/` | Electron, Vite, React, TypeScript | Desktop workbench and local coding experience |
 | `executor/`, `executor_manager/` | Python, Docker | Agent execution and orchestration |
 | `chat_shell/` | FastAPI, LangGraph | Lightweight chat runtime |
 | `knowledge_runtime/`, `knowledge_doc_converter/` | FastAPI, Celery | RAG and document conversion |
@@ -18,7 +19,7 @@ Use `docs/en/` and `docs/zh/` for detailed architecture and guides. Keep this fi
 
 ## Scoped instructions
 
-- Before modifying `wework/**`, read and follow [`wework/AGENTS.md`](wework/AGENTS.md). It contains the desktop UI, local runtime, i18n, and Tauri verification rules.
+- Before modifying `wework/**`, read and follow [`wework/AGENTS.md`](wework/AGENTS.md). It contains the desktop UI, local runtime, i18n, and Electron verification rules.
 - Before modifying `frontend/**`, read and follow [`frontend/AGENTS.md`](frontend/AGENTS.md). It contains web-frontend state, responsive UI, and i18n rules.
 - Add module-specific instructions beside a module only when they cannot be expressed as a repository-wide rule.
 
@@ -40,8 +41,6 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 ## Engineering rules
 
 - Diagnose problems from logs, actual code, and other concrete evidence first. When evidence is insufficient, add focused diagnostic logging before changing behavior; do not guess.
-- Architecture-governed logic is cataloged in `docs/zh/architecture/README.md`; keep `docs/en/architecture/README.md` synchronized. Before changing a cataloged flow, update its connection graph, sequence diagram, code-ownership table, and essential invariants first, then trace every affected edge against the code before implementation. If a new flow needs this protection, add one topic file and one catalog row instead of expanding an unrelated architecture document.
-- Architecture topic files are diagram-first and concise: one independently maintainable file per flow, with only scope, connection graphs, sequence diagrams, code ownership, and essential invariants. Put background, API reference, migration history, test instructions, and product prose in their existing guides and link to them; do not accumulate all architecture diagrams in one file.
 - Comments are English. Use clear names, type hints for Python, and keep functions focused (prefer under 50 lines).
 - Before adding code, search for and reuse existing components, services, utilities, and patterns. Extract shared logic instead of duplicating it.
 - Favor cohesive modules, explicit interfaces, and standard practices. Split files over 1000 lines.
@@ -59,6 +58,7 @@ Code uses CRD terms. In Chinese UI, `Team` is “智能体” and `Bot` is “�
 - Use strict TypeScript, function components, `const`, single quotes, and no semicolons.
 - Check existing UI in `src/components/ui/`, `src/components/common/`, and feature components before creating new components.
 - Preserve existing `data-testid` values; if one changes, update its E2E coverage in the same change. All new interactive elements need descriptive `data-testid` values.
+- Run a package-owned binary through that package, for example `pnpm --filter wework exec prettier`; do not use root-level `pnpm exec` for tools declared only in a workspace package.
 
 ## Testing and verification
 

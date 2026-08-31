@@ -216,22 +216,53 @@ describe('plugin trial state', () => {
   })
 
   test('queues a prompted plugin reference in a fresh chat', () => {
+    const targetProject = {
+      id: 42,
+      name: '空白工作台',
+      tasks: [],
+    }
     expect(
       queuePluginReferenceTrial({
         pluginName: 'smart-app-builder',
         marketplaceName: 'wework-personal',
-        displayName: '智能应用开发助手',
-        prompt: '帮我创建一个智能应用',
+        displayName: '智能工作台开发助手',
+        prompt: '帮我创建一个智能工作台',
         openInNewChat: true,
+        targetProject,
       })
     ).toBe(true)
 
     expect(consumePluginTrial()).toEqual(
       expect.objectContaining({
         input:
-          '[$智能应用开发助手](plugin://smart-app-builder@wework-personal) 帮我创建一个智能应用',
-        pluginName: '智能应用开发助手',
+          '[$智能工作台开发助手](plugin://smart-app-builder@wework-personal) 帮我创建一个智能工作台',
+        pluginName: '智能工作台开发助手',
         openInNewChat: true,
+        targetProject,
+      })
+    )
+  })
+
+  test('queues a prompted plugin reference for a local workspace', () => {
+    expect(
+      queuePluginReferenceTrial({
+        pluginName: 'smart-app-builder',
+        marketplaceName: 'wework-personal',
+        displayName: '智能工作台开发助手',
+        openInNewChat: true,
+        targetWorkspace: {
+          deviceId: ' local-device-1 ',
+          path: ' /tmp/blank-workbench ',
+        },
+      })
+    ).toBe(true)
+
+    expect(consumePluginTrial()).toEqual(
+      expect.objectContaining({
+        targetWorkspace: {
+          deviceId: 'local-device-1',
+          path: '/tmp/blank-workbench',
+        },
       })
     )
   })

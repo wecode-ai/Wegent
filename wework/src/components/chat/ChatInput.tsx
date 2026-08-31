@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react'
 import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { TFunction } from 'i18next'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -55,7 +56,9 @@ import {
 import type { PluginTrialRefinementRequest } from '@/features/plugins/usePluginTrialPromptRefinement'
 import type { ComposerTextareaHandle } from './composer/ComposerTextarea'
 import { ComposerPluginIcon } from './composer/ComposerPluginIcon'
+import type { ModelSelectorCloseReason } from './composer/model-selector-types'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
+import type { QuickPhrase } from '@/desktop/appPreferences'
 
 export type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 
@@ -85,7 +88,7 @@ export interface ProjectChatControls {
   contextUsage?: RuntimeContextUsage
   isOptionsLocked: boolean
   modelSelectorOpenSignal?: number
-  onModelSelectorOpenChange?: (open: boolean) => void
+  onModelSelectorOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   setSelectedModel: (model: UnifiedModel | null) => void
   setSelectedModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   setSelectedModelOption: (optionId: string, value: string) => void
@@ -126,6 +129,8 @@ export interface ProjectWorkControls {
   onListBranches?: () => Promise<string[]>
   onCheckoutBranch?: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   worktreeBranch?: string | null
   onWorktreeBranchChange?: (branchName: string | null) => void
   // When false, the project trigger renders a static folder icon instead of the
@@ -152,8 +157,11 @@ export interface ChatInputProps {
   disabledReason?: string
   placeholder?: string
   inputTestId?: string
+  nativeEmptyCaret?: boolean
   submitButtonTestId?: string
   variant?: 'compact' | 'desktop'
+  collapseWhenIdle?: boolean
+  projectPhrases?: QuickPhrase[]
   projectChat?: ProjectChatControls
   projectWork?: ProjectWorkControls
   showProjectWorkBar?: boolean
@@ -560,8 +568,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder,
     inputTestId,
+    nativeEmptyCaret = false,
     submitButtonTestId,
     variant = 'compact',
+    collapseWhenIdle = false,
+    projectPhrases,
     projectChat,
     projectWork,
     showProjectWorkBar = true,
@@ -682,9 +693,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     item => runtimeProjectUiId(item.project) === projectWork.currentProject?.id
   )?.project
   const projectQuickPhrases =
-    currentRuntimeProject?.source === 'local_project'
+    projectPhrases ??
+    (currentRuntimeProject?.source === 'local_project'
       ? (currentRuntimeProject.aiSettings?.quickPhrases ?? [])
-      : []
+      : [])
   const applyTrialTemplate = (template: PluginPathComponent) => {
     const applyTemplate = controls.onApplyTrialTemplate ?? controls.applyTrialTemplate
     if (!applyTemplate) return
@@ -756,6 +768,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     setPendingModelSelection(null)
     applyModelSelection(model, options)
   }
+  const cancelModelSelection = () => {
+    setPendingModelSelection(null)
+    controls.onModelSelectorOpenChange?.(false, 'dismiss')
+  }
 
   const handleSubmit = (valueOverride?: string, options?: ChatSubmitOptions) => {
     const submittedValue = (valueOverride ?? value).trim()
@@ -800,6 +816,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
     disabledReason,
     placeholder: disabledReason ? '' : inputPlaceholder,
     inputTestId,
+    nativeEmptyCaret,
     submitButtonTestId,
     onOpenSkillFile,
     workspaceTarget,
@@ -851,7 +868,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
         pendingModelSelection.model?.name ||
         t('workbench.model_auto_select', 'Auto select')
       }
-      onCancel={() => setPendingModelSelection(null)}
+      onCancel={cancelModelSelection}
       onConfirm={confirmModelSelection}
     />
   ) : null
@@ -976,6 +993,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function Ch
           isStreaming={isStreaming}
           onPause={onPause}
           showWorkspaceMenu={showWorkspaceMenu}
+          collapseWhenIdle={collapseWhenIdle}
           inputLeadingContext={inputLeadingContext}
           onDismissInputLeadingContext={onDismissInputLeadingContext}
           toolbarLeadingContext={toolbarLeadingContext}
@@ -1097,7 +1115,7 @@ function QueueResumeDialog({
   onPreserve: () => void
   onClear: () => void
 }) {
-  return (
+  return createPortal(
     <div
       data-testid="paused-queue-send-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
@@ -1151,7 +1169,8 @@ function QueueResumeDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -1166,7 +1185,7 @@ function ModelSwitchWarningDialog({
   onCancel: () => void
   onConfirm: () => void
 }) {
-  return (
+  return createPortal(
     <div
       data-testid="model-switch-warning-dialog-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
@@ -1220,6 +1239,7 @@ function ModelSwitchWarningDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch } from 'react'
 import type { ExecutorClient } from '@/api/executorAccess'
+import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
-import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
+import { buildRuntimeTaskRoute, navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import type {
   RuntimeTaskSummary,
@@ -24,13 +25,12 @@ import type {
 import {
   createRuntimeTaskStreamHandlers,
   runtimeAddressDebug,
-  runtimeMessagesToWorkbenchMessages,
-  runtimeTranscriptTurnsToConversationTurns,
   runtimeTranscriptDebug,
   type RuntimeTaskStreamHandlers,
 } from './runtimePaneMessages'
 import type { WorkbenchAction } from './workbenchReducer'
 import {
+  findRuntimeTask,
   getRuntimeTaskRouteKey,
   getRuntimeTaskWorkspacePath,
   isSameRuntimeTaskAddress,
@@ -47,6 +47,7 @@ import type {
 } from './workbenchContextTypes'
 import { evictRuntimeConversation } from './runtimeConversationCache'
 import type { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import { projectRuntimePaneTranscript } from './runtimeTaskLifecycle/projection'
 
 interface UseWorkbenchRuntimeTasksOptions {
   user: User
@@ -57,6 +58,7 @@ interface UseWorkbenchRuntimeTasksOptions {
   lifecycleStore: RuntimeTaskLifecycleStore
   markRuntimeTasksArchived: (addresses: RuntimeTaskAddress[]) => void
   refreshWorkLists: RefreshWorkLists
+  canNavigate?: () => boolean
 }
 
 const runtimeTranscriptRequests = new Map<string, Promise<RuntimePaneTranscript>>()
@@ -70,6 +72,7 @@ export function useWorkbenchRuntimeTasks({
   lifecycleStore,
   markRuntimeTasksArchived,
   refreshWorkLists,
+  canNavigate = () => true,
 }: UseWorkbenchRuntimeTasksOptions) {
   const { t } = useTranslation('common')
   const openedRuntimeTaskKeysRef = useRef<Set<string>>(new Set())
@@ -100,11 +103,11 @@ export function useWorkbenchRuntimeTasks({
         reopeningCurrentTask,
         navigate: options?.navigate === true,
       })
-      if (options?.navigate) {
+      if (options?.navigate && canNavigate()) {
         navigateTo(buildRuntimeTaskRoute(address))
       }
     },
-    [dispatch]
+    [canNavigate, dispatch]
   )
 
   const isCurrentRuntimeTask = useCallback(
@@ -124,11 +127,14 @@ export function useWorkbenchRuntimeTasks({
     [dispatch]
   )
 
-  const clearCurrentRuntimeTaskView = useCallback(() => {
-    currentRuntimeTaskRef.current = null
-    dispatch({ type: 'current_task_cleared' })
-    navigateTo('/')
-  }, [dispatch])
+  const clearCurrentRuntimeTaskView = useCallback(
+    (navigate = true) => {
+      currentRuntimeTaskRef.current = null
+      dispatch({ type: 'current_task_cleared' })
+      if (navigate) navigateTo('/')
+    },
+    [dispatch]
+  )
 
   const loadRuntimeTranscriptForPane = useCallback(
     async (
@@ -154,24 +160,7 @@ export function useWorkbenchRuntimeTasks({
             throw new Error('Runtime transcript response is missing canonical turns')
           }
 
-          return {
-            messages: runtimeMessagesToWorkbenchMessages(
-              Array.isArray(transcript.messages) ? transcript.messages : []
-            ),
-            turns: runtimeTranscriptTurnsToConversationTurns(transcript.turns),
-            running: typeof transcript.running === 'boolean' ? transcript.running : undefined,
-            contextUsage: transcript.contextUsage ?? null,
-            turnNavigation: Array.isArray(transcript.turnNavigation)
-              ? transcript.turnNavigation
-              : [],
-            fullContent: transcript.fullContent === true,
-            rangeStart: typeof transcript.rangeStart === 'number' ? transcript.rangeStart : null,
-            rangeEnd: typeof transcript.rangeEnd === 'number' ? transcript.rangeEnd : null,
-            hasMoreBefore: Boolean(transcript.hasMoreBefore),
-            beforeCursor: transcript.beforeCursor ?? null,
-            hasMoreAfter: Boolean(transcript.hasMoreAfter),
-            afterCursor: transcript.afterCursor ?? null,
-          }
+          return projectRuntimePaneTranscript(transcript)
         })
         .finally(() => {
           if (runtimeTranscriptRequests.get(transcriptKey) === request) {
@@ -191,7 +180,10 @@ export function useWorkbenchRuntimeTasks({
   )
 
   const openRuntimeTask = useCallback(
-    async (address: RuntimeTaskAddress) => {
+    async (
+      address: RuntimeTaskAddress,
+      options?: { fallbackProject?: ProjectWithTasks | null }
+    ) => {
       const runtimeProjectWork = state.runtimeWork?.projects.find(item =>
         item.deviceWorkspaces.some(
           workspace =>
@@ -203,7 +195,7 @@ export function useWorkbenchRuntimeTasks({
         ? (state.projects.find(
             item => item.id === runtimeProjectUiId(runtimeProjectWork.project)
           ) ?? runtimeProjectToProject(runtimeProjectWork))
-        : null
+        : (options?.fallbackProject ?? null)
 
       writeLastProjectId(user.id, project?.id ?? null)
       openRuntimeTaskView(address, project, {
@@ -221,7 +213,14 @@ export function useWorkbenchRuntimeTasks({
       ) {
         return
       }
-      clearCurrentRuntimeTaskView()
+      const activeRoute = parseRuntimeTaskRoute(
+        stripAppBasePath(window.location.pathname),
+        window.location.search
+      )
+      const shouldNavigateHome = addresses.some(address =>
+        isSameRuntimeTaskAddress(activeRoute, address)
+      )
+      clearCurrentRuntimeTaskView(shouldNavigateHome)
     },
     [clearCurrentRuntimeTaskView]
   )
@@ -255,31 +254,6 @@ export function useWorkbenchRuntimeTasks({
     [dispatch, services.runtimeWorkApi, t]
   )
 
-  const completeArchivedBoardTasks = useCallback(
-    async (addresses: RuntimeTaskAddress[]) => {
-      const trackingApis = [
-        services.projectSpaceApis?.local,
-        services.projectSpaceApis?.cloud ?? services.deliveryApi,
-      ].filter((api, index, values) => Boolean(api) && values.indexOf(api) === index)
-      if (trackingApis.length === 0) return
-
-      await Promise.all(
-        addresses.map(async address => {
-          const results = await Promise.allSettled(
-            trackingApis.map(api => api!.updateTaskTrackingStatus(address, 'archived'))
-          )
-          if (results.every(result => result.status === 'rejected')) {
-            console.warn('[Wework] Failed to complete archived task on project board', {
-              address: runtimeAddressDebug(address),
-              errors: results.map(result => (result.status === 'rejected' ? result.reason : null)),
-            })
-          }
-        })
-      )
-    },
-    [services.deliveryApi, services.projectSpaceApis]
-  )
-
   const archiveRuntimeConversations = useCallback(
     async (
       addresses: RuntimeTaskAddress[],
@@ -287,8 +261,16 @@ export function useWorkbenchRuntimeTasks({
     ): Promise<ArchiveRuntimeConversationsResult> => {
       const archiveTargets = uniqueRuntimeTaskAddresses(addresses)
       if (archiveTargets.length === 0) return { status: 'archived' }
+      const localFailedTargets = archiveTargets.filter(address => {
+        const task = findRuntimeTask(state.runtimeWork, address)
+        return task?.status === 'failed' && task.optimistic === true
+      })
+      const persistedTargets = archiveTargets.filter(
+        address =>
+          !localFailedTargets.some(localAddress => isSameRuntimeTaskAddress(localAddress, address))
+      )
       const results = await Promise.all(
-        archiveTargets.map(async address => {
+        persistedTargets.map(async address => {
           try {
             return { address, response: await executorClient.runtime.archiveConversation(address) }
           } catch (error) {
@@ -296,12 +278,12 @@ export function useWorkbenchRuntimeTasks({
           }
         })
       )
-      const archivedAddresses = results.flatMap(result =>
-        result.response?.accepted ? [result.address] : []
-      )
+      const archivedAddresses = [
+        ...localFailedTargets,
+        ...results.flatMap(result => (result.response?.accepted ? [result.address] : [])),
+      ]
       let worktreeCleanupSucceeded = true
       if (archivedAddresses.length > 0) {
-        await completeArchivedBoardTasks(archivedAddresses)
         archivedAddresses.forEach(evictRuntimeConversation)
         archivedAddresses.forEach(address => lifecycleStore.remove(address))
         markRuntimeTasksArchived(archivedAddresses)
@@ -330,7 +312,6 @@ export function useWorkbenchRuntimeTasks({
     },
     [
       clearCurrentRuntimeTaskIfArchived,
-      completeArchivedBoardTasks,
       dispatch,
       executorClient,
       lifecycleStore,
@@ -472,8 +453,10 @@ export function useWorkbenchRuntimeTasks({
           return
         }
 
+        await openRuntimeTask(response.target, {
+          fallbackProject: state.currentProject,
+        })
         await refreshWorkLists()
-        await openRuntimeTask(response.target)
       } catch (error) {
         dispatch({
           type: 'error_set',
@@ -481,7 +464,14 @@ export function useWorkbenchRuntimeTasks({
         })
       }
     },
-    [dispatch, executorClient, openRuntimeTask, refreshWorkLists, state.currentRuntimeTask]
+    [
+      dispatch,
+      executorClient,
+      openRuntimeTask,
+      refreshWorkLists,
+      state.currentProject,
+      state.currentRuntimeTask,
+    ]
   )
 
   const getRuntimeGoal = useCallback(

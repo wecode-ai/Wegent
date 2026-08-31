@@ -445,6 +445,8 @@ export interface AdminPublicBot {
   ghost_name: string | null
   shell_name: string | null
   model_name: string | null
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string | null
   // Expanded Ghost fields for UI convenience
   system_prompt: string | null
   mcp_servers: Record<string, unknown> | null
@@ -475,6 +477,8 @@ export interface AdminPublicBotCreate {
   preload_skills?: string[]
   preload_skill_refs?: Record<string, SkillRefMeta>
   agent_config?: Record<string, unknown>
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string
   default_knowledge_base_refs?: { id: number; name: string }[]
 }
 
@@ -492,6 +496,8 @@ export interface AdminPublicBotUpdate {
   preload_skills?: string[]
   preload_skill_refs?: Record<string, SkillRefMeta>
   agent_config?: Record<string, unknown>
+  secondary_model_name?: string | null
+  secondary_model_namespace?: string
   default_knowledge_base_refs?: { id: number; name: string }[]
 }
 

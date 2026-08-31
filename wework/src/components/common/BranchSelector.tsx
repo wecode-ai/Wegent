@@ -1,4 +1,13 @@
-import { Check, ChevronDown, GitBranch, Plus, Search, X } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  GitBranch,
+  LoaderCircle,
+  Plus,
+  Search,
+  Sparkles,
+  X,
+} from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -16,6 +25,7 @@ import {
 } from '@/lib/floating-menu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { normalizeGeneratedBranchName } from '@/lib/branch-name'
 
 interface BranchSelectorProps {
   currentBranch?: string
@@ -24,11 +34,14 @@ interface BranchSelectorProps {
   onListBranches: () => Promise<string[]>
   onCheckoutBranch: (branchName: string) => Promise<void>
   onCreateBranch?: (branchName: string) => Promise<void>
+  onGenerateBranchName?: (sourceText: string) => Promise<string>
+  branchNameSource?: string
   variant: 'environment' | 'workbar'
   mobileSheet?: boolean
 }
 
 const BRANCH_MENU_MAX_HEIGHT = 420
+const BRANCH_NAME_GENERATION_TIMEOUT_MS = 30_000
 
 function branchMatchesQuery(branch: string, query: string): boolean {
   const normalizedBranch = branch.toLowerCase()
@@ -52,6 +65,8 @@ export function BranchSelector({
   onListBranches,
   onCheckoutBranch,
   onCreateBranch,
+  onGenerateBranchName,
+  branchNameSource = '',
   variant,
   mobileSheet = false,
 }: BranchSelectorProps) {
@@ -63,7 +78,7 @@ export function BranchSelector({
   const [branches, setBranches] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [branchesLoading, setBranchesLoading] = useState(false)
-  const [action, setAction] = useState<'idle' | 'switching' | 'creating'>('idle')
+  const [action, setAction] = useState<'idle' | 'switching' | 'creating' | 'generating'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [createFormOpen, setCreateFormOpen] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
@@ -87,6 +102,7 @@ export function BranchSelector({
     setError(null)
     setCreateFormOpen(false)
     setNewBranchName('')
+    setAction('idle')
   }, [])
 
   const updateDesktopMenuLayout = useCallback(() => {
@@ -215,6 +231,61 @@ export function BranchSelector({
     }
   }
 
+  async function handleGenerateBranchName() {
+    if (!onGenerateBranchName) return
+    const sourceText = branchNameSource.trim()
+    if (!sourceText) {
+      setError(t('workbench.environment_branch_generate_source_required', '请先输入任务描述'))
+      return
+    }
+    setError(null)
+    setAction('generating')
+    console.info('[Wework] Branch name generation requested', {
+      variant,
+      sourceLength: sourceText.length,
+    })
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    try {
+      const generated = normalizeGeneratedBranchName(
+        await Promise.race([
+          onGenerateBranchName(sourceText),
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    t('workbench.environment_branch_generate_timeout', 'AI 生成超时，请重试')
+                  )
+                ),
+              BRANCH_NAME_GENERATION_TIMEOUT_MS
+            )
+          }),
+        ])
+      )
+      if (!generated) {
+        throw new Error(t('workbench.environment_branch_generate_empty', 'AI 未生成有效分支名'))
+      }
+      setNewBranchName(generated)
+      console.info('[Wework] Branch name generation completed', {
+        variant,
+        branchNameLength: generated.length,
+      })
+    } catch (nextError) {
+      console.warn('[Wework] Branch name generation failed', {
+        variant,
+        error: nextError instanceof Error ? nextError.message : String(nextError),
+      })
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : t('workbench.environment_branch_generate_failed', 'AI 生成分支名失败')
+      )
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId)
+      setAction('idle')
+    }
+  }
+
   const emptyBranchLabel =
     variant === 'workbar'
       ? t('workbench.environment_branch_select', '选择分支')
@@ -333,7 +404,9 @@ export function BranchSelector({
                 {t('common.loading', '加载中...')}
               </p>
             )}
-            {!branchesLoading && error && <p className="px-2 py-3 text-xs text-red-500">{error}</p>}
+            {!branchesLoading && error && !createFormOpen && (
+              <p className="px-2 py-3 text-xs text-red-500">{error}</p>
+            )}
             {!branchesLoading &&
               !error &&
               filteredBranches.map(branch => (
@@ -368,26 +441,71 @@ export function BranchSelector({
             )}
           >
             {createFormOpen ? (
-              <form className="flex items-center gap-2" onSubmit={handleCreate}>
-                <input
-                  data-testid={`${prefix}-new-branch-input`}
-                  value={newBranchName}
-                  onChange={event => setNewBranchName(event.target.value)}
-                  className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary"
-                  placeholder={t('workbench.environment_new_branch_placeholder', '输入新分支名')}
-                  autoFocus={!useMobileSheet}
-                />
-                <button
-                  type="submit"
-                  data-testid={`${prefix}-confirm-new-branch-button`}
-                  disabled={!newBranchName.trim() || action === 'creating'}
-                  className="h-8 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
-                >
-                  {action === 'creating'
-                    ? t('workbench.environment_branch_creating', '创建中')
-                    : t('workbench.environment_branch_create_confirm', '创建')}
-                </button>
-              </form>
+              <div>
+                <form className="flex items-center gap-2" onSubmit={handleCreate}>
+                  <input
+                    data-testid={`${prefix}-new-branch-input`}
+                    value={newBranchName}
+                    onChange={event => setNewBranchName(event.target.value)}
+                    disabled={action === 'generating'}
+                    aria-busy={action === 'generating'}
+                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary disabled:cursor-wait disabled:bg-surface disabled:text-text-muted"
+                    placeholder={
+                      action === 'generating'
+                        ? t('workbench.environment_branch_generating', 'AI 正在生成分支名…')
+                        : t('workbench.environment_new_branch_placeholder', '输入新分支名')
+                    }
+                    autoFocus={!useMobileSheet}
+                  />
+                  {onGenerateBranchName && (
+                    <button
+                      type="button"
+                      data-testid={`${prefix}-generate-new-branch-button`}
+                      disabled={action !== 'idle'}
+                      onClick={() => void handleGenerateBranchName()}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={t('workbench.environment_branch_generate', '使用 AI 生成分支名')}
+                      title={t('workbench.environment_branch_generate', '使用 AI 生成分支名')}
+                    >
+                      {action === 'generating' ? (
+                        <LoaderCircle className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4" />
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    data-testid={`${prefix}-confirm-new-branch-button`}
+                    disabled={!newBranchName.trim() || action !== 'idle'}
+                    className="h-8 rounded-md bg-text-primary px-2 text-xs font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
+                  >
+                    {action === 'creating'
+                      ? t('workbench.environment_branch_creating', '创建中')
+                      : t('workbench.environment_branch_create_confirm', '创建')}
+                  </button>
+                </form>
+                {action === 'generating' && (
+                  <p
+                    data-testid={`${prefix}-branch-generation-status`}
+                    className="flex items-center gap-1.5 px-2 pt-2 text-xs text-text-secondary"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    {t('workbench.environment_branch_generating', 'AI 正在生成分支名…')}
+                  </p>
+                )}
+                {error && (
+                  <p
+                    data-testid={`${prefix}-branch-generation-error`}
+                    className="px-2 pt-2 text-xs text-red-500"
+                    aria-live="polite"
+                  >
+                    {error}
+                  </p>
+                )}
+              </div>
             ) : (
               <button
                 type="button"

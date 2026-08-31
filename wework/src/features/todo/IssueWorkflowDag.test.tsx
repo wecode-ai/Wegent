@@ -8,48 +8,52 @@ const fitView = vi.fn()
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
-    t: (key: string): string =>
-      ({
-        'todo.workflow_active_stages': '当前阶段',
-        'todo.workflow_node_details': '节点详情',
-        'todo.workflow_stage_human_execution': '人工执行',
-        'todo.workflow_ai_execution': 'AI 执行',
-        'todo.workflow_start_work': '开始处理',
-        'todo.workflow_add_stage_task': '添加任务',
-        'todo.workflow_view_execution_short': '查看',
-        'todo.workflow_task_executions': '任务执行',
-        'todo.workflow_task_status_running': '执行中',
-        'todo.workflow_task_status_succeeded': '成功',
-        'todo.workflow_task_status_failed': '失败',
-        'todo.workflow_task_status_cancelled': '已取消',
-        'todo.workflow_task_status_archived': '已归档',
-        'todo.workflow_task_status_pending': '等待执行',
-        'todo.workflow_run_again': '重新运行',
-        'todo.workflow_run': '运行',
-        'todo.workflow_node_blocked': '等待前置任务',
-        'todo.workflow_node_ready': '可开始',
-        'todo.workflow_node_queued': '排队中',
-        'todo.workflow_node_running': '执行中',
-        'todo.workflow_node_awaiting_approval': '待人工批准',
-        'todo.workflow_node_changes_requested': '已驳回，待修改',
-        'todo.workflow_node_completed': '已完成',
-        'todo.workflow_node_forced_completed': '已强制推进',
-        'todo.workflow_node_failed': '执行失败',
-        'todo.workflow_required_deliverables': '必要交付物',
-        'todo.workflow_deliveries_submitted': '已提交',
-        'todo.workflow_deliverable_fulfilled': '已提交',
-        'todo.workflow_deliverable_missing': '待提交',
-        'todo.workflow_deliverables_missing_count': '仍有交付物未提交',
-        'todo.deliverable_type_text': '文本',
-        'todo.deliverable_type_file': '文件',
-        'todo.workflow_upload_deliverables': '上传交付物',
-        'todo.workflow_approve_stage': '批准进入下一阶段',
-        'todo.workflow_reject_stage': '驳回',
-        'todo.workflow_force_advance': '强制推进',
-        'todo.workflow_decision_reason_placeholder': '填写原因',
-        'todo.workflow_wait_dependencies': '等待前置阶段',
-        'todo.workflow_no_stage_tasks': '尚无具体任务',
-      })[key] ?? key,
+    t: (key: string, options?: { count?: number }): string => {
+      if (key === 'todo.workflow_task_count') return `${options?.count ?? 0} 个任务`
+      return (
+        {
+          'todo.workflow_active_stages': '当前阶段',
+          'todo.workflow_node_details': '节点详情',
+          'todo.workflow_stage_human_execution': '手动执行',
+          'todo.workflow_ai_execution': 'AI 执行',
+          'todo.workflow_start_work': '开始处理',
+          'todo.workflow_add_stage_task': '添加任务',
+          'todo.workflow_view_execution_short': '查看',
+          'todo.workflow_task_executions': '任务执行',
+          'todo.workflow_task_status_running': '执行中',
+          'todo.workflow_task_status_succeeded': '成功',
+          'todo.workflow_task_status_failed': '失败',
+          'todo.workflow_task_status_cancelled': '已取消',
+          'todo.workflow_task_status_archived': '已归档',
+          'todo.workflow_task_status_pending': '等待执行',
+          'todo.workflow_run_again': '重新运行',
+          'todo.workflow_run': '运行',
+          'todo.workflow_node_blocked': '等待前置任务',
+          'todo.workflow_node_ready': '可开始',
+          'todo.workflow_node_queued': '排队中',
+          'todo.workflow_node_running': '执行中',
+          'todo.workflow_node_awaiting_approval': '待人工批准',
+          'todo.workflow_node_changes_requested': '已驳回，待修改',
+          'todo.workflow_node_completed': '已完成',
+          'todo.workflow_node_forced_completed': '已强制推进',
+          'todo.workflow_node_failed': '执行失败',
+          'todo.workflow_required_deliverables': '必要交付物',
+          'todo.workflow_deliveries_submitted': '已提交',
+          'todo.workflow_deliverable_fulfilled': '已提交',
+          'todo.workflow_deliverable_missing': '待提交',
+          'todo.workflow_deliverables_missing_count': '仍有交付物未提交',
+          'todo.deliverable_type_text': '文本',
+          'todo.deliverable_type_file': '文件',
+          'todo.workflow_upload_deliverables': '上传交付物',
+          'todo.workflow_approve_stage': '批准进入下一阶段',
+          'todo.workflow_reject_stage': '驳回',
+          'todo.workflow_force_advance': '强制推进',
+          'todo.workflow_decision_reason_placeholder': '填写原因',
+          'todo.workflow_wait_dependencies': '等待前置阶段',
+          'todo.workflow_no_stage_tasks': '尚无具体任务',
+        }[key] ?? key
+      )
+    },
   }),
 }))
 
@@ -65,6 +69,11 @@ vi.mock('@xyflow/react', () => ({
     children,
     onInit,
     onNodeClick,
+    preventScrolling,
+    zoomOnScroll,
+    zoomOnPinch,
+    zoomOnDoubleClick,
+    panOnDrag,
   }: {
     nodes: Array<{ id: string; type: string; data: Record<string, unknown> }>
     nodeTypes: Record<string, ComponentType<{ data: Record<string, unknown> }>>
@@ -74,13 +83,25 @@ vi.mock('@xyflow/react', () => ({
       event: MouseEvent<HTMLDivElement>,
       node: { id: string; type: string; data: Record<string, unknown> }
     ) => void
+    preventScrolling?: boolean
+    zoomOnScroll?: boolean
+    zoomOnPinch?: boolean
+    zoomOnDoubleClick?: boolean
+    panOnDrag?: boolean
   }) => {
     useEffect(() => {
       onInit?.({ fitView })
     }, [onInit])
 
     return (
-      <div data-testid="mock-react-flow">
+      <div
+        data-testid="mock-react-flow"
+        data-prevent-scrolling={String(preventScrolling)}
+        data-zoom-on-scroll={String(zoomOnScroll)}
+        data-zoom-on-pinch={String(zoomOnPinch)}
+        data-zoom-on-double-click={String(zoomOnDoubleClick)}
+        data-pan-on-drag={String(panOnDrag)}
+      >
         {nodes.map(node => {
           const NodeComponent = nodeTypes[node.type]
           return (
@@ -152,6 +173,48 @@ describe('IssueWorkflowDag', () => {
     )
   })
 
+  test('activates viewport interactions only after the graph is clicked', () => {
+    render(<IssueWorkflowDag nodes={[stage('编辑')]} tasks={[]} />)
+
+    const graph = screen.getByTestId('cloud-todo-workflow-dag')
+    const flow = screen.getByTestId('mock-react-flow')
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+
+    fireEvent.pointerDown(graph)
+
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'true')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'true')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'true')
+
+    fireEvent.pointerDown(document.body)
+
+    expect(flow).toHaveAttribute('data-prevent-scrolling', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-scroll', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-pinch', 'false')
+    expect(flow).toHaveAttribute('data-zoom-on-double-click', 'false')
+    expect(flow).toHaveAttribute('data-pan-on-drag', 'false')
+  })
+
+  test('shows the execution failure reason in the failed stage details', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('开发', { status: 'failed' })]}
+        tasks={[]}
+        executionError="Transient runtime payload does not match the claimed project"
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-execution-error-开发')).toHaveTextContent(
+      'Transient runtime payload does not match the claimed project'
+    )
+  })
+
   test('switches the detail panel when a completed graph node is clicked', () => {
     const onCreateTask = vi.fn()
     render(
@@ -181,13 +244,16 @@ describe('IssueWorkflowDag', () => {
 
     fireEvent.click(screen.getByTestId('mock-flow-node-设计'))
 
-    expect(screen.getByText('节点详情')).toBeInTheDocument()
     expect(screen.getByTestId('cloud-todo-workflow-action-设计')).toHaveTextContent('设计任务')
     expect(screen.queryByTestId('cloud-todo-workflow-action-开发')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-create-workflow-task-设计')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-node-设计')).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
   })
 
-  test('exposes ready human and AI stage actions outside the zoomable graph', () => {
+  test('links the selected graph node to the stage action panel', () => {
     const onCreateTask = vi.fn()
     const onRunAutomation = vi.fn()
 
@@ -204,20 +270,36 @@ describe('IssueWorkflowDag', () => {
       />
     )
 
-    expect(screen.getByTestId('cloud-todo-workflow-actions')).toHaveTextContent('当前阶段')
-    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent(
-      '人工执行 · 可开始'
-    )
-    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent(
-      'AI 执行 · 可开始'
-    )
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('手动执行')
+    expect(screen.getByTestId('cloud-todo-workflow-action-编辑')).toHaveTextContent('可开始')
+    expect(screen.queryByTestId('cloud-todo-workflow-action-审阅')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-workflow-action-交付')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
     expect(onCreateTask).toHaveBeenCalledWith('编辑')
 
+    fireEvent.click(screen.getByTestId('mock-flow-node-审阅'))
+
+    expect(screen.queryByTestId('cloud-todo-workflow-action-编辑')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('AI 执行')
+    expect(screen.getByTestId('cloud-todo-workflow-action-审阅')).toHaveTextContent('可开始')
     fireEvent.click(screen.getByTestId('cloud-todo-run-workflow-node-审阅'))
     expect(onRunAutomation).toHaveBeenCalledWith('审阅', 'rule-1')
+  })
+
+  test('keeps an unconfigured automatic stage out of the manual task flow', () => {
+    render(
+      <IssueWorkflowDag
+        nodes={[stage('开发', { execution_mode: 'robot', automation_rule_id: null })]}
+        tasks={[]}
+        onCreateTask={vi.fn()}
+        onRunAutomation={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('cloud-todo-workflow-action-开发')).toHaveTextContent('AI 执行')
+    expect(screen.queryByTestId('cloud-todo-create-workflow-task-开发')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-run-workflow-node-开发')).not.toBeInTheDocument()
   })
 
   test('prevents duplicate reruns and surfaces the backend rejection', async () => {
@@ -336,7 +418,7 @@ describe('IssueWorkflowDag', () => {
     expect(onOpenTask).toHaveBeenCalledWith(latestTask)
 
     const graphNode = screen.getByTestId('cloud-todo-workflow-node-编辑')
-    expect(graphNode).toHaveTextContent('任务执行2')
+    expect(graphNode).toHaveTextContent('2 个任务')
     expect(within(graphNode).queryByText('最近失败的任务')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByTestId('cloud-todo-create-workflow-task-编辑'))
@@ -377,6 +459,16 @@ describe('IssueWorkflowDag', () => {
     )
 
     expect(screen.getByText(/测试报告/)).toBeInTheDocument()
+    const deliverableProgress = screen.getByTestId('cloud-todo-workflow-deliverable-progress-编辑')
+    const taskList = screen.getByTestId('cloud-todo-workflow-task-list-编辑')
+    const createTask = screen.getByTestId('cloud-todo-create-workflow-task-编辑')
+    expect(
+      deliverableProgress.compareDocumentPosition(taskList) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+    expect(
+      taskList.compareDocumentPosition(createTask) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
     fireEvent.click(screen.getByTestId('cloud-todo-approve-workflow-node-编辑'))
     expect(screen.getByTestId('workflow-stage-completion-dialog')).toBeInTheDocument()
     const fieldset = screen.getByTestId('workflow-deliverable-input-test-report')

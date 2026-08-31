@@ -551,13 +551,20 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         shell_ref_namespace = shell_info.get("namespace", "default")
 
         # Create Bot with shellRef pointing to the user-selected Shell
+        bot_spec = {
+            "ghostRef": {"name": ghost_name, "namespace": namespace},
+            "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
+            "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
+        }
+        if obj_in.secondary_model_name:
+            bot_spec["secondaryModelRef"] = {
+                "name": obj_in.secondary_model_name,
+                "namespace": obj_in.secondary_model_namespace or "default",
+            }
+
         bot_json = {
             "kind": "Bot",
-            "spec": {
-                "ghostRef": {"name": ghost_name, "namespace": namespace},
-                "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
-                "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
-            },
+            "spec": bot_spec,
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
@@ -1100,6 +1107,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         )
                     bot.json = bot_crd.model_dump()
                     flag_modified(bot, "json")
+
+        if "secondary_model_name" in update_data:
+            from app.schemas.kind import ModelRef
+
+            bot_crd = Bot.model_validate(bot.json)
+            secondary_model_name = update_data.get("secondary_model_name")
+            if secondary_model_name:
+                bot_crd.spec.secondaryModelRef = ModelRef(
+                    name=secondary_model_name,
+                    namespace=update_data.get("secondary_model_namespace") or "default",
+                )
+            else:
+                bot_crd.spec.secondaryModelRef = None
+            bot.json = bot_crd.model_dump()
+            flag_modified(bot, "json")
 
         if "system_prompt" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
@@ -1827,6 +1849,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 else {}
             )
 
+        secondary_model_ref = bot_crd.spec.secondaryModelRef
+
         return {
             "id": bot.id,
             "user_id": bot.user_id,
@@ -1845,6 +1869,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "is_active": bot.is_active,
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
+            "secondary_model_name": (
+                secondary_model_ref.name if secondary_model_ref else None
+            ),
+            "secondary_model_namespace": (
+                secondary_model_ref.namespace if secondary_model_ref else None
+            ),
         }
 
     def _validate_skills(

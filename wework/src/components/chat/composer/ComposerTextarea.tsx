@@ -27,6 +27,9 @@ import {
   showPluginTrialGuide,
 } from '@/features/plugins/pluginTrial'
 import { composerAppPluginKey } from '@/features/plugins/composerPluginMetadata'
+import { executeDshAction, type WeworkDshAction } from '@/features/dsh-runtime/dshActions'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
 import { isImeComposingEvent, isImeEnterEvent } from '@/lib/ime'
 import { navigateTo } from '@/lib/navigation'
@@ -38,7 +41,11 @@ import {
   openNativeWorkspacePathPicker,
   type NativeWorkspacePath,
 } from '@/lib/native-workspace-path-picker'
-import { resolveDataTransferWorkspacePaths } from '@/lib/workspace-path-transfer'
+import {
+  hasWorkspacePathDragData,
+  resolveDataTransferWorkspacePaths,
+} from '@/lib/workspace-path-transfer'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 import type { LocalDeviceApp, LocalDeviceSkill, UnifiedModel } from '@/types/api'
 import {
   COMPOSER_APPS_REQUEST_SYNC_EVENT,
@@ -116,6 +123,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       rows,
       textareaRef,
       className,
+      nativeEmptyCaret = false,
       skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
       disableAutocomplete = false,
       onKeyDown,
@@ -145,6 +153,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     ref
   ) {
     const { t } = useTranslation('common')
+    const actions = useDshSlotEntries<WeworkDshAction>(WEWORK_DSH_SLOTS.action)
+    const openPluginCenterAction =
+      actions.find(action => action.id === 'plugin-center.open') ?? null
     const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
     const menuRef = useRef<HTMLDivElement>(null)
     const modelMenuRef = useRef<HTMLDivElement>(null)
@@ -158,12 +169,16 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const appsSourceRef = useRef<typeof onListLocalApps>(undefined)
     const mountedRef = useRef(true)
     const editorRef = useRef<ComposerEditorHandle | null>(null)
+    const focusRequestExpiresAtRef = useRef(0)
     const valueRef = useRef(value)
 
     useImperativeHandle(
       ref,
       () => ({
-        focus: () => editorRef.current?.focus(),
+        focus: () => {
+          focusRequestExpiresAtRef.current = Date.now() + 2_000
+          editorRef.current?.focus()
+        },
         getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
         setValue: (nextValue, selectionOffset = nextValue.length) => {
           valueRef.current = nextValue
@@ -384,20 +399,22 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         }
       })
 
-      commands.push({
-        id: 'plugin-marketplace',
-        title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
-        description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
-        group: pluginGroup,
-        searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
-        Icon: Store,
-        trailingIcon: ExternalLink,
-        testId: 'plugin-marketplace',
-        onSelect: () => navigateTo('/plugins'),
-      })
+      if (openPluginCenterAction) {
+        commands.push({
+          id: 'plugin-marketplace',
+          title: t('workbench.composer_open_plugin_marketplace', '打开插件市场'),
+          description: t('workbench.composer_open_plugin_marketplace_hint', '浏览和搜索全部插件'),
+          group: pluginGroup,
+          searchAliases: ['plugin', 'plugins', 'marketplace', '插件', '插件市场'],
+          Icon: Store,
+          trailingIcon: ExternalLink,
+          testId: 'plugin-marketplace',
+          onSelect: () => executeDshAction(openPluginCenterAction),
+        })
+      }
 
       return commands
-    }, [appCandidates, appearanceMode, t])
+    }, [appCandidates, appearanceMode, openPluginCenterAction, t])
 
     const slashCommands = useMemo(
       () => [...actionSlashCommands, ...pluginSlashCommands, ...skillSlashCommands],
@@ -637,10 +654,6 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
       },
       [loadLocalApps, loadLocalSkills]
     )
-
-    useEffect(() => {
-      loadLocalApps()
-    }, [loadLocalApps])
 
     useEffect(() => {
       // Publish whatever slash autocomplete is currently showing so the toolbar
@@ -1050,6 +1063,7 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         cloudSpaceDirectReference,
         commitEditorValue,
         onSelectCloudProject,
+        onSelectExternalMention,
         onSetGoal,
         onSetPlanMode,
         selectMentionCandidate,
@@ -1397,14 +1411,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         const files = Array.from(clipboardData.files)
         if (files.length > 0) {
           event.preventDefault()
-          void resolveDataTransferWorkspacePaths(
-            clipboardData,
-            'clipboard',
-            workspaceTarget?.workspaceSource
-          ).then(({ attachmentFiles, referenceEntries }) => {
-            insertPathReferences(referenceEntries)
-            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-          })
+          void resolveDataTransferWorkspacePaths(clipboardData, 'clipboard').then(
+            ({ attachmentFiles, referenceEntries }) => {
+              insertPathReferences(referenceEntries)
+              if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+            }
+          )
           return true
         }
         if (!onPasteFiles) return false
@@ -1414,26 +1426,51 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
         onPasteFiles([textAttachment])
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [insertPathReferences, onPasteFiles]
     )
 
     const handleDrop = useCallback(
       (event: DragEvent) => {
         const dataTransfer = event.dataTransfer
-        if (!dataTransfer || !Array.from(dataTransfer.types).includes('Files')) return false
+        if (!dataTransfer) return false
+        if (disabled) {
+          event.preventDefault()
+          event.stopPropagation()
+          return true
+        }
+        if (Array.from(dataTransfer.types).includes(SELECTED_TEXT_DRAG_TYPE)) {
+          const text = dataTransfer.getData('text/plain')
+          if (!text) return false
+          event.preventDefault()
+          event.stopPropagation()
+          const editor = editorRef.current
+          if (!editor) return false
+          const current = editor.getSnapshot()
+          const before = current.value.slice(0, current.selectionStart)
+          const after = current.value.slice(current.selectionEnd)
+          const leadingBreak = before && !before.endsWith('\n') ? '\n' : ''
+          const trailingBreak = after && !after.startsWith('\n') ? '\n' : ''
+          const inserted = `${leadingBreak}${text}${trailingBreak}`
+          commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
+          editor.focus()
+          return true
+        }
+        if (
+          !Array.from(dataTransfer.types).includes('Files') &&
+          !hasWorkspacePathDragData(dataTransfer)
+        )
+          return false
         event.preventDefault()
         event.stopPropagation()
-        void resolveDataTransferWorkspacePaths(
-          dataTransfer,
-          'drop',
-          workspaceTarget?.workspaceSource
-        ).then(({ attachmentFiles, referenceEntries }) => {
-          insertPathReferences(referenceEntries)
-          if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
-        })
+        void resolveDataTransferWorkspacePaths(dataTransfer, 'drop').then(
+          ({ attachmentFiles, referenceEntries }) => {
+            insertPathReferences(referenceEntries)
+            if (attachmentFiles.length > 0) onPasteFiles?.(attachmentFiles)
+          }
+        )
         return true
       },
-      [insertPathReferences, onPasteFiles, workspaceTarget?.workspaceSource]
+      [commitEditorValue, disabled, insertPathReferences, onPasteFiles]
     )
 
     return (
@@ -1464,12 +1501,18 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
           }}
           onClick={() => updateAutocompleteTrigger()}
           onFocus={() => updateAutocompleteTrigger()}
+          onReady={() => {
+            if (focusRequestExpiresAtRef.current >= Date.now()) {
+              editorRef.current?.focus()
+            }
+          }}
           disabled={disabled}
           placeholder={placeholder}
           testId={testId}
           rows={rows}
           textareaRef={textareaRef}
           className={className}
+          nativeEmptyCaret={nativeEmptyCaret}
         />
         {showSkillMenu && (
           <ComposerMentionMenu

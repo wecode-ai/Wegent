@@ -7,15 +7,11 @@ sidebar_position: 20
 ## 1. Document status
 
 - Created: August 17, 2026
-- Status: core implementation, the real-Tauri cloud lifecycle, and the Remote Docker container lifecycle are complete; only managed-production persistent-volume and instance-replacement acceptance still require the target environment
+- Status: core implementation, the real-Electron cloud lifecycle, and the Remote Docker container lifecycle are complete; only managed-production persistent-volume and instance-replacement acceptance still require the target environment
 - Objective: let local devices, managed cloud devices, and user-managed Remote Docker devices share one managed Git Worktree capability
-- Delivery model: one primary agent owns the goal, architecture truth, shared contracts, integration, and final verification; sub-agents implement disjoint workstreams in parallel
+- Delivery model: one primary agent owns the goal, shared contracts, integration, and final verification; sub-agents implement disjoint workstreams in parallel
 
-This document records the implementation plan, parallel ownership, and acceptance status; it is not the architecture source of truth. The architecture truth is now established in:
-
-- `docs/zh/architecture/git-worktree-execution.md`
-- `docs/en/architecture/git-worktree-execution.md`
-- the corresponding rows in both architecture indexes
+This document records the implementation plan, parallel ownership, and acceptance status.
 
 ## 2. Target model
 
@@ -41,7 +37,10 @@ flowchart LR
 Required invariants:
 
 1. Only the target Executor holding the source repository may create, delete, or restore a Worktree.
-2. `deviceId` is part of Worktree identity; no cross-device fallback or migration is implicit.
+2. `deviceId` records the device that created or most recently prepared the Worktree and remains
+   available for routing and diagnostics. It is not Worktree ownership or an operation permission:
+   an Executor must not block task execution, reconciliation, archival, restoration, or cleanup
+   solely because a persisted record contains a different `deviceId`.
 3. Backend never executes Git and never owns filesystem truth.
 4. A Runtime Task binds to at most one managed Worktree.
 5. Worktree IDs derive from stable unique task IDs.
@@ -72,7 +71,7 @@ The implementation will:
 - scope launch-mode and branch preferences to DeviceWorkspace identity;
 - separate execution location from launch-mode UI semantics;
 - enforce managed-cloud persistent-volume prerequisites;
-- add unit, contract, Backend, desktop E2E, and real-Tauri verification.
+- add unit, contract, Backend, desktop E2E, and real-Electron verification.
 
 It will not:
 
@@ -99,7 +98,7 @@ flowchart TD
   C3["C3 Restart and reconciliation"]
   D1["D1 Cross-layer contract tests"]
   D2["D2 Desktop E2E"]
-  D3["D3 Real Tauri and cloud-device acceptance"]
+  D3["D3 Real Electron and cloud-device acceptance"]
 
   A0 --> A1
   A0 --> A2
@@ -128,14 +127,12 @@ Wave 0 is serialized and owned by the primary agent. In Wave 1, Wework availabil
 Owns:
 
 - goal status and dependency tracking;
-- architecture truth and shared request/response contracts;
+- shared request/response contracts;
 - cross-module decisions and conflict resolution;
-- review, integration, broad tests, real Tauri verification, and final acceptance.
+- review, integration, broad tests, real Electron verification, and final acceptance.
 
 Exclusive write scope:
 
-- both `git-worktree-execution.md` architecture files;
-- both architecture indexes;
 - shared cross-layer contracts and final integration files.
 
 ### Agent A: Wework types and availability
@@ -233,7 +230,7 @@ Deliverables:
 - local, cloud, and Remote Docker scenarios;
 - queued cancellation, archive/restore, offline, and restart coverage;
 - existing GitHub CI invocation;
-- a real-Tauri acceptance checklist and evidence requirements.
+- a real-Electron acceptance checklist and evidence requirements.
 
 ### Agent G: Workbench state, preferences, and Composer
 
@@ -383,14 +380,14 @@ Wave 4:
 
 - focused and broad tests pass;
 - every new E2E scenario runs in existing GitHub desktop CI;
-- real Tauri verification passes;
+- real Electron verification passes;
 - managed cloud and Remote Docker acceptance passes without retries or skipped assertions.
 
 ## 9. Completion definition
 
 The goal is complete only when:
 
-- both architecture truth files and indexes are updated;
+- cross-layer shared contracts are confirmed;
 - local, cloud, and Remote Docker use the same Executor Worktree data plane;
 - Wework no longer hard-codes capability from device type;
 - old, offline, and non-Git targets have explicit unavailable reasons;
@@ -398,24 +395,24 @@ The goal is complete only when:
 - Terminal, IDE, file-tree, and Git actions use the final Worktree path;
 - persistent-volume and stable-path requirements are implemented and verified;
 - all new E2E coverage runs in CI;
-- focused tests, broad regression, and real Tauri verification pass;
+- focused tests, broad regression, and real Electron verification pass;
 - no retry, skip, or fallback masks a failure.
 
 ## 10. Implementation record and acceptance result
 
 As of August 18, 2026, the core code work in this plan has been completed through goal mode and parallel sub-agent work. The real Remote Docker container lifecycle has passed, leaving only the managed-production persistent-volume gate:
 
-| Wave | Result                                                                                                                                         |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| A0   | Chinese and English architecture truth, indexes, protocol boundaries, and invariants are frozen                                                |
-| A1   | Wework now has unified Local, Cloud, Remote, and `device_path` types and Worktree availability                                                 |
-| A2   | Executor now owns versioned capability, preflight, deferred creation, identity checks, snapshots, restore, cleanup, and restart reconciliation |
-| A3   | Backend now owns logical-device routing, authorization, structured RPC errors, and `runtime_features` projection                               |
-| B    | Hybrid creation, planned/final path reconciliation, tool path routing, and DeviceWorkspace preferences are complete                            |
-| C    | stop acknowledgement, archival snapshot deletion, unarchive restore, settings, and automatic cleanup are complete                              |
-| D    | cross-layer contracts, CI classification, six atomic checkpoints, and the real-Tauri cloud lifecycle are complete; target-environment acceptance is described below |
+| Wave | Result                                                                                                                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A0   | Cross-layer protocol boundaries and invariants are frozen                                                                                                           |
+| A1   | Wework now has unified Local, Cloud, Remote, and `device_path` types and Worktree availability                                                                      |
+| A2   | Executor now owns versioned capability, preflight, deferred creation, identity checks, snapshots, restore, cleanup, and restart reconciliation                      |
+| A3   | Backend now owns logical-device routing, authorization, structured RPC errors, and `runtime_features` projection                                                    |
+| B    | Hybrid creation, planned/final path reconciliation, tool path routing, and DeviceWorkspace preferences are complete                                                 |
+| C    | stop acknowledgement, archival snapshot deletion, unarchive restore, settings, and automatic cleanup are complete                                                   |
+| D    | cross-layer contracts, CI classification, six atomic checkpoints, and the real-Electron cloud lifecycle are complete; target-environment acceptance is described below |
 
-The real-Tauri `cloud-git-worktree` aggregate expanded and verified six independently runnable checkpoints:
+The real-Electron `cloud-git-worktree` aggregate expanded and verified six independently runnable checkpoints:
 
 1. `cloud-worktree-capability`: live capability, protocol version, target-workspace preflight, and explicit unavailable reasons;
 2. `cloud-worktree-create`: selecting New Worktree, target-Executor creation, isolation from the base workspace, and execution from the final path;
@@ -434,7 +431,7 @@ Executor: cargo fmt --check and cargo test passed
   unit layer: 869 passed, 1 ignored
   app_runtime_work_send_contract: 37 passed in 3.54s
 CI desktop classifier contract: passed
-Real Tauri aggregate:
+Real Electron aggregate:
   node e2e/desktop/run-checkpoints.mjs --parallel-segments cloud-git-worktree
   all six atomic checkpoints passed with three isolated workers
 Evidence:

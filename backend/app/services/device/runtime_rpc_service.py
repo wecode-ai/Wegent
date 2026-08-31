@@ -4,7 +4,9 @@
 
 """Typed runtime task RPC over the existing local executor Socket.IO channel."""
 
+import asyncio
 import base64
+import copy
 import gzip
 import json
 import logging
@@ -15,10 +17,17 @@ from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
 from app.core.socketio import get_sio
+from app.db.session import get_db_session
+from app.schemas.device import DeviceType
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
 )
+from app.services.device.runtime_task_create_protocol import (
+    RuntimeTaskCreateProtocolError,
+    negotiate_runtime_task_create_payload,
+)
+from app.services.user_runtime_config import user_runtime_config_service
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -28,6 +37,8 @@ MAX_RUNTIME_RPC_TIMEOUT_SECONDS = 600
 SOCKET_ACK_GRACE_SECONDS = 5
 RUNTIME_RPC_COMPRESSED_ENCODING = "gzip+base64+json"
 RUNTIME_RPC_ENCODING_KEY = "__runtimeRpcEncoding"
+RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES = 512 * 1024
+RUNTIME_RPC_MAX_ENCODED_BYTES = 980_000
 LOCAL_EXECUTOR_NAMESPACE = "/local-executor"
 DEVICE_ID_RESPONSE_KEYS = frozenset({"deviceId", "device_id"})
 RETRYABLE_RUNTIME_RPC_CODES = frozenset(
@@ -36,6 +47,97 @@ RETRYABLE_RUNTIME_RPC_CODES = frozenset(
         "runtime_rpc_timeout",
     }
 )
+REMOTE_RUNTIME_DEVICE_TYPES = frozenset({DeviceType.CLOUD, DeviceType.REMOTE})
+RUNTIME_MODEL_CONFIG_METHODS = frozenset(
+    {
+        "runtime.text.generate",
+        "runtime.tasks.create",
+        "runtime.tasks.send",
+        "runtime.tasks.rollback",
+        "runtime.tasks.interrupt_and_send",
+        "runtime.tasks.supervisor.set",
+        "runtime.automations.create",
+        "runtime.automations.update",
+    }
+)
+RUNTIME_MODEL_CONFIG_KEYS = frozenset({"model_config", "modelConfig"})
+
+
+def _load_remote_runtime_proxy_url(user_id: int) -> str:
+    with get_db_session() as db:
+        return user_runtime_config_service.get_proxy_url_for_execution(
+            db,
+            user_id=user_id,
+        )
+
+
+def _runtime_model_configs(value: Any) -> list[dict[str, Any]]:
+    configs: list[dict[str, Any]] = []
+    if isinstance(value, list):
+        for item in value:
+            configs.extend(_runtime_model_configs(item))
+        return configs
+    if not isinstance(value, dict):
+        return configs
+
+    for key, item in value.items():
+        if key in RUNTIME_MODEL_CONFIG_KEYS and isinstance(item, dict):
+            configs.append(item)
+            continue
+        configs.extend(_runtime_model_configs(item))
+    return configs
+
+
+def _set_runtime_proxy(model_config: dict[str, Any], proxy_url: str) -> None:
+    model_config.pop("proxy_url", None)
+    model_config.pop("proxyUrl", None)
+    if proxy_url:
+        model_config["proxy"] = {"url": proxy_url}
+    else:
+        model_config.pop("proxy", None)
+
+    runtime_config = model_config.pop("runtimeConfig", None)
+    if not isinstance(runtime_config, dict):
+        runtime_config = model_config.get("runtime_config")
+    runtime_config = dict(runtime_config) if isinstance(runtime_config, dict) else {}
+    codex_config = runtime_config.get("codex")
+    codex_config = dict(codex_config) if isinstance(codex_config, dict) else {}
+    codex_config["use_proxy"] = bool(proxy_url)
+    codex_config["proxy_configured"] = bool(proxy_url)
+    runtime_config["codex"] = codex_config
+    model_config["runtime_config"] = runtime_config
+
+
+async def _enforce_remote_runtime_proxy(
+    *,
+    user_id: int,
+    device_type: DeviceType,
+    method: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        device_type not in REMOTE_RUNTIME_DEVICE_TYPES
+        or method not in RUNTIME_MODEL_CONFIG_METHODS
+    ):
+        return payload
+
+    next_payload = copy.deepcopy(payload)
+    model_configs = _runtime_model_configs(next_payload)
+    if not model_configs:
+        return payload
+
+    proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    for model_config in model_configs:
+        _set_runtime_proxy(model_config, proxy_url)
+    logger.info(
+        "[RuntimeRpcService] Applied account proxy policy: "
+        "user_id=%s method=%s configured=%s model_config_count=%s",
+        user_id,
+        method,
+        bool(proxy_url),
+        len(model_configs),
+    )
+    return next_payload
 
 
 class RuntimeRpcError(RuntimeError):
@@ -90,6 +192,45 @@ class RuntimeRpcService:
                 code=exc.code,
                 retryable=exc.retryable,
                 details=exc.details,
+            ) from exc
+
+        if method == "runtime.tasks.create":
+            try:
+                payload = negotiate_runtime_task_create_payload(
+                    payload,
+                    route.online_info.get("runtime_features"),
+                )
+            except RuntimeTaskCreateProtocolError as exc:
+                raise RuntimeRpcError(
+                    str(exc),
+                    code="unsupported_runtime_task_create_features",
+                    retryable=False,
+                    details={
+                        "deviceId": route.logical_device_id,
+                        "features": list(exc.features),
+                    },
+                ) from exc
+
+        try:
+            payload = await _enforce_remote_runtime_proxy(
+                user_id=user_id,
+                device_type=route.device_type,
+                method=method,
+                payload=payload,
+            )
+        except Exception as exc:
+            logger.exception(
+                "[RuntimeRpcService] Failed to resolve account proxy policy: "
+                "user_id=%s logical_device_id=%s method=%s",
+                user_id,
+                route.logical_device_id,
+                method,
+            )
+            raise RuntimeRpcError(
+                "Failed to resolve cloud device proxy configuration",
+                code="runtime_proxy_config_failed",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
             ) from exc
 
         sio = get_sio()
@@ -302,3 +443,44 @@ class RuntimeRpcService:
 
 
 runtime_rpc_service = RuntimeRpcService()
+
+
+def encode_runtime_rpc_response(
+    response: dict[str, Any],
+    *,
+    method: str,
+) -> dict[str, Any]:
+    """Compress a large browser-facing Runtime RPC result for Socket.IO."""
+
+    raw = json.dumps(
+        response,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(raw) <= RUNTIME_RPC_COMPRESSION_THRESHOLD_BYTES:
+        return response
+
+    compressed = gzip.compress(raw)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    envelope: dict[str, Any] = {
+        RUNTIME_RPC_ENCODING_KEY: RUNTIME_RPC_COMPRESSED_ENCODING,
+        "payload": encoded,
+        "rawBytes": len(raw),
+        "compressedBytes": len(compressed),
+    }
+    envelope_bytes = len(json.dumps(envelope, separators=(",", ":")).encode("utf-8"))
+    if envelope_bytes > RUNTIME_RPC_MAX_ENCODED_BYTES:
+        raise RuntimeRpcError(
+            "Runtime RPC response exceeded the Socket.IO payload limit",
+            code="runtime_rpc_response_too_large",
+        )
+
+    logger.info(
+        "[RuntimeRpcService] Runtime RPC response compressed for Wework: "
+        "method=%s raw_bytes=%s compressed_bytes=%s encoded_bytes=%s",
+        method,
+        len(raw),
+        len(compressed),
+        envelope_bytes,
+    )
+    return envelope
