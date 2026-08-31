@@ -25,7 +25,8 @@ use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
     local::codex_home::{
-        codex_home_migration_status, initialize_codex_home, CodexHomeInitializeRequest,
+        codex_home_migration_status, import_external_content, initialize_codex_home,
+        CodexHomeInitializeRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
@@ -97,6 +98,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executions.*",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.codex_home.import_external_content",
     "executor.codex_home.initialize",
     "executor.codex_home.status",
     "executor.harnesses.list",
@@ -651,6 +653,19 @@ impl AppIpcServer {
                     .map_err(|error| AppIpcError::new("codex_home_initialize_failed", error))?,
             )
             .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.import_external_content" {
+            let request = serde_json::from_value::<ExternalContentImportRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let imported = tokio::task::spawn_blocking(move || import_external_content(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("external_content_import_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("external_content_import_failed", error))?;
+            return serde_json::to_value(imported)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
 
         if method == "executor.harnesses.prepare_launch" {
@@ -1223,13 +1238,15 @@ impl AppIpcServer {
                     };
                     let server = self.clone();
                     let response_tx = priority_write_tx.clone();
-                    let (request_id, method) = app_ipc_request_metadata(&request_line);
+                    let (request_id, method, command_key) =
+                        app_ipc_request_metadata(&request_line);
                     tokio::spawn(async move {
                         let started_at = Instant::now();
                         log_app_ipc_request(
                             "app IPC request started",
                             request_id.as_deref(),
                             method.as_deref(),
+                            command_key.as_deref(),
                             None,
                             None,
                         );
@@ -1245,6 +1262,7 @@ impl AppIpcServer {
                                     "app IPC request timed out",
                                     request_id.as_deref(),
                                     method.as_deref(),
+                                    command_key.as_deref(),
                                     Some(started_at.elapsed().as_millis()),
                                     None,
                                 );
@@ -1263,10 +1281,13 @@ impl AppIpcServer {
                         if let Some(response) = response {
                             let ok = response.get("ok").and_then(Value::as_bool);
                             let elapsed_ms = started_at.elapsed().as_millis();
+                            let response_bytes =
+                                serde_json::to_vec(&response).map_or(0, |bytes| bytes.len());
                             log_app_ipc_request(
                                 "app IPC request finished",
                                 request_id.as_deref(),
                                 method.as_deref(),
+                                command_key.as_deref(),
                                 Some(elapsed_ms),
                                 ok,
                             );
@@ -1278,20 +1299,41 @@ impl AppIpcServer {
                                     &response,
                                 );
                             }
+                            let queue_started_at = Instant::now();
                             if response_tx.send(response).await.is_err() {
                                 log_app_ipc_request(
                                     "app IPC response dropped",
                                     request_id.as_deref(),
                                     method.as_deref(),
+                                    command_key.as_deref(),
                                     Some(elapsed_ms),
                                     ok,
                                 );
+                            } else {
+                                let queue_wait_ms = queue_started_at.elapsed().as_millis();
+                                let mut fields = Vec::new();
+                                if let Some(request_id) = request_id.as_deref() {
+                                    fields.push(("request_id", request_id.to_owned()));
+                                }
+                                if let Some(method) = method.as_deref() {
+                                    fields.push(("method", method.to_owned()));
+                                }
+                                if let Some(command_key) = command_key.as_deref() {
+                                    fields.push(("command_key", command_key.to_owned()));
+                                }
+                                fields.push(("response_bytes", response_bytes.to_string()));
+                                fields.push(("queue_wait_ms", queue_wait_ms.to_string()));
+                                write_executor_log_line(&format_executor_log(
+                                    "app IPC response queued",
+                                    &fields,
+                                ));
                             }
                         } else {
                             log_app_ipc_request(
                                 "app IPC request ignored",
                                 request_id.as_deref(),
                                 method.as_deref(),
+                                command_key.as_deref(),
                                 Some(started_at.elapsed().as_millis()),
                                 None,
                             );
@@ -2863,7 +2905,7 @@ pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
     )
 }
 
-fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
+fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Option<String>) {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
             let request_id = message
@@ -2876,9 +2918,16 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>) {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned);
-            (request_id, method)
+            let command_key = message
+                .get("params")
+                .and_then(Value::as_object)
+                .and_then(|params| params.get("command_key"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned);
+            (request_id, method, command_key)
         }
-        _ => (None, None),
+        _ => (None, None, None),
     }
 }
 
@@ -2886,6 +2935,7 @@ fn log_app_ipc_request(
     event: &str,
     request_id: Option<&str>,
     method: Option<&str>,
+    command_key: Option<&str>,
     elapsed_ms: Option<u128>,
     ok: Option<bool>,
 ) {
@@ -2895,6 +2945,9 @@ fn log_app_ipc_request(
     }
     if let Some(method) = method {
         fields.push(("method", method.to_owned()));
+    }
+    if let Some(command_key) = command_key {
+        fields.push(("command_key", command_key.to_owned()));
     }
     if let Some(elapsed_ms) = elapsed_ms {
         fields.push(("elapsed_ms", elapsed_ms.to_string()));
@@ -3464,7 +3517,32 @@ mod tests {
     use tokio::net::UnixStream;
     use tokio::time::Duration;
 
-    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer, BlockingSingleFlight};
+    use super::{
+        app_ipc_request_metadata, is_bulk_app_ipc_event, local_app_command, AppIpcServer,
+        BlockingSingleFlight,
+    };
+
+    #[test]
+    fn app_ipc_request_metadata_includes_device_command_key() {
+        let line = json!({
+            "id": "request-1",
+            "method": "device.execute_command",
+            "params": {
+                "command_key": "workspace_read_file_chunk",
+                "path": "/workspace"
+            }
+        })
+        .to_string();
+
+        assert_eq!(
+            app_ipc_request_metadata(&line),
+            (
+                Some("request-1".to_owned()),
+                Some("device.execute_command".to_owned()),
+                Some("workspace_read_file_chunk".to_owned())
+            )
+        );
+    }
 
     #[tokio::test]
     async fn blocking_single_flight_survives_a_timed_out_waiter() {

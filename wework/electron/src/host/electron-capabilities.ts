@@ -45,6 +45,7 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import { RotatingLog } from '../runtime/rotating-log.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -120,6 +121,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  rendererStartupReady: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -175,6 +177,7 @@ export function createElectronCapabilityRouter(
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    rendererStartupReady: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -194,12 +197,22 @@ export function createElectronCapabilityRouter(
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
   const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const filePreviewLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
+  router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('diagnostics.filePreview', params => {
+    const event = recordParam(params, 'event')
+    return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))

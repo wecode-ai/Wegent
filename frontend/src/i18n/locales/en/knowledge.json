@@ -1229,6 +1229,35 @@
       "emptyFailed": "The last run did not finish",
       "emptyFailedHint": "You can start it again. If it keeps failing, the reason is below."
     },
+    "progress": {
+      "title": "Generating",
+      "step": "Stage {{current}}/{{total}}",
+      "stepLabel": {
+        "plan": "Plan review",
+        "planPassed_one": "Plan review passed ({{count}} page)",
+        "planPassed_other": "Plan review passed ({{count}} pages)",
+        "writing": "Write pages",
+        "writingActive": "Writing pages ({{current}} / {{total}})",
+        "writingCompleted_one": "Page writing complete ({{count}} page)",
+        "writingCompleted_other": "Page writing complete ({{count}} pages)",
+        "qa": "Final quality review",
+        "qaCompleted": "Final quality review passed",
+        "publish": "Integrate and publish",
+        "publishCompleted": "Published"
+      },
+      "stage": {
+        "generating": "Generating wiki content",
+        "planning": "Analyzing the repository and planning pages",
+        "plan_review": "Reviewing the wiki page plan",
+        "revising_plan": "Revising the plan from review findings",
+        "writing": "Writing wiki pages",
+        "qa_review": "Running content QA",
+        "repairing": "Repairing documentation from QA findings",
+        "recheck": "Rechecking the repairs",
+        "publishing": "Validating and publishing the wiki",
+        "finishing": "Finishing this generation"
+      }
+    },
     "workspace": {
       "wiki": "Wiki",
       "documents": "Document Management",

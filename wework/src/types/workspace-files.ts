@@ -77,6 +77,7 @@ export interface WorkspaceFileOpenOptions {
   lineStart?: number
   lineEnd?: number
   isDirectory?: boolean
+  traceId?: string
 }
 
 export interface WorkspaceFileOpenRequest extends WorkspaceFileOpenOptions {

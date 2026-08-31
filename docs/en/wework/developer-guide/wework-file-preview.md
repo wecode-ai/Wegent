@@ -42,6 +42,24 @@ The local native command `read_local_workspace_text_file` returns `editable` and
 
 Saving still uses the Rust executor's `workspace_write_text_file` capability because writes retain the task-workspace concurrency check and atomic replacement semantics. The IPC payload carries the file content, file name, and the `revision` returned by the read command. Before writing, the executor rereads the file on disk and compares the SHA-256 revision. If another process changed the file, saving fails and the frontend must block the overwrite and offer reload. Writes must stay inside the same workspace root and replace the target through a same-directory temporary file. Files opened through remote devices remain preview-only.
 
+## Preview Latency Diagnostics
+
+The desktop app associates one file-link click and its subsequent preview work with a shared `traceId`, then writes diagnostic events to `file-preview.log` under Electron's log directory. The log is limited to 2 MiB with two rotated files. It records only the file extension, path length, file size, chunk count, stage, and timing; it does not record complete paths, file contents, or credentials.
+
+For a right panel that appears long after the link is selected, inspect these stages under the same `traceId`:
+
+1. `message_link_click` to `filesystem_stat_end`: determine whether the target is a file or directory before opening the right panel.
+2. `open_file_request_queued` to `open_file_request_effect`: move the request from workbench state into the file panel.
+3. `parent_tree_start` to `parent_tree_end`: read the parent directory and resolve the target entry.
+4. `file_chunk_start` to `file_chunk_end`: read one binary chunk.
+5. `base64_decode_end` and `file_constructed`: decode chunks, copy bytes, and construct the browser `File` in the renderer.
+6. `binary_preview_state_queued` to `binary_preview_committed`: let React receive and commit the binary preview state.
+7. `file_viewer_react_commit`: record the Flyfish Viewer React commit duration and viewer type.
+
+After each important stage, a zero-delay timer measures renderer event-queue latency in `renderer_queue_probe.lagMs`; delays of at least 50 ms include `blocked: true`. If the preceding stage has completed but this probe runs much later, synchronous JavaScript, layout, painting, or another renderer long task is blocking the queue. `preview_loading_clear_skipped` means that a later file request replaced the current request and should be investigated as a request race rather than an unfinished single read.
+
+When a read traverses executor App IPC, `executor.log` records its `command_key`, handling duration, response size, and `queue_wait_ms`. A fast `app IPC request finished` followed by a large `app IPC response queued.queue_wait_ms` indicates backpressure in the response write queue. If the executor queues the response quickly but the frontend logs `file_chunk_end` much later, inspect IPC transport and renderer message consumption next.
+
 ## Preview State Lifecycle
 
 The file panel determines workspace changes from the target's `deviceId`, `path`, `source`, `taskId`, and `workspaceSource`. Task streaming and background polling may create new target objects with the same fields; reference-only changes must not clear the directory tree, reread the file, or unmount the current preview. Reload data only when the target fields actually change, the user selects another file, or the user explicitly refreshes.

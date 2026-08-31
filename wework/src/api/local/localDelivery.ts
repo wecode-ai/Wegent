@@ -1119,16 +1119,6 @@ export function createLocalDeliveryApi(
         },
       })
     },
-    async bindProjectTask(
-      projectId: CloudProjectId,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null
-    ) {
-      await request('projects.bind_task', {
-        project_id: projectId,
-        task: { ...task, ...(taskTitle ? { taskTitle } : {}) },
-      })
-    },
     async trackProjectTask(
       projectId: CloudProjectId,
       task: RuntimeTaskAddress,
@@ -1146,7 +1136,7 @@ export function createLocalDeliveryApi(
               task_id: task.taskId,
             }
           )
-          if (existing.loop_item_id) {
+          if (existing.loop_item_id && String(existing.cloud_project_id) === String(projectId)) {
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }
         } catch {

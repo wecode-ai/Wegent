@@ -1254,7 +1254,7 @@ function GlobalImNotificationBell({
                   type="button"
                   data-testid="sidebar-global-im-notification-settings-button"
                   onClick={openSessionSettings}
-                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.away_im_reminder_change_session', '更换会话')}
                 </button>
