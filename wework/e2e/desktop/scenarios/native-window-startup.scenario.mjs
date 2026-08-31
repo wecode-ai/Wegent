@@ -2,10 +2,17 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
-export async function createDesktopScenario({ resultDir }) {
+export async function createDesktopScenario({ resultDir, uiTimeoutMs }) {
   return {
     async verify(control) {
-      const snapshot = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+      const deadline = Date.now() + uiTimeoutMs
+      let snapshot
+      do {
+        snapshot = JSON.parse(await control.command('getStartupSplashSnapshot', 'body'))
+        if (snapshot.state === 'closed') break
+        await new Promise(resolve => setTimeout(resolve, 50))
+      } while (Date.now() < deadline)
+
       assert.equal(snapshot.state, 'closed', 'The Electron startup splash was not closed')
       assert.deepEqual(
         snapshot.events.map(event => event.name),
