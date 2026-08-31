@@ -42,6 +42,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
+  'external-content-import': './scenarios/external-content-import.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',
@@ -70,6 +71,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
+  'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-git-worktree',

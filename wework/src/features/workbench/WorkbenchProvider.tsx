@@ -2955,8 +2955,6 @@ export function WorkbenchProvider({
             <CoreDshModelSync
               enabled={syncCoreDshModels}
               models={conversationModels}
-              selectedModel={modelSelection.selectedModel}
-              selectedModelOptions={modelSelection.selectedModelOptions}
               services={resolvedServices}
             />
             {children}

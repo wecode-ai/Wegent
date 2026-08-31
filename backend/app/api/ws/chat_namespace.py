@@ -55,6 +55,7 @@ from app.core.constants import (
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
 
@@ -1771,6 +1772,14 @@ def get_device_id(task):
     return task_crd.spec.device_id if task_crd.spec else None
 
 
+def _is_code_wiki_task(task: TaskResource) -> bool:
+    """Whether a task has a generation-bound Code Wiki runtime prompt."""
+    task_json = task.json if isinstance(task.json, dict) else {}
+    metadata = task_json.get("metadata") or {}
+    labels = metadata.get("labels") if isinstance(metadata, dict) else {}
+    return isinstance(labels, dict) and labels.get("source") == "code_wiki"
+
+
 def _prepare_chat_retry_dispatch(
     db: Session,
     payload: ChatRetryPayload,
@@ -1804,6 +1813,16 @@ def _prepare_chat_retry_dispatch(
             f"[WS] chat:retry error: User subtask not found parent_id={failed_ai_subtask.parent_id}"
         )
         return {"error": "User message not found"}
+
+    if _is_code_wiki_task(task):
+        logger.info(
+            "[WS] chat:retry rejected for Code Wiki task_id=%s; "
+            "a new wiki generation is required",
+            task.id,
+        )
+        return {
+            "error": "Code Wiki task retry is not supported. Start a new Code Wiki generation."
+        }
 
     logger.info(
         f"[WS] chat:retry found failed_ai_subtask: id={failed_ai_subtask.id}, "
