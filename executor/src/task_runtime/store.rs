@@ -55,12 +55,16 @@ pub struct LocalTaskStore {
 }
 
 impl LocalTaskStore {
+    pub(crate) fn default_path() -> PathBuf {
+        local_database_path()
+    }
+
     pub fn from_env() -> Result<Self, TaskRuntimeError> {
-        Self::open(local_database_path())
+        Self::open(Self::default_path())
     }
 
     pub fn from_env_if_exists() -> Result<Option<Self>, TaskRuntimeError> {
-        let path = local_database_path();
+        let path = Self::default_path();
         if !path.exists() {
             return Ok(None);
         }

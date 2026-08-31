@@ -4,7 +4,6 @@
 
 use super::*;
 use crate::runtime_work::automations::AutomationRunStatus;
-use crate::task_runtime::LocalTaskStore;
 
 static LAST_RUNTIME_STATUS_OBSERVATION: AtomicU64 = AtomicU64::new(0);
 
@@ -34,10 +33,11 @@ impl RuntimeWorkRpcHandler {
     ) {
         let handler = self.clone();
         let device_id = self.device_id.clone();
+        let task_store_path = self.task_store_path.clone();
         let worker_task_id = local_task_id.clone();
         tokio::spawn(async move {
             let binding_result = tokio::task::spawn_blocking(move || {
-                let store = LocalTaskStore::from_env()?;
+                let store = LocalTaskStore::open(task_store_path.as_ref())?;
                 store.ensure_default_work_item_binding(
                     &device_id,
                     &worker_task_id,
@@ -92,9 +92,11 @@ impl RuntimeWorkRpcHandler {
         execution_status: &str,
         observed_at_ms: i64,
     ) {
-        let store = match LocalTaskStore::from_env_if_exists() {
-            Ok(Some(store)) => store,
-            Ok(None) => return,
+        if !self.task_store_path.exists() {
+            return;
+        }
+        let store = match LocalTaskStore::open(self.task_store_path.as_ref()) {
+            Ok(store) => store,
             Err(error) => {
                 log_executor_event(
                     "runtime task Issue status store unavailable",
@@ -163,7 +165,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) fn start_queue_run(&self, local_task_id: &str) {
-        let Ok(store) = LocalTaskStore::from_env() else {
+        let Ok(store) = LocalTaskStore::open(self.task_store_path.as_ref()) else {
             return;
         };
         let _ = store.mark_runtime_running(local_task_id);
@@ -182,7 +184,7 @@ impl RuntimeWorkRpcHandler {
         error: Option<String>,
         result_content: Option<String>,
     ) {
-        let Ok(store) = LocalTaskStore::from_env() else {
+        let Ok(store) = LocalTaskStore::open(self.task_store_path.as_ref()) else {
             return;
         };
         let Ok(Some(execution)) = store.execution_by_runtime_task_id(local_task_id) else {
