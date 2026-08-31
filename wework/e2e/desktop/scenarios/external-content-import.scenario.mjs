@@ -6,12 +6,7 @@ const SOURCE_CONFIG = 'model = "desktop-e2e-imported"\n'
 const SOURCE_INSTRUCTIONS = '# Desktop E2E imported instructions\n'
 const SOURCE_SKILL = '# Desktop E2E imported skill\n'
 
-export async function createDesktopScenario({
-  captureScreenshot,
-  executorHome,
-  homePath,
-  uiTimeoutMs,
-}) {
+export async function createDesktopScenario({ captureScreenshot, executorHome, homePath }) {
   const sourceHome = join(homePath, '.codex')
   const destinationHome = join(executorHome, 'codex')
   await mkdir(join(sourceHome, 'skills', 'external-import-e2e'), { recursive: true })
@@ -24,13 +19,9 @@ export async function createDesktopScenario({
   return {
     async verify(control) {
       await control.command('navigate', 'body', { value: '/settings/general' })
-      await control.command('waitFor', '[data-testid="general-external-content-import-button"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command('waitFor', '[data-testid="general-external-content-import-button"]')
       await control.command('click', '[data-testid="general-external-content-import-button"]')
-      await control.command('waitFor', '[data-testid="external-content-import-dialog"]', {
-        timeoutMs: uiTimeoutMs,
-      })
+      await control.command('waitFor', '[data-testid="external-content-import-dialog"]')
       assert.equal(
         await control.command('getAttribute', '[data-testid="external-content-source-codex"]', {
           value: 'aria-pressed',
@@ -45,7 +36,6 @@ export async function createDesktopScenario({
       )
       await control.command('waitFor', '[data-testid="external-content-import-success"]', {
         text: 'Codex',
-        timeoutMs: uiTimeoutMs,
       })
       await captureScreenshot(
         control,

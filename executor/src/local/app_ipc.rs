@@ -658,11 +658,14 @@ impl AppIpcServer {
         if method == "executor.codex_home.import_external_content" {
             let request = serde_json::from_value::<ExternalContentImportRequest>(params)
                 .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
-            return serde_json::to_value(
-                import_external_content(request)
-                    .map_err(|error| AppIpcError::new("external_content_import_failed", error))?,
-            )
-            .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+            let imported = tokio::task::spawn_blocking(move || import_external_content(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("external_content_import_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("external_content_import_failed", error))?;
+            return serde_json::to_value(imported)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
 
         if method == "executor.harnesses.prepare_launch" {
