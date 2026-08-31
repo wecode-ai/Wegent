@@ -72,6 +72,13 @@ export interface LocalExecutorBackendConnection {
   deviceType: 'app' | 'remote'
 }
 
+interface LocalExecutorBackendStatus {
+  configured: boolean
+  connected: boolean
+  backend_url: string | null
+  socket_url: string | null
+}
+
 export interface BundledPluginMarketplace {
   id: string
   path: string
@@ -329,7 +336,10 @@ export function getLocalExecutorStatus(): Promise<LocalExecutorStatus> {
 }
 
 export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
-  const status = await ensureLocalExecutorAvailable()
+  const [status, backendStatus] = await Promise.all([
+    ensureLocalExecutorAvailable(),
+    requestDshExecutor<LocalExecutorBackendStatus>('executor.backend.status', {}),
+  ])
   return {
     path: 'Electron managed executor log',
     content: 'Executor diagnostics are managed by the Electron runtime.',
@@ -343,9 +353,9 @@ export async function readLocalExecutorLog(): Promise<LocalExecutorLog> {
     sidecarPath: '',
     currentDir: '',
     executorHome: '',
-    backendUrl: null,
-    socketUrl: null,
-    hasBackendAuthToken: false,
+    backendUrl: backendStatus.backend_url,
+    socketUrl: backendStatus.socket_url,
+    hasBackendAuthToken: backendStatus.configured,
     pendingRequestCount: 0,
     status,
   }

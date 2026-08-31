@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from shared.telemetry.context import set_request_context
+
 
 def _runtime_route(
     *, runtime_features=None, device_type=None, app_device_id: str | None = None
@@ -95,6 +97,35 @@ def _socketio_with_call(call: AsyncMock, *, connected: bool = True):
             "manager": _SocketManager(connected=connected),
         },
     )()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_propagates_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device import runtime_rpc_service as module
+
+    async def resolve_route(**_kwargs):
+        set_request_context("changed-during-route-resolution")
+        return _runtime_route()
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(side_effect=resolve_route),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    set_request_context("cloud-runtime-request-1")
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.list",
+        payload={},
+    )
+
+    assert sio_call.await_args.args[1]["request_id"] == "cloud-runtime-request-1"
 
 
 @pytest.mark.asyncio

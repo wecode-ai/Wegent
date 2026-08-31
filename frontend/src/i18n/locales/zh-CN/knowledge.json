@@ -1229,6 +1229,35 @@
       "emptyFailed": "上次生成没有完成",
       "emptyFailedHint": "可以重新触发一次；如果反复失败，看看下面的原因。"
     },
+    "progress": {
+      "title": "生成中",
+      "step": "阶段 {{current}}/{{total}}",
+      "stepLabel": {
+        "plan": "规划评审",
+        "planPassed_one": "规划评审通过（{{count}} 个页面）",
+        "planPassed_other": "规划评审通过（{{count}} 个页面）",
+        "writing": "写入页面",
+        "writingActive": "正在写入页面（{{current}} / {{total}}）",
+        "writingCompleted_one": "页面写入完成（{{count}} 个页面）",
+        "writingCompleted_other": "页面写入完成（{{count}} 个页面）",
+        "qa": "最终质量评审",
+        "qaCompleted": "最终质量评审通过",
+        "publish": "整合与发布",
+        "publishCompleted": "已发布"
+      },
+      "stage": {
+        "generating": "正在生成 Wiki 内容",
+        "planning": "正在分析仓库并规划页面",
+        "plan_review": "正在评审 Wiki 页面计划",
+        "revising_plan": "正在根据评审意见修订计划",
+        "writing": "正在撰写 Wiki 页面",
+        "qa_review": "正在进行内容 QA",
+        "repairing": "正在根据 QA 意见修正文档",
+        "recheck": "正在复核修正结果",
+        "publishing": "正在校验并发布 Wiki",
+        "finishing": "正在结束本次生成"
+      }
+    },
     "workspace": {
       "wiki": "Wiki",
       "documents": "文档管理",

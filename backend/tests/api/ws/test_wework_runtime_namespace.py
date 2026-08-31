@@ -15,6 +15,7 @@ from app.api.ws import device_namespace, local_task_responses, wework_runtime_na
 from app.api.ws.device_namespace import DeviceNamespace
 from app.api.ws.wework_runtime_namespace import WeworkRuntimeNamespace
 from app.core.socketio import SOCKETIO_MAX_HTTP_BUFFER_SIZE
+from shared.telemetry.context import get_request_id
 
 
 @pytest.fixture(autouse=True)
@@ -564,6 +565,7 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
     )
 
     assert response == {"id": "req-1", "ok": True, "result": {"accepted": True}}
+    assert get_request_id() == "req-1"
     runtime_rpc.assert_awaited_once_with(
         user_id=7,
         device_id="cloud-device",
@@ -571,6 +573,113 @@ async def test_runtime_request_relays_to_device_runtime_rpc(monkeypatch):
         payload={"message": "hello"},
         timeout_seconds=75,
     )
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_binds_authenticated_execution_identity(monkeypatch):
+    namespace = WeworkRuntimeNamespace()
+    runtime_rpc = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        runtime_rpc,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(
+            return_value={
+                "user_id": 7,
+                "user_name": "hongyu9",
+                "user_email": "hongyu9@example.com",
+            }
+        ),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.tasks.create",
+            "params": {
+                "executionRequest": {
+                    "user": {
+                        "id": 0,
+                        "name": "local",
+                        "user_name": "local",
+                        "email": "local@localhost",
+                        "preference": "preserved",
+                    },
+                    "user_id": 0,
+                    "user_name": "local",
+                },
+                "friendlyTitleExecutionRequest": {
+                    "user": {"id": 0, "name": "local"},
+                    "user_id": 0,
+                    "user_name": "local",
+                },
+            },
+        },
+    )
+
+    assert response == {"id": "req-1", "ok": True, "result": {"accepted": True}}
+    payload = runtime_rpc.await_args.kwargs["payload"]
+    assert payload["executionRequest"]["user"] == {
+        "id": 7,
+        "name": "hongyu9",
+        "user_name": "hongyu9",
+        "email": "hongyu9@example.com",
+        "preference": "preserved",
+    }
+    assert payload["executionRequest"]["user_id"] == 7
+    assert payload["executionRequest"]["user_name"] == "hongyu9"
+    assert payload["friendlyTitleExecutionRequest"]["user"] == {
+        "id": 7,
+        "name": "hongyu9",
+        "user_name": "hongyu9",
+        "email": "hongyu9@example.com",
+    }
+    assert payload["friendlyTitleExecutionRequest"]["user_id"] == 7
+    assert payload["friendlyTitleExecutionRequest"]["user_name"] == "hongyu9"
+
+
+@pytest.mark.asyncio
+async def test_runtime_request_rejects_execution_without_authenticated_user_name(
+    monkeypatch,
+):
+    namespace = WeworkRuntimeNamespace()
+    runtime_rpc = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_rpc_service,
+        "call",
+        runtime_rpc,
+    )
+    monkeypatch.setattr(
+        namespace,
+        "get_session",
+        AsyncMock(return_value={"user_id": 7}),
+    )
+
+    response = await namespace.on_runtime_request(
+        "browser-sid",
+        {
+            "id": "req-1",
+            "device_id": "cloud-device",
+            "method": "runtime.tasks.create",
+            "params": {"executionRequest": {"user_name": "local"}},
+        },
+    )
+
+    assert response == {
+        "id": "req-1",
+        "ok": False,
+        "error": {
+            "code": "unauthorized",
+            "message": "Authenticated runtime user identity is incomplete",
+        },
+    }
+    runtime_rpc.assert_not_awaited()
 
 
 @pytest.mark.asyncio

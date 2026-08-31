@@ -211,4 +211,22 @@ describe('WorkItemComposerGuide', () => {
     expect(onOpenBoard).toHaveBeenCalledOnce()
     expect(screen.queryByTestId('work-item-context-menu')).not.toBeInTheDocument()
   })
+
+  test('allows an already linked task to choose another board', async () => {
+    const user = userEvent.setup()
+    const onSelectProject = vi.fn()
+    render(
+      <WorkItemComposerGuide
+        project={project}
+        item={item}
+        projects={[project, teamProject]}
+        onSelectProject={onSelectProject}
+      />
+    )
+
+    await user.click(screen.getByTestId('work-item-change-board'))
+    await user.click(screen.getByTestId('work-item-workspace-option-team-work'))
+
+    expect(onSelectProject).toHaveBeenCalledWith(teamProject)
+  })
 })

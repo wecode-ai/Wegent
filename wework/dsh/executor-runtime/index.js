@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { Transform, Writable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { ExecutorRuntimeClient, ExecutorRuntimeError } from './executor-runtime-client.js'
@@ -28,7 +29,7 @@ export async function apply(ctx) {
     return () => projectionStream.stop()
   }, 'wework-executor-runtime: session projection')
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
-  register(ctx, `${BASE_PATH}/rpc`, (req, res) => rpc(req, res, client))
+  register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) => handleExecutorEvents(req, res))
 }
 
@@ -61,18 +62,40 @@ async function describe(req, res, client) {
   }
 }
 
-async function rpc(req, res, client) {
+export async function handleExecutorRpc(req, res, client) {
   if (!trustedBrowserRequest(req)) return forbidden(res)
   if (req.method !== 'POST') return methodNotAllowed(res, 'POST')
+  const startedAt = Date.now()
+  let requestId = requestIdFromRequest(req)
+  let method = '<invalid>'
   try {
     const body = await readJsonBody(req)
     if (!isRecord(body) || typeof body.method !== 'string' || !isRecord(body.params)) {
       throw new ExecutorRuntimeError('invalid_params', 'Request must contain method and params')
     }
-    const result = await client.request(body.method, body.params)
-    sendJson(res, 200, { ok: true, result: result ?? null })
+    requestId = requestId ?? requestIdFromBody(body) ?? randomUUID()
+    method = body.method
+    console.info('[wework-executor-runtime] RPC request started', {
+      request_id: requestId,
+      method,
+    })
+    const result = await client.request(body.method, body.params, undefined, requestId)
+    console.info('[wework-executor-runtime] RPC request finished', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      ok: true,
+    })
+    sendJson(res, 200, { ok: true, result: result ?? null }, false, requestId)
   } catch (error) {
-    sendError(res, error)
+    requestId ??= randomUUID()
+    console.error('[wework-executor-runtime] RPC request failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    sendError(res, error, requestId)
   }
 }
 
@@ -261,7 +284,7 @@ function trustedBrowserRequest(req) {
   }
 }
 
-function sendError(res, error) {
+function sendError(res, error, requestId) {
   const body = errorBody(error)
   const status = ['invalid_json', 'invalid_params', 'request_too_large'].includes(body.error.code)
     ? 400
@@ -270,7 +293,7 @@ function sendError(res, error) {
       : body.error.retryable
         ? 503
         : 500
-  sendJson(res, status, body)
+  sendJson(res, status, body, false, requestId)
 }
 
 function errorBody(error) {
@@ -293,12 +316,13 @@ function errorBody(error) {
   }
 }
 
-function sendJson(res, status, value, head = false) {
+function sendJson(res, status, value, head = false, requestId) {
   const body = JSON.stringify(value)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'content-length': Buffer.byteLength(body),
+    ...(requestId ? { 'x-request-id': requestId } : {}),
   })
   res.end(head ? undefined : body)
 }
@@ -317,6 +341,21 @@ function methodNotAllowed(res, allow) {
 
 function singleHeader(value) {
   return Array.isArray(value) ? value[0] : value
+}
+
+function requestIdFromRequest(req) {
+  return normalizedRequestId(singleHeader(req.headers['x-request-id']))
+}
+
+function requestIdFromBody(body) {
+  return normalizedRequestId(body.id) ?? normalizedRequestId(body.request_id)
+}
+
+function normalizedRequestId(value) {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (!normalized || normalized.length > 128 || /[^\x20-\x7e]/.test(normalized)) return null
+  return normalized
 }
 
 function isRecord(value) {

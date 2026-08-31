@@ -14,7 +14,7 @@ import {
 } from '@/features/model-settings/localModelSettings'
 import { saveLocalProxyUrl } from '@/features/model-settings/localProxySettings'
 import { createDefaultLocalModelCatalogEntry } from '@/features/model-settings/localModelCatalog'
-import type { TurnFileChangesSummary } from '@/types/api'
+import type { TurnFileChangesSummary, User } from '@/types/api'
 
 const OFFICIAL_CODEX_MODEL_DEFINITIONS: Array<[string, string, string, string[]]> = [
   ['gpt-5.6-sol', 'GPT-5.6-Sol', 'low', ['low', 'medium', 'high', 'xhigh', 'max', 'ultra']],
@@ -37,11 +37,25 @@ const OFFICIAL_CODEX_MODELS = OFFICIAL_CODEX_MODEL_DEFINITIONS.map(
   })
 )
 
+const AUTHENTICATED_CLOUD_USER: User = {
+  id: 9,
+  user_name: 'hongyu9',
+  email: 'hongyu9@example.com',
+}
+
 describe('createLocalAppServices', () => {
   beforeEach(() => {
     localStorage.clear()
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  test('rejects cloud runtime construction without authenticated user identity', () => {
+    expect(() =>
+      createRuntimeWorkApiFromIpc(vi.fn(), async () => 'cloud-device', {
+        transportLabel: 'Cloud',
+      })
+    ).toThrow('Cloud runtime user identity is required')
   })
 
   test('reuses the runtime event stream for the same local transport', () => {
@@ -2354,6 +2368,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync,
       resolveDeviceName: () => 'Cloud Executor',
@@ -2706,6 +2721,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'device-a', {
       resolveDeviceId: async data => String(data.deviceId),
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync,
     })
@@ -2754,6 +2770,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync: vi.fn().mockResolvedValue(false),
     })
@@ -2785,6 +2802,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(vi.fn(), async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync,
     })
@@ -2842,6 +2860,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync,
     })
@@ -2913,6 +2932,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync: async ({ sync }) => {
         await sync()
@@ -2949,6 +2969,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'cloud-device', {
       resolveDeviceId: async () => 'cloud-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
       syncConfiguredModelCatalog: true,
       requestModelCatalogSync: async ({ sync }) => {
         await sync()
@@ -4554,6 +4575,7 @@ describe('createLocalAppServices', () => {
     const runtimeApi = createRuntimeWorkApiFromIpc(request, async () => 'remote-device', {
       resolveDeviceId: async () => 'remote-device',
       transportLabel: 'Cloud',
+      user: AUTHENTICATED_CLOUD_USER,
     })
 
     await runtimeApi.getWorktreeCapabilities({ deviceId: 'remote-device' })

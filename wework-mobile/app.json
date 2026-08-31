@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Wegent",
+    "slug": "wework-mobile",
+    "scheme": "wegent",
+    "version": "0.1.0",
+    "icon": "./assets/icon.png",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "icon": "./assets/icon.png",
+      "bundleIdentifier": "com.wecode.wegent",
+      "appleTeamId": "27XH7KRW54"
+    },
+    "android": {
+      "package": "com.wecode.wegent",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "predictiveBackGestureEnabled": true
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-document-picker",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允许 Wegent 选择照片并作为会话附件发送。",
+          "cameraPermission": "允许 Wegent 拍摄照片并作为会话附件发送。",
+          "microphonePermission": false
+        }
+      ]
+    ]
+  }
+}

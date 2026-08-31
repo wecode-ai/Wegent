@@ -274,6 +274,7 @@ import {
 import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
+  verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
@@ -2239,7 +2240,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     let associatedTaskTabTestId = null
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync')
+      shouldRunDesktopCheckpoint('task-status-sync') ||
+      shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
@@ -2310,7 +2312,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     let taskRowCompletionText = COMPLETION_TEXT
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync')
+      shouldRunDesktopCheckpoint('task-status-sync') ||
+      shouldRunDesktopCheckpoint('task-board-association')
     ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       await control.command('waitFor', activeModelSelector, {
@@ -2383,6 +2386,26 @@ last_updated = "2026-07-30T00:00:00Z"`
           'utf8'
         )
         console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+      if (shouldRunDesktopCheckpoint('task-board-association')) {
+        phase = 'project-space-task-board-association'
+        control.releaseInitialToolExecution()
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
+          captureScreenshots: false,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(
+          `Wework desktop task-board-association checkpoint passed. Evidence: ${resultDir}`
+        )
         return
       }
       await verifyUserMessageNavigation({

@@ -193,6 +193,7 @@ import {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   RETRY_COMPLETION_TEXT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_PROMPT,
   RUNNING_FORK_COMPLETION_TEXT,
@@ -236,6 +237,9 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const CLOUD_STORED_USER_NAME = 'wework-desktop-e2e-cloud-user'
+const CLOUD_AUTHENTICATED_USER_NAME = 'admin'
+const CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID = 'wework-cloud-e2e-identity-tool-call'
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
 const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
 const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
@@ -1107,7 +1111,7 @@ class DesktopE2EServer {
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
         id: 9001,
-        user_name: 'wework-desktop-e2e-cloud-user',
+        user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
       })
       return
@@ -2478,12 +2482,16 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_TASK_PROMPT),
         'The real cloud Codex request did not contain the UI task prompt'
       )
-      const tool = selectShellTool(body, this.cloudWorkspacePath)
+      const tool = selectShellToolCommand(
+        body,
+        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        this.cloudWorkspacePath
+      )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall(CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID, tool.name, tool.arguments),
         customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -2496,6 +2504,12 @@ class DesktopE2EServer {
         requestContainsToolOutput(body),
         true,
         'The real cloud Codex request did not report its tool output to the model service'
+      )
+      const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
+      assert.equal(
+        identityToolOutput.trim().endsWith(`Output:\n${CLOUD_AUTHENTICATED_USER_NAME}`),
+        true,
+        'The real cloud executor did not expose the authenticated Wework user identity'
       )
       this.cloudModelStage = 'complete'
       this.writeSse(response, [
@@ -3689,18 +3703,28 @@ class DesktopE2EServer {
 
     if (this.scenario === 'retry') {
       this.recordScenarioRequest('retry', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(RETRY_PROMPT),
-        'The real Codex request did not contain the retry prompt'
-      )
       const retryRequests = this.scenarioRequests.get('retry') ?? []
       if (retryRequests.length === 1) {
+        assert.ok(
+          latestModelInputText(body).includes(RETRY_PROMPT),
+          'The initial Codex request did not contain the retry scenario prompt'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
+      const continuationInput = latestModelInputText(body)
+      assert.ok(
+        continuationInput.includes(RETRY_CONTINUATION_PROMPT),
+        'The retry action did not continue the existing Codex conversation'
+      )
+      assert.equal(
+        continuationInput.includes(RETRY_PROMPT),
+        false,
+        'The retry action replayed the original user prompt'
+      )
       await this.retryCompletionRelease
       this.writeSse(response, [
         responseCreated(responseId),

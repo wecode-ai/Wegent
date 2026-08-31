@@ -126,8 +126,8 @@ import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 
-const WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS = 6000
 const POPOUT_WINDOW_LABEL = 'popout-window'
 
 function isPopoutWindowRuntime() {
@@ -762,6 +762,14 @@ function AppShell() {
   const cloudToken = cloudConnection.token
   const titlebarOverlaysContent = false
   const showChromeTitlebar = (isDesktop || isElectron) && !isPopoutWindow
+  useEffect(() => {
+    const startupRouteReady =
+      path === '/login' || path === '/login/oidc' || path === '/auth/wework/authorize'
+    if (!startupRouteReady || isLoading || !isMainWindow) return
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the startup route', error)
+    })
+  }, [isLoading, isMainWindow, path])
   const workspaceTabStorageScope = useMemo(
     () => (isElectron ? (currentWindowLabel ?? 'main') : browserWorkspaceTabStorageScope()),
     [currentWindowLabel, isElectron]
@@ -819,10 +827,6 @@ function AppShell() {
       : fixedWorkspaceTabs[0]?.id
   }, [appPreferences, fixedWorkspaceTabs, isMainWindow])
   const [workbenchStartupReady, setWorkbenchStartupReady] = useState(false)
-  const [workbenchStartupRevealAppKey, setWorkbenchStartupRevealAppKey] = useState<string | null>(
-    null
-  )
-  const workbenchStartupRevealTimedOut = workbenchStartupRevealAppKey === activeAppKey
   const updateImNotificationPresence = useMemo(() => {
     if (!cloudApiBaseUrl || !cloudToken) return undefined
     return createRuntimeWorkApi(
@@ -972,27 +976,6 @@ function AppShell() {
     return installMacOSInputArrowKeyGuard()
   }, [])
 
-  useEffect(() => {
-    if (
-      path === '/login' ||
-      path === '/login/oidc' ||
-      isLoading ||
-      !user ||
-      workbenchStartupReady
-    ) {
-      return undefined
-    }
-
-    const timer = window.setTimeout(() => {
-      console.warn(
-        `[Wework] Workbench startup has not completed after ${WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS}ms; revealing shell while requests continue.`
-      )
-      setWorkbenchStartupRevealAppKey(activeAppKey)
-    }, WORKBENCH_STARTUP_REVEAL_TIMEOUT_MS)
-
-    return () => window.clearTimeout(timer)
-  }, [activeAppKey, isLoading, path, user, workbenchStartupReady])
-
   // No chrome on login/setup pages
   if (path === '/login' || path === '/login/oidc') {
     return <AppRoutes />
@@ -1058,7 +1041,7 @@ function AppShell() {
         ) : null}
         {isMainWindow && isElectron ? (
           <>
-            <IdleTaskCoordinator active={workbenchStartupReady || workbenchStartupRevealTimedOut} />
+            <IdleTaskCoordinator active={workbenchStartupReady} />
             <WeworkIdleTasks />
           </>
         ) : null}
@@ -1090,7 +1073,7 @@ function AppShell() {
     <CodexHomeInitializer>
       <LocalRuntimeInitializer
         initialCloudConnection={initialCloudConnection}
-        startupReady={workbenchStartupReady || workbenchStartupRevealTimedOut}
+        startupReady={workbenchStartupReady}
       >
         {shell}
       </LocalRuntimeInitializer>

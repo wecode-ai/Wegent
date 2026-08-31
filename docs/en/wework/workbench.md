@@ -79,6 +79,8 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 
 IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
 
+The away-reminder panel shows the current delivery conversation. When cloud connectivity is available, **Change conversation** and the primary enable or disable action remain fully visible in the same action row, so either setting can be adjusted directly.
+
 After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
 
 ## Split tasks by dragging
@@ -136,6 +138,8 @@ Message, scroll-position, and measured-height caches are bounded. Archiving a ta
 ## Use selected response text
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
+
+Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
 
