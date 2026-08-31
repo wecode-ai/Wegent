@@ -224,6 +224,10 @@
         "knowledge_description": "新聊天默认会带上这些知识库，之后仍可在聊天中追加选择。",
         "mcp_description": "连接外部 MCP 服务，为智能体补充工具能力。"
       },
+      "prompt_protection": {
+        "label": "提示词防护",
+        "description": "使用当前选择的模型额外调用一次，对请求进行最佳努力的风险判断。开启后会增加延迟和模型成本，且不构成安全边界。"
+      },
       "execution": {
         "bind_mode_description": "决定这个智能体可以在哪些入口和任务类型中使用。",
         "requires_workspace_description": "开启后，编码任务必须先选择仓库。",

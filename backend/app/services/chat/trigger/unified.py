@@ -37,6 +37,13 @@ from app.services.execution.skill_generation import (
     enrich_skill_generation_context,
     has_skill_generation_context_enrichers,
 )
+from app.services.prompt_protection import (
+    PromptProtectionBlocked,
+    PromptProtectionContext,
+    PromptProtectionEntrypoint,
+    evaluate_prompt_protection,
+    record_prompt_protection_failure,
+)
 from app.services.runtime_codex_model import (
     CODEX_RUNTIME_MODEL_ID,
     CODEX_RUNTIME_MODEL_NAME,
@@ -667,6 +674,7 @@ async def trigger_ai_response_unified(
     enable_tools: bool = True,
     enable_deep_thinking: bool = True,
     previous_bot_id: Optional[int] = None,
+    prompt_protection_entrypoint: Optional[PromptProtectionEntrypoint] = None,
 ) -> None:
     """Trigger AI response using unified execution architecture.
 
@@ -724,6 +732,16 @@ async def trigger_ai_response_unified(
         previous_bot_id=previous_bot_id,
     )
 
+    await _enforce_prompt_protection(
+        request=request,
+        task=task,
+        assistant_subtask=assistant_subtask,
+        team=team,
+        user=user,
+        message=message,
+        entrypoint=prompt_protection_entrypoint,
+    )
+
     # 2. Dispatch task
     # ExecutionDispatcher automatically selects communication mode:
     # - device_id specified -> WebSocket mode
@@ -739,6 +757,115 @@ async def trigger_ai_response_unified(
         task.id,
         assistant_subtask.id,
     )
+
+
+def _prompt_protection_context(
+    *,
+    request: "ExecutionRequest",
+    task: TaskResource,
+    assistant_subtask: Subtask,
+    team: Kind,
+    user: User,
+    message: Union[str, list],
+    entrypoint: Optional[PromptProtectionEntrypoint],
+) -> tuple[Any, str, PromptProtectionContext] | None:
+    if entrypoint is None:
+        return None
+
+    from app.schemas.kind import Team as TeamCRD
+
+    team_crd = TeamCRD.model_validate(team.json)
+    shell_type = _request_shell_type(request)
+    eligible = (
+        team_crd.spec.promptProtectionEnabled
+        and team_crd.spec.collaborationModel == "solo"
+        and shell_type in {"Chat", "ClaudeCode"}
+        and isinstance(message, str)
+    )
+    if not eligible:
+        return None
+    context = PromptProtectionContext(
+        team_id=team.id,
+        team_namespace=team.namespace or "default",
+        task_id=task.id,
+        subtask_id=assistant_subtask.id,
+        user_id=user.id,
+        entrypoint=f"{entrypoint.value}:{shell_type}",
+        model_id=str(request.model_config.get("model_id") or ""),
+    )
+    return team_crd, shell_type, context
+
+
+def _prompt_protection_system_prompt(
+    *,
+    assistant_subtask: Subtask,
+    team: Kind,
+    context: PromptProtectionContext,
+) -> str | None:
+    from app.services.execution import TaskRequestBuilder
+
+    db = SessionLocal()
+    try:
+        try:
+            return TaskRequestBuilder(db).get_base_system_prompt_for_subtask(
+                assistant_subtask,
+                team,
+            )
+        except Exception:
+            record_prompt_protection_failure(
+                context=context,
+                failure_type="prompt_resolution_error",
+            )
+            return None
+    finally:
+        db.close()
+
+
+async def _enforce_prompt_protection(
+    *,
+    request: "ExecutionRequest",
+    task: TaskResource,
+    assistant_subtask: Subtask,
+    team: Kind,
+    user: User,
+    message: Union[str, list],
+    entrypoint: Optional[PromptProtectionEntrypoint],
+) -> None:
+    """Apply the gate only to explicitly marked simple-Team Web messages."""
+    target = _prompt_protection_context(
+        request=request,
+        task=task,
+        assistant_subtask=assistant_subtask,
+        team=team,
+        user=user,
+        message=message,
+        entrypoint=entrypoint,
+    )
+    if target is None:
+        return
+    team_crd, shell_type, context = target
+    raw_system_prompt = _prompt_protection_system_prompt(
+        assistant_subtask=assistant_subtask,
+        team=team,
+        context=context,
+    )
+    if raw_system_prompt is None:
+        return
+
+    result = await evaluate_prompt_protection(
+        context=context,
+        team_name=team.name,
+        team_description=team_crd.spec.description or "",
+        system_prompt=raw_system_prompt,
+        user_input=message,
+        model_config=request.model_config,
+    )
+    if result.blocked:
+        raise PromptProtectionBlocked(
+            result.risks,
+            bot_name=request.bot_name,
+            shell_type=shell_type,
+        )
 
 
 async def build_execution_request(

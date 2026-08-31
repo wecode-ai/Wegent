@@ -16,7 +16,7 @@ from app.services.chat.trigger.unified import (
     build_wework_runtime_model_config,
 )
 from app.services.llm_proxy_service import (
-    _join_upstream_url,
+    join_upstream_url,
     proxy_llm_responses,
     resolve_llm_proxy_model_config,
 )
@@ -105,7 +105,7 @@ def test_join_upstream_url_appends_endpoint_once(
     endpoint_path: str,
     expected: str,
 ):
-    assert _join_upstream_url(base_url, endpoint_path) == expected
+    assert join_upstream_url(base_url, endpoint_path) == expected
 
 
 @pytest.fixture

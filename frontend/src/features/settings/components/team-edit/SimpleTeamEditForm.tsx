@@ -49,6 +49,8 @@ interface SimpleTeamEditFormProps {
   setDisplayName: (value: string) => void
   description: string
   setDescription: (value: string) => void
+  promptProtectionEnabled: boolean
+  setPromptProtectionEnabled: (value: boolean) => void
   quickPhrases: string[]
   onQuickPhrasesChange: (value: string[]) => void
   inputPlaceholder: TeamInputPlaceholder
@@ -143,6 +145,8 @@ export default function SimpleTeamEditForm({
   setDisplayName,
   description,
   setDescription,
+  promptProtectionEnabled,
+  setPromptProtectionEnabled,
   quickPhrases,
   onQuickPhrasesChange,
   inputPlaceholder,
@@ -401,6 +405,19 @@ export default function SimpleTeamEditForm({
 
       <SimpleSection title={t('settings:team.simple.sections.prompt')} sectionId="prompt">
         <SimpleConfigGroup>
+          <SimpleConfigRow
+            label={t('settings:team.simple.prompt_protection.label')}
+            description={t('settings:team.simple.prompt_protection.description')}
+            align="start"
+          >
+            <div className="flex justify-end pt-1">
+              <Switch
+                checked={promptProtectionEnabled}
+                onCheckedChange={setPromptProtectionEnabled}
+                data-testid="prompt-protection-enabled-switch"
+              />
+            </div>
+          </SimpleConfigRow>
           <div className="space-y-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs leading-5 text-text-muted">

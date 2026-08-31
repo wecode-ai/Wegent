@@ -391,6 +391,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     namespace?: string
   }>({ name: '' })
   const [simplePrompt, setSimplePrompt] = useState('')
+  const [promptProtectionEnabled, setPromptProtectionEnabled] = useState(false)
   const [simpleSelectedSkills, setSimpleSelectedSkills] = useState<string[]>([])
   const [simpleSelectedSkillRefs, setSimpleSelectedSkillRefs] = useState<
     Record<string, SkillRefMeta>
@@ -518,6 +519,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName(formTeam.name)
       setDisplayName(formTeam.displayName || '')
       setDescription(formTeam.description || '')
+      setPromptProtectionEnabled(formTeam.prompt_protection_enabled ?? false)
       setQuickPhrases(formTeam.quick_phrases || [])
       setInputPlaceholder(formTeam.inputPlaceholder || {})
       setIcon(formTeam.icon || null)
@@ -590,6 +592,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setName('')
       setDisplayName('')
       setDescription('')
+      setPromptProtectionEnabled(false)
       setQuickPhrases([])
       setIcon(null)
       setMode('solo')
@@ -1039,6 +1042,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name,
           displayName,
           description,
+          promptProtectionEnabled,
           quickPhrases,
           inputPlaceholder,
           bindMode,
@@ -1476,6 +1480,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   setDisplayName={setDisplayName}
                   description={description}
                   setDescription={setDescription}
+                  promptProtectionEnabled={promptProtectionEnabled}
+                  setPromptProtectionEnabled={setPromptProtectionEnabled}
                   quickPhrases={quickPhrases}
                   onQuickPhrasesChange={setQuickPhrases}
                   inputPlaceholder={inputPlaceholder}

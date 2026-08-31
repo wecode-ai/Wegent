@@ -553,6 +553,10 @@ class TeamSpec(QuickPhraseMixin):
         description="Optional media selectors exposed while retaining chat execution.",
     )
     description: Optional[str] = None  # Team description
+    promptProtectionEnabled: bool = Field(
+        default=False,
+        description="Whether prompt protection is enabled for this Team.",
+    )
     icon: Optional[str] = None  # Icon ID from preset icon library
     requiresWorkspace: Optional[bool] = Field(
         default=None,

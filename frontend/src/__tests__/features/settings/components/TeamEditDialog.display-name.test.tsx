@@ -11,6 +11,7 @@ import TeamEditDialog from '@/features/settings/components/TeamEditDialog'
 
 const mockRefreshTeams = jest.fn()
 const mockTeamModeEditor = jest.fn((_props: Record<string, unknown>) => null)
+const mockSimpleTeamEditForm = jest.fn((_props: Record<string, unknown>) => null)
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -118,7 +119,7 @@ jest.mock('@/features/settings/components/team-edit/TeamModeChangeDialog', () =>
 
 jest.mock('@/features/settings/components/team-edit/SimpleTeamEditForm', () => ({
   __esModule: true,
-  default: () => null,
+  default: (props: Record<string, unknown>) => mockSimpleTeamEditForm(props),
 }))
 
 const mockedUpdateTeam = updateTeam as jest.MockedFunction<typeof updateTeam>
@@ -157,6 +158,7 @@ describe('TeamEditDialog display name', () => {
     jest.clearAllMocks()
     mockRefreshTeams.mockResolvedValue(undefined)
     mockTeamModeEditor.mockImplementation(() => null)
+    mockSimpleTeamEditForm.mockImplementation(() => null)
   })
 
   it('edits and saves the team display name', async () => {
@@ -255,6 +257,33 @@ describe('TeamEditDialog display name', () => {
         team.id,
         expect.objectContaining({
           bind_mode: ['knowledge'],
+        })
+      )
+    })
+  })
+
+  it('loads prompt protection state into the simple Team editor', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'solo' }
+    team.prompt_protection_enabled = true
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          promptProtectionEnabled: true,
         })
       )
     })

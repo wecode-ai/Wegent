@@ -176,6 +176,7 @@ export interface Team {
   displayName?: string | null
   namespace?: string // Namespace for group teams (default: 'default')
   description: string
+  prompt_protection_enabled?: boolean
   bots: TeamBot[]
   workflow: Record<string, string>
   is_active: boolean

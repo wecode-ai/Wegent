@@ -86,6 +86,12 @@ from app.services.chat.trigger import (
     trigger_ai_response_unified,
 )
 from app.services.chat.wework_task_defaults import apply_wework_task_defaults
+from app.services.prompt_protection import (
+    BLOCKED_ERROR_CODE,
+    BLOCKED_MESSAGE,
+    PromptProtectionBlocked,
+    PromptProtectionEntrypoint,
+)
 from app.services.task_fork_history import task_fork_history_resolver
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
@@ -188,6 +194,34 @@ async def _finalize_failed_ai_trigger(
         result=final_result,
         error=error_message,
     )
+
+
+async def _finalize_prompt_protection_block(
+    *,
+    task_id: int,
+    assistant_subtask_id: int,
+) -> None:
+    """Complete a blocked assistant turn while leaving the Task reusable."""
+    final_result = await collect_completed_result(
+        assistant_subtask_id,
+        status="COMPLETED",
+        result={"value": ""},
+    )
+    await persist_completed_result(
+        subtask_id=assistant_subtask_id,
+        task_id=task_id,
+        status="COMPLETED",
+        result=final_result,
+    )
+
+
+def _web_prompt_protection_entrypoint(
+    device_id: Optional[str],
+) -> Optional[PromptProtectionEntrypoint]:
+    """Protect Web execution while leaving Device Chat unchanged."""
+    if device_id is not None:
+        return None
+    return PromptProtectionEntrypoint.WEB_USER_MESSAGE
 
 
 class ChatNamespace(socketio.AsyncNamespace):
@@ -671,7 +705,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"task_id": int, "subtask_id": int} or {"error": "..."}
             For pipeline:confirm action: {"task_id": int, "current_stage": int, ...}
         """
-        logger.info(f"[WS] chat:send received sid={sid} data={data}")
+        logger.info("[WS] chat:send received sid=%s", sid)
 
         # Check token expiry before processing
         if await self._check_token_expiry(sid):
@@ -1112,6 +1146,36 @@ class ChatNamespace(socketio.AsyncNamespace):
                             user_subtask_id=user_subtask_id_for_context,  # Pass user subtask ID for unified context processing
                             auth_token=auth_token,  # Pass original JWT token from WebSocket session
                             previous_bot_id=previous_bot_id,  # Pipeline mode: previous stage's bot_id for session management
+                            prompt_protection_entrypoint=(
+                                _web_prompt_protection_entrypoint(device_id)
+                            ),
+                        )
+                    except PromptProtectionBlocked as blocked:
+                        await self.emit(
+                            ServerEvents.CHAT_START,
+                            {
+                                "task_id": task.id,
+                                "subtask_id": assistant_subtask.id,
+                                "bot_name": blocked.bot_name,
+                                "shell_type": blocked.shell_type,
+                                "message_id": assistant_subtask.message_id,
+                            },
+                            room=task_room,
+                        )
+                        await self.emit(
+                            ServerEvents.CHAT_ERROR,
+                            ChatErrorPayload(
+                                subtask_id=assistant_subtask.id,
+                                error=BLOCKED_MESSAGE,
+                                type=BLOCKED_ERROR_CODE,
+                                message_id=assistant_subtask.message_id,
+                                task_id=task.id,
+                            ).model_dump(),
+                            room=task_room,
+                        )
+                        await _finalize_prompt_protection_block(
+                            task_id=task.id,
+                            assistant_subtask_id=assistant_subtask.id,
                         )
                     except Exception as e:
                         logger.exception(

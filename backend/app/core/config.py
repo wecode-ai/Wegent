@@ -185,6 +185,7 @@ class Settings(BaseSettings):
     CHAT_HISTORY_EXPIRE_SECONDS: int = 7200  # Chat history expiration (2 hours)
     CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
+    PROMPT_PROTECTION_TIMEOUT_SECONDS: float = 10.0
 
     # Async video polling configuration
     VIDEO_POLL_INTERVAL_SECONDS: int = 3
