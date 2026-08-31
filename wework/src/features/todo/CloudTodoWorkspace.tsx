@@ -83,6 +83,8 @@ import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -541,6 +543,7 @@ interface CloudTodoWorkspaceProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
+  startupActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1088,6 +1091,7 @@ export function CloudTodoWorkspace({
   runtimeTaskLifecycle,
   services,
   embedded = false,
+  startupActive = false,
   activeProjectRef,
   defaultProjectRequested = false,
   focusedItemId,
@@ -2085,6 +2089,34 @@ export function CloudTodoWorkspace({
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
+  const startupProjectsLoading = projectSpaceApis.local
+    ? localProjectsLoading
+    : cloudProjectsLoading
+  const startupProjectRouteReady =
+    !activeProjectRef ||
+    Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
+  const focusedStartupItem = focusedItemId
+    ? items.find(item => item.id === focusedItemId)
+    : undefined
+  const startupFocusedItemReady =
+    !focusedItemId ||
+    selectedItem?.id === focusedItemId ||
+    (!boardItemsLoading && !focusedStartupItem)
+  const startupBoardReady =
+    startupActive &&
+    Boolean(workbench?.isStartupReady) &&
+    !startupProjectsLoading &&
+    startupProjectRouteReady &&
+    !boardItemsLoading &&
+    startupFocusedItemReady
+  useEffect(() => {
+    if (!startupBoardReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready project space', error)
+    })
+  }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
   useEffect(() => {

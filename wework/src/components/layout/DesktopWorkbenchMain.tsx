@@ -118,7 +118,12 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getPlatform } from '@/lib/platform'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
@@ -193,8 +198,11 @@ import {
 } from './desktopWorkbenchPaneTypes'
 import {
   findRuntimeTask,
+  isSameRuntimeTaskAddress,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { stripAppBasePath } from '@/config/runtime'
+import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -903,7 +911,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
+  const { services, openRuntimeTask, workspaceTabId, isStartupReady } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -929,6 +937,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
+  const startupTaskRoute = parseRuntimeTaskRoute(
+    stripAppBasePath(window.location.pathname),
+    window.location.search
+  )
+  const startupTaskRouteReady =
+    !startupTaskRoute || isSameRuntimeTaskAddress(currentRuntimeTask, startupTaskRoute)
+  const startupSurfaceReady =
+    isStartupReady &&
+    startupTaskRouteReady &&
+    !paneSession.transcriptLoading &&
+    paneActive &&
+    paneVisible &&
+    workbenchVisible
+  useEffect(() => {
+    if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready workbench', error)
+    })
+  }, [startupSurfaceReady])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,

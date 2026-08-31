@@ -31,9 +31,10 @@ interface SplashWebContents {
 }
 
 export interface StartupSplashWindow {
+  close: () => void
   isDestroyed: () => boolean
   isVisible: () => boolean
-  once: (event: 'closed' | 'ready-to-show', listener: () => void) => void
+  once: (event: 'closed', listener: () => void) => void
   show: () => void
   webContents: SplashWebContents
 }
@@ -68,6 +69,12 @@ export function resolveStartupSplashTheme(
 ): StartupSplashTheme {
   if (appearanceMode === 'light' || appearanceMode === 'dark') return appearanceMode
   return systemUsesDarkColors ? 'dark' : 'light'
+}
+
+export function startupSplashBlocksMainWindowActivation(
+  snapshot: StartupSplashSnapshot | null
+): boolean {
+  return snapshot !== null && snapshot.state !== 'closed'
 }
 
 async function writePng(path: string, bytes: Buffer): Promise<void> {
@@ -123,6 +130,7 @@ export class StartupSplash {
         await this.persistPng(options.capturePath, image.toPNG())
       }
     } finally {
+      if (!target.isDestroyed()) target.close()
       this.markClosed()
     }
 
@@ -147,23 +155,16 @@ export class StartupSplash {
   private async createAndShow(): Promise<StartupSplashSnapshot> {
     this.state = 'loading'
     const target = this.options.window
-
-    const shown = new Promise<void>(resolve => {
-      target.once('ready-to-show', () => {
-        if (!target.isDestroyed()) {
-          target.show()
-          this.state = 'visible'
-          this.record('shown')
-        }
-        resolve()
-      })
-    })
     target.once('closed', () => this.markClosed())
 
-    await shown
     if (!target.webContents.isDestroyed()) {
       await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
       this.record('animation-ready')
+    }
+    if (!target.isDestroyed()) {
+      target.show()
+      this.state = 'visible'
+      this.record('shown')
     }
     return this.snapshot()
   }
