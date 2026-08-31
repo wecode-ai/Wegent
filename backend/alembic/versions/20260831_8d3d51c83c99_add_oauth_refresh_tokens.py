@@ -1,8 +1,8 @@
 """Add persistent OAuth refresh tokens.
 
-Revision ID: e58ee381a7c2
-Revises: d47dd270f4b6
-Create Date: 2026-08-20 18:00:00+08:00
+Revision ID: 8d3d51c83c99
+Revises: d6e7f8a9b0c1
+Create Date: 2026-08-31 00:00:00+08:00
 """
 
 from typing import Sequence, Union
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "e58ee381a7c2"
-down_revision: Union[str, Sequence[str], None] = "d47dd270f4b6"
+revision: str = "8d3d51c83c99"
+down_revision: Union[str, Sequence[str], None] = "d6e7f8a9b0c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
