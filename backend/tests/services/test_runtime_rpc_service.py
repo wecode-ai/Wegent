@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 
-def _runtime_route(*, runtime_features=None, device_type=None):
+def _runtime_route(
+    *, runtime_features=None, device_type=None, app_device_id: str | None = None
+):
     from app.schemas.device import DeviceType
     from app.services.device.runtime_route import RuntimeRoute
 
@@ -25,6 +27,7 @@ def _runtime_route(*, runtime_features=None, device_type=None):
                 else {}
             ),
         },
+        app_device_id=app_device_id,
     )
 
 
@@ -614,6 +617,38 @@ async def test_runtime_rpc_service_projects_runtime_device_id_back_to_logical_id
         device_id="device-1",
         method="runtime.worktrees.capabilities",
         payload={"deviceId": "device-1"},
+    )
+
+    assert result["deviceId"] == "device-1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_projects_app_device_id_back_to_logical_id(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(app_device_id="electron-device-1")),
+    )
+    sio = _socketio_with_call(
+        AsyncMock(
+            return_value={
+                "accepted": True,
+                "deviceId": "electron-device-1",
+                "localTaskId": "runtime-task-1",
+            }
+        )
+    )
+    monkeypatch.setattr(module, "get_sio", lambda: sio)
+
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={"message": "pwd"},
     )
 
     assert result["deviceId"] == "device-1"
