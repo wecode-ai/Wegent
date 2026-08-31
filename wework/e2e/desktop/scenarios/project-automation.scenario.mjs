@@ -1579,9 +1579,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[aria-label="自动化名称"]', {
       value: '统一自动化回归',
     })
-    await control.command('fill', '[data-testid="automation-rule-description"]', {
-      value: '创建 Issue 后按完整流程执行，并持久化节点与 DAG 配置。',
-    })
     await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
     await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
     await control.command('waitFor', '[data-testid^="execution-node-name-"]', {
@@ -1686,6 +1683,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.roleSource, 'generic')
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
+    assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
     assert.deepEqual(
       unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
         .workspace_binding,
