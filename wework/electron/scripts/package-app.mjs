@@ -9,8 +9,7 @@ import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
-// Wework can run package scripts through Electron's Node mode, where ASAR interception
-// otherwise makes app.asar behave like a directory and breaks recursive cleanup.
+// Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
 process.noAsar = true
 
 const { resolveBuildIdentity } = identityModule

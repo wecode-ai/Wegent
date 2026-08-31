@@ -14,7 +14,7 @@ const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
-  'The completed response contains one long SQL block.',
+  'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
   ...Array.from(
@@ -23,6 +23,12 @@ const LONG_CODE_COMPLETION = [
       `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
   ),
   '```',
+  '',
+  ...Array.from(
+    { length: 24 },
+    (_, index) =>
+      `### Rapid scroll section ${index + 1}\n\n${`Visible fallback content ${index + 1} keeps the conversation painted during rapid scrolling. `.repeat(18)}`
+  ),
 ].join('\n')
 const LONG_CODE_REASONING = Array.from(
   { length: 180 },
@@ -49,11 +55,13 @@ const PROMPT = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT: keep the partial response act
 const MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_PARTIAL'
 const VIEWPORT_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_VIEWPORT_ANCHOR'
 const APPEND_MARKER = 'WEWORK_DESKTOP_E2E_STREAMING_TEXT_APPENDED'
+const SCROLL_BUTTON_APPEND_MARKER = 'WEWORK_DESKTOP_E2E_SCROLL_BUTTON_APPEND'
 const ATTACHMENT_FILENAME = 'streaming-turn-navigation.png'
 const ATTACHMENT_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
 const TURN_NAVIGATION_MARKER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-turn-navigation-marker"]`
 const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+const SCROLL_TO_BOTTOM_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
@@ -96,7 +104,12 @@ const APPENDED_PARAGRAPHS = Array.from({ length: 14 }, (_, index) =>
 )
 const PARTIAL_TEXT = `${MARKER}: response remains active while final checks continue. 中文流式内容不得重复。\n\n${INITIAL_PARAGRAPHS.join('\n\n')}`
 const APPENDED_TEXT = `\n\n${APPENDED_PARAGRAPHS.join('\n\n')}`
-const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}\n\nCOMPLETE`
+const SCROLL_BUTTON_APPENDED_TEXT = `\n\n${Array.from({ length: 24 }, (_, index) =>
+  index === 0
+    ? `${SCROLL_BUTTON_APPEND_MARKER}: content keeps growing after the user clicks the jump-to-bottom button.`
+    : `Scroll button growth paragraph ${index + 1}: the click must continue following the virtualized conversation bottom.`
+).join('\n\n')}`
+const COMPLETION_TEXT = `${PARTIAL_TEXT}${APPENDED_TEXT}${SCROLL_BUTTON_APPENDED_TEXT}\n\nCOMPLETE`
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -721,12 +734,14 @@ export function createDesktopScenario({
   let releaseAppend
   let releasePhaseFlipCompletion
   let releaseResponse
+  let releaseScrollButtonAppend
   let releaseStart
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveRequest
+  let resolveScrollButtonAppendWritten
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
   let targetRequest
@@ -739,6 +754,9 @@ export function createDesktopScenario({
   const responseRelease = new Promise(resolve => {
     releaseResponse = resolve
   })
+  const scrollButtonAppendRelease = new Promise(resolve => {
+    releaseScrollButtonAppend = resolve
+  })
   const startRelease = new Promise(resolve => {
     releaseStart = resolve
   })
@@ -747,6 +765,9 @@ export function createDesktopScenario({
   })
   const partialWritten = new Promise(resolve => {
     resolvePartialWritten = resolve
+  })
+  const scrollButtonAppendWritten = new Promise(resolve => {
+    resolveScrollButtonAppendWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -788,6 +809,19 @@ export function createDesktopScenario({
       'The long completed code block rendered syntax token nodes'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
+    const rapidScrollSamples = JSON.parse(
+      await control.command('sampleRapidScrollContent', SCROLLER_SELECTOR, {
+        value: JSON.stringify({
+          contentSelector: '[data-markdown-window-chunk] > *',
+          ratios: [0.75, 0.5, 0.25],
+        }),
+      })
+    )
+    assert.equal(
+      rapidScrollSamples.every(sample => sample.hasVisibleContent),
+      true,
+      `Rapid scrolling exposed an empty Markdown viewport: ${JSON.stringify(rapidScrollSamples)}`
+    )
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
@@ -976,6 +1010,14 @@ export function createDesktopScenario({
           await new Promise(resolve => setTimeout(resolve, 40))
         }
         resolveAppendWritten()
+        await scrollButtonAppendRelease
+        for (const chunk of SCROLL_BUTTON_APPENDED_TEXT.match(/[\s\S]{1,48}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, appendOffset)))
+          response.flush?.()
+          appendOffset += [...chunk].length
+          await new Promise(resolve => setTimeout(resolve, 40))
+        }
+        resolveScrollButtonAppendWritten()
         await responseRelease
         response.end(sse(stream.finish))
         return true
@@ -1709,10 +1751,25 @@ export function createDesktopScenario({
       )
       await capture(control, 'streaming-text-13-anchor-stable-after-append.png')
 
-      await control.command('scrollToBottomAsUser', SCROLLER_SELECTOR)
+      await control.command('waitFor', SCROLL_TO_BOTTOM_BUTTON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      releaseScrollButtonAppend()
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: SCROLL_BUTTON_APPEND_MARKER,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('pointerDown', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
+      await control.command('click', SCROLL_TO_BOTTOM_BUTTON_SELECTOR)
+      await scrollButtonAppendWritten
+      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+        text: SCROLL_BUTTON_APPEND_MARKER,
+        stableMs: 750,
+        timeoutMs: uiTimeoutMs,
+      })
       const pinnedBeforeSwitch = await waitForBottom(
         control,
-        'The streaming conversation before switching tasks',
+        'The growing streaming conversation after clicking the scroll-to-bottom button',
         5_000
       )
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
@@ -1722,8 +1779,9 @@ export function createDesktopScenario({
       })
       assert.ok(
         distanceFromBottom(pinnedBeforeSwitch) <= 8,
-        `The streaming conversation was ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom before switching tasks`
+        `The scroll-to-bottom button left the growing streaming conversation ${distanceFromBottom(pinnedBeforeSwitch)}px from the bottom`
       )
+      await capture(control, 'streaming-text-14-scroll-button-followed-layout-growth.png')
       await new Promise(resolve => setTimeout(resolve, 250))
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
