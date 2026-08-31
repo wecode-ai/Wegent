@@ -532,6 +532,9 @@ export function useWorkbenchCloudProjectContext({
     }
     const api = projectSpaceApiFor(projectToBind)
     if (!api) return
+    if (isDefaultWorkItemProject(projectToBind) && !itemToBind) {
+      return
+    }
     const bindingTaskTitle =
       runtimeTaskTitleRef.current ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||
@@ -798,6 +801,9 @@ export function useWorkbenchCloudProjectContext({
       if (!contextRuntimeTask) {
         setCloudActionNotice(t('workbench.cloud_project_bound_notice', { name: project.name }))
         setPendingCloudContext(project, null)
+        return
+      }
+      if (isDefaultWorkItemProject(project)) {
         return
       }
       const api = projectSpaceApiFor(project)
