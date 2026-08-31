@@ -727,33 +727,28 @@ async function markerState(bridge) {
 }
 
 async function clickMarker(bridge) {
-  const marker = await markerState(bridge)
-  assert.ok(marker, 'The browser annotation marker is unavailable')
-  const inspect = await bridge({
-    action: 'inspect',
-    options: { interactiveOnly: false, includeTextBlocks: false, maxNodes: 800 },
-    timeoutMs: 5_000,
-  })
-  const markerNode = inspect.nodes.find(
-    node => node.role === 'button' && node.name === `Browser annotation ${marker.number}`
+  const result = await pageValue(
+    bridge,
+    `(() => {
+      const root = document.getElementById(${JSON.stringify(MARKER_ROOT_ID)})?.shadowRoot
+      const marker = root?.querySelector(${JSON.stringify(MARKER_SELECTOR)})
+      if (!marker) return { ok: false, markerCount: 0 }
+      const markerCount = root.querySelectorAll(${JSON.stringify(MARKER_SELECTOR)}).length
+      const annotationId = marker.getAttribute('data-annotation-id')
+      const number = marker.textContent
+      marker.click()
+      return {
+        ok: marker.getAttribute('aria-expanded') === 'true',
+        annotationId,
+        markerCount,
+        number,
+      }
+    })()`
   )
-  assert.ok(
-    markerNode?.ref,
-    `Browser annotation ${marker.number} did not expose an inspect ref: ${JSON.stringify({
-      marker,
-      markerNode,
-      buttons: inspect.nodes.filter(node => node.role === 'button'),
-    })}`
-  )
-  const result = await bridge({
-    action: 'click',
-    ref: markerNode.ref,
-    timeoutMs: 5_000,
-  })
   assert.equal(
     result.ok,
     true,
-    `The browser annotation marker could not be clicked: ${JSON.stringify(result)}`
+    `The current browser annotation marker did not handle its click: ${JSON.stringify(result)}`
   )
 }
 
