@@ -775,6 +775,18 @@ export function createHybridWorkbenchServices(
       return cloudServices.deviceApi.createDockerRemoteDeviceCommand(data)
     },
   }
+  const projectSpaceDeviceApi: WorkbenchServices['deviceApi'] = {
+    ...hybridDeviceApi,
+    async listDevices(requestOptions) {
+      const [localDevices, cloudDevices] = await Promise.all([
+        listLocalDevices(requestOptions?.signal),
+        listCloudDevices(requestOptions?.signal),
+      ])
+      return mergeDeviceLists(localDevices, cloudDevices) as Awaited<
+        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
+      >
+    },
+  }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
     prepareRuntimeModel(data) {
@@ -1307,6 +1319,7 @@ export function createHybridWorkbenchServices(
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,
+            deviceApi: projectSpaceDeviceApi,
             pluginApi: projectPluginApi,
           }
         : undefined,

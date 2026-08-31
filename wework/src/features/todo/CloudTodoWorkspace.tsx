@@ -4306,7 +4306,7 @@ export function CloudTodoWorkspace({
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
-                  deviceApi={services.deviceApi}
+                  deviceApi={selectedProjectServices?.deviceApi ?? services.deviceApi}
                   modelApi={services.modelApi}
                   teamApi={selectedProjectServices?.teamApi}
                   pluginApi={selectedProjectServices?.pluginApi}
@@ -4926,7 +4926,7 @@ export function CloudTodoWorkspace({
               pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
             }
             modelApi={services.modelApi}
-            deviceApi={services.deviceApi}
+            deviceApi={pendingExecutionServices?.deviceApi ?? services.deviceApi}
             localProjects={localProjects}
             onClose={() => setPendingExecutionConfiguration(null)}
             onConfirm={async result => {
