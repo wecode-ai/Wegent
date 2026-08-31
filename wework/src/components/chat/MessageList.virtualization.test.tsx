@@ -8,14 +8,19 @@ import {
 import type { WorkbenchMessage } from '@/types/workbench'
 import '@/i18n'
 
-const { measureElementMock, resizeItemMock, useVirtualizerMock, virtualizerInstances } = vi.hoisted(
-  () => ({
-    measureElementMock: vi.fn(),
-    resizeItemMock: vi.fn(),
-    useVirtualizerMock: vi.fn(),
-    virtualizerInstances: [] as Array<Record<string, unknown>>,
-  })
-)
+const {
+  measureElementMock,
+  observeElementOffsetMock,
+  resizeItemMock,
+  useVirtualizerMock,
+  virtualizerInstances,
+} = vi.hoisted(() => ({
+  measureElementMock: vi.fn(),
+  observeElementOffsetMock: vi.fn(),
+  resizeItemMock: vi.fn(),
+  useVirtualizerMock: vi.fn(),
+  virtualizerInstances: [] as Array<Record<string, unknown>>,
+}))
 
 vi.mock('@/lib/runtime-environment', () => ({
   isDesktopRuntime: () => true,
@@ -23,7 +28,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
-  observeElementOffset: vi.fn(),
+  observeElementOffset: (...args: unknown[]) => observeElementOffsetMock(...args),
   defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
     Array.from(
       { length: range.endIndex - range.startIndex + 1 },
@@ -72,6 +77,7 @@ describe('MessageList desktop virtualization', () => {
   afterEach(() => {
     clearRuntimeConversationCacheForTests()
     measureElementMock.mockClear()
+    observeElementOffsetMock.mockClear()
     resizeItemMock.mockClear()
     useVirtualizerMock.mockClear()
     virtualizerInstances.length = 0
@@ -110,23 +116,117 @@ describe('MessageList desktop virtualization', () => {
 
   test('adapts the virtualizer to the desktop bottom-origin scroller', () => {
     const scrollElement = createScrollElement(200)
+    const messages = buildMessages(20, 'bottom-origin')
+    messages[19] = {
+      ...messages[19],
+      role: 'assistant',
+      status: 'streaming',
+    }
+    Object.defineProperty(scrollElement, 'scrollHeight', {
+      configurable: true,
+      value: 10_178,
+    })
     scrollElement.scrollTop = -178
+    const scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scrollElement.scrollTop = top ?? scrollElement.scrollTop
+    })
+    scrollElement.scrollTo = scrollTo
 
     render(
-      <MessageList
-        messages={buildMessages(20, 'bottom-origin')}
-        scrollElementRef={{ current: scrollElement }}
-        bottomOrigin
-      />
+      <MessageList messages={messages} scrollElementRef={{ current: scrollElement }} bottomOrigin />
     )
 
     expect(useVirtualizerMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        anchorTo: 'start',
+        followOnAppend: false,
         observeElementOffset: expect.any(Function),
         scrollToFn: expect.any(Function),
       })
     )
     expect(scrollElement.scrollTop).toBe(0)
+
+    const options = useVirtualizerMock.mock.calls.at(-1)?.[0] as {
+      observeElementOffset: (
+        instance: Record<string, unknown>,
+        callback: (offset: number, isScrolling: boolean) => void
+      ) => void
+      scrollToFn: (
+        offset: number,
+        options: { adjustments?: number; behavior?: ScrollBehavior },
+        instance: Record<string, unknown>
+      ) => void
+    }
+    const instance = {
+      elementsCache: new Map<string, HTMLElement>(),
+      getTotalSize: () => 10_000,
+      scrollElement,
+    }
+    const listElement = document.createElement('div')
+    const itemElement = document.createElement('div')
+    listElement.style.height = '3900px'
+    listElement.append(itemElement)
+    instance.elementsCache.set('user-19', itemElement)
+    const shouldAdjustScrollPosition = virtualizerInstances.at(-1)
+      ?.shouldAdjustScrollPositionOnItemSizeChange as
+      | ((
+          item: { key: string; start: number },
+          delta: number,
+          instance: typeof instance
+        ) => boolean)
+      | undefined
+
+    scrollElement.scrollTop = -160
+    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    expect(shouldAdjustScrollPosition?.({ key: 'user-18', start: 8_000 }, 40, instance)).toBe(false)
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, -40, instance)).toBe(
+      false
+    )
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(-200)
+
+    scrollElement.scrollTop = 0
+    expect(shouldAdjustScrollPosition?.({ key: 'user-19', start: 9_000 }, 40, instance)).toBe(false)
+    expect(listElement).toHaveStyle({ height: '3940px' })
+    expect(scrollElement.scrollTop).toBe(0)
+
+    Object.defineProperty(scrollElement, 'scrollHeight', {
+      configurable: true,
+      value: 10_218,
+    })
+    scrollElement.scrollTop = -200
+    observeElementOffsetMock.mockImplementationOnce(
+      (_instance: unknown, callback: (offset: number, isScrolling: boolean) => void) => {
+        callback(123, true)
+        return () => undefined
+      }
+    )
+    const onOffset = vi.fn()
+    options.observeElementOffset(instance, onOffset)
+    expect(onOffset).toHaveBeenLastCalledWith(9_600, true)
+
+    onOffset.mockClear()
+    options.scrollToFn(9_800, {}, instance)
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: 0 })
+    expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
+
+    options.scrollToFn(9_600, {}, instance)
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: -200 })
+    expect(onOffset).toHaveBeenLastCalledWith(9_600, false)
+
+    options.scrollToFn(9_560, { adjustments: 40 }, instance)
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: -200 })
+    expect(onOffset).toHaveBeenLastCalledWith(9_600, false)
+
+    options.scrollToFn(9_760, { adjustments: 40 }, instance)
+    expect(scrollTo).toHaveBeenLastCalledWith({ behavior: undefined, top: 0 })
+    expect(onOffset).toHaveBeenLastCalledWith(9_800, false)
   })
 
   test('normalizes a restored bottom-origin distance in the task-switch layout commit', () => {
@@ -236,6 +336,7 @@ describe('MessageList desktop virtualization', () => {
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         anchorTo: 'end',
+        followOnAppend: 'auto',
       })
     )
   })
@@ -260,6 +361,31 @@ describe('MessageList desktop virtualization', () => {
     expect(useVirtualizerMock).toHaveBeenLastCalledWith(
       expect.objectContaining({
         anchorTo: 'start',
+        followOnAppend: false,
+      })
+    )
+  })
+
+  test('reconfigures the virtualizer when the scroll origin changes', () => {
+    const props = {
+      messages: buildMessages(20, 'origin-switch'),
+      scrollElementRef: { current: createScrollElement(200) },
+    }
+    const view = render(<MessageList {...props} />)
+
+    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({
+        observeElementOffset: expect.any(Function),
+      })
+    )
+
+    useVirtualizerMock.mockClear()
+    view.rerender(<MessageList {...props} bottomOrigin />)
+
+    expect(useVirtualizerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        observeElementOffset: expect.any(Function),
+        scrollToFn: expect.any(Function),
       })
     )
   })

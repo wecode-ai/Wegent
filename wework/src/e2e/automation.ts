@@ -65,6 +65,9 @@ interface DesktopControlResult {
 
 interface ScrollStabilitySamplePoint {
   anchorTop: number
+  clientHeight: number
+  scrollHeight: number
+  scrollOrigin: 'bottom' | 'top'
   scrollTop: number
   time: number
 }
@@ -1759,7 +1762,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         scrollEvents: [],
         stop: () => {},
       }
-      const capture = (time: number) => {
+      const capture = (time: number): ScrollStabilitySamplePoint | null => {
         const anchors = findDesktopControlElements(command.selector)
         const anchor = options.anchorText
           ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
@@ -1767,6 +1770,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (!anchor) return null
         return {
           anchorTop: anchor.getBoundingClientRect().top,
+          clientHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
           scrollTop: scroller.scrollTop,
           time: time - startedAt,
         }

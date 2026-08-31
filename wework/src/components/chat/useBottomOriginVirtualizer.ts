@@ -4,6 +4,7 @@ import {
   type PartialKeys,
   type ReactVirtualizer,
   type ReactVirtualizerOptions,
+  type Virtualizer,
 } from '@tanstack/react-virtual'
 import { useLayoutEffect, useRef } from 'react'
 import type { RefObject } from 'react'
@@ -18,6 +19,7 @@ type VirtualizerOptions<TScrollElement extends HTMLElement, TItemElement extends
   'getScrollElement' | 'initialOffset' | 'initialRect'
 > & {
   bottomOrigin: boolean
+  bottomOriginAppendOnlyItemKeys?: ReadonlySet<string | number | bigint>
   initialContentHeightPx: number
   initialDistanceFromBottomPx: number
   positionKey?: string | number | null
@@ -33,6 +35,7 @@ export function useBottomOriginVirtualizer<
   TItemElement extends Element,
 >({
   bottomOrigin,
+  bottomOriginAppendOnlyItemKeys,
   initialContentHeightPx,
   initialDistanceFromBottomPx,
   positionKey,
@@ -43,6 +46,9 @@ export function useBottomOriginVirtualizer<
   TScrollElement,
   TItemElement
 > {
+  const observedOffsetCallbackRef = useRef<((offset: number, isScrolling: boolean) => void) | null>(
+    null
+  )
   // TanStack Virtual requires the current element for its synchronous initial measurement.
   const scrollElement = scrollElementRef?.current ?? null
   const viewportHeight = scrollElement?.clientHeight ?? 0
@@ -52,20 +58,35 @@ export function useBottomOriginVirtualizer<
   )
   const observeBottomOriginOffset: NonNullable<
     ReactVirtualizerOptions<TScrollElement, TItemElement>['observeElementOffset']
-  > = (instance, callback) =>
-    observeElementOffset(instance, (_offset, isScrolling) => {
+  > = (instance, callback) => {
+    observedOffsetCallbackRef.current = callback
+    const cleanup = observeElementOffset(instance, (_offset, isScrolling) => {
       const element = instance.scrollElement
-      callback(element ? getVirtualizerOffset(element) : 0, isScrolling)
+      const offset = element ? getVirtualizerOffset(instance, element) : 0
+      callback(offset, isScrolling)
     })
+    return () => {
+      if (observedOffsetCallbackRef.current === callback) {
+        observedOffsetCallbackRef.current = null
+      }
+      cleanup?.()
+    }
+  }
   const scrollBottomOriginToOffset: NonNullable<
     ReactVirtualizerOptions<TScrollElement, TItemElement>['scrollToFn']
   > = (offset, { adjustments = 0, behavior }, instance) => {
     const element = instance.scrollElement
     if (!element) return
+    const maximumOffset = getVirtualizerMaximumOffset(instance, element)
+    const targetOffset = Math.min(maximumOffset, Math.max(0, offset + adjustments))
+    const distanceFromBottom = maximumOffset - targetOffset
     element.scrollTo({
-      top: offset + adjustments - getMaximumScrollOffset(element),
+      top: distanceFromBottom === 0 ? 0 : -distanceFromBottom,
       behavior,
     })
+    if (behavior !== 'smooth') {
+      observedOffsetCallbackRef.current?.(targetOffset, false)
+    }
   }
 
   // TanStack Virtual owns mutable measurement callbacks that React Compiler must not memoize.
@@ -80,6 +101,8 @@ export function useBottomOriginVirtualizer<
             width: scrollElement?.clientWidth ?? 0,
             height: viewportHeight,
           },
+          anchorTo: 'start',
+          followOnAppend: false,
           observeElementOffset: observeBottomOriginOffset,
           scrollToFn: scrollBottomOriginToOffset,
         }
@@ -94,8 +117,33 @@ export function useBottomOriginVirtualizer<
         }
   )
   // TanStack exposes this policy as a mutable instance callback rather than an option.
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-    shouldAdjustScrollPositionOnItemSizeChange
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = bottomOrigin
+    ? (item, delta, instance) => {
+        const element = instance.scrollElement
+        if (
+          !element ||
+          element.scrollTop >= -0.5 ||
+          delta <= 0 ||
+          !bottomOriginAppendOnlyItemKeys?.has(item.key)
+        ) {
+          return false
+        }
+
+        const offset = getVirtualizerOffset(instance, element)
+        if (item.start < offset) {
+          const itemElement = instance.elementsCache.get(item.key)
+          const listElement = itemElement?.parentElement
+          if (listElement instanceof HTMLElement) {
+            const currentHeight =
+              Number.parseFloat(listElement.style.height) ||
+              listElement.getBoundingClientRect().height
+            listElement.style.height = `${Math.max(0, currentHeight + delta)}px`
+          }
+          element.scrollTop -= delta
+        }
+        return false
+      }
+    : shouldAdjustScrollPositionOnItemSizeChange
 
   const normalizedPositionKeyRef = useRef<string | number | null | typeof UNINITIALIZED_POSITION>(
     UNINITIALIZED_POSITION
@@ -110,13 +158,41 @@ export function useBottomOriginVirtualizer<
     element.scrollTop = distanceFromBottom === 0 ? 0 : -distanceFromBottom
   }, [bottomOrigin, initialDistanceFromBottomPx, positionKey, scrollElementRef])
 
+  const virtualTotalSize = virtualizer.getTotalSize()
+  useLayoutEffect(() => {
+    if (!bottomOrigin) return
+    const element = scrollElementRef?.current
+    const callback = observedOffsetCallbackRef.current
+    if (!element || !callback) return
+
+    const offset = getVirtualizerOffset(virtualizer, element)
+    callback(offset, false)
+  }, [
+    bottomOrigin,
+    options.count,
+    positionKey,
+    scrollElementRef,
+    virtualTotalSize,
+    virtualizer,
+    viewportHeight,
+  ])
+
   return virtualizer
 }
 
-function getMaximumScrollOffset(element: HTMLElement): number {
-  return Math.max(0, element.scrollHeight - element.clientHeight)
+function getVirtualizerMaximumOffset<
+  TScrollElement extends HTMLElement,
+  TItemElement extends Element,
+>(instance: Virtualizer<TScrollElement, TItemElement>, element: TScrollElement): number {
+  return Math.max(0, instance.getTotalSize() - element.clientHeight)
 }
 
-function getVirtualizerOffset(element: HTMLElement): number {
-  return Math.max(0, getMaximumScrollOffset(element) + element.scrollTop)
+function getVirtualizerOffset<TScrollElement extends HTMLElement, TItemElement extends Element>(
+  instance: Virtualizer<TScrollElement, TItemElement>,
+  element: TScrollElement
+): number {
+  return Math.min(
+    getVirtualizerMaximumOffset(instance, element),
+    Math.max(0, getVirtualizerMaximumOffset(instance, element) + element.scrollTop)
+  )
 }

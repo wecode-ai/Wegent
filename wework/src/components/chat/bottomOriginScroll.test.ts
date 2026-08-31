@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   getContentPositionForViewportY,
   getDistanceFromBottom,
+  getDistanceFromTop,
   getScrollViewportBounds,
   setDistanceFromBottom,
   scrollToContentPosition,
@@ -26,6 +27,7 @@ describe('bottom-origin scroll coordinates', () => {
     element.dataset.scrollOrigin = 'bottom'
 
     expect(getDistanceFromBottom(element, true)).toBe(320)
+    expect(getDistanceFromTop(element, true)).toBe(480)
     expect(getScrollViewportBounds(element)).toEqual({ startPx: 480, endPx: 680 })
 
     setDistanceFromBottom(element, 0, 'auto', true)

@@ -624,6 +624,89 @@ describe('ScrollableMessageArea', () => {
     expect(anchor.getBoundingClientRect().top).toBe(100)
   })
 
+  test('keeps a bottom-origin user anchor when width reflow clamps toward zero', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    const externalScrollRef = createRef<HTMLDivElement>()
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="bottom-origin-width-reflow-clamp"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            {
+              id: 'bottom-origin-width-reflow-clamp-message',
+              role: 'assistant',
+              content: '关闭文件面板后仍在阅读的段落',
+              status: 'done',
+              createdAt: '2026-08-31T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
+    let scrollHeight = 2_000
+    let anchorContentTop = 1_200
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: -600,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 100, 300)
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const contentScrollTop = scrollHeight - scroller.clientHeight + scroller.scrollTop
+      const top = 100 + anchorContentTop - contentScrollTop
+      return {
+        top,
+        bottom: top + 40,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 10_000
+    anchorContentTop = 9_100
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 1_300
+    anchorContentTop = 400
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(-700)
+    expect(anchor.getBoundingClientRect().top).toBe(100)
+  })
+
   test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {
     const resizeCallbacks: ResizeObserverCallback[] = []
     const originalResizeObserver = globalThis.ResizeObserver
@@ -799,6 +882,57 @@ describe('ScrollableMessageArea', () => {
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: -480,
       behavior: 'auto',
+    })
+  })
+
+  test('saves the bottom target instead of a smooth-scroll intermediate position', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-smooth-bottom"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            {
+              id: 'external-smooth-bottom-message',
+              role: 'assistant',
+              content: '桌面外部滚动容器中的长消息',
+              status: 'done',
+              createdAt: '2026-08-31T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: -200,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    fireEvent.scroll(scroller)
+    const button = screen.getByTestId('scroll-to-bottom-button')
+
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: -0,
+      behavior: 'smooth',
+    })
+    expect(scroller.scrollTop).toBe(-200)
+    expect(getConversationScrollSnapshot('external-smooth-bottom')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
     })
   })
 
@@ -4255,6 +4389,7 @@ describe('ScrollableMessageArea', () => {
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     scroller.scrollTop = 400
+    fireEvent.wheel(scroller, { deltaY: 80 })
     fireEvent.scroll(scroller)
     Object.defineProperty(scroller, 'scrollHeight', {
       value: 800,

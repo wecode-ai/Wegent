@@ -5,6 +5,12 @@ export function getDistanceFromBottom(element: HTMLElement, bottomOrigin: boolea
   return Math.max(0, element.scrollHeight - element.clientHeight - element.scrollTop)
 }
 
+export function getDistanceFromTop(element: HTMLElement, bottomOrigin: boolean): number {
+  if (!bottomOrigin) return Math.max(0, element.scrollTop)
+  const maximumOffset = Math.max(0, element.scrollHeight - element.clientHeight)
+  return Math.max(0, maximumOffset + element.scrollTop)
+}
+
 export function setDistanceFromBottom(
   element: HTMLElement,
   distanceFromBottomPx: number,
@@ -57,7 +63,5 @@ export function hasBottomScrollOrigin(element: HTMLElement): boolean {
 }
 
 function getContentScrollPosition(element: HTMLElement): number {
-  if (!hasBottomScrollOrigin(element)) return element.scrollTop
-  const maxOffset = Math.max(0, element.scrollHeight - element.clientHeight)
-  return Math.max(0, maxOffset + element.scrollTop)
+  return getDistanceFromTop(element, hasBottomScrollOrigin(element))
 }

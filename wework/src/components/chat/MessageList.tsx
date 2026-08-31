@@ -283,6 +283,13 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const bottomOriginAppendOnlyItemKeys = useMemo(
+    () =>
+      new Set(
+        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
+      ),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
@@ -302,6 +309,7 @@ export const MessageList = memo(function MessageList({
   }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
   const messageVirtualizer = useBottomOriginVirtualizer({
     bottomOrigin,
+    bottomOriginAppendOnlyItemKeys,
     count: visibleMessages.length,
     enabled: virtualMessages,
     getItemKey: index => visibleMessages[index]?.id ?? index,
@@ -314,6 +322,7 @@ export const MessageList = memo(function MessageList({
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: virtualAnchorToEnd ? 'end' : 'start',
+    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -329,7 +338,9 @@ export const MessageList = memo(function MessageList({
     initialDistanceFromBottomPx,
     positionKey: conversationKey,
     scrollElementRef,
-    shouldAdjustScrollPositionOnItemSizeChange: preserveScrollPositionOutsideVirtualizer,
+    shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
+      ? undefined
+      : preserveScrollPositionOutsideVirtualizer,
   })
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
 
@@ -717,6 +728,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
     previous.scrollElementRef !== next.scrollElementRef ? 'scrollElementRef' : null,
+    previous.bottomOrigin !== next.bottomOrigin ? 'bottomOrigin' : null,
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,

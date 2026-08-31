@@ -473,6 +473,13 @@ function distanceFromBottom(metrics) {
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
 
+function distanceFromTop(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
+  }
+  return Math.max(0, metrics.scrollTop)
+}
+
 function assertElementFullyVisible(elementMetrics, scrollerMetrics, description) {
   assert.ok(
     elementMetrics.top >= scrollerMetrics.top && elementMetrics.bottom <= scrollerMetrics.bottom,
@@ -556,6 +563,7 @@ async function waitForBottom(control, description, timeoutMs) {
 
 async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
   const startedAt = Date.now()
+  const initialDistanceFromTop = distanceFromTop(initialMetrics)
   while (Date.now() - startedAt < timeoutMs) {
     const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
     assert.ok(
@@ -563,8 +571,8 @@ async function assertScrollPositionRemainsStable(control, initialMetrics, descri
       `${description} returned to the bottom after the user scrolled upward`
     )
     assert.ok(
-      Math.abs(metrics.scrollTop - initialMetrics.scrollTop) <= 8,
-      `${description} jumped from ${initialMetrics.scrollTop}px to ${metrics.scrollTop}px`
+      Math.abs(distanceFromTop(metrics) - initialDistanceFromTop) <= 8,
+      `${description} jumped from ${initialDistanceFromTop}px to ${distanceFromTop(metrics)}px from the content top`
     )
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -1680,8 +1688,9 @@ export function createDesktopScenario({
         'The streaming conversation after pending bottom restores had time to run'
       )
       assert.ok(
-        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
-        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
+        Math.abs(distanceFromTop(stableUserScrollPosition) - distanceFromTop(userScrollPosition)) <=
+          8,
+        `The streaming conversation jumped from ${distanceFromTop(userScrollPosition)}px to ${distanceFromTop(stableUserScrollPosition)}px from the content top after the user scrolled upward`
       )
       await assertComposerDocked(
         control,
@@ -1755,14 +1764,14 @@ export function createDesktopScenario({
       const anchorTops = stabilitySamples.frames.map(sample => sample.anchorTop)
       const anchorRange = Math.max(...anchorTops) - Math.min(...anchorTops)
       const effectiveScrollEvents = stabilitySamples.scrollEvents.filter(
-        sample => Math.abs(sample.scrollTop - scrollerBeforeAppend.scrollTop) >= 0.5
+        sample => Math.abs(distanceFromTop(sample) - distanceFromTop(scrollerBeforeAppend)) >= 0.5
       )
       const scrollDirections = effectiveScrollEvents
         .slice(1)
         .map((sample, index) =>
-          Math.abs(sample.scrollTop - effectiveScrollEvents[index].scrollTop) < 0.5
+          Math.abs(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index])) < 0.5
             ? 0
-            : Math.sign(sample.scrollTop - effectiveScrollEvents[index].scrollTop)
+            : Math.sign(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index]))
         )
         .filter(direction => direction !== 0)
       const directionReversals = scrollDirections.filter(
@@ -1792,8 +1801,8 @@ export function createDesktopScenario({
         `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
       )
       assert.ok(
-        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
-        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
+        Math.abs(distanceFromTop(scrollerAfterAppend) - distanceFromTop(scrollerBeforeAppend)) <= 8,
+        `The paused streaming scroller moved from ${distanceFromTop(scrollerBeforeAppend)}px to ${distanceFromTop(scrollerAfterAppend)}px from the content top`
       )
       await assertComposerDocked(
         control,
