@@ -125,7 +125,8 @@ node e2e/utils/mock-connector-upstream-server.mjs
 `project-assignment-notification`、`offline-local-project-space`、
 `core-dsh-plugin-management`、`plugin-auto-update`、
 `plugin-workspace-publication`、`project-ai-settings`、`model-routing`、
-`permission-modes`、`core-task-flow`、`task-attachments`、
+`permission-modes`、`computer-use`、`task-status-sync`、
+`task-board-association`、`core-task-flow`、`task-attachments`、
 `cloud-git-worktree`、`cloud-worktree-capability`、`cloud-worktree-create`、
 `cloud-worktree-queued-cancel`、`cloud-worktree-tools`、
 `cloud-worktree-archive-restore`、`cloud-worktree-device-restart`、
@@ -174,7 +175,11 @@ ZIP fixture 改用 Python 标准库，因此不再恢复完整前端依赖缓存
 merge queue 会验证最终进入 `main` 的合并提交，因此合入后不再通过 `push main`
 重复运行同一套 Tests、Lint、Platform E2E 和 Wework E2E。映射规则位于
 `.github/scripts/classify-wework-desktop-e2e.sh`，新增功能覆盖时
-必须同步登记对应 segment。分段命令也可用于本地快速迭代：
+必须同步登记对应 segment。新增 `DESKTOP_CHECKPOINTS` 检查点时，必须同时把它加入
+Core、Cloud 或正式发布 catalog，分配到对应 shard，为相关源码路径增加最小分类，
+并更新 `.github/scripts/test-classify-ci-changes.sh` 的矩阵期望和专用分类断言。
+分类器会拒绝只注册在运行器、但没有 CI catalog 覆盖的检查点，避免本地可运行而
+GitHub CI 永远不执行的死覆盖。分段命令也可用于本地快速迭代：
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle

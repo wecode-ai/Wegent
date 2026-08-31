@@ -126,8 +126,9 @@ The checkpoints are `remote-device-onboarding`, `workspace-tabs`,
 `telemetry-consent`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
-`project-ai-settings`, `model-routing`, `permission-modes`, `core-task-flow`,
-`task-attachments`, `cloud-git-worktree`, `cloud-worktree-capability`,
+`project-ai-settings`, `model-routing`, `permission-modes`, `computer-use`,
+`task-status-sync`, `task-board-association`, `core-task-flow`, `task-attachments`,
+`cloud-git-worktree`, `cloud-worktree-capability`,
 `cloud-worktree-create`, `cloud-worktree-queued-cancel`, `cloud-worktree-tools`,
 `cloud-worktree-archive-restore`, `cloud-worktree-device-restart`,
 `context-compaction`, `runtime-task-queue`, `runtime-terminal-convergence`,
@@ -190,8 +191,14 @@ the pipeline tail. Merge queue validates
 the final commit that enters `main`, so Tests, Lint, Platform E2E, and Wework E2E
 do not repeat the same validation after the merge through a `push main` trigger. The
 mapping lives in `.github/scripts/classify-wework-desktop-e2e.sh` and must be updated when new
-feature coverage is registered. Segment commands are also useful for focused
-local iteration:
+feature coverage is registered. When adding a `DESKTOP_CHECKPOINTS` entry, also
+add it to a Core, Cloud, or formal-release catalog, assign it to a shard, map
+the relevant source paths to the smallest applicable coverage, and update both
+the matrix expectations and focused classifier assertions in
+`.github/scripts/test-classify-ci-changes.sh`. The classifier rejects a
+checkpoint that exists only in the runner without CI catalog coverage, preventing
+locally runnable coverage that GitHub CI never invokes. Segment commands are also
+useful for focused local iteration:
 
 ```bash
 pnpm --filter wework e2e:desktop -- --segment automation-lifecycle
