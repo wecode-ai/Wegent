@@ -727,6 +727,35 @@ describe('ProjectAutomationView', () => {
     expect(projectAutomationApi.update).not.toHaveBeenCalled()
   })
 
+  test('saves an automation without an optional description', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    await openRuleEditor()
+
+    fireEvent.change(screen.getByTestId('automation-rule-description'), {
+      target: { value: '   ' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    expect(input.eventConfig?.wework_flow).toMatchObject({ description: '' })
+    expect(input.prompt).not.toContain('自动化目标：')
+  })
+
+  test('still requires an automation name', async () => {
+    const { projectAutomationApi } = renderView()
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('automation-editor-section-menu'))
+    fireEvent.change(screen.getByRole('textbox', { name: '自动化名称' }), {
+      target: { value: '   ' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    expect(await screen.findByText('请填写自动化名称')).toBeInTheDocument()
+    expect(projectAutomationApi.update).not.toHaveBeenCalled()
+  })
+
   test('selects the first workflow node when entering the rule editor', async () => {
     renderView()
     await openRuleEditor()

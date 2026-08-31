@@ -29,7 +29,6 @@ function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
     installedReleaseNotes: null,
     status: 'idle',
     downloadProgress: null,
-    message: null,
     error: null,
     checkNow: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),

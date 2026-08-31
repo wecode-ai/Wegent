@@ -332,7 +332,39 @@ describe('AppUpdateProvider', () => {
     })
 
     expect(appUpdate?.status).toBe('upToDate')
-    expect(appUpdate?.message).toBe('upToDate')
+  })
+
+  test('normalizes an HTML network failure before publishing update state', async () => {
+    let appUpdate: AppUpdateContextValue | null = null
+    vi.mocked(checkForWeworkUpdate).mockRejectedValue(
+      new Error(
+        '<!doctype html><style>body{color:red}</style><body>SGErrorDomain EOF https://internal.example/update</body>'
+      )
+    )
+
+    const Probe = () => {
+      appUpdate = useAppUpdate()
+      return null
+    }
+
+    render(
+      <AppUpdateProvider>
+        <Probe />
+      </AppUpdateProvider>
+    )
+
+    await act(async () => {
+      await appUpdate?.checkNow()
+    })
+
+    expect(appUpdate?.status).toBe('error')
+    expect(appUpdate?.error).toEqual({
+      stage: 'check',
+      kind: 'network',
+      code: 'APP_UPDATE_NETWORK_UNAVAILABLE',
+      occurredAt: Date.now(),
+      detail: null,
+    })
   })
 
   test('wakes hourly but only checks the update source after 24 hours', async () => {
@@ -598,7 +630,12 @@ describe('AppUpdateProvider', () => {
 
     expect(checkForWeworkUpdate).toHaveBeenCalledTimes(2)
     expect(appUpdate?.status).toBe('available')
-    expect(appUpdate?.error).toBe('The signature verification failed')
+    expect(appUpdate?.error).toMatchObject({
+      stage: 'install',
+      kind: 'generic',
+      code: 'APP_UPDATE_INSTALL_FAILED',
+      detail: 'The signature verification failed',
+    })
     expect(localStorage.getItem(APP_UPDATE_PENDING_RELEASE_NOTES_KEY)).toBeNull()
 
     await act(async () => {

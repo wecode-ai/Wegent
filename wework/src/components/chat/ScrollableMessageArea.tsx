@@ -1197,10 +1197,14 @@ function ScrollableMessagePaneContent({
   )
 
   const handleScrollToBottom = () => {
+    userScrollIntentRef.current = false
     userScrollPausedAutoFollowRef.current = false
     userViewportAnchorRef.current = null
     preserveLatestUserTurnRef.current = false
-    scrollToBottom('smooth', { saveSnapshot: true })
+    scheduleStableScrollToBottom('smooth', {
+      saveSnapshot: true,
+      releaseAfterStable: true,
+    })
   }
 
   const markUserScrollIntent = useCallback(
