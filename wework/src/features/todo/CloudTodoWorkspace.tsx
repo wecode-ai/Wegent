@@ -2089,9 +2089,9 @@ export function CloudTodoWorkspace({
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
-  const startupProjectsLoading = projectSpaceApis.local
-    ? localProjectsLoading
-    : cloudProjectsLoading
+  const startupProjectsLoading =
+    (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
+    (Boolean(projectSpaceApis.cloud) && cloudProjectsLoading)
   const startupProjectRouteReady =
     !activeProjectRef ||
     Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
@@ -2101,7 +2101,7 @@ export function CloudTodoWorkspace({
   const startupFocusedItemReady =
     !focusedItemId ||
     selectedItem?.id === focusedItemId ||
-    (!boardItemsLoading && !focusedStartupItem)
+    (!boardItemsLoading && (!focusedStartupItem || focusedStartupItem.can_view_detail === false))
   const startupBoardReady =
     startupActive &&
     Boolean(workbench?.isStartupReady) &&

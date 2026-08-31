@@ -11,14 +11,18 @@ import {
 } from './startup-splash.js'
 
 class FakeSplashWindow implements StartupSplashWindow {
-  private readonly listeners = new Map<string, () => void>()
+  private readonly closeListeners: Array<(event: { preventDefault: () => void }) => void> = []
+  private readonly closedListeners: Array<() => void> = []
   private destroyed = false
   private visible = false
 
   readonly close = vi.fn(() => {
+    const event = { preventDefault: vi.fn() }
+    this.closeListeners.forEach(listener => listener(event))
+    if (event.preventDefault.mock.calls.length > 0) return
     this.destroyed = true
     this.visible = false
-    this.listeners.get('closed')?.()
+    this.closedListeners.forEach(listener => listener())
   })
   readonly isDestroyed = vi.fn(() => this.destroyed)
   readonly isVisible = vi.fn(() => this.visible)
@@ -33,8 +37,22 @@ class FakeSplashWindow implements StartupSplashWindow {
     isDestroyed: vi.fn(() => false),
   }
 
+  on(event: 'close', listener: (event: { preventDefault: () => void }) => void): void {
+    if (event === 'close') this.closeListeners.push(listener)
+  }
+
   once(event: 'closed', listener: () => void): void {
-    this.listeners.set(event, listener)
+    if (event === 'closed') this.closedListeners.push(listener)
+  }
+
+  requestNativeClose(): boolean {
+    const event = { preventDefault: vi.fn() }
+    this.closeListeners.forEach(listener => listener(event))
+    if (event.preventDefault.mock.calls.length > 0) return false
+    this.destroyed = true
+    this.visible = false
+    this.closedListeners.forEach(listener => listener())
+    return true
   }
 }
 
@@ -170,6 +188,21 @@ describe('StartupSplash', () => {
       destroyed: true,
       visible: false,
     })
+  })
+
+  test('prevents native close requests until renderer startup readiness closes it', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+
+    expect(target.requestNativeClose()).toBe(false)
+    expect(splash.snapshot().state).toBe('visible')
+    expect(target.isDestroyed()).toBe(false)
+
+    await splash.close()
+
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
   })
 
   test('captures and persists the rendered splash before closing when requested by E2E', async () => {

@@ -743,6 +743,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       close: () => startupSplashWindow?.close(),
       isDestroyed: () => startupSplashWindow?.isDestroyed() ?? true,
       isVisible: () => startupSplashWindow?.isVisible() ?? false,
+      on: (_event, listener) => startupSplashWindow?.on('close', listener),
       once: (_event, listener) => startupSplashWindow?.once('closed', listener),
       show: () => {
         if (!keepE2EWindowInBackground) startupSplashWindow?.show()

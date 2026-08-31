@@ -34,9 +34,14 @@ export interface StartupSplashWindow {
   close: () => void
   isDestroyed: () => boolean
   isVisible: () => boolean
+  on: (event: 'close', listener: (event: StartupSplashCloseEvent) => void) => void
   once: (event: 'closed', listener: () => void) => void
   show: () => void
   webContents: SplashWebContents
+}
+
+export interface StartupSplashCloseEvent {
+  preventDefault: () => void
 }
 
 export interface StartupSplashOptions {
@@ -89,10 +94,14 @@ export class StartupSplash {
   private state: StartupSplashSnapshot['state'] = 'idle'
   private showPromise: Promise<StartupSplashSnapshot> | null = null
   private closePromise: Promise<StartupSplashSnapshot> | null = null
+  private controlledClose = false
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
     this.persistPng = options.writePng ?? writePng
+    options.window.on('close', event => {
+      if (!this.controlledClose) event.preventDefault()
+    })
     this.record('created')
   }
 
@@ -130,7 +139,10 @@ export class StartupSplash {
         await this.persistPng(options.capturePath, image.toPNG())
       }
     } finally {
-      if (!target.isDestroyed()) target.close()
+      if (!target.isDestroyed()) {
+        this.controlledClose = true
+        target.close()
+      }
       this.markClosed()
     }
 
