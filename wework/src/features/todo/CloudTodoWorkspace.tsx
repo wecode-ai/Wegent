@@ -1801,6 +1801,15 @@ export function CloudTodoWorkspace({
   const pendingExecutionServices = pendingExecutionProject
     ? services.projectSpaceDetailServices?.[pendingExecutionProject.location]
     : undefined
+  function openExecutionConfiguration(pending: PendingExecutionConfiguration): boolean {
+    const project = projectForItem(pending.item)
+    if (!project || !services.projectSpaceDetailServices?.[project.location]) {
+      setBoardError('项目空间运行服务当前不可用')
+      return false
+    }
+    setPendingExecutionConfiguration(pending)
+    return true
+  }
   const selectedProjectApi =
     selectedProject?.task_provider === 'dingtalk_aitable'
       ? apiForProject(selectedProject)
@@ -2476,11 +2485,10 @@ export function CloudTodoWorkspace({
     if (!isProcessingStatus(item.status) || !itemNeedsExecutionConfiguration(item)) {
       return false
     }
-    setPendingExecutionConfiguration({
+    return openExecutionConfiguration({
       item,
       continuation: { type: 'save' },
     })
-    return true
   }
 
   async function createTodoInBoardColumn(
@@ -3048,7 +3056,7 @@ export function CloudTodoWorkspace({
     }
     const needsExecutionConfig = enteringExecution && itemNeedsExecutionConfiguration(executionItem)
     if (needsExecutionConfig && !executionResult) {
-      setPendingExecutionConfiguration({
+      openExecutionConfiguration({
         item: executionItem,
         continuation: { type: 'move', columnKey, beforeItemId },
       })
@@ -3154,7 +3162,7 @@ export function CloudTodoWorkspace({
           itemId: locatedUpdated.id,
           route: 'workflow_configuration',
         })
-        setPendingExecutionConfiguration({
+        openExecutionConfiguration({
           item: locatedUpdated,
           continuation: { type: 'save' },
         })
@@ -4298,7 +4306,8 @@ export function CloudTodoWorkspace({
                 <AITableView api={aitableApi} project={selectedProject} />
               ) : projectView === 'automation' &&
                 selectedProjectAutomationSupported &&
-                selectedProjectApi ? (
+                selectedProjectApi &&
+                selectedProjectServices ? (
                 <ProjectAutomationView
                   key={selectedProject.id}
                   api={selectedProjectApi}
@@ -4306,7 +4315,7 @@ export function CloudTodoWorkspace({
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
-                  deviceApi={selectedProjectServices?.deviceApi ?? services.deviceApi}
+                  deviceApi={selectedProjectServices.deviceApi}
                   modelApi={services.modelApi}
                   teamApi={selectedProjectServices?.teamApi}
                   pluginApi={selectedProjectServices?.pluginApi}
@@ -4785,7 +4794,7 @@ export function CloudTodoWorkspace({
                                         }
                                       }}
                                       onConfigureExecution={() =>
-                                        setPendingExecutionConfiguration({
+                                        openExecutionConfiguration({
                                           item,
                                           continuation: { type: 'save' },
                                         })
@@ -4916,7 +4925,7 @@ export function CloudTodoWorkspace({
             onConfirm={pendingAutomationSelection.onConfirm}
           />
         ) : null}
-        {pendingExecutionConfiguration ? (
+        {pendingExecutionConfiguration && pendingExecutionServices ? (
           <IssueExecutionConfigDialog
             item={pendingExecutionConfiguration.item}
             projectChatAgentApi={
@@ -4926,7 +4935,7 @@ export function CloudTodoWorkspace({
               pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
             }
             modelApi={services.modelApi}
-            deviceApi={pendingExecutionServices?.deviceApi ?? services.deviceApi}
+            deviceApi={pendingExecutionServices.deviceApi}
             localProjects={localProjects}
             onClose={() => setPendingExecutionConfiguration(null)}
             onConfirm={async result => {

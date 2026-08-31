@@ -4,19 +4,20 @@ import { HostCapabilityError } from './capability-router.js'
 const CAPTURE_ATTEMPT_TIMEOUT_MS = 10_000
 
 export interface WebContentsCaptureOptions {
-  debuggerOnly?: boolean
+  preferDebugger?: boolean
 }
 
 export async function captureWebContentsDataUrl(
   contents: WebContents,
   options: WebContentsCaptureOptions = {}
 ): Promise<string> {
-  const attempts = options.debuggerOnly
+  const attempts = options.preferDebugger
     ? [
         {
           label: 'CDP Page.captureScreenshot',
           capture: () => captureDebugger(contents, false),
         },
+        { label: 'Electron capturePage', capture: () => captureNative(contents) },
       ]
     : [
         { label: 'Electron capturePage', capture: () => captureNative(contents) },

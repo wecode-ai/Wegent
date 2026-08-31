@@ -778,10 +778,16 @@ export function createHybridWorkbenchServices(
   const projectSpaceDeviceApi: WorkbenchServices['deviceApi'] = {
     ...hybridDeviceApi,
     async listDevices(requestOptions) {
-      const [localDevices, cloudDevices] = await Promise.all([
-        listLocalDevices(requestOptions?.signal),
-        listCloudDevices(requestOptions?.signal),
-      ])
+      const localDevices = await listLocalDevices(requestOptions?.signal)
+      let cloudDevices: DeviceInfo[] = []
+      try {
+        cloudDevices = await listCloudDevices(requestOptions?.signal)
+      } catch (error) {
+        console.warn(
+          '[Wework] Failed to load cloud devices for project execution configuration',
+          error
+        )
+      }
       return mergeDeviceLists(localDevices, cloudDevices) as Awaited<
         ReturnType<WorkbenchServices['deviceApi']['listDevices']>
       >

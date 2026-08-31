@@ -797,6 +797,20 @@ describe('createHybridWorkbenchServices', () => {
     expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps local project execution available when cloud device discovery fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.cloudListDevices.mockRejectedValue(new Error('cloud devices unavailable'))
+    const services = createServices()
+
+    const devices = await services.projectSpaceDetailServices?.cloud?.deviceApi.listDevices()
+
+    expect(devices?.map(device => device.device_id)).toEqual(['local-device'])
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to load cloud devices for project execution configuration',
+      expect.objectContaining({ message: 'cloud devices unavailable' })
+    )
+  })
+
   it('keeps remote Docker devices in the workbench device list after background sync', async () => {
     mocks.cloudListDevices.mockResolvedValue([
       {
