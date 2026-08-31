@@ -93,6 +93,7 @@ import {
 import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
+import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -117,7 +118,12 @@ import {
 import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
 import { DesktopWindowControls } from './DesktopWindowControls'
 import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getPlatform } from '@/lib/platform'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import {
@@ -192,8 +198,11 @@ import {
 } from './desktopWorkbenchPaneTypes'
 import {
   findRuntimeTask,
+  isSameRuntimeTaskAddress,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
+import { stripAppBasePath } from '@/config/runtime'
+import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -902,7 +911,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
+  const { services, openRuntimeTask, workspaceTabId, isStartupReady } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -928,6 +937,27 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
+  const startupTaskRoute = parseRuntimeTaskRoute(
+    stripAppBasePath(window.location.pathname),
+    window.location.search
+  )
+  const startupTaskRouteReady =
+    !startupTaskRoute || isSameRuntimeTaskAddress(currentRuntimeTask, startupTaskRoute)
+  const startupSurfaceReady =
+    isStartupReady &&
+    startupTaskRouteReady &&
+    !paneSession.transcriptLoading &&
+    paneActive &&
+    paneVisible &&
+    workbenchVisible
+  useEffect(() => {
+    if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready workbench', error)
+    })
+  }, [startupSurfaceReady])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,
     project: currentProject,
@@ -1018,14 +1048,19 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       : currentRuntimeTask
   const currentProjectSpaceRuntimeTask = runtimeTaskSummary ? currentRuntimeTask : null
   const runtimeTaskTitle = truncateRuntimeTaskTitle(runtimeTaskSummary?.title)
+  const runtimeTaskDescription =
+    paneSession.messages.find(message => message.role === 'user')?.content ?? ''
   const workbenchTitle = activeLocalHarnessSession?.title ?? runtimeTaskTitle
   const {
     activeDeliveryItem,
+    associateRuntimeTaskWithExistingItem,
+    associateRuntimeTaskWithNewItem,
     boundCloudItem,
     boundCloudProject,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,
+    closeTaskBoardAssociation,
     clearTodoBindingError,
     closeDeliveryDialog,
     cloudActionNotice,
@@ -1040,6 +1075,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     pendingCloudProject,
     prepareSubmission,
     removeCloudProjectContext,
+    taskBoardAssociation,
     todoBindingError,
     visibleCloudMentionCandidates,
   } = useWorkbenchCloudProjectContext({
@@ -1048,6 +1084,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
     paneKey,
+    runtimeTaskDescription,
+    runtimeTaskExecutionKnown: paneSession.status.taskExecution.known,
+    runtimeTaskExecutionStatus: paneSession.status.taskExecution.status,
+    runtimeTaskRunning: paneSession.status.taskExecution.running,
     runtimeTaskTitle,
     services,
     userId: state.user?.id,
@@ -5098,6 +5138,21 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         />
         <TransientNotice message={todoBindingError} tone="error" onClear={clearTodoBindingError} />
         <TransientNotice message={cloudActionNotice} onClear={clearCloudActionNotice} />
+        <TaskBoardAssociationDialog
+          key={
+            taskBoardAssociation
+              ? `${taskBoardAssociation.project.project_store}:${taskBoardAssociation.project.id}`
+              : 'closed'
+          }
+          project={taskBoardAssociation?.project ?? null}
+          currentProject={boundCloudProject}
+          items={taskBoardAssociation?.items ?? []}
+          loading={taskBoardAssociation?.loading ?? false}
+          pending={taskBoardAssociation?.pending ?? false}
+          onClose={closeTaskBoardAssociation}
+          onCreate={associateRuntimeTaskWithNewItem}
+          onSelect={associateRuntimeTaskWithExistingItem}
+        />
         {deliveryDialogOpen &&
           activeDeliveryItem &&
           currentRuntimeTask &&

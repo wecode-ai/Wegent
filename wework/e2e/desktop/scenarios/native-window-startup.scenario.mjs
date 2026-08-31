@@ -9,7 +9,7 @@ export async function createDesktopScenario({ resultDir }) {
       assert.equal(snapshot.state, 'closed', 'The Electron startup splash was not closed')
       assert.deepEqual(
         snapshot.events.map(event => event.name),
-        ['created', 'shown', 'animation-ready', 'closed'],
+        ['created', 'animation-ready', 'shown', 'closed'],
         'The Electron startup splash did not complete its animated lifecycle'
       )
       assert.ok(
