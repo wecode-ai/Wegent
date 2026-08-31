@@ -291,15 +291,23 @@ def test_sign_claims_keeps_signing_key_kid_reserved(test_db: Session):
         subject="user:1",
         expires_in=300,
         claims={},
-        headers={"kid": "caller-controlled", "typ": "at+jwt"},
+        headers={
+            "alg": "HS256",
+            "kid": "caller-controlled",
+            "typ": "at+jwt",
+        },
     )
 
     headers = jwt.get_unverified_header(issued.access_token)
+    assert headers["alg"] == "RS256"
     assert headers["kid"] == signing_key.kid
     assert headers["typ"] == "at+jwt"
 
 
-def test_update_issuer_rejects_malformed_oauth_client_ttl(test_db: Session):
+@pytest.mark.parametrize("access_ttl", ["invalid", -1, 0, 59, 3601])
+def test_update_issuer_rejects_malformed_oauth_client_ttl(
+    test_db: Session, access_ttl: object
+):
     _, issuer = _new_issuer(test_db, "malformed-client")
     test_db.add(
         Kind(
@@ -310,7 +318,7 @@ def test_update_issuer_rejects_malformed_oauth_client_ttl(test_db: Session):
             json={
                 "spec": {
                     "tokenIssuerRef": {"kindId": issuer.id},
-                    "accessTtlSeconds": "invalid",
+                    "accessTtlSeconds": access_ttl,
                 }
             },
             is_active=True,

@@ -406,7 +406,12 @@ class OutboundTokenService:
             access_ttl = (
                 spec.get("accessTtlSeconds") if isinstance(spec, dict) else None
             )
-            if isinstance(access_ttl, bool) or not isinstance(access_ttl, int):
+            if (
+                isinstance(access_ttl, bool)
+                or not isinstance(access_ttl, int)
+                or access_ttl < 60
+                or access_ttl > OAUTH_ACCESS_TOKEN_TTL_SECONDS
+            ):
                 raise OutboundTokenValidationError(
                     f"OAuth client '{client.name}' has an invalid access TTL",
                     error_code="OAUTH_CLIENT_INVALID_ACCESS_TTL",
@@ -550,7 +555,11 @@ class OutboundTokenService:
             reserved,
             signing_key.private_key_pem,
             algorithm="RS256",
-            headers={**(headers or {}), "kid": signing_key.resource.spec.kid},
+            headers={
+                **(headers or {}),
+                "alg": signing_key.resource.spec.algorithm,
+                "kid": signing_key.resource.spec.kid,
+            },
         )
         return TokenIssueResponse(
             access_token=token,
