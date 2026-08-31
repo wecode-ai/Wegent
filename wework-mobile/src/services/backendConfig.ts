@@ -15,8 +15,8 @@ interface BackendMetadata {
   socket_url?: unknown
 }
 
-export function configuredBackendUrl(): string {
-  return process.env.EXPO_PUBLIC_BACKEND_URL?.trim() || 'http://localhost:8000'
+export function configuredBackendUrl(): string | null {
+  return process.env.EXPO_PUBLIC_BACKEND_URL?.trim() || null
 }
 
 export function normalizeBackendUrl(input: string, socketOverride?: string): BackendConfig {

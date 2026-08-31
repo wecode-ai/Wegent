@@ -47,6 +47,7 @@ pnpm test
 pnpm build
 ```
 
-The default Backend is `http://localhost:8000`. Override it at build or development time with
-`EXPO_PUBLIC_BACKEND_URL`. The app reads the Web and Socket.IO origins from
-`/api/auth/wework/config`; users never enter or copy an access token.
+Set an optional build-time Backend default with `EXPO_PUBLIC_BACKEND_URL`. When it is omitted,
+the app asks the user for the Backend address before login and remembers a successfully connected
+address on the device. The app reads the Web and Socket.IO origins from `/api/auth/wework/config`;
+users never enter or copy an access token.
