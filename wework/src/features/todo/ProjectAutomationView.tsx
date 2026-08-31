@@ -9,6 +9,7 @@ import type {
 } from '@/api/deliveries'
 import type { ProjectAutomationRule } from '@/api/projectAutomations'
 import type { ExecutionListApi } from '@/features/todo/ProjectQueueView'
+import { modelSelectionIdentityOptions } from '@/features/workbench/runtimeModelSelection'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type {
   CloneGitRepositoryInput,
@@ -18,6 +19,7 @@ import type {
 } from '@/types/api'
 import { getLocalExecutorStatus } from '@/desktop/localExecutor'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
+import { getDefaultModelOptions } from '@/lib/model-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { AutomationRulesView } from './AutomationRulesView.jsx'
 import {
@@ -234,11 +236,10 @@ async function fetchExecutionCatalog(
         name: model.name,
         label: model.displayName || model.name,
         type: model.type,
-        options: Object.fromEntries(
-          Object.entries(model.config ?? {}).flatMap(([key, value]) =>
-            typeof value === 'string' ? [[key, value]] : []
-          )
-        ),
+        options: {
+          ...getDefaultModelOptions(model),
+          ...modelSelectionIdentityOptions(model),
+        },
       })),
     plugins: [],
   }
