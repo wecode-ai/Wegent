@@ -15,6 +15,7 @@ import {
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
   registerRendererStorageCapabilities,
+  showElectronNotification,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
@@ -29,6 +30,52 @@ describe('cpuLoadRatioBetween', () => {
       0.7
     )
     expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('showElectronNotification', () => {
+  test('opens the targeted runtime task when the notification is clicked', () => {
+    const openRuntimeTask = vi.fn()
+    const listeners = new Map<string, () => void>()
+    const notification = {
+      once: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Task completed',
+        body: 'The reply is ready.',
+        taskAddressId: 'device-1:task-1',
+      },
+      openRuntimeTask,
+      () => notification
+    )
+    listeners.get('click')?.()
+
+    expect(notification.show).toHaveBeenCalledOnce()
+    expect(openRuntimeTask).toHaveBeenCalledWith('device-1:task-1')
+  })
+
+  test('does not add click navigation without a task target', () => {
+    const notification = {
+      once: vi.fn(),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Assigned',
+        body: 'A project task was assigned.',
+      },
+      vi.fn(),
+      () => notification
+    )
+
+    expect(notification.once).not.toHaveBeenCalled()
+    expect(notification.show).toHaveBeenCalledOnce()
   })
 })
 

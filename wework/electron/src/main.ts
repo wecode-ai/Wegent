@@ -1237,6 +1237,12 @@ async function configureDesktopRuntime(): Promise<void> {
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
+          openRuntimeTask: taskAddressId =>
+            dispatchTrayAction({
+              type: 'open-task',
+              source: 'notification',
+              taskId: taskAddressId,
+            }),
           plugins: workbenchPlugins,
           updatePreferences: updateDesktopPreferences,
         },

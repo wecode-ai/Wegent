@@ -59,10 +59,41 @@ export interface ElectronDesktopServices {
   browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
+  openRuntimeTask: (taskAddressId: string) => void
   plugins: WorkbenchPluginManager
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+}
+
+interface ElectronNotificationHandle {
+  once(event: 'click', listener: () => void): void
+  show(): void
+}
+
+interface ElectronNotificationInput {
+  title: string
+  body: string
+  taskAddressId?: string
+}
+
+export function showElectronNotification(
+  input: ElectronNotificationInput,
+  openRuntimeTask: (taskAddressId: string) => void,
+  createNotification: (options: {
+    title: string
+    body: string
+  }) => ElectronNotificationHandle = options => new Notification(options)
+): void {
+  const notification = createNotification({
+    title: input.title,
+    body: input.body,
+  })
+  const taskAddressId = input.taskAddressId
+  if (taskAddressId) {
+    notification.once('click', () => openRuntimeTask(taskAddressId))
+  }
+  notification.show()
 }
 
 export interface CoreDshPluginService {
@@ -359,6 +390,9 @@ export function createElectronCapabilityRouter(
     return captureWebContentsDataUrl(contents)
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
+  router.register('e2e.activateRuntimeTaskNotification', params => {
+    desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
+  })
   router.register('e2e.focusMainWindow', () => {
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
@@ -471,7 +505,14 @@ export function createElectronCapabilityRouter(
     }
     const title = stringParam(params, 'title')
     const body = stringParam(params, 'body')
-    new Notification({ title, body }).show()
+    showElectronNotification(
+      {
+        title,
+        body,
+        taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
+      },
+      desktopServices.openRuntimeTask
+    )
   })
   router.register('preferences.get', () => preferences.read())
   router.register('preferences.update', async params => {
