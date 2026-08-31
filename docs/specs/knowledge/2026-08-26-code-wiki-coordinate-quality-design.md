@@ -2,170 +2,161 @@
 sidebar_position: 6
 ---
 
-# Code Wiki Coordinate 质量闭环设计
+# Code Wiki Coordinate 生成质量设计
 
-## 背景与目标
+## 背景与经验
 
-当前 Code Wiki 由单个 Claude Code Bot 自行决定探索、写作与结束时机。它通常能得到可用的工程
-导航，但对大型仓库容易过早结束：关键运行时边界、控制流细节与图示覆盖依赖同一个模型自行
-判断，服务端发布门禁也只验证结构和 Mermaid 的明显错误。
+最初的 Code Wiki 由一个 Claude Code Writer 完成仓库探索、页面规划、写作和发布。它通常能生成
+合理的目录和工程概览，但会较快结束：读取范围有限，复杂模块容易只列职责和文件，缺少控制流、
+状态转换、约束、失败恢复和必要图示。
 
-本期为**手动 full rebuild** 增加低成本质量闭环。复用 Executor 的 Claude Code `coordinate`
-协作模式，由 Writer 生成 Wiki、Reviewer 进行计划审阅与最终 QA；不新增候选版本、用户确认或
-前端工作流。目标是在同模型、同一次 Task 内，以有限回合提高覆盖与可验证性，而不是复刻
-OpenWiki 的无上限多智能体循环。
+第一版 Coordinate 方案加入了 Plan Reviewer 和最终 QA。实际运行表明，Plan Reviewer 能发现目录、
+页面范围和源码依据问题，整体规划通常没有明显缺陷；但所有页面仍由同一个 Writer 撰写时，长任务
+中的上下文竞争没有消失。Writer 即使按计划创建了全部页面，也可能在具体章节中丢失重要机制。
+例如运行时页面可以列出 `context`、`guard` 等目录，却没有解释它们何时介入、如何影响执行，也没有
+给复杂流程配图。最终 QA 对这种系统性深度不足的改善有限，因为它发生在大批页面完成之后，通常只
+定位少量事实或引用错误。
 
-## 范围和非目标
+早期门禁还尝试从 Executor 的 subagent 生命周期事件判断 Reviewer 是否完成。同步 Reviewer 已经
+返回 verdict 时，事件观察仍可能停在 `awaiting_observation`，导致 Writer 重启 Reviewer、重复提交或
+在 generation 已终止后继续尝试。这类检查防住了假设中的 Writer 绕过，却让正常协作路径变得脆弱。
+当前实现改为由 Writer 和 Reviewer 直接写入、读取 generation 上的持久状态；Executor 事件只用于
+展示和诊断，不再决定能否发布。
 
-- 仅通过 Coordinate Team 执行的 `FULL` Code Wiki generation 需要本质量闭环；incremental、
-  定时更新和保留的 Solo A/B baseline 均维持精简路径。
-- Team 由 Writer leader 和一个 Reviewer 组成，collaboration model 为 `coordinate`。
-- Reviewer 合并 plan critic 与 content QA 职责。它是协作性质量角色，不是权限隔离或恶意输入
-  安全审计边界；两个 Bot 仍在同一 Task 与工作环境中运行。
-- 不修改任务 UI 或发布版本模型。Wiki Reader 只展示由持久化 review 证据派生的只读进度；质量
-  失败后不发布，用户继续看到旧 Wiki，后续仍可通过既有“重新生成”再次运行。
-- 不构建通用 benchmark 平台。本期只在固定 `main` commit 上运行旧 Solo 与新 Coordinate 的
-  人工 A/B 对照。
+因此当前方案把主要质量投入前移到“计划内容合同 + 合理分工”，默认只保留 Plan Review。复杂仓库
+按源码领域拆成少量 Work Package，由独立 Section Writer 在受限上下文中研究和撰写；Coordinator
+最后编写跨领域综合页。这样解决的是每页可用注意力和源码覆盖，而不只是增加一次事后评审。
 
-本文件取代 2026-08-12 设计中“默认启用多轮 skeleton critics 或 Wiki QA subagents”的非目标，
-但不改变其余 prompt、安全与 full-rebuild 决策。
+## 目标与范围
 
-## 固定执行协议
+- 仅 Coordinate Team 执行的手动 `FULL` rebuild 使用本协议；incremental、定时更新和 Solo baseline
+  保持精简路径。
+- 同一 Task 内复用 Claude Code 原生 subagent：Coordinator、Plan Reviewer，以及按需调用的 Section
+  Writer。它们是协作角色，不是权限隔离边界。
+- 默认策略为 `plan_only`。`plan_and_qa` 及 Recheck 仍保留在服务端合同中，便于后续实验，但新建
+  generation 不使用。
+- 不增加候选版本或用户确认步骤。失败 generation 不发布，Reader 继续展示上一版本。
+- 不追求 OpenWiki 式近乎全仓无上限探索；通过显式 scope、持久交接和确定性门禁控制成本。
 
-Writer 必须按以下顺序工作：
+## Team 与写作模式
 
-1. 探索仓库并按 `REVIEW_CONTRACT.md` 写出包含页面路径、模块覆盖、源码依据和预期图示的 Plan
-   handoff。Writer 用 `review-open` 持久化 handoff，使状态变为 `ready`，再同步委派 Reviewer；
-   Reviewer 从 `review-status` 读取 handoff，并选择最小的一组结构核心页面作为 `focusPaths`。若首次计划
-   `changes_requested`，先修订计划并使用同一 `plan` phase 再审一次；第二次仍要求修改则失败。
-2. Reviewer 在自己的原生子任务结束前用 `wiki_submit review --phase plan` 提交计划结论、路径和
-   摘要。要求修改时必须提交结构化 Markdown findings。review API 原子生成持久 checkpoint；Writer
-   在子任务返回后只读取一次状态并执行服务端返回的 `nextAction`。若仍为 `ready`，说明 Reviewer
-   未提交 verdict，Writer 立即 fail，不轮询或重拉 Reviewer。
-3. 全部页面写完后，Writer 持久化列出所有写入页的 QA handoff，再同步委派 Reviewer。Reviewer 对每个 `focusPath` 至少提出一个可由源码证伪的机制
-   问题，确认页面说明了职责与边界、控制或数据流、状态与转换、适用的约束和失败恢复，以及修改
-   与验证方式；并可抽查非核心页面的整体覆盖。图示只在关系、时序或生命周期明显优于文字时要求。
-4. QA 通过时 Reviewer 提交 `qa passed` 后 Writer 完成；QA 要求修改时，Writer 按 findings 定向修复，
-   持久化逐项说明修复的 Recheck handoff，再委派一次 recheck；`recheck passed` 后完成。
-5. recheck 仍不通过或 Task 无法修复时，Writer 使 generation 失败而不发布。不得把失败静默
-   降级为“仍然 complete”。
+Coordinate Team 包含三个资源角色：
 
-Reviewer 负责提交审阅结论、证据、遗漏和可执行修改项，不负责页面作者职责，也不自行 complete
-或 fail generation。Writer 在上下文压缩或恢复后以 `review-status` 作为唯一恢复来源。运行时
-prompt 与 `wiki_submit` skill 共同提供这一协议；prompt 是协作指导，服务端门禁才是发布的确定性
-条件。
+- **Coordinator**：探索全局、制定 Plan 和 Writing Plan、委派 Work Package、编写首页及跨领域综合
+  页面，并完成发布。
+- **Reviewer**：只评审 Plan，检查覆盖、页面职责、`Must explain` 问题、源码证据、图示意图和分工
+  是否合理；不写页面、不代替 Coordinator 发布。
+- **Section Writer**：只处理一个持久化 Work Package，研究共享源码范围并写入被分配的页面；不
+  修改计划、不发 Reviewer verdict，也不写其他 Package 的页面。
 
-## 服务端质量合同
+Writing Plan 支持两种模式：
 
-内部 review-open API 将 Writer handoff、范围、attempt 和当前页面指纹持久化到
-`generation.ext.qualityReview`；review API 只接受对应 `ready` handoff 的 Reviewer verdict。每条
-checkpoint 保存：
+- `coordinator`：适合结构紧凑、主要机制能装入一个连贯写作上下文的工程。全部路径归 Coordinator，
+  不委派 Section Writer。
+- `scoped`：适合存在多个独立运行时、业务领域或跨系统流程的工程。相关的小章节可以归入同一个
+  Work Package，但不默认按一页一个 Worker。Coordinator 保留首页、快速开始、总体架构等需要跨域
+  综合的页面，并在相关 Package 完成后撰写。
 
-- phase：`plan`、`qa` 或 `recheck`；
-- status：`passed` 或 `changes_requested`；
-- 计划 checkpoint 的 `focusPaths`：需要机制级深度的最小核心页面集合；
-- 本轮检查的页面路径与简短摘要；
-- `changes_requested` 的可执行 findings；
-- 同 phase 的服务端 attempt 序号；
-- 当前 generation 全部页面的稳定内容指纹。
+每个计划路径必须恰好有一个 owner。`scoped` 模式还必须持久化输出语言，Section Writer 只凭
+generation ID 和 Work Package ID 就能恢复完整上下文，不依赖 Coordinator 的对话历史。
 
-full generation 在发布前必须满足：
+## Plan 内容合同
 
-- 最近的计划审阅为 `passed`，计划页非空且均已写入，`focusPaths` 非空且属于计划；
-- QA 的 checked paths 覆盖全部 `focusPaths`；
-- 最终 QA 为 `passed`，或 final QA 曾要求修改且唯一一次 recheck 为 `passed`；
-- 最后一个通过 checkpoint 的内容指纹与当前待发布页面一致。
+Plan 不只是路径列表。每个页面必须声明：
 
-不满足时，沿用既有 publish refusal：generation 标为失败、版本不发布、`wiki_submit complete`
-收到机器可读原因。已有 `PUBLISH_REFUSED` 修复通道允许 Writer 补页或修复，然后再次审阅和
-complete；不会产生半发布版本。incremental generation 不检查这些 checkpoint。
+- 面向读者的用途及与父页、子页、跨页的关系；
+- 可核验的源码入口、关键 symbol、测试或命令；
+- 一组源码派生的 `Must explain` 问题，覆盖该页重要机制、状态、边界或失败路径；
+- 关系、时序或生命周期是否值得用 Mermaid 表达；没有信息增益时可明确写 `none`；
+- 所属 Work Package，以及与相邻 Package 的边界。
 
-full run prompt 使用 Executor 实际生成的 Reviewer agent type，并明确每次委派的 phase。状态为
-`not_started -> ready -> passed | changes_requested`，且返回 `attempt` 和 `nextAction`；`ready` handoff
-与 Reviewer verdict 之间页面发生变化时拒绝提交。Executor 的
-subagent 生命周期继续用于普通任务展示和诊断，但不参与 Wiki 发布门禁。该模型明确把 Reviewer
-作为协作性质量角色，而不是针对恶意 Writer 的安全隔离角色，避免依赖 prompt 文本解析和两条异步
-事件链的时序关联。
+Reviewer 重点判断信息架构和执行分工，而不是润色标题。通过时必须提交完整计划路径和非空
+`focusPaths`。首次 `changes_requested` 后允许 Coordinator 修订并复审一次；第二次仍不通过则终止
+generation，避免无界循环。
 
-## Reader 进度投影
+## 持久交接与状态机
 
-运行状态 API 从 `qualityReview` handoff/checkpoint 和当前候选页面数量实时派生进度，不另存一套
-总体流程状态。Coordinate full rebuild 展示四个有证据的阶段：规划、撰写、QA、发布；计划复审、
-QA 修复和 Recheck 使用各自更具体的文案。没有质量 review 证据的旧版、Solo 或 incremental run
-只展示通用“正在生成”，不伪造阶段编号或完成百分比。首次生成和已有 Wiki 的重新生成均在 Reader
-主内容区看到默认展开、可折叠的四阶段卡片；计划通过后显示计划页总数，撰写阶段显示候选页完成数。
-状态进入 `running` 时启动轮询、离开时停止，因此从已完成页面手动重新生成也会持续刷新；状态转为
-`completed` 时重新加载页面树并尽量保留当前阅读路径。stale 或已结束任务不再显示运行进度。
+Writer 先用 `review-open --phase plan` 提交 Markdown handoff 和结构化 Writing Plan，使状态从
+`not_started` 进入 `ready`，再同步调用 Reviewer。Reviewer 用 `review-status` 读取同一份持久输入，
+并在退出前调用 `review` 写入 `passed` 或 `changes_requested`：
 
-## 验证与 A/B
+```text
+not_started -> ready -> passed | changes_requested
+```
 
-以已提交的 Wegent `main` SHA、相同模型、语言和 full rebuild 参数，创建两个隔离的临时 Code
-Wiki：A 使用现有 Solo Team，B 使用 Coordinate Team。记录每次的运行耗时、可用 cost/token、
-页面数、字符数、Mermaid 数量、发布结果与 checkpoint；这些是信号而非质量结论。
+`generation.ext.qualityReview` 保存 review policy、handoff、Writing Plan、服务端 attempt 和 verdict。
+`review-status` 返回 `reviewPolicy`、`nextAction`、handoff、review，以及 Plan 通过后的页面进度：
 
-人工对照重点检查 Reviewer 为目标仓库选择的核心章节：是否从目录清单深入到真实边界、控制或数据
-流、状态转换、约束与恢复机制、修改和验证方式；是否覆盖计划中的主要模块与跨边界流程；必要图示
-是否源码有据；Reviewer 的机制问题是否都能从 Wiki 得到准确答案。满足这些前提下，以显著成本/
-时长增幅换取稳定的内容增益为通过标准。
+- `plannedPaths`
+- `writtenPaths`
+- `missingPaths`
+- `unexpectedPaths`
 
-## English Version
+Coordinator 在 Reviewer 返回后只读取一次状态并服从 `nextAction`。若状态仍为 `ready`，说明 Reviewer
+没有提交 verdict，generation 直接失败；不得 sleep、轮询或另起 Reviewer 猜测结果。命令返回终态
+退出码时，Writer 立即停止，不允许在失败 Task 上继续 review、写页或 complete。原 Code Wiki Task
+也不支持会话级重试，用户重新生成会创建新的 generation。
 
-# Code Wiki Coordinate Quality Loop
+## 写作与发布门禁
 
-## Goal and Scope
+Plan 通过后，`scoped` 模式按 Work Package 同步委派 Section Writer。每个 Worker 从持久 Plan 恢复
+源码范围、页面路径、语言和 `Must explain` 合同，并只提交自己的页面。Coordinator 以服务端返回的
+`missingPaths` 判断完成度，不依赖 subagent 的自然语言总结；所有领域页完成后再写综合页。
 
-For manual `FULL` Code Wiki rebuilds through the Coordinate Team, replace the single self-directed
-writer flow with one Writer leader and one cooperative Reviewer in the existing Claude Code
-`coordinate` Team mode. The Reviewer combines plan criticism and content QA. Incremental, scheduled,
-and retained Solo A/B baseline runs remain lean. This is not an access-control boundary: both bots
-still run in the same task environment.
+默认 `plan_only` 发布门禁要求：
 
-No candidate-version UI, confirmation step, task UI, or benchmark platform is added. The Reader adds
-only a derived progress display. A failed quality gate publishes nothing, so the previously published
-Wiki remains visible and a normal regeneration can be run later.
+- 最近一次 Plan verdict 为 `passed`；
+- 实际页面集合与计划路径集合完全相等，不能缺页或夹带计划外页面；
+- `focusPaths` 非空且全部属于计划；
+- 页面路径、内容和 Mermaid 通过既有确定性校验。
 
-## Bounded Protocol
+Plan verdict 只证明计划与分工经过审阅，不声称最终正文经过人工式 QA。内容深度主要由
+`Must explain` 合同、受限 Worker scope 和源码核验获得。保留的 `plan_and_qa` 策略可以恢复全量 QA
+和一次 Recheck，但只有 generation 明确返回该策略时才能使用，Writer 不得自行开启额外阶段。
 
-The Writer persists a contract-formatted Plan handoff with `review-open`, then delegates the Reviewer
-synchronously. The Reviewer reads that durable handoff, selects the smallest structurally central set
-of `focusPaths`, and submits the `plan` verdict. After the native task returns, the Writer reads state
-once and follows `nextAction`. QA uses a handoff covering every written page; requested changes carry
-actionable findings; Recheck uses a handoff mapping those findings to repairs. A Reviewer that returns
-while state remains `ready` fails the generation rather than starting a polling or replacement loop.
+## Reader 进度
 
-## Server Contract
+运行状态由持久 review 状态和候选页面数量实时派生，不另存一套流程状态。默认 `plan_only` 展示
+规划评审、页面写入、整合与发布三个阶段；保留的 `plan_and_qa` 展示四阶段。Plan 通过后显示计划
+页数，写作中显示已写/总数。
 
-The internal review-open endpoint stores the Writer handoff, scope, server-side attempt and stable
-candidate fingerprint in `generation.ext.qualityReview`. The review endpoint accepts a verdict only
-for that ready handoff and stores status, checked paths, Plan focus paths, summary, actionable findings
-and the reviewed fingerprint. `review-status` exposes `not_started`, `ready`, `passed`, or
-`changes_requested` plus a server-derived `nextAction`. The full-run prompt still names the generated
-Reviewer agent type for delegation, but Executor lifecycle callbacks are diagnostics rather than
-publication evidence. Before
-publishing, the server requires a non-empty passed plan whose paths exist, non-empty focus paths that
-belong to the plan, QA coverage of every focus path, plus either passed QA or
-QA changes followed by passed recheck, and it requires the latest passing checkpoint fingerprint to
-match the pages being published. The collaboration improves quality but is deliberately not treated
-as an access-control boundary against a malicious Writer.
+Reader 每 10 秒轮询运行状态，离开 `running` 后停止。generation 完成时重新加载页面树、当前版本和
+正文，并在路径仍可读时保留当前页面。轮询的短暂网络失败不会冻结进度；旧版、Solo 和 incremental
+任务没有质量证据时只显示通用生成状态。
 
-## Reader Progress Projection
+## 验证方式
 
-The polled run-status API derives progress from durable handoffs, checkpoints, and the candidate page
-count instead of persisting another workflow state. Coordinate full rebuilds expose four evidenced
-steps: planning, writing, QA, and publishing, with specific labels for plan revision, QA repair, and
-Recheck. Legacy, Solo, and incremental runs expose only generic generation with no invented step or
-percentage. The Reader main area shows the same expanded-by-default, collapsible four-step card for
-initial generation and regeneration. Once the Plan passes it shows the planned page total, and while
-writing it shows candidate pages written versus planned. Polling starts whenever status enters
-`running` and stops when it leaves, including a manual regeneration begun from an idle page. On
-completion the Reader reloads the page tree while preserving the current path when possible. Terminal
-and stale runs do not show active progress.
+在相同提交、模型、语言和 full rebuild 参数下比较 Solo 与 Coordinate 输出，记录耗时、可获得的
+token/cost、页面数、字符数、Mermaid 数量和发布结果。这些指标只用于解释成本，不替代人工判断。
 
-## Evaluation
+人工抽查应从目标仓库的重要页面提出源码可证伪的问题，确认 Wiki 能说明真实控制/数据流、状态与
+转换、边界和失败恢复，并在图示确有信息增益时提供源码有据的图。实际 Wegent 验证中，scoped
+writing 明显改善了单页深度，但运行时间约提升到小时级；这是当前在 15 分钟浅生成与 OpenWiki
+近两小时全量扫描之间接受的成本点，仍需通过更多不同规模仓库验证。
 
-On one committed Wegent `main` SHA, run two isolated temporary full rebuilds with the same model and
-language: existing Solo (A) and Coordinate (B). Compare duration, available cost/tokens, page and
-diagram counts, publish/checkpoint results, and human review of coverage and factual usefulness.
-For the repository-specific focus pages, check real boundaries, control/data flow, state and
-transformations, applicable constraints and recovery, change guidance, and source-grounded diagrams
-where a visual materially improves comprehension.
+## English Summary
+
+# Code Wiki Coordinate Generation Quality
+
+The first Coordinate design added Plan review and final QA to a single Writer. Runs showed that the
+Plan was usually sound while individual pages still lost mechanism-level detail: one Writer retained
+too many domains in one long context, and late QA had limited leverage over systematic shallowness.
+An early gate also depended on observing Executor subagent events, producing false
+`awaiting_observation` states and retry loops even after a Reviewer had submitted a verdict.
+
+The current default is `plan_only`. The Coordinator persists a source-grounded Plan and a structured
+Writing Plan. The Plan Reviewer checks page purposes, evidence, `Must explain` questions, diagram
+intent, focus pages, and ownership. Compact repositories use `coordinator` mode; larger repositories
+use `scoped` mode, where bounded Section Writers recover one Work Package from persisted state and
+write only its assigned pages. The Coordinator writes cross-domain synthesis after those packages.
+
+Review handoffs and verdicts live in `generation.ext.qualityReview`; Executor lifecycle events are
+diagnostic only. `review-status` returns the backend-derived policy, next action, durable handoff and
+verdict, plus planned, written, missing, and unexpected paths. Publication requires a passed Plan,
+non-empty valid focus paths, and an exact match between planned and written pages. The reserved
+`plan_and_qa` policy retains QA and Recheck but is used only when the generation explicitly selects it.
+
+The Reader derives a three-step Plan/Writing/Publish view for `plan_only`, polls every ten seconds, and
+reloads navigation and content after publication. Evaluation compares cost signals but judges quality
+with repository-specific, falsifiable questions about mechanisms, state, boundaries, recovery, and
+source-grounded diagrams.
