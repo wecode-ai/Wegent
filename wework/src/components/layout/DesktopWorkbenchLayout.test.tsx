@@ -5928,6 +5928,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(rightPanelShell).toHaveClass('h-full', 'min-h-0', 'overflow-hidden')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({
@@ -10890,6 +10891,72 @@ describe('DesktopWorkbenchLayout', () => {
       'data-embedded-browser-label',
       'workspace-browser-runtime-b'
     )
+  })
+
+  test('reveals the Electron startup window only after the active transcript is ready', async () => {
+    runtimeMocks.electron = true
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading={false} />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
+  })
+
+  test('keeps the startup animation visible until the routed task is restored', async () => {
+    runtimeMocks.electron = true
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-a')
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
+  })
+
+  test('does not reveal an inactive project-space surface during startup', async () => {
+    runtimeMocks.electron = true
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+    const props = {
+      ...baseProps,
+      surfaceKind: 'board' as const,
+      state: {
+        ...baseProps.state,
+        user: {
+          id: 1,
+          user_name: 'local',
+          email: 'local@example.com',
+        },
+      },
+    }
+    const { rerender } = render(<DesktopWorkbenchLayout {...props} routeActive={false} />)
+
+    await waitFor(() => {
+      expect(deliveryApiMock.listCloudProjects).toHaveBeenCalled()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...props} routeActive />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
   })
 
   test('does not reuse a migrated default browser label after switching panes', async () => {

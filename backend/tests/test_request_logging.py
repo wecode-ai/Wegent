@@ -54,6 +54,18 @@ def test_access_logs_include_forwarded_headers(test_client, caplog):
         ) in log_message
 
 
+def test_cors_exposes_request_id_header(test_client):
+    response = test_client.get(
+        "/api/health",
+        headers={"Origin": "https://wework.example.com"},
+    )
+
+    assert response.status_code == 200
+    exposed_headers = response.headers["access-control-expose-headers"]
+    assert "X-Request-ID" in exposed_headers
+    assert response.headers["X-Request-ID"]
+
+
 def test_access_logs_redact_sensitive_query_parameters(test_client, caplog):
     with caplog.at_level(logging.INFO, logger="app.main"):
         response = test_client.get("/api/health?token=opencut-secret&probe=visible")

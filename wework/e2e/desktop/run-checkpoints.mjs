@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS } from './checkpoints.mjs'
 import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
+import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
@@ -42,6 +43,7 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'offline-local-project-space': './scenarios/offline-local-project-space.scenario.mjs',
   'cloud-context-resilience': './scenarios/cloud-context-resilience.scenario.mjs',
   'task-attachments': './scenarios/task-attachments.scenario.mjs',
+  'external-content-import': './scenarios/external-content-import.scenario.mjs',
 }
 const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'cloud-space-mention',
@@ -70,6 +72,7 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
+  'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-git-worktree',
@@ -257,21 +260,43 @@ function checkpointScenarioEnv(env, checkpoint) {
   return nextEnv
 }
 
-function runDesktopBuild() {
-  return new Promise((resolvePromise, reject) => {
-    console.log('[desktop-e2e] Building the shared Electron application and executor')
-    const command = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
-    const child = spawn(command, ['run', 'ai:verify:electron:build'], {
+async function runDesktopBuild() {
+  const startedAt = Date.now()
+  const logPath = join(weworkDir, 'test-results', 'desktop-e2e', `desktop-build-${process.pid}.log`)
+  console.log(
+    `[desktop-e2e] Building the shared Electron application and executor. Full log: ${logPath}`
+  )
+  const heartbeat = setInterval(() => {
+    console.log(
+      `[desktop-e2e] Desktop build still running: elapsed=${formatDuration(Date.now() - startedAt)}`
+    )
+  }, HEARTBEAT_INTERVAL_MS)
+
+  let result
+  try {
+    result = await runCommandToLog({
+      args: ['run', 'ai:verify:electron:build'],
+      command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm',
       cwd: weworkDir,
       env: process.env,
-      stdio: 'inherit',
+      logPath,
     })
-    child.once('error', reject)
-    child.once('exit', code => {
-      if (code === 0) resolvePromise()
-      else reject(new Error(`Desktop E2E build exited with code ${code ?? 'unknown'}`))
-    })
-  })
+  } finally {
+    clearInterval(heartbeat)
+  }
+
+  if (result.code !== 0) {
+    console.error(
+      `[desktop-e2e] Desktop build failed: ${result.signal ? `signal=${result.signal}` : `exit=${result.code}`}. Full log: ${logPath}`
+    )
+    if (result.tail.trim()) {
+      console.error(`[desktop-e2e] Desktop build output tail:\n${result.tail.trimEnd()}`)
+    }
+    throw new Error(`Desktop E2E build exited with code ${result.code}`)
+  }
+  console.log(
+    `[desktop-e2e] Desktop build passed: duration=${formatDuration(Date.now() - startedAt)}. Full log: ${logPath}`
+  )
 }
 
 async function sharedBuildEnvironment(environment = process.env) {

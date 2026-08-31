@@ -47,6 +47,7 @@ from app.schemas.knowledge import (
     CodeWikiResolveResponse,
     CodeWikiRunCreate,
     CodeWikiRunHistory,
+    CodeWikiRunProgress,
     CodeWikiRunRecord,
     CodeWikiRunResponse,
     CodeWikiRunStatus,
@@ -423,6 +424,7 @@ def get_code_wiki_status(
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     state = current_run_state(db, knowledge_base)
     spec = (knowledge_base.json or {}).get("spec", {})
+    progress = state.progress
     return CodeWikiRunStatus(
         status=state.status,
         generation_id=state.generation_id,
@@ -430,6 +432,17 @@ def get_code_wiki_status(
         error_message=state.error_message,
         failure_code=state.failure_code,
         is_stale=state.is_stale,
+        progress=(
+            CodeWikiRunProgress(
+                stage=progress.stage,
+                current_step=progress.current_step,
+                total_steps=progress.total_steps,
+                pages_written=progress.pages_written,
+                pages_total=progress.pages_total,
+            )
+            if progress
+            else None
+        ),
         last_published_at=spec.get(PUBLISHED_AT_KEY),
         last_published_commit=str(spec.get(PUBLISHED_COMMIT_KEY, "") or ""),
     )

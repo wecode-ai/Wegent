@@ -19,9 +19,13 @@ export interface FloatingMetrics {
 export interface UseFloatingInputOptions {
   /**
    * Whether there are messages to display.
-   * Floating input is only shown when there are messages.
    */
   hasMessages: boolean
+
+  /**
+   * Whether an empty state still renders the floating input.
+   */
+  inputAlwaysAtBottom?: boolean
 }
 
 export interface UseFloatingInputReturn {
@@ -73,7 +77,10 @@ export interface UseFloatingInputReturn {
  * This hook extracts multiple useEffect calls from ChatArea into a single,
  * cohesive unit that manages floating input positioning.
  */
-export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseFloatingInputReturn {
+export function useFloatingInput({
+  hasMessages,
+  inputAlwaysAtBottom = false,
+}: UseFloatingInputOptions): UseFloatingInputReturn {
   const chatAreaRef = useRef<HTMLDivElement>(null)
   const inputControlsRef = useRef<HTMLDivElement>(null)
   const [floatingInputElement, setFloatingInputElement] = useState<HTMLDivElement | null>(null)
@@ -181,7 +188,7 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
    * Tracks height changes for scroll padding calculation.
    */
   useEffect(() => {
-    if (!hasMessages || !floatingInputElement) {
+    if ((!hasMessages && !inputAlwaysAtBottom) || !floatingInputElement) {
       setInputHeight(0)
       return
     }
@@ -198,7 +205,7 @@ export function useFloatingInput({ hasMessages }: UseFloatingInputOptions): UseF
 
     window.addEventListener('resize', updateHeight)
     return () => window.removeEventListener('resize', updateHeight)
-  }, [floatingInputElement, hasMessages])
+  }, [floatingInputElement, hasMessages, inputAlwaysAtBottom])
 
   return {
     chatAreaRef,

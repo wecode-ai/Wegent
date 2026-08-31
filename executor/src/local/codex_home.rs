@@ -31,6 +31,21 @@ pub struct CodexHomeInitializeRequest {
     remote_apps_enabled: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportRequest {
+    source: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalContentImportResult {
+    source: String,
+    source_path: String,
+    destination_path: String,
+    imported_entries: Vec<String>,
+}
+
 fn default_remote_apps_enabled() -> bool {
     true
 }
@@ -50,6 +65,14 @@ pub fn initialize_codex_home(
     let wework_codex_home = wework_codex_home_path()?;
     let native_codex_home = native_codex_home_path()?;
     initialize_codex_home_from_paths(&wework_codex_home, &native_codex_home, request)
+}
+
+pub fn import_external_content(
+    request: ExternalContentImportRequest,
+) -> Result<ExternalContentImportResult, String> {
+    let home = dirs::home_dir().ok_or_else(|| "Unable to resolve home directory".to_owned())?;
+    let destination = wework_codex_home_path()?;
+    import_external_content_from_paths(&request.source, &home, &destination)
 }
 
 fn codex_home_migration_status_from_paths(
@@ -184,9 +207,73 @@ fn copy_initialization_files(source: &Path, destination: &Path) -> Result<(), St
     Ok(())
 }
 
+fn import_external_content_from_paths(
+    source: &str,
+    home: &Path,
+    destination: &Path,
+) -> Result<ExternalContentImportResult, String> {
+    let (source_path, entries): (PathBuf, &[(&str, &str)]) = match source {
+        "codex" => (
+            home.join(".codex"),
+            &[
+                ("config.toml", "config.toml"),
+                ("auth.json", "auth.json"),
+                ("AGENTS.md", "AGENTS.md"),
+                ("models_cache.json", "models_cache.json"),
+                ("plugins", "plugins"),
+                ("skills", "skills"),
+                ("cache", "cache"),
+                ("vendor_imports", "vendor_imports"),
+            ],
+        ),
+        "claude-code" => (
+            home.join(".claude"),
+            &[
+                ("CLAUDE.md", "AGENTS.md"),
+                ("settings.json", "claude/settings.json"),
+                ("plugins", "claude/plugins"),
+                ("skills", "skills"),
+            ],
+        ),
+        _ => return Err(format!("Unsupported external content source: {source}")),
+    };
+
+    let mut imported_entries = Vec::new();
+    for (source_entry, destination_entry) in entries {
+        let entry_path = source_path.join(source_entry);
+        if !entry_path.exists() {
+            continue;
+        }
+        copy_entry(&entry_path, &destination.join(destination_entry))?;
+        imported_entries.push((*source_entry).to_owned());
+    }
+    if imported_entries.is_empty() {
+        return Err(format!(
+            "No supported content was found in {}",
+            source_path.display()
+        ));
+    }
+
+    Ok(ExternalContentImportResult {
+        source: source.to_owned(),
+        source_path: source_path.display().to_string(),
+        destination_path: destination.display().to_string(),
+        imported_entries,
+    })
+}
+
 fn copy_entry(source: &Path, destination: &Path) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
+    }
+    if destination.exists() {
+        if let (Ok(source_path), Ok(destination_path)) =
+            (fs::canonicalize(source), fs::canonicalize(destination))
+        {
+            if source_path == destination_path {
+                return Ok(());
+            }
+        }
     }
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?;
@@ -276,6 +363,79 @@ mod tests {
         assert_eq!(
             fs::read_to_string(wework_home.join("skills/example/SKILL.md")).unwrap(),
             "example"
+        );
+    }
+
+    #[test]
+    fn imports_codex_content_into_an_existing_home() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+        fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+        fs::write(destination.join("config.toml"), "old\n").unwrap();
+
+        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("config.toml")).unwrap(),
+            "model = \"gpt-5\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("skills/example/SKILL.md")).unwrap(),
+            "example"
+        );
+        assert_eq!(result.imported_entries, vec!["config.toml", "skills"]);
+    }
+
+    #[test]
+    fn maps_claude_instructions_and_skills_to_codex_content() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let destination = root.path().join("destination");
+        fs::create_dir_all(home.join(".claude/skills/example")).unwrap();
+        fs::write(home.join(".claude/CLAUDE.md"), "Claude instructions").unwrap();
+        fs::write(home.join(".claude/skills/example/SKILL.md"), "example").unwrap();
+
+        let result =
+            import_external_content_from_paths("claude-code", &home, &destination).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(destination.join("AGENTS.md")).unwrap(),
+            "Claude instructions"
+        );
+        assert_eq!(
+            fs::read_to_string(destination.join("skills/example/SKILL.md")).unwrap(),
+            "example"
+        );
+        assert_eq!(result.imported_entries, vec!["CLAUDE.md", "skills"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keeps_an_existing_link_to_the_imported_codex_auth() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let source_auth = home.join(".codex/auth.json");
+        let destination = root.path().join("destination");
+        let destination_auth = destination.join("auth.json");
+        fs::create_dir_all(source_auth.parent().unwrap()).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(&source_auth, "{\"auth\":\"native\"}\n").unwrap();
+        std::os::unix::fs::symlink(&source_auth, &destination_auth).unwrap();
+
+        let result = import_external_content_from_paths("codex", &home, &destination).unwrap();
+
+        assert_eq!(result.imported_entries, vec!["auth.json"]);
+        assert!(fs::symlink_metadata(&destination_auth)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_to_string(destination_auth).unwrap(),
+            "{\"auth\":\"native\"}\n"
         );
     }
 }

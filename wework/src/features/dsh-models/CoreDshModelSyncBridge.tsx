@@ -1,37 +1,22 @@
 import { useEffect, useMemo } from 'react'
-import {
-  listLocalHarnessModelOptions,
-  localHarnessModelOptionKey,
-} from '@/features/local-harness/localHarnessModels'
-import type { ModelOptions, UnifiedModel } from '@/types/api'
+import { listLocalHarnessModelOptions } from '@/features/local-harness/localHarnessModels'
+import type { UnifiedModel } from '@/types/api'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { requestCoreDsh, scheduleCoreDshModelSync } from '@/features/dsh-models/coreDshModelSync'
 
 interface CoreDshModelSyncProps {
   enabled: boolean
   models: UnifiedModel[]
-  selectedModel: UnifiedModel | null
-  selectedModelOptions: ModelOptions
   services: WorkbenchServices
 }
 
-export function CoreDshModelSync({
-  enabled,
-  models,
-  selectedModel,
-  selectedModelOptions,
-  services,
-}: CoreDshModelSyncProps) {
-  const options = useMemo(
-    () => listLocalHarnessModelOptions('claude_code', models, selectedModel, selectedModelOptions),
-    [models, selectedModel, selectedModelOptions]
-  )
-  const preferredModelKey = selectedModel ? localHarnessModelOptionKey(selectedModel) : null
+export function CoreDshModelSync({ enabled, models, services }: CoreDshModelSyncProps) {
+  const options = useMemo(() => listLocalHarnessModelOptions('claude_code', models), [models])
 
   useEffect(() => {
     if (!enabled || !services.localHarnessModelApi) return
     void scheduleCoreDshModelSync(
-      { options, preferredModelKey },
+      { options },
       {
         resolveLaunch: (option, scope) =>
           services.localHarnessModelApi?.resolveLaunch('claude_code', option, scope) ??
@@ -43,7 +28,7 @@ export function CoreDshModelSync({
     ).catch(error => {
       console.error('[Wework] Failed to expose models to Core DSH:', error)
     })
-  }, [enabled, options, preferredModelKey, services.localHarnessModelApi])
+  }, [enabled, options, services.localHarnessModelApi])
 
   return null
 }
