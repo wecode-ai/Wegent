@@ -18,6 +18,7 @@ core_segments=(
   permission-modes
   computer-use
   task-status-sync
+  task-board-association
   core-task-flow
   task-attachments
   window-lifecycle
@@ -120,7 +121,7 @@ core_shards=(
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
   conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  task-status-sync,core-task-flow,change-request-status,context-compaction
+  task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
   resilience
@@ -396,14 +397,21 @@ classify_wework_path() {
       return
       ;;
     wework/src/api/deliveries* | \
+      wework/src/api/local/localDelivery* | \
       wework/src/components/layout/useWorkbenchCloudProjectContext* | \
       wework/src/features/todo/CloudTodoWorkspace* | \
-      wework/src/features/workbench/projectTaskTracking* | \
-      wework/src/features/workbench/workbenchContextTypes*)
+      wework/src/features/todo/TaskBoardAssociationDialog* | \
+      wework/src/features/todo/WorkItemComposerGuide*)
       select_target "core:task-status-sync"
+      select_target "core:task-board-association"
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
         select_target "core:cloud-context-resilience"
       fi
+      return
+      ;;
+    wework/src/features/workbench/projectTaskTracking* | \
+      wework/src/features/workbench/workbenchContextTypes*)
+      select_target "core:task-status-sync"
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
@@ -491,6 +499,7 @@ classify_wework_path() {
       select_target "core:temporary-chat"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
         select_target "core:cloud-context-resilience"
+        select_target "core:task-board-association"
       fi
       return
       ;;

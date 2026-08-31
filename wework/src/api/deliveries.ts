@@ -1107,16 +1107,6 @@ export function createDeliveryApi(client: HttpClient) {
         { action, reason }
       )
     },
-    bindProjectTask(
-      projectId: CloudProjectIdInput,
-      task: RuntimeTaskAddress,
-      taskTitle?: string | null
-    ): Promise<void> {
-      return client.post(`/v1/cloud-projects/${projectId}/tasks`, {
-        ...task,
-        ...(taskTitle ? { taskTitle } : {}),
-      })
-    },
     trackProjectTask(
       projectId: CloudProjectIdInput,
       task: RuntimeTaskAddress,
@@ -1127,7 +1117,7 @@ export function createDeliveryApi(client: HttpClient) {
         const trackingKey = projectTaskTrackingKey(projectId, task)
         try {
           const existing = await api.findCloudContextForTask(task)
-          if (existing.loop_item_id) {
+          if (existing.loop_item_id && String(existing.project.id) === String(projectId)) {
             pendingTrackedItems.delete(trackingKey)
             return { item: await api.getLoopItem(existing.loop_item_id) }
           }

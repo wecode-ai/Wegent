@@ -18,6 +18,7 @@ export const DESKTOP_CHECKPOINTS = [
   'permission-modes',
   'computer-use',
   'task-status-sync',
+  'task-board-association',
   'core-task-flow',
   'task-attachments',
   'cloud-git-worktree',

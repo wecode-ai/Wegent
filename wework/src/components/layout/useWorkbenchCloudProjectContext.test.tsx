@@ -972,6 +972,186 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(workspaceTabs.tabs).toEqual([taskTab, boardTab])
   })
 
+  test('creates and binds a board item for an existing runtime task', async () => {
+    const targetProject = project('space-target', 'local')
+    const createdItem = {
+      ...loopItem(targetProject.id),
+      status: 'pending' as const,
+    }
+    const runningItem = {
+      ...createdItem,
+      status: 'in_progress' as const,
+    }
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-existing',
+    }
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      trackProjectTask: vi.fn().mockResolvedValue({ item: createdItem }),
+      updateTaskTrackingStatus: vi.fn().mockResolvedValue(runningItem),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskDescription: '完成已有任务的看板关联',
+        runtimeTaskExecutionStatus: 'running',
+        runtimeTaskRunning: true,
+        runtimeTaskTitle: '已有任务',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    await waitFor(() => expect(result.current.taskBoardAssociation?.loading).toBe(false))
+
+    act(() => result.current.associateRuntimeTaskWithNewItem())
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(runningItem))
+    expect(localApi.trackProjectTask).toHaveBeenCalledWith(
+      targetProject.id,
+      currentRuntimeTask,
+      '已有任务',
+      '完成已有任务的看板关联'
+    )
+    expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledWith(currentRuntimeTask, 'running')
+  })
+
+  test('marks a new board item as awaiting confirmation when a settled task reports done', async () => {
+    const targetProject = project('space-target', 'local')
+    const createdItem = {
+      ...loopItem(targetProject.id),
+      status: 'inbox' as const,
+    }
+    const reviewItem = {
+      ...createdItem,
+      status: 'in_review' as const,
+    }
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-existing',
+    }
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      trackProjectTask: vi.fn().mockResolvedValue({ item: createdItem }),
+      updateTaskTrackingStatus: vi.fn().mockResolvedValue(reviewItem),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskExecutionKnown: true,
+        runtimeTaskExecutionStatus: 'done',
+        runtimeTaskRunning: false,
+        runtimeTaskTitle: '已有任务',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    await waitFor(() => expect(result.current.taskBoardAssociation?.loading).toBe(false))
+
+    act(() => result.current.associateRuntimeTaskWithNewItem())
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(reviewItem))
+    expect(localApi.updateTaskTrackingStatus).toHaveBeenCalledWith(currentRuntimeTask, 'succeeded')
+  })
+
+  test('moves an existing runtime task by binding the selected target card', async () => {
+    const sourceProject = project('space-source', 'local')
+    const targetProject = project('space-target', 'local')
+    const sourceItem = loopItem(sourceProject.id)
+    const targetItem = {
+      ...loopItem(targetProject.id),
+      id: 'todo-target',
+      title: '目标卡片',
+      status: 'completed' as const,
+    }
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-existing',
+    }
+    let currentContext = {
+      project: sourceProject,
+      loop_item: sourceItem,
+    }
+    const localApi = {
+      bindTask: vi.fn().mockImplementation(async () => {
+        currentContext = {
+          project: targetProject,
+          loop_item: targetItem,
+        }
+      }),
+      findCloudContextForTask: vi.fn().mockImplementation(async () => currentContext),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [sourceProject, targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockImplementation(async projectId => ({
+        items: projectId === targetProject.id ? [targetItem] : [sourceItem],
+      })),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskTitle: '已有任务',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(sourceItem))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    await waitFor(() => expect(result.current.taskBoardAssociation?.items).toEqual([targetItem]))
+
+    act(() => result.current.associateRuntimeTaskWithExistingItem(targetItem))
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(targetItem))
+    expect(localApi.bindTask).toHaveBeenCalledWith(targetItem.id, currentRuntimeTask, '已有任务')
+    expect(result.current.boundCloudProject).toEqual(targetProject)
+    expect(result.current.boundCloudItem?.status).toBe('completed')
+  })
+
   test('maps a cloud task to the local delivery model', () => {
     const item = loopItem('space-cloud')
 
