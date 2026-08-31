@@ -929,7 +929,7 @@ export function WorkspaceBrowserTabPanel({
       const normalizedState = { ...state, scope }
       const contexts = browserAnnotationStateToContexts(
         normalizedState,
-        activePageUrl ? getFallbackBrowserTitle(activePageUrl) : null
+        activePageUrlRef.current ? getFallbackBrowserTitle(activePageUrlRef.current) : null
       )
       if (onReplaceBrowserCodeComments) {
         onReplaceBrowserCodeComments(scope, contexts)
@@ -938,7 +938,7 @@ export function WorkspaceBrowserTabPanel({
       }
       return true
     },
-    [activePageUrl, browserTabId, label, onAddCodeComment, onReplaceBrowserCodeComments]
+    [browserTabId, label, onAddCodeComment, onReplaceBrowserCodeComments]
   )
 
   const enterAnnotationMode = useCallback(

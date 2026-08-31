@@ -679,10 +679,15 @@ function editorButton(label: string, testId: string) {
 }
 
 function editorPanel(draft: RuntimeDraft) {
-  const designChanges = editorDesignChanges(draft)
   const width = editorDesignOpen ? 376 : 326
   const height = editorDesignOpen ? Math.min(540, innerHeight - 32) : 220
   const position = editorPosition(draft.anchor, width, height)
+  let submit: HTMLButtonElement | null = null
+  const updateSubmitAvailability = () => {
+    if (!submit) return
+    submit.disabled = editorComment.trim().length === 0 && editorDesignChanges(draft).length === 0
+    submit.style.opacity = submit.disabled ? '.35' : '1'
+  }
   const surface = document.createElement('form')
   surface.setAttribute('data-testid', 'browser-annotation-editor-surface')
   styleElement(surface, {
@@ -767,7 +772,7 @@ function editorPanel(draft: RuntimeDraft) {
   header.append(chip)
   surface.append(header)
 
-  if (editorDesignOpen) surface.append(editorDesignEditor(draft))
+  if (editorDesignOpen) surface.append(editorDesignEditor(draft, updateSubmitAvailability))
 
   const textarea = document.createElement('textarea')
   textarea.setAttribute('aria-label', '添加评论')
@@ -789,7 +794,7 @@ function editorPanel(draft: RuntimeDraft) {
   })
   textarea.addEventListener('input', () => {
     editorComment = textarea.value
-    submit.disabled = editorComment.trim().length === 0 && editorDesignChanges(draft).length === 0
+    updateSubmitAvailability()
   })
   textarea.addEventListener('keydown', event => {
     if (
@@ -831,17 +836,16 @@ function editorPanel(draft: RuntimeDraft) {
     cancel.addEventListener('click', () => emit('close-draft'))
     actions.append(cancel)
   }
-  const submit = editorButton(
+  submit = editorButton(
     draft.commentId ? '保存批注' : '添加批注',
     'browser-annotation-submit-button'
   )
   submit.type = 'submit'
   submit.textContent = draft.commentId ? '保存' : editorDesignOpen ? '添加' : '↑'
-  submit.disabled = editorComment.trim().length === 0 && designChanges.length === 0
   submit.style.background = 'CanvasText'
   submit.style.color = 'Canvas'
   submit.style.minWidth = draft.commentId || editorDesignOpen ? '56px' : '28px'
-  submit.style.opacity = submit.disabled ? '.35' : '1'
+  updateSubmitAvailability()
   actions.append(submit)
   footer.append(actions)
   surface.append(footer)
@@ -875,7 +879,7 @@ function editorPanel(draft: RuntimeDraft) {
   return surface
 }
 
-function editorDesignEditor(draft: RuntimeDraft) {
+function editorDesignEditor(draft: RuntimeDraft, updateSubmitAvailability: () => void) {
   const editor = styleElement(document.createElement('div'), {
     borderTop: '1px solid color-mix(in srgb, CanvasText 12%, transparent)',
     flex: '1',
@@ -919,6 +923,7 @@ function editorDesignEditor(draft: RuntimeDraft) {
     })
     input.addEventListener('input', () => {
       editorDesignValues[property] = input.value
+      updateSubmitAvailability()
     })
     const reset = editorButton(`重置 ${property}`, `browser-annotation-reset-${property}`)
     reset.textContent = '↶'

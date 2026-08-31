@@ -2285,6 +2285,40 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
   })
 
+  test('keeps one annotation-state subscription while the active page URL changes', async () => {
+    mockBrowserHostRect()
+    let handlePageStateChange!: Parameters<
+      typeof embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges
+    >[0]
+    embeddedBrowserMocks.listenEmbeddedBrowserPageStateChanges.mockImplementation(handler => {
+      handlePageStateChange = handler
+      return Promise.resolve(() => undefined)
+    })
+    embeddedBrowserMocks.listenEmbeddedBrowserAnnotationState.mockImplementation(() =>
+      Promise.resolve(() => undefined)
+    )
+    render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+
+    act(() => {
+      handlePageStateChange({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+        title: 'Next page',
+        url: 'https://example.com/next',
+        isLoading: false,
+        invalidTlsCertificate: null,
+      })
+    })
+    await waitFor(() => expect(input).toHaveValue('https://example.com/next'))
+
+    expect(embeddedBrowserMocks.listenEmbeddedBrowserAnnotationState).toHaveBeenCalledTimes(1)
+  })
+
   test('ignores an annotation state response from an older page runtime', async () => {
     mockBrowserHostRect()
     const onAddCodeComment = vi.fn()

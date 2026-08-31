@@ -20,6 +20,7 @@ const BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR =
 const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR =
   `${ACTIVE_WORKBENCH_SELECTOR} ` +
   '[data-testid="workspace-browser-annotation-original-view-button"]'
+const CODE_COMMENT_BADGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="code-comment-context-badge"]`
 const COMPOSER_SELECTOR = '[data-testid="chat-message-input"][contenteditable="true"]'
 const OVERLAY_INPUT_SELECTOR = '[data-testid="browser-annotation-comment-input"]'
 const OVERLAY_SUBMIT_SELECTOR = '[data-testid="browser-annotation-submit-button"]'
@@ -69,6 +70,7 @@ function basicFixtureHtml() {
     <button id="annotation-secondary" type="button" aria-label="Secondary annotation target">
       Secondary annotation target
     </button>
+    <p id="annotation-tertiary">Tertiary annotation target</p>
     <output id="page-click-state">not-clicked</output>
     <script>
       document.getElementById('annotation-primary').addEventListener('click', () => {
@@ -220,6 +222,21 @@ async function editorValue(bridge, selector, property = 'value') {
   )
 }
 
+async function assertEditorSubmitEnabled(bridge, message) {
+  const state = await pageValue(
+    bridge,
+    annotationRootExpression(`root => {
+      const submit = root.querySelector(${JSON.stringify(OVERLAY_SUBMIT_SELECTOR)})
+      if (!submit) return null
+      return {
+        disabled: Boolean(submit.disabled),
+        opacity: submit.style.opacity,
+      }
+    }`)
+  )
+  assert.deepEqual(state, { disabled: false, opacity: '1' }, message)
+}
+
 async function editorElementPoint(bridge, selector) {
   return pageValue(
     bridge,
@@ -335,10 +352,6 @@ async function waitForAnnotationSave(control, bridge, previousRuntimeRevision, t
       await control.command('getElementCount', BROWSER_ANNOTATION_COUNT_SELECTOR)
     )
     if (count > 0) {
-      await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
-        text: '1',
-        timeoutMs,
-      })
       return waitForBrowserAnnotationRender(
         control,
         previousRuntimeRevision,
@@ -598,9 +611,20 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
   await selectElementAnnotationTarget(control, bridge, targetSelector, uiTimeoutMs)
 }
 
-async function submitOverlayComment(control, bridge, comment, uiTimeoutMs) {
+async function submitOverlayComment(control, bridge, comment, uiTimeoutMs, beforeSubmit = null) {
   const previousRuntimeRevision = await browserAnnotationRuntimeRevision(control)
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, comment)
+  assert.equal(
+    await editorValue(bridge, OVERLAY_INPUT_SELECTOR),
+    comment,
+    'The browser annotation comment input did not retain its entered value'
+  )
+  await assertEditorSubmitEnabled(
+    bridge,
+    'Entering a browser annotation comment did not enable the submit button'
+  )
+  await new Promise(resolve => setTimeout(resolve, 50))
+  if (beforeSubmit) await beforeSubmit()
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
   await waitForAnnotationSave(control, bridge, previousRuntimeRevision, uiTimeoutMs)
 }
@@ -730,7 +754,18 @@ async function verifyCore(
     'not-clicked',
     'Selecting a target triggered the page action'
   )
-  await submitOverlayComment(control, bridge, 'Primary browser annotation comment', uiTimeoutMs)
+  await submitOverlayComment(
+    control,
+    bridge,
+    'Primary browser annotation comment',
+    uiTimeoutMs,
+    () =>
+      captureBrowserScreenshot(
+        bridge,
+        resultDir,
+        'browser-annotation-02b-comment-submit-enabled.png'
+      )
+  )
 
   const savedMarker = await markerState(bridge)
   assert.equal(savedMarker?.number, '1', 'The first saved comment did not render marker 1')
@@ -754,12 +789,39 @@ async function verifyCore(
     resultDir,
     'browser-annotation-03b-second-comment-card.png'
   )
-  await clickEditorElement(bridge, OVERLAY_REMOVE_SELECTION_SELECTOR)
+  await clickEditorElement(bridge, OVERLAY_DESIGN_SELECTOR)
+  await fillEditorElement(bridge, OVERLAY_COLOR_SELECTOR, '#ef4444')
+  await assertEditorSubmitEnabled(
+    bridge,
+    'Changing the second annotation design did not enable the submit button'
+  )
+  const secondRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
+  await waitForAnnotationSave(control, bridge, secondRuntimeRevision, uiTimeoutMs)
   control.activateWindow('main')
   await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
-    text: '1',
+    text: '2',
     timeoutMs: uiTimeoutMs,
   })
+  await control.command('waitFor', CODE_COMMENT_BADGE_SELECTOR, {
+    text: '2',
+    timeoutMs: uiTimeoutMs,
+  })
+  await captureScreenshot(control, 'browser-annotation-03c-two-annotations.png')
+
+  await hoverElementAnnotationTarget(bridge, '#annotation-tertiary', uiTimeoutMs)
+  await selectElementAnnotationTarget(control, bridge, '#annotation-tertiary', uiTimeoutMs)
+  await submitOverlayComment(control, bridge, 'Tertiary browser annotation comment', uiTimeoutMs)
+  control.activateWindow('main')
+  await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
+    text: '3',
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', CODE_COMMENT_BADGE_SELECTOR, {
+    text: '3',
+    timeoutMs: uiTimeoutMs,
+  })
+  await captureScreenshot(control, 'browser-annotation-03d-three-annotations.png')
 
   await clickMarker(bridge)
   await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
@@ -774,13 +836,10 @@ async function verifyCore(
   const deleteRuntimeRevision = await browserAnnotationRuntimeRevision(control)
   await clickEditorElement(bridge, OVERLAY_DELETE_SELECTOR)
   control.activateWindow('main')
-  await waitForElementCount(
-    control,
-    BROWSER_ANNOTATION_COUNT_SELECTOR,
-    0,
-    uiTimeoutMs,
-    'Deleting the comment did not clear the toolbar count'
-  )
+  await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
+    text: '2',
+    timeoutMs: uiTimeoutMs,
+  })
   await waitForBrowserAnnotationRender(
     control,
     deleteRuntimeRevision,
@@ -794,14 +853,11 @@ async function verifyCore(
         MARKER_ROOT_ID
       )})?.shadowRoot?.querySelectorAll(${JSON.stringify(MARKER_SELECTOR)}).length ?? 0`
     ),
-    0,
-    'Deleting the comment left a marker in the page'
+    2,
+    'Deleting the first comment removed or duplicated the remaining annotation markers'
   )
   await captureScreenshot(control, 'browser-annotation-07-deleted-and-exited.png')
 
-  await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
-  await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
-  await submitOverlayComment(control, bridge, 'Annotation cleared through the toolbar', uiTimeoutMs)
   control.activateWindow('main')
   await control.command('click', BROWSER_ANNOTATION_CLEAR_SELECTOR)
   await control.command('waitFor', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR, {
@@ -977,7 +1033,6 @@ async function verifyDesign(
   })
 
   await startElementAnnotation(control, bridge, '#design-target', uiTimeoutMs)
-  await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Use the requested design color')
   await clickEditorElement(bridge, OVERLAY_DESIGN_SELECTOR)
   assert.equal(
     await editorValue(bridge, OVERLAY_FONT_SIZE_SELECTOR),
@@ -993,13 +1048,17 @@ async function verifyDesign(
   await waitForEditorElement(bridge, OVERLAY_SCREENSHOT_SELECTOR, uiTimeoutMs)
   assert.equal(
     await editorValue(bridge, OVERLAY_INPUT_SELECTOR),
-    'Use the requested design color',
-    'The controlled comment input lost its value before submit'
+    '',
+    'The design-only annotation unexpectedly populated a comment'
   )
   assert.equal(
     await editorValue(bridge, OVERLAY_COLOR_SELECTOR),
     '#ef4444',
     'The controlled design input lost its value before submit'
+  )
+  await assertEditorSubmitEnabled(
+    bridge,
+    'Changing a design value without a comment did not enable the submit button'
   )
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-05-design-editor.png')
   let runtimeRevision = await browserAnnotationRuntimeRevision(control)
