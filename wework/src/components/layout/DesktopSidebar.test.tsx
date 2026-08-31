@@ -4836,7 +4836,9 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
     expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
-    await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
+    const settingsButton = screen.getByTestId('sidebar-global-im-notification-settings-button')
+    expect(settingsButton).toHaveClass('shrink-0', 'whitespace-nowrap')
+    await user.click(settingsButton)
 
     expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()
