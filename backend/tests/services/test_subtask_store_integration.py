@@ -394,7 +394,7 @@ def test_create_assistant_subtask_falls_back_to_task_executor_reference(
 
 def test_edit_user_message_rolls_back_deletion_when_reference_save_fails(
     test_db: Session,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     test_db.add(_task(111, owner_id=10))
     test_db.add_all(
