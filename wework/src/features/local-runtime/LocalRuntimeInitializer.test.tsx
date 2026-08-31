@@ -7,7 +7,7 @@ import {
   connectLocalExecutorToBackend,
   copyLocalExecutorDebugInfo,
   disconnectLocalExecutorFromBackend,
-  ensureLocalExecutorStarted,
+  ensureLocalExecutorAvailable,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
@@ -24,14 +24,14 @@ vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: vi.fn(),
   copyLocalExecutorDebugInfo: vi.fn(),
   disconnectLocalExecutorFromBackend: vi.fn(),
-  ensureLocalExecutorStarted: vi.fn(),
+  ensureLocalExecutorAvailable: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
 const connectMock = vi.mocked(connectLocalExecutorToBackend)
 const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
-const ensureMock = vi.mocked(ensureLocalExecutorStarted)
+const ensureMock = vi.mocked(ensureLocalExecutorAvailable)
 const readLogMock = vi.mocked(readLocalExecutorLog)
 const SLOW_STARTUP_WARNING_MS = 10000
 

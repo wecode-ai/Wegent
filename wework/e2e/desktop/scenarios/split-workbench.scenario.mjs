@@ -161,6 +161,23 @@ async function verifyMultilineComposerCaret(control, captureScreenshot) {
     /\bcomposer-prosemirror-editor\b/,
     'The split workbench did not render the ProseMirror composer'
   )
+  const beforePaste = '0123456789'
+  const pastedText = 'PASTED'
+  const afterPaste = 'abcdefghij'
+  await control.command('fill', COMPOSER, { value: `${beforePaste}${afterPaste}` })
+  await control.command('setSelectionOffset', COMPOSER, { value: String(beforePaste.length) })
+  await control.command('pasteText', COMPOSER, { value: pastedText })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    `${beforePaste}${pastedText}${afterPaste}`,
+    'Pasting text in the middle did not preserve the surrounding composer text'
+  )
+  assert.equal(
+    Number(await control.command('getSelectionOffset', COMPOSER)),
+    beforePaste.length + pastedText.length,
+    'Pasting text in the middle moved the composer caret away from the pasted text'
+  )
+
   await control.command('fill', COMPOSER, { value: '' })
   await control.command('click', COMPOSER)
   const [singleLineCaretMetrics] = JSON.parse(
@@ -465,19 +482,16 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
           },
         },
       })
-      assert.equal(
-        await control.command('setLocalStorageItem', 'body', {
-          value: JSON.stringify({
-            key: 'wework:workbench-split-groups:v3:fixed-task',
-            value: restoredSplitState,
-          }),
-        }),
-        restoredSplitState,
-        'The completed task pane state could not be persisted before reload'
-      )
 
       const readyCountBeforeCompletedTaskReload = control.readyCount
-      await control.command('reloadMainWindow', 'body')
+      await control.command('reloadMainWindow', 'body', {
+        value: JSON.stringify({
+          localStorage: {
+            key: 'wework:workbench-split-groups:v3:fixed-task',
+            value: restoredSplitState,
+          },
+        }),
+      })
       await control.awaitReadyAfter(readyCountBeforeCompletedTaskReload)
       await waitForWorkbenchDebugState(
         control,
@@ -561,16 +575,19 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       await captureScreenshot(control, '02-split-drag-targets.png', 'body')
 
-      const splitStartedAt = Date.now()
-      await control.command('dragEnd', 'body', {
-        target: rightTarget,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('waitFor', '[role="separator"][data-separator]', {
-        visible: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      const splitDurationMs = Date.now() - splitStartedAt
+      const splitResult = JSON.parse(
+        await control.command('dragEnd', 'body', {
+          target: rightTarget,
+          waitForSelector: '[role="separator"][data-separator]',
+          timeoutMs: uiTimeoutMs,
+        })
+      )
+      const splitDurationMs = splitResult.durationMs
+      assert.equal(
+        typeof splitDurationMs,
+        'number',
+        `Sidebar drag did not report its renderer duration: ${JSON.stringify(splitResult)}`
+      )
       assert.ok(
         splitDurationMs < 3_000,
         `Sidebar drag took too long to create a split: ${splitDurationMs}ms`

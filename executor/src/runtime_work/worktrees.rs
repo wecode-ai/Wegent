@@ -20,7 +20,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::config::device::worktree_persistent_storage_verified;
+use crate::{
+    config::device::worktree_persistent_storage_verified,
+    path_compat::strip_windows_verbatim_prefix,
+};
 
 use super::{response::RuntimeTaskLink, store::runtime_work_dir};
 
@@ -1140,7 +1143,16 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
     let value = path.to_str().ok_or("Invalid worktree path")?;
-    git_output(path, &["worktree", "remove", "--force", value], None).map(|_| ())
+    let common_dir = git_common_dir(path)?;
+    let mut command = Command::new("git");
+    command
+        .arg("--git-dir")
+        .arg(common_dir)
+        .args(["worktree", "remove", "--force", value]);
+    command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
+    crate::process::hide_windows_console(&mut command);
+    let output = command.output().map_err(|error| error.to_string())?;
+    command_result(output).map(|_| ())
 }
 
 fn remove_empty_worktree_container(path: &Path) -> Result<(), String> {
@@ -1860,7 +1872,9 @@ fn git_common_dir(worktree_path: &Path) -> Result<PathBuf, String> {
     } else {
         worktree_path.join(common_dir)
     };
-    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
+    Ok(strip_windows_verbatim_prefix(
+        &fs::canonicalize(&absolute).unwrap_or(absolute),
+    ))
 }
 
 fn normalize_configured_root(value: &str) -> Result<String, String> {

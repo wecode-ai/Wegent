@@ -6,6 +6,8 @@ import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 
+import { sharedDesktopComponentIds } from './lib/desktop-component-ids.mjs'
+
 const [
   assetsDirectory,
   outputDirectory,
@@ -50,7 +52,7 @@ const sharedComponentBaseUrl = (
   process.env.WEWORK_COMPONENT_BASE_URL?.trim() ||
   `https://github.com/${repository}/releases/download/wework-updater`
 ).replace(/\/+$/, '')
-const sharedComponentIds = new Set(['coreDsh', 'codex', 'dws'])
+const sharedComponentIds = new Set(sharedDesktopComponentIds)
 const requestedTargets = new Set(
   (process.env.WEWORK_RELEASE_TARGETS?.trim() || 'macos-arm64,macos-x64,windows-x64')
     .split(',')
@@ -58,6 +60,10 @@ const requestedTargets = new Set(
     .filter(Boolean)
 )
 const supportedTargets = new Set(['macos-arm64', 'macos-x64', 'windows-x64'])
+const macosReleasePlatforms = new Map([
+  ['macos-arm64', 'darwin-aarch64'],
+  ['macos-x64', 'darwin-x86_64'],
+])
 if (requestedTargets.size === 0) {
   throw new Error('At least one desktop release target is required.')
 }
@@ -67,15 +73,17 @@ if ([...requestedTargets].some(target => !supportedTargets.has(target))) {
 await mkdir(output, { recursive: true })
 
 const macAssets = []
-if (requestedTargets.has('macos-arm64')) {
-  macAssets.push(await asset(`WeWork_${version}_macos_arm64.zip`))
-}
-if (requestedTargets.has('macos-x64')) {
-  macAssets.push(await asset(`WeWork_${version}_macos_x64.zip`))
+for (const [target, platform] of macosReleasePlatforms) {
+  if (requestedTargets.has(target)) {
+    macAssets.push(await asset(`WeWork_${version}_${platform}.zip`))
+  }
 }
 const windows = requestedTargets.has('windows-x64')
-  ? await asset(`WeWork_${version}_windows_x64-setup.exe`)
+  ? await asset(`WeWork_${version}_windows-x64-setup.exe`)
   : null
+await Promise.all(
+  [...macAssets, ...(windows ? [windows] : [])].map(file => requireAsset(`${file.name}.blockmap`))
+)
 const electronChannels = channel === 'stable' ? ['latest', 'beta'] : ['beta']
 
 for (const targetChannel of electronChannels) {
@@ -96,14 +104,13 @@ for (const targetChannel of electronChannels) {
 }
 
 const tauriPlatforms = {}
-if (requestedTargets.has('macos-arm64')) {
-  tauriPlatforms['darwin-aarch64'] = await tauriEntry(`WeWork_${version}_macos_arm64.app.tar.gz`)
-}
-if (requestedTargets.has('macos-x64')) {
-  tauriPlatforms['darwin-x86_64'] = await tauriEntry(`WeWork_${version}_macos_x64.app.tar.gz`)
+for (const [target, platform] of macosReleasePlatforms) {
+  if (requestedTargets.has(target)) {
+    tauriPlatforms[platform] = await tauriEntry(`WeWork_${version}_${platform}.app.tar.gz`)
+  }
 }
 if (requestedTargets.has('windows-x64')) {
-  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows_x64-setup.exe`)
+  tauriPlatforms['windows-x86_64'] = await tauriEntry(`WeWork_${version}_windows-x64-setup.exe`)
 }
 const tauriSource = {
   version,
@@ -215,6 +222,12 @@ async function localAsset(name) {
     size: file.size,
     sha512: await sha512(path),
   }
+}
+
+async function requireAsset(name) {
+  const path = resolve(assets, name)
+  const file = await stat(path).catch(() => null)
+  if (!file?.isFile()) throw new Error(`Desktop release asset is missing: ${path}`)
 }
 
 async function tauriEntry(name) {

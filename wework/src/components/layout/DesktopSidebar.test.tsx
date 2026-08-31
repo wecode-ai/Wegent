@@ -202,6 +202,10 @@ async function waitForSidebarPointerSensorCleanup() {
   })
 }
 
+// Compile the injected DSH modules outside the per-test hook timeout. The setup hook
+// still clears and restores the module cache before every test to preserve isolation.
+await preloadDefaultDshUiTestModules()
+
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
     await preloadDefaultDshUiTestModules()
@@ -826,7 +830,7 @@ describe('DesktopSidebar', () => {
   test('shows download progress in the account-row update icon', () => {
     renderSidebar({}, undefined, {
       availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: { downloadedBytes: 40, totalBytes: 100 },
     })
 
@@ -2960,6 +2964,46 @@ describe('DesktopSidebar', () => {
         '对齐方案'
       )
     })
+  })
+
+  test('opens a runtime conversation once before double click rename', async () => {
+    const user = userEvent.setup()
+    const onOpenRuntimeTask = vi.fn()
+    const onRenameRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/chat-double-click',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'codex-double-click',
+                workspacePath: '/workspace/chats/chat-double-click',
+                workspaceKind: 'chat',
+                title: 'Double click rename',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+      onOpenRuntimeTask,
+      onRenameRuntimeTask,
+    })
+
+    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('rename-runtime-local-task-input-codex-double-click')).toHaveValue(
+      'Double click rename'
+    )
   })
 
   test('renders project runtime tasks directly under projects and opens by address', async () => {

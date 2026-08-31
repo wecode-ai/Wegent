@@ -6,3 +6,5 @@ export const desktopComponentIds = Object.freeze([
   'codex',
   'dws',
 ])
+
+export const sharedDesktopComponentIds = Object.freeze(['coreDsh', 'codex', 'dws'])

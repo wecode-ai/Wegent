@@ -128,6 +128,45 @@ class TestIsConfigured:
 class TestSyncNodesToDb:
     """Tests for _sync_nodes_to_db using real database session."""
 
+    @pytest.mark.parametrize("source", ["docs", "wikispace"])
+    def test_duplicate_input_keeps_last_node_and_counts_each_identity_once(
+        self, test_db: Session, test_user: User, source: str
+    ) -> None:
+        now = datetime(2026, 8, 28, 16, 0, 0)
+        first = {
+            "nodeId": "duplicate-node",
+            "name": "First",
+            "nodeType": "file",
+            "contentType": "ALIDOC",
+            "extension": "adoc",
+            "parentId": "old-parent",
+            "updateTime": now.timestamp(),
+        }
+        last = {**first, "name": "Last", "parentId": "new-parent"}
+
+        result = DingTalkDocService._sync_nodes_to_db(
+            test_user.id, [first, last], now, test_db, source=source
+        )
+
+        assert (result["added"], result["updated"], result["total"]) == (1, 0, 1)
+        document = test_db.query(DingtalkSyncedNode).one()
+        original_id = document.id
+        assert document.name == "Last"
+        assert document.parent_node_id == "new-parent"
+        assert document.raw_metadata == last
+
+        refreshed = {**last, "name": "Refreshed"}
+        result = DingTalkDocService._sync_nodes_to_db(
+            test_user.id, [first, refreshed], now, test_db, source=source
+        )
+
+        assert (result["added"], result["updated"], result["total"]) == (0, 1, 1)
+        test_db.expire_all()
+        document = test_db.query(DingtalkSyncedNode).one()
+        assert document.id == original_id
+        assert document.name == "Refreshed"
+        assert document.raw_metadata == refreshed
+
     def test_adds_new_nodes(self, test_db: Session, test_user: User) -> None:
         """New nodes are added to the database."""
         now = datetime.now(timezone.utc)
@@ -231,11 +270,19 @@ class TestSyncNodesToDb:
             user_id=test_user.id,
             dingtalk_node_id="abc123abc123abc123abc123abc12304",
             name="Keep This",
+            raw_metadata={
+                "nodeId": "abc123abc123abc123abc123abc12304",
+                "name": "Keep This",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+                "updateTime": now.timestamp(),
+            },
             doc_url="https://alidocs.dingtalk.com/i/nodes/abc123abc123abc123abc123abc12304",
             parent_node_id="",
             node_type="doc",
             workspace_id="",
-            content_type="",
+            content_type="ALIDOC",
             content_updated_at=now,
             is_active=True,
             last_synced_at=now,
@@ -262,7 +309,9 @@ class TestSyncNodesToDb:
             {
                 "nodeId": "abc123abc123abc123abc123abc12304",
                 "name": "Keep This",
-                "nodeType": "doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
                 "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]
@@ -369,7 +418,13 @@ class TestSyncNodesToDb:
         nodes = [
             {"nodeId": "a" * 32, "name": "Folder", "nodeType": "folder"},
             {"nodeId": "b" * 32, "name": "File", "nodeType": "file"},
-            {"nodeId": "c" * 32, "name": "Doc", "nodeType": "doc"},
+            {
+                "nodeId": "c" * 32,
+                "name": "Doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+            },
             {"nodeId": "d" * 32, "name": "Other", "nodeType": "other"},
         ]
 
@@ -401,8 +456,8 @@ class TestSyncNodesToDb:
             .filter(DingtalkSyncedNode.dingtalk_node_id == "d" * 32)
             .first()
         )
-        # Unknown types default to "doc"
-        assert other.node_type == "doc"
+        # Unknown formats must not become importable documents.
+        assert other.node_type == "file"
 
     def test_no_change_counts_as_neither_added_nor_updated(
         self, test_db: Session, test_user: User
@@ -416,11 +471,19 @@ class TestSyncNodesToDb:
             user_id=test_user.id,
             dingtalk_node_id=dingtalk_node_id,
             name="Stable Doc",
+            raw_metadata={
+                "nodeId": dingtalk_node_id,
+                "name": "Stable Doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+                "updateTime": now.timestamp(),
+            },
             doc_url=f"https://alidocs.dingtalk.com/i/nodes/{dingtalk_node_id}",
             parent_node_id="",
             node_type="doc",
             workspace_id="",
-            content_type="",
+            content_type="ALIDOC",
             content_updated_at=now,
             is_active=True,
             last_synced_at=now,
@@ -434,7 +497,9 @@ class TestSyncNodesToDb:
             {
                 "nodeId": dingtalk_node_id,
                 "name": "Stable Doc",
-                "nodeType": "doc",
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
                 "updateTime": now.timestamp(),  # Match existing content_updated_at
             },
         ]
@@ -560,6 +625,37 @@ class TestGetDingtalkDocs:
 class TestGetSyncStatus:
     """Tests for get_sync_status."""
 
+    @pytest.mark.parametrize("source", ["docs", "wikispace"])
+    @pytest.mark.parametrize("table_configured", [False, True])
+    def test_reports_table_configuration_independently(
+        self,
+        test_db: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str,
+        table_configured: bool,
+    ) -> None:
+        from app.schemas.dingtalk_doc import DingtalkSyncStatus
+        from app.services.dingtalk_wikispace_service import DingTalkWikiSpaceService
+
+        monkeypatch.setattr(
+            DingTalkDocService,
+            "get_user_dingtalk_mcp_url",
+            lambda user, service_id="docs": (
+                "https://mcp.example.test"
+                if service_id == "docs" or (service_id == "table" and table_configured)
+                else None
+            ),
+        )
+        service = DingTalkDocService if source == "docs" else DingTalkWikiSpaceService
+
+        result = DingtalkSyncStatus.model_validate(
+            service.get_sync_status(test_user, test_db)
+        ).model_dump()
+
+        assert result["table_configured"] is table_configured
+        assert result["ai_table_configured"] is False
+
     @patch.object(DingTalkDocService, "is_configured", return_value=True)
     def test_returns_status_when_configured(
         self, mock_is_configured: MagicMock, test_db: Session, test_user: User
@@ -643,6 +739,64 @@ class TestGetSyncStatus:
 
 class TestListNodesRecursive:
     """Tests for _list_nodes_recursive - verifies folder traversal behavior."""
+
+    @pytest.mark.asyncio
+    async def test_recurses_into_document_with_children(self) -> None:
+        """Online documents can be parents even when MCP calls them files."""
+        import json
+        from unittest.mock import AsyncMock
+
+        parent = {
+            "nodeId": "parent-doc",
+            "name": "Parent document",
+            "nodeType": "file",
+            "contentType": "ALIDOC",
+            "extension": "adoc",
+            "hasChildren": True,
+            "workspaceId": "workspace-1",
+        }
+        children = [
+            {
+                "nodeId": node_id,
+                "name": node_id,
+                "nodeType": "file",
+                "contentType": "ALIDOC",
+                "extension": "adoc",
+                "hasChildren": False,
+            }
+            for node_id in ("child-week", "child-untitled")
+        ]
+        responses = {
+            None: [parent],
+            "parent-doc": children,
+        }
+
+        async def list_nodes(tool_name: str, args: dict) -> MagicMock:
+            result = MagicMock()
+            result.meta = None
+            result.content = [
+                MagicMock(type="text", text=json.dumps(responses[args.get("folderId")]))
+            ]
+            return result
+
+        session = MagicMock()
+        session.call_tool = AsyncMock(side_effect=list_nodes)
+        all_nodes: list = []
+        await DingTalkDocService._list_nodes_recursive(
+            session, None, None, all_nodes, depth=0
+        )
+
+        assert [node["nodeId"] for node in all_nodes] == [
+            "parent-doc",
+            "child-week",
+            "child-untitled",
+        ]
+        assert all(node["parentId"] == "parent-doc" for node in all_nodes[1:])
+        assert session.call_tool.call_count == 2
+        session.call_tool.assert_any_await(
+            "list_nodes",
+            {"pageSize": 50, "folderId": "parent-doc", "workspaceId": "workspace-1"},
+        )
 
     @pytest.mark.asyncio
     async def test_recurses_into_folder_without_has_children_flag(self) -> None:

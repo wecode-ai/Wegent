@@ -38,28 +38,8 @@ const MIME_TYPES = {
 
 export function apply(ctx) {
   const backendUrl = resolveBackendUrl(process.env)
-  const assets = weworkIndexAssets(readFileSync(indexPath, 'utf8'))
-  const developmentReload = injectDevelopmentReload('', process.env, fileBuildId(indexPath))
   ctx.on('webserver/index-inject', table => {
-    table.push(
-      {
-        kind: 'html',
-        placement: 'head',
-        html: assets.head,
-      },
-      {
-        kind: 'html',
-        placement: 'body',
-        html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
-      }
-    )
-    if (developmentReload) {
-      table.push({
-        kind: 'html',
-        placement: 'body',
-        html: developmentReload,
-      })
-    }
+    table.push(...weworkIndexInjection(process.env, indexPath))
   })
   register(ctx, 'prefix', APP_BASE_PATH, serveWeworkApp)
   if (!backendUrl) return
@@ -175,6 +155,31 @@ export function injectDevelopmentReload(html, environment, buildId) {
     `${APP_BASE_PATH}/`
   )},{method:'HEAD',cache:'no-store'});const next=response.headers.get('x-wework-app-build-id');if(next&&next!==current)window.location.reload()}catch{}finally{checking=false}},500)})()</script>`
   return html.includes('</head>') ? html.replace('</head>', `${script}</head>`) : `${script}${html}`
+}
+
+export function weworkIndexInjection(environment = process.env, appIndexPath = indexPath) {
+  const assets = weworkIndexAssets(readFileSync(appIndexPath, 'utf8'))
+  const developmentReload = injectDevelopmentReload('', environment, fileBuildId(appIndexPath))
+  const injection = [
+    {
+      kind: 'html',
+      placement: 'head',
+      html: assets.head,
+    },
+    {
+      kind: 'html',
+      placement: 'body',
+      html: `<script src="${APP_BASE_PATH}/runtime-config.js"></script>`,
+    },
+  ]
+  if (developmentReload) {
+    injection.push({
+      kind: 'html',
+      placement: 'body',
+      html: developmentReload,
+    })
+  }
+  return injection
 }
 
 function fileBuildId(path) {

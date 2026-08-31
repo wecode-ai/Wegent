@@ -230,6 +230,7 @@ import {
   assert,
   createServer,
   join,
+  pathToFileURL,
   randomUUID,
   withTimeout,
 } from './shared.mjs'
@@ -729,6 +730,7 @@ class DesktopE2EServer {
         'pasted_zip_attachment',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
+        'workspace_selection_streaming',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -1877,6 +1879,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -2831,6 +2848,47 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'workspace_selection_streaming') {
+      this.recordScenarioRequest('workspace_selection_streaming', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes('WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'),
+        'The real Codex request did not contain the workspace-selection streaming prompt'
+      )
+      const stream = streamingTextEvents(
+        responseId,
+        Array.from(
+          { length: 40 },
+          (_, index) => `Workspace selection background update ${index + 1}.\n`
+        ).join('')
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      let offset = 0
+      for (const delta of stream.chunks) {
+        response.write(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta,
+              offset,
+            },
+          ])
+        )
+        offset += [...delta].length
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      }
+      response.end(createSse(stream.finish))
+      return
+    }
+
     if (this.scenario === 'window_lifecycle') {
       this.recordScenarioRequest('window_lifecycle', modelRequest)
       assert.ok(
@@ -3134,21 +3192,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'connector_auth_unmatched_resume') {
-      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
-        'The unmatched connector auth resume scenario did not receive its trigger prompt'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     if (this.scenario === 'skill_mention_display') {
       this.recordScenarioRequest('skill_mention_display', modelRequest)
       const requestText = JSON.stringify(body)
@@ -3251,7 +3294,7 @@ class DesktopE2EServer {
         assistantMessage(
           FILE_PANEL_ANCHOR_RESPONSE.replace(
             `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
-            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+            `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
         responseCompleted(responseId),
@@ -3444,9 +3487,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'pasted_workspace_paths') {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
@@ -3471,9 +3514,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'dropped_workspace_paths') {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'

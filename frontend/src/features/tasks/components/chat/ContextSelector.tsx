@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { Check, Database, Table2, X } from 'lucide-react'
+import { BookOpen, Check, Table2, X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
@@ -312,7 +312,7 @@ export default function ContextSelector({
           )}
           data-testid="context-selector-knowledge-tab"
         >
-          <Database className="mr-1.5 h-3.5 w-3.5" />
+          <BookOpen className="mr-1.5 h-3.5 w-3.5" />
           {t('knowledge:title')}
         </TabsTrigger>
         <TabsTrigger

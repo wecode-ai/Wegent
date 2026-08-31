@@ -6,7 +6,7 @@
 
 import enum
 
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, Integer, String
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -48,6 +48,8 @@ class DingtalkSyncedNode(Base):
     source = Column(String(16), nullable=False, default=DingTalkNodeSource.DOCS.value)
     # Content type (e.g., ALIDOC)
     content_type = Column(String(32), nullable=False, default="")
+    # Original directory node JSON, before local ID and parent normalization.
+    raw_metadata = Column(JSON, nullable=True)
     # Document content last updated time from list_nodes updateTime field
     content_updated_at = Column(DateTime, nullable=False, default=func.now())
     is_active = Column(Boolean, nullable=False, default=True)
@@ -56,6 +58,11 @@ class DingtalkSyncedNode(Base):
     updated_at = Column(
         DateTime, nullable=False, default=func.now(), onupdate=func.now()
     )
+
+    @property
+    def extension(self) -> str:
+        """Project the source format without exposing the full metadata to clients."""
+        return str((self.raw_metadata or {}).get("extension") or "").strip().lower()
 
     __table_args__ = (
         # Unique constraint: one node per user per DingTalk node per source

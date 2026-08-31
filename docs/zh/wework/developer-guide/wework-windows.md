@@ -61,6 +61,24 @@ pnpm --dir wework/electron test
 pnpm --dir wework/electron build:release
 ```
 
+桌面 E2E 使用的原生测试应用可通过统一入口构建：
+
+```powershell
+$env:CI = "true"
+pnpm --filter wework ai:verify:electron:build
+```
+
+该命令会准备 Electron、Codex、DWS 和 Executor sidecar，并在当前操作系统生成原生
+应用；Windows 产物为
+`wework/electron/release/WeWork-win32-x64/WeWork.exe`，不能用 Linux 或 macOS
+产物替代。
+
+`.github/workflows/wework-e2e.yml` 会在 `windows-latest` 上构建该原生应用，并让
+Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回归会运行全部
+17 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
+分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
+Windows job 验证，其他平台的通过结果不能替代它。
+
 正式安装器、代码签名、Electron YAML 更新清单和旧 Tauri JSON/签名桥接清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。
 

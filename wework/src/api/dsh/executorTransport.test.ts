@@ -153,6 +153,17 @@ describe('DSH executor transport', () => {
     const unsubscribe = subscribeDshExecutorEvents(listener)
 
     expect(sources).toHaveLength(1)
+    expect(sources[0].url).toBe('/wework/executor/v1/events?after=0&replay=0')
+    sources[0].onopen?.()
+    sources[0].onmessage?.({
+      data: JSON.stringify({
+        protocolVersion: 1,
+        sequence: 6,
+        emittedAt: '2026-08-25T00:00:00.000Z',
+        event: 'executor.stream.cursor',
+        payload: {},
+      }),
+    } as MessageEvent)
     sources[0].onmessage?.({
       data: JSON.stringify({
         protocolVersion: 1,
@@ -167,7 +178,7 @@ describe('DSH executor transport', () => {
 
     expect(sources).toHaveLength(2)
     expect(sources[0].closed).toBe(true)
-    expect(sources[1].url).toBe('/wework/executor/v1/events?after=7')
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=7&replay=1')
 
     sources[0].onmessage?.({
       data: JSON.stringify({
@@ -191,6 +202,69 @@ describe('DSH executor transport', () => {
     expect(listener).toHaveBeenCalledTimes(2)
     unsubscribe()
     expect(sources[1].closed).toBe(true)
+  })
+
+  test('backs off and reconnects after a malformed executor event', () => {
+    vi.useFakeTimers()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const unsubscribe = subscribeDshExecutorEvents(vi.fn())
+
+    sources[0].onopen?.()
+    sources[0].onmessage?.({ data: '{invalid' } as MessageEvent)
+
+    expect(sources[0].closed).toBe(true)
+    expect(sources).toHaveLength(1)
+    vi.advanceTimersByTime(499)
+    expect(sources).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    expect(sources).toHaveLength(2)
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=0&replay=1')
+
+    unsubscribe()
+    consoleError.mockRestore()
+    vi.useRealTimers()
+  })
+
+  test('advances the cursor when one event listener throws', () => {
+    const sources: FakeEventSource[] = []
+    vi.stubGlobal(
+      'EventSource',
+      class extends FakeEventSource {
+        constructor(url: string) {
+          super(url)
+          sources.push(this)
+        }
+      }
+    )
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const listener = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error('reducer failed')
+      })
+      .mockImplementation(() => undefined)
+    const unsubscribe = subscribeDshExecutorEvents(listener)
+
+    sources[0].onopen?.()
+    emitExecutorEvent(sources[0].onmessage, eventEnvelope(1, 'response.block.updated'))
+    emitExecutorEvent(sources[0].onmessage, eventEnvelope(2, 'response.completed'))
+    reconnectDshExecutorEvents()
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(sources[1].url).toBe('/wework/executor/v1/events?after=2&replay=1')
+
+    unsubscribe()
+    consoleError.mockRestore()
   })
 })
 
@@ -229,6 +303,7 @@ function eventEnvelope(
 }
 
 class FakeEventSource {
+  onopen: (() => void) | null = null
   onmessage: ((event: MessageEvent) => void) | null = null
   onerror: (() => void) | null = null
   closed = false

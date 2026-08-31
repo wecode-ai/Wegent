@@ -63,8 +63,6 @@ export interface NavigationSectionProps {
   isAllSelected: boolean
   /** Whether "Groups" is selected (show all groups list) */
   isGroupsSelected: boolean
-  /** Whether "DingTalk" is selected */
-  isDingtalkSelected: boolean
   /** Currently selected external source view ID */
   selectedSourceViewId: string | null
   /** Whether section is expanded */
@@ -77,18 +75,12 @@ export interface NavigationSectionProps {
   onSelectGroup: (groupId: string) => void
   /** Select "Groups" to show all groups list */
   onSelectGroups: () => void
-  /** Select "DingTalk" docs */
-  onSelectDingtalk: () => void
   /** Select an external source view */
   onSelectSourceView: (sourceViewId: string) => void
   /** Registered external source views */
   sourceViews: KnowledgeSourceView[]
   /** Total KB count */
   totalKbCount: number
-  /** DingTalk synced doc count */
-  dingtalkDocCount: number
-  /** Whether DingTalk MCP is configured */
-  isDingtalkConfigured: boolean
   /** Summary counts from backend */
   summary?: {
     total_count: number
@@ -337,19 +329,15 @@ export function NavigationSection({
   selectedGroupId,
   isAllSelected,
   isGroupsSelected,
-  isDingtalkSelected,
   selectedSourceViewId,
   isExpanded,
   onToggle,
   onSelectAll,
   onSelectGroup,
   onSelectGroups,
-  onSelectDingtalk,
   onSelectSourceView,
   sourceViews,
   totalKbCount,
-  dingtalkDocCount,
-  isDingtalkConfigured: _isDingtalkConfigured,
   summary,
 }: NavigationSectionProps) {
   const { t } = useTranslation('knowledge')
@@ -534,16 +522,6 @@ export function NavigationSection({
           testId="nav-organization-item"
         />
       )}
-
-      {/* DingTalk Docs (钉钉文档) */}
-      <NavItem
-        icon={<FileText className="w-4 h-4" />}
-        label={t('document.sidebar.dingtalk', '钉钉文档')}
-        count={dingtalkDocCount}
-        isSelected={isDingtalkSelected}
-        onClick={onSelectDingtalk}
-        testId="nav-dingtalk-item"
-      />
 
       {sourceViews.map(sourceView => (
         <NavItem

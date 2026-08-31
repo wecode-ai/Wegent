@@ -213,6 +213,47 @@ def test_validate_transfer_document_names_rejects_duplicates(test_db: Session) -
 
 
 @pytest.mark.unit
+def test_validate_transfer_rejects_duplicate_external_identity(
+    test_db: Session,
+) -> None:
+    """One external source may only have one copy in the target KB."""
+    owner = _create_user(test_db, "owner-external-transfer")
+    source_kb_id = _create_kb(test_db, owner.id, "source-external-kb")
+    target_kb_id = _create_kb(test_db, owner.id, "target-external-kb")
+    external_meta = {"title": "External source"}
+    source_doc = KnowledgeService.create_external_document(
+        test_db,
+        source_kb_id,
+        owner.id,
+        name="source-copy.md",
+        external_provider="dingtalk",
+        external_resource_id="same-external-resource",
+        folder_id=0,
+        external_meta=external_meta,
+    )
+    KnowledgeService.create_external_document(
+        test_db,
+        target_kb_id,
+        owner.id,
+        name="target-copy.md",
+        external_provider="dingtalk",
+        external_resource_id="same-external-resource",
+        folder_id=0,
+        external_meta=external_meta,
+    )
+
+    with pytest.raises(StructuredValidationException) as exc_info:
+        KnowledgeTransferService.validate_transfer_external_identities(
+            db=test_db,
+            source_documents=(source_doc,),
+            target_kb_id=target_kb_id,
+        )
+
+    assert exc_info.value.error_code == "DUPLICATE_EXTERNAL_DOCUMENTS"
+    assert exc_info.value.payload == {"names": ["source-copy.md"]}
+
+
+@pytest.mark.unit
 def test_transfer_namespace_level_classification(test_db: Session) -> None:
     """Namespace level classification matches transfer rule scopes."""
     owner = _create_user(test_db, "owner-transfer-scope")
@@ -1118,6 +1159,30 @@ def test_lock_transfer_documents_uses_row_lock(test_db: Session) -> None:
         mock_for_update.assert_called_once()
 
     assert docs[0].id == doc.id
+
+
+@pytest.mark.unit
+def test_lock_transfer_target_knowledge_base_uses_row_lock(test_db: Session) -> None:
+    """Target writes serialize with external document creation."""
+    owner = _create_user(test_db, "owner-target-row-lock")
+    target_kb_id = _create_kb(test_db, owner.id, "target-row-lock-kb")
+
+    with patch.object(
+        test_db.query(Kind).__class__,
+        "with_for_update",
+        autospec=True,
+    ) as mock_for_update:
+        mock_query = test_db.query(Kind)
+        mock_for_update.return_value = mock_query
+
+        target = KnowledgeTransferService.lock_transfer_target_knowledge_base(
+            db=test_db,
+            target_kb_id=target_kb_id,
+        )
+
+        mock_for_update.assert_called_once()
+
+    assert target.id == target_kb_id
 
 
 @pytest.mark.unit

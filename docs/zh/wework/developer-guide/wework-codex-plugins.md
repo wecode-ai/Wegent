@@ -110,6 +110,8 @@ Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。
 
+已有任务会保留创建或上次发送时保存的模型选择。如果该模型暂时不在当前模型目录中，Wework 会要求用户重新选择可用模型，并阻止继续发送；它不会把新任务的默认模型静默替换到已有任务中。
+
 ### 监督模型
 
 任务监督与会话共用同一个模型选择组件和同一份模型目录，但分别保存最近一次选择。监督设置不能维护第二套模型过滤或排序逻辑；会话中可选的官方 Codex 模型、自定义 provider 和本地模型也必须在监督中可选。

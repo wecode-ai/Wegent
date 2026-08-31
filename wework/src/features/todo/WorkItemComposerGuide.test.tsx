@@ -140,6 +140,34 @@ describe('WorkItemComposerGuide', () => {
     expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
   })
 
+  test('refreshes the work-item status when runtime execution settles', async () => {
+    const runningItem = { ...item, status: 'in_progress' as const }
+    const api = {
+      listTaskBindings: vi.fn().mockResolvedValue(taskBindings),
+      findCloudContextForTask: vi
+        .fn()
+        .mockResolvedValueOnce({ project, loop_item: runningItem })
+        .mockResolvedValueOnce({ project, loop_item: item }),
+    } as unknown as ProjectSpaceApi
+    const props = {
+      item: runningItem,
+      api,
+      currentTask: { deviceId: 'local-device', taskId: 'runtime-1' },
+    }
+    const { rerender } = render(<WorkItemComposerGuide {...props} refreshKey="running" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('进行中')
+    )
+
+    rerender(<WorkItemComposerGuide {...props} refreshKey="done" />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('work-item-guide-summary-status')).toHaveTextContent('等待确认')
+    )
+    expect(api.findCloudContextForTask).toHaveBeenCalledTimes(2)
+  })
+
   test('summarizes sibling tasks without opening a second menu', async () => {
     const api = {
       listTaskBindings: vi.fn().mockResolvedValue(taskBindings),

@@ -4,6 +4,7 @@ import type { NativeWorkspacePath } from './native-workspace-path-picker'
 import { readDroppedFiles } from '@/desktop/droppedFiles'
 
 const FILE_URI_CLIPBOARD_TYPES = ['text/uri-list', 'public.file-url'] as const
+export const WORKSPACE_PATH_DRAG_TYPE = 'application/x-wework-workspace-paths'
 const IMAGE_EXTENSIONS = new Set([
   'apng',
   'avif',
@@ -15,6 +16,37 @@ const IMAGE_EXTENSIONS = new Set([
   'svg',
   'webp',
 ])
+
+function isNativeWorkspacePath(value: unknown): value is NativeWorkspacePath {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<NativeWorkspacePath>
+  return typeof candidate.path === 'string' && typeof candidate.isDirectory === 'boolean'
+}
+
+export function writeWorkspacePathDragData(
+  dataTransfer: DataTransfer,
+  entries: NativeWorkspacePath[]
+): void {
+  dataTransfer.setData(WORKSPACE_PATH_DRAG_TYPE, JSON.stringify(entries))
+}
+
+export function readWorkspacePathDragData(
+  dataTransfer: DataTransfer
+): NativeWorkspacePath[] | null {
+  if (!hasWorkspacePathDragData(dataTransfer)) return null
+
+  try {
+    const value: unknown = JSON.parse(dataTransfer.getData(WORKSPACE_PATH_DRAG_TYPE))
+    if (!Array.isArray(value) || !value.every(isNativeWorkspacePath)) return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+export function hasWorkspacePathDragData(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types ?? []).includes(WORKSPACE_PATH_DRAG_TYPE)
+}
 
 declare global {
   interface Window {
@@ -148,15 +180,18 @@ export interface ResolvedWorkspacePathTransfer {
 
 export async function resolveDataTransferWorkspacePaths(
   dataTransfer: DataTransfer,
-  source: 'clipboard' | 'drop',
-  workspaceSource?: string | null
+  source: 'clipboard' | 'drop'
 ): Promise<ResolvedWorkspacePathTransfer> {
+  const draggedWorkspacePaths = readWorkspacePathDragData(dataTransfer)
+  if (draggedWorkspacePaths) {
+    return {
+      attachmentFiles: [],
+      referenceEntries: draggedWorkspacePaths,
+    }
+  }
+
   const files = Array.from(dataTransfer.files)
-  if (
-    !isDesktopRuntime() ||
-    workspaceSource === 'remote' ||
-    (files.length > 0 && files.every(isWorkspaceImageFile))
-  ) {
+  if (!isDesktopRuntime() || (files.length > 0 && files.every(isWorkspaceImageFile))) {
     return { attachmentFiles: files, referenceEntries: [] }
   }
 
@@ -172,7 +207,7 @@ export async function resolveDataTransferWorkspacePaths(
   } catch (error) {
     console.warn(`[Wework workspace transfer] native ${source} path inspection failed`, error)
     return {
-      attachmentFiles: files.filter(isWorkspaceImageFile),
+      attachmentFiles: files,
       referenceEntries: [],
     }
   }

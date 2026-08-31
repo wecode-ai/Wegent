@@ -173,6 +173,8 @@ describe('bundled plugin resources', () => {
     expect(builderConfig).toContain('productName: identity.productName')
     expect(builderConfig).toContain('executableName: identity.executableName')
     expect(builderConfig).toContain('weworkAppId: identity.identifier')
+    expect(builderConfig).toContain("{ from: 'resources/app-update.yml', to: 'app-update.yml' }")
+    expect(packageAssetsScript).toContain("join(resourcesRoot, 'app-update.yml')")
     expect(workflow).toMatch(
       /- name: Prepare Apple signing keychain[\s\S]*?security import[\s\S]*?APPLE_SIGNING_IDENTITY=[\s\S]*?MACOS_KEYCHAIN_PATH=/
     )

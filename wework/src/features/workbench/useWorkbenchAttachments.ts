@@ -6,6 +6,7 @@ import {
   uploadAttachment as defaultUploadAttachment,
 } from '@/api/attachments'
 import { readTextAttachmentMetadata, releaseAttachmentPreview } from '@/lib/attachments'
+import { isWorkspaceImageFile } from '@/lib/workspace-path-transfer'
 import { track } from '@/telemetry/client'
 
 interface UseWorkbenchAttachmentsOptions {
@@ -22,6 +23,24 @@ function emptyAttachmentState(): MultiAttachmentUploadState {
     uploadingFiles: new Map(),
     errors: new Map(),
   }
+}
+
+function createImagePreview(file: File): string | undefined {
+  if (
+    !isWorkspaceImageFile(file) ||
+    typeof URL === 'undefined' ||
+    typeof URL.createObjectURL !== 'function'
+  ) {
+    return undefined
+  }
+  return URL.createObjectURL(file)
+}
+
+function releaseImagePreview(previewUrl: string | undefined): void {
+  if (!previewUrl || typeof URL === 'undefined' || typeof URL.revokeObjectURL !== 'function') {
+    return
+  }
+  URL.revokeObjectURL(previewUrl)
 }
 
 export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions = {}) {
@@ -86,12 +105,14 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
           continue
         }
 
+        const previewUrl = createImagePreview(file)
         updateScopeState(targetScopeKey, current => {
           const uploadingFiles = new Map(current.uploadingFiles)
-          uploadingFiles.set(fileId, { file, progress: 0 })
+          uploadingFiles.set(fileId, { file, progress: 0, previewUrl })
           return { ...current, uploadingFiles }
         })
 
+        let previewTransferred = false
         try {
           const textMetadataPromise = readTextAttachmentMetadata(file)
           const attachment = await uploadAttachment(file, progress => {
@@ -105,7 +126,7 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
             })
           })
           const textMetadata = await textMetadataPromise
-          const enrichedAttachment = textMetadata
+          let enrichedAttachment = textMetadata
             ? {
                 ...attachment,
                 text_preview: attachment.text_preview ?? textMetadata.text_preview,
@@ -113,6 +134,16 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
                 text_length: attachment.text_length ?? textMetadata.text_length,
               }
             : attachment
+          if (previewUrl) {
+            if (enrichedAttachment.local_preview_url !== previewUrl) {
+              releaseAttachmentPreview(enrichedAttachment)
+            }
+            enrichedAttachment = {
+              ...enrichedAttachment,
+              local_preview_url: previewUrl,
+            }
+            previewTransferred = true
+          }
 
           updateScopeState(targetScopeKey, current => {
             const uploadingFiles = new Map(current.uploadingFiles)
@@ -133,6 +164,10 @@ export function useWorkbenchAttachments(options: UseWorkbenchAttachmentsOptions 
             errors.set(fileId, error instanceof Error ? error.message : 'Upload failed')
             return { ...current, uploadingFiles, errors }
           })
+        } finally {
+          if (!previewTransferred) {
+            releaseImagePreview(previewUrl)
+          }
         }
       }
     },

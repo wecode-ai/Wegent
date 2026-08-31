@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -6,18 +6,12 @@ import { CloudCredentialError, CloudCredentialService } from './cloud-credential
 
 const roots: string[] = []
 
-const encryption = {
-  isEncryptionAvailable: () => true,
-  encryptString: (value: string) => Buffer.from(`encrypted:${value}`),
-  decryptString: (value: Buffer) => value.toString().replace(/^encrypted:/, ''),
-}
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
 
 describe('CloudCredentialService', () => {
-  test('stores only encrypted secrets and refreshes with a device proof', async () => {
+  test('stores credentials in a private file and refreshes with a device proof', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
     roots.push(root)
     const request = vi
@@ -44,7 +38,7 @@ describe('CloudCredentialService', () => {
           { status: 200 }
         )
       )
-    const service = new CloudCredentialService(root, encryption, request)
+    const service = new CloudCredentialService(root, request)
 
     const publicKey = await service.devicePublicKey()
     const claimed = await service.claimAuthorization({
@@ -66,9 +60,42 @@ describe('CloudCredentialService', () => {
     const refreshRequest = JSON.parse(String(request.mock.calls[1][1]?.body))
     expect(refreshRequest.refresh_token).toBe('refresh-secret')
     expect(refreshRequest.proof.split('.')).toHaveLength(3)
-    const stored = await readFile(join(root, 'cloud-credentials.json'), 'utf8')
-    expect(stored).not.toContain('refresh-secret')
-    expect(stored).not.toContain('PRIVATE KEY')
+    const credentialPath = join(root, 'cloud-credentials.json')
+    const stored = JSON.parse(await readFile(credentialPath, 'utf8'))
+    expect(stored).toMatchObject({
+      version: 2,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      refreshToken: 'refresh-secret',
+    })
+    expect(stored.privateKey).toContain('PRIVATE KEY')
+    if (process.platform !== 'win32') {
+      expect((await stat(credentialPath)).mode & 0o777).toBe(0o600)
+    }
+  })
+
+  test('rejects the obsolete encrypted credential format', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-cloud-credentials-'))
+    roots.push(root)
+    await writeFile(
+      join(root, 'cloud-credentials.json'),
+      JSON.stringify({
+        version: 1,
+        apiBaseUrl: 'https://cloud.example.com/api',
+        publicKey: { kty: 'EC', crv: 'P-256', x: 'x', y: 'y' },
+        encryptedPrivateKey: 'encrypted-private-key',
+        encryptedRefreshToken: 'encrypted-refresh-token',
+      }),
+      { mode: 0o600 }
+    )
+    const request = vi.fn<typeof fetch>()
+    const service = new CloudCredentialService(root, request)
+
+    await expect(service.refreshAccessToken('https://cloud.example.com/api')).rejects.toMatchObject(
+      {
+        code: 'credentials_unavailable',
+      } satisfies Partial<CloudCredentialError>
+    )
+    expect(request).not.toHaveBeenCalled()
   })
 
   test('returns a legacy access token without retaining desktop credentials', async () => {
@@ -85,7 +112,7 @@ describe('CloudCredentialService', () => {
         { status: 200 }
       )
     )
-    const service = new CloudCredentialService(root, encryption, request)
+    const service = new CloudCredentialService(root, request)
 
     await service.devicePublicKey()
     const claimed = await service.claimAuthorization({
@@ -133,7 +160,7 @@ describe('CloudCredentialService', () => {
           )
         )
       )
-    const service = new CloudCredentialService(root, encryption, request)
+    const service = new CloudCredentialService(root, request)
     await service.devicePublicKey()
     await service.claimAuthorization({
       apiBaseUrl: 'https://cloud.example.com/api',
@@ -167,7 +194,7 @@ describe('CloudCredentialService', () => {
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ detail: 'Desktop login has expired' }), { status: 401 })
       )
-    const service = new CloudCredentialService(root, encryption, request)
+    const service = new CloudCredentialService(root, request)
     await service.devicePublicKey()
     await service.claimAuthorization({
       apiBaseUrl: 'https://cloud.example.com/api',

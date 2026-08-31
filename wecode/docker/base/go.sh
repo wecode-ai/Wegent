@@ -1,19 +1,21 @@
-## 这个目前没有使用，注意是否有问题
 #!/bin/bash
+
+set -e
 
 # 设置 Go 二进制包镜像源
 export GO_BINARY_BASE_URL="http://mirrors.nevis.sina.com.cn/golang"
+export TERM=xterm
 
 # 安装必要的依赖
 echo "Installing dependencies..."
 yum install -y bison || { echo "Failed to install bison"; exit 1; }
 yum clean all && rm -rf /var/cache/yum
 
-# 安装 GVM
-echo "Installing GVM..."
-
-export SRC_REPO=https://ci:_BY3b4ZSV7kssC4qzu2p@git.intra.weibo.com/noc-monitor/mirror/gvm.git
-bash /tmp/dev-language/gvm-installer.sh || { echo "GVM installation failed"; exit 1; }
+# Load GVM prepared by prepare_build.sh
+test -f /root/.gvm/scripts/gvm || {
+    echo "Prepared GVM source is missing"
+    exit 1
+}
 
 # 注释/root/.gvm/scripts/gvm-default中最后一行：". "$GVM_ROOT/scripts/env/cd" && cd ."，默认不覆盖cd命令
 sed -i '$ s/^\. "\$GVM_ROOT\/scripts\/env\/cd".*$/# &/' /root/.gvm/scripts/gvm-default
@@ -31,7 +33,7 @@ yes | gvm use "$GO_VERSION" --default || { echo "Failed to set Go $GO_VERSION as
 # 配置 Go 环境变量
 echo "Configuring Go environment..."
 go env -w GO111MODULE=on || { echo "Failed to set GO111MODULE"; exit 1; }
-go env -w GOPROXY=http://mirrors.cloud.aliyuncs.com/goproxy/,https://goproxy.cn,direct || { echo "Failed to set GOPROXY"; exit 1; }
+go env -w GOPROXY=https://goproxy.cn,direct || { echo "Failed to set GOPROXY"; exit 1; }
 
 # 安装常用 Go 工具
 echo "Installing Go tools..."
@@ -58,7 +60,7 @@ touch /root/.zshrc
 # 批量写入配置到 ~/.bashrc 和 ~/.zshrc，避免重复设置
 {
     echo 'source ~/.gvm/scripts/gvm'
-    echo 'export GOPROXY=http://mirrors.cloud.aliyuncs.com/goproxy/,https://goproxy.cn,direct'
+    echo 'export GOPROXY=https://goproxy.cn,direct'
     echo 'export GO111MODULE=on'
     echo 'export GOINSECURE=git.intra.weibo.com,gitlab.weibo.cn'
     echo 'export GONOPROXY=git.intra.weibo.com,gitlab.weibo.cn'
@@ -67,7 +69,7 @@ touch /root/.zshrc
 } >> ~/.bashrc
 
 {
-    echo 'export GOPROXY=http://mirrors.cloud.aliyuncs.com/goproxy/,https://goproxy.cn,direct'
+    echo 'export GOPROXY=https://goproxy.cn,direct'
     echo 'export GO111MODULE=on'
     echo 'export GOINSECURE=git.intra.weibo.com,gitlab.weibo.cn'
     echo 'export GONOPROXY=git.intra.weibo.com,gitlab.weibo.cn'

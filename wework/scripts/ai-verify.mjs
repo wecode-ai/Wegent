@@ -55,6 +55,7 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   reload: 'reloadApp',
   'close-to-tray': 'closeMainWindowToTray',
   'request-close': 'requestMainWindowClose',
+  'selection-offset': 'getSelectionOffset',
   'dismiss-popout': 'dismissPopoutWindow',
   drag: 'drag',
   'drop-file': 'dropFile',
@@ -65,17 +66,20 @@ export const AI_VERIFY_ACTIONS = Object.freeze({
   metrics: 'getElementMetrics',
   navigate: 'navigate',
   'paste-paths': 'pastePaths',
+  'paste-text': 'pasteText',
   'pointer-move': 'pointerMove',
   press: 'press',
   submit: 'submit',
   'scroll-into-view': 'scrollIntoView',
   'select-text': 'selectText',
+  'set-selection-offset': 'setSelectionOffset',
   'show-popout': 'showPopoutWindow',
   'system-drag-drop': 'completeSystemDragDrop',
   'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
   'wait-for': 'waitFor',
   'window-focus-snapshot': 'getWindowFocusSnapshot',
   text: 'getText',
+  value: 'getValue',
 })
 
 const SELECTOR_OPTIONAL_COMMANDS = new Set([
@@ -121,8 +125,8 @@ Options:
                             Seed and verify isolated first-run Codex migration
   --packaged true           Launch the packaged app instead of Electron source mode
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
-  --value TEXT_OR_JSON      Replacement value for fill; JSON for click-at,
-                            seed-local-project, paste-paths, or drop-paths
+  --value TEXT_OR_JSON      Replacement value for fill or paste-text; JSON for
+                            click-at, seed-local-project, paste-paths, or drop-paths
   --target SELECTOR         Event target selector for pointer-move (default: body)
                             Required destination for drag and click-then-macrotask
   --file PATH               File to dispatch for drop-file
@@ -352,8 +356,7 @@ export async function buildSourceRuntimeEnvironment(
   const lock = JSON.parse(await readFile(join(weworkDir, 'codex-binaries.lock.json'), 'utf8'))
   const codex = lock.targets[target]
   if (!codex?.binaryPath) throw new Error(`Codex binary is not configured for ${target}`)
-  const executorTargetDir =
-    process.env.CARGO_TARGET_DIR?.trim() || join(repositoryDir, 'executor', 'target')
+  const executorTargetDir = join(repositoryDir, 'executor', 'target', 'ai-verify')
   return {
     CODEX_BINARY_PATH: join(weworkDir, 'resources', 'binaries', 'codex', target, codex.binaryPath),
     DWS_BINARY_PATH: join(
@@ -368,6 +371,7 @@ export async function buildSourceRuntimeEnvironment(
       platform === 'win32' ? 'wegent-executor.exe' : 'wegent-executor'
     ),
     WEWORK_COMPONENT_RESOURCES_ROOT: join(electronDir, 'resources'),
+    WEWORK_CORE_PLUGIN_ROOT: join(electronDir, 'resources', 'wework-core-plugins'),
     WEWORK_HARNESS_RUNTIME_ROOT: join(weworkDir, 'node_modules', '.cache', 'harness-runtime-dev'),
   }
 }

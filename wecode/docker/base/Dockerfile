@@ -48,27 +48,38 @@ RUN wget -O glab_1.74.0_linux_amd64.rpm "https://gitlab.com/gitlab-org/cli/-/rel
 # -------------------------
 # Go 环境安装（支持 GVM）
 # -------------------------
-COPY *.sh /tmp/dev-language/
-RUN chmod +x /tmp/dev-language/*.sh
+COPY go.sh /tmp/dev-language/go.sh
+COPY gvm /root/.gvm
+RUN chmod +x /tmp/dev-language/go.sh
 RUN /tmp/dev-language/go.sh
 
 ENV PATH="/root/.gvm/gos/go1.23.2/bin:$PATH"
-ENV GOPROXY="http://mirrors.cloud.aliyuncs.com/goproxy/,https://goproxy.cn,direct"
+ENV GOPROXY="https://goproxy.cn,direct"
 ENV GO111MODULE="on"
 ENV GOROOT="/root/.gvm/gos/go1.23.2"
 ENV GOPATH="/root/.gvm/pkgsets/go1.23.2/global"
 
 # -------------------------
-# SQLite3 (安全方式安装，不破坏系统)
+# Install a standalone SQLite CLI without replacing the system sqlite-libs
 # -------------------------
-RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
-    tar -xvf sqlite-autoconf-3500400.tar.gz && \
-    cd sqlite-autoconf-3500400 && \
-    ./configure --prefix=/usr/local && \
-    make -j$(nproc) && make install && \
-    cd .. && rm -rf sqlite-autoconf* && \
-    echo "/usr/local/lib" > /etc/ld.so.conf.d/sqlite3.conf && \
-    ldconfig
+ARG SQLITE_VERSION=3.50.4
+ARG SQLITE_AUTOCONF_VERSION=3500400
+ARG SQLITE_SHA256=a3db587a1b92ee5ddac2f66b3edb41b26f9c867275782d46c3a088977d6a5b18
+RUN set -eux; \
+    archive="sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}.tar.gz"; \
+    source_dir="sqlite-autoconf-${SQLITE_AUTOCONF_VERSION}"; \
+    wget "https://www.sqlite.org/2025/${archive}"; \
+    echo "${SQLITE_SHA256}  ${archive}" | sha256sum -c -; \
+    tar -xzf "${archive}"; \
+    cd "${source_dir}"; \
+    ./configure --disable-shared; \
+    make -j"$(nproc)" sqlite3; \
+    install -m 0755 sqlite3 /usr/local/bin/sqlite3; \
+    cd ..; \
+    rm -rf "${source_dir}" "${archive}"; \
+    sqlite3 --version | grep -q "^${SQLITE_VERSION} "; \
+    ! ldd /usr/local/bin/sqlite3 | grep -q libsqlite3; \
+    rpm -V sqlite-libs
 
 # -------------------------
 # Maven settings

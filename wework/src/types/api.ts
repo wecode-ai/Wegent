@@ -2740,6 +2740,7 @@ export interface Attachment {
 export interface AttachmentUploadProgress {
   file: File
   progress: number
+  previewUrl?: string
 }
 
 export interface MultiAttachmentUploadState {

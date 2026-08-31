@@ -81,7 +81,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
   const status = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const error = appUpdate?.error ?? null
-  const busy = status === 'checking' || status === 'installing'
+  const busy = status === 'checking' || status === 'downloading' || status === 'installing'
   const downloadPercent = downloadProgress
     ? calculateSidebarUpdateDownloadPercent(
         downloadProgress.downloadedBytes,
@@ -135,8 +135,8 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
           onBeforeInstall?.()
           void appUpdate.installUpdate()
         }}
-        title={error ?? (status === 'installing' ? downloadTitle : title)}
-        aria-label={error ?? (status === 'installing' ? downloadTitle : title)}
+        title={error ?? (status === 'downloading' ? downloadTitle : title)}
+        aria-label={error ?? (status === 'downloading' ? downloadTitle : title)}
         className={cn(
           'group relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-60',
           error
@@ -144,7 +144,7 @@ function SidebarAppUpdateButton({ onBeforeInstall }: { onBeforeInstall?: () => v
             : 'text-[rgb(var(--color-sidebar-text-secondary))] hover:bg-[rgb(var(--color-sidebar-hover))] hover:text-[rgb(var(--color-sidebar-text-primary))]'
         )}
       >
-        {status === 'installing' && downloadPercent !== null ? (
+        {status === 'downloading' && downloadPercent !== null ? (
           <SidebarUpdateDownloadProgress progress={downloadPercent} />
         ) : busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />

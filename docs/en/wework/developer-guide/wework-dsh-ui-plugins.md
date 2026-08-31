@@ -10,25 +10,55 @@ Applications, routes, settings pages, and workspace panels are contributed by
 independent DSH client plugins. Do not add a Wework-specific manifest, dynamic
 module loader, or second Cordis `Context`.
 
+## Extension layers
+
+Wework DSH extensions have four layers. A plugin should depend only on the
+layers it needs:
+
+1. The UI slots documented here inject navigation, pages, applications, and
+   workspace surfaces into the desktop workbench.
+2. Standard DSH services such as `sessions`, `tools`, and model services remain
+   owned by DSH and need no Wework-private event bus.
+3. [Executor Session projection](./wework-dsh-executor-sessions.md) projects
+   running Wework tasks into standard DSH Sessions and provides generic Backend
+   plugin storage.
+4. The Electron host boundary is owned by the first-party
+   `@wegent/dsh-electron-host` package. It exposes narrow capabilities rather
+   than Electron objects, file descriptors, or authentication tokens.
+   Third-party plugins must not depend on that host package directly; they may
+   use only explicitly public Wework client adapters. Plugins in one Core DSH
+   page share a JavaScript trust domain, so install only trusted plugins.
+
 ## Extension points
 
-| Slot                           | Purpose                           | Required metadata                 |
-| ------------------------------ | --------------------------------- | --------------------------------- |
-| `wework.app`                   | Product switcher and app surfaces | `id`, `label`, `mode`             |
-| `wework.route`                 | Top-level auxiliary pages         | `id`, `path`, `telemetryFeature`  |
-| `wework.sidebar.navigation`    | Left sidebar navigation entries   | `id`, `path`, `label`             |
-| `wework.settings.page`         | Settings navigation and content   | `id`, `path`, `label`, `category` |
-| `wework.workspace.tab`         | Closable top workspace tabs       | `id`, `label`                     |
-| `wework.workspace.sidebar.tab` | Right workspace panel tabs        | `id`, `label`                     |
-| `wework.shell.before`          | Content before the workbench root | `id`                              |
-| `wework.shell.after`           | Content after the workbench root  | `id`                              |
-| `wework.shell.overlay`         | Global overlays                   | `id`                              |
+| Slot                           | Purpose                                  | Required metadata                 | Component props            |
+| ------------------------------ | ---------------------------------------- | --------------------------------- | -------------------------- |
+| `wework.action`                | Host-invoked navigation action           | `id`, `path`                      | No component               |
+| `wework.app`                   | Product switcher and app surface         | `id`, `label`, `mode`             | `visible`, `tab`           |
+| `wework.route`                 | Top-level auxiliary page                 | `id`, `path`, `telemetryFeature`  | `search`, `onNavigate`     |
+| `wework.sidebar.navigation`    | Left-sidebar navigation entry            | `id`, `path`, `label`             | Usually metadata-only      |
+| `wework.settings.page`         | Settings navigation and content          | `id`, `path`, `label`, `category` | Settings context, `onBack` |
+| `wework.workspace.tab`         | Closable top workspace tab               | `id`, `label`                     | `visible`, `tab`           |
+| `wework.workspace.sidebar.tab` | Right workspace-panel tab type           | `id`, `label`                     | `visible`, `scope`, `tab`  |
+| `wework.shell.before`          | Before the workbench root                | `id`                              | Empty object               |
+| `wework.shell.after`           | After the workbench root                 | `id`                              | Empty object               |
+| `wework.shell.overlay`         | Global pointer-transparent overlay layer | `id`                              | Empty object               |
 
 `wework.app` supports three modes:
 
 - `native`: navigate to `path` and let the native Wework workspace handle it.
 - `iframe`: open `url` in a Wework application WebView.
 - `surface`: render the registered plugin component at `/app/<id>`.
+
+`wework.action` is a stable path-action descriptor, not an arbitrary callback
+channel. Register `{ id, path }` so existing host entry points can resolve the
+action by id and navigate. Do not put functions, tokens, or non-serializable
+state in a descriptor.
+
+Third-party `wework.settings.page` and `wework.route` contributions must not set
+the Wework-internal `module` or `component` fields. Pass the React component as
+the fourth argument to `ctx.wework.ui.register`. `telemetryFeature` must use an
+existing low-cardinality Wework value; generic third-party pages use `apps`.
 
 ## Registration contract
 
@@ -87,6 +117,38 @@ Wework descriptors directly in DSH options. DSH re-runs the `slots.inject`
 callback when the host slot mounts, unmounts, or is rebuilt and keeps the
 plugin lifecycle scoped to that declaration.
 
+## Runnable plugin demo
+
+The repository's
+[`wework/dsh/examples/ui-extension-demo`](https://github.com/wecode-ai/Wegent/tree/main/wework/dsh/examples/ui-extension-demo)
+is a complete third-party plugin with no imports from Wework-private React
+modules. It contains a standard `package.json`, `cordis.patch.yml`, host entry,
+client entry, and Node regression tests, and covers every slot in the table.
+
+In development, install the Demo's absolute directory from **Plugins → Manage
+→ Wework plugins**, or use:
+
+```text
+file:/absolute/path/to/Wegent/wework/dsh/examples/ui-extension-demo
+```
+
+Installation, update, enablement, and removal mutate the managed `wework-core`
+profile. Restart Core DSH after configuration changes. The install flow
+snapshots the profile, runs the package manager, validates `dsh.bundle.patch`,
+and preflights `dsh --profile wework-core --dump-config`; it restores the
+snapshot on failure. Plugins must not depend on immediate hot activation after
+installation.
+
+When copying the Demo:
+
+1. Replace the npm package name, Loader entry id, and every contribution id.
+2. Keep only the slots you need and give each interactive element a stable
+   `data-testid`.
+3. Do not import Wework source pages or Contexts. Communicate through component
+   props, standard DSH services, and public capabilities.
+4. Run the Demo Node tests before installing the absolute local directory into
+   an isolated Wework environment.
+
 ## First-party Wework plugins
 
 Wework bundles these UI plugins with Core DSH:
@@ -144,3 +206,7 @@ When adding a DSH plugin shipped with Wework:
 3. Add Node tests for slot metadata and registration behavior.
 4. Run Wework typecheck, focused Vitest coverage, DSH client tests, and a real
    desktop plugin verification.
+
+Ordinary third-party plugins must not be added to
+`prepare-harness-runtime.mjs`; that path is only for first-party managed
+components shipped and updated with Wework.

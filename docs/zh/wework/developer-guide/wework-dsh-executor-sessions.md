@@ -15,6 +15,13 @@ Executor。
 消费的 `sequence` 断线续传。每个 `(deviceId, taskId)` 映射为一个稳定、独立的
 Session，因此并行任务不会合并到同一个事件流。
 
+Wework renderer 使用同一 DSH runtime 暴露的浏览器 SSE 事件流。首次浏览器订阅会
+显式关闭历史回放；Executor 原子记录当前 journal 的最新 `sequence`，先发送内部
+`executor.stream.cursor` 基线，再只转发新事件。浏览器消费该基线但不把它交给业务
+listener。连接建立后的重连会显式开启回放，并从最后消费的 `sequence` 补齐断线期间
+的事件。不能仅用 `after=0` 判断是否首次连接，因为尚未收到普通业务事件的重连也可能
+携带零游标；混淆两种语义会导致全量历史事件阻塞 renderer，或漏掉断线期间的事件。
+
 主要映射如下：
 
 | Executor 事件                              | DSH Session 事件                            |
