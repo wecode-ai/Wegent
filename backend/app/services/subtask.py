@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
-from app.stores.tasks import subtask_store, task_access_store
+from app.stores.tasks import subtask_store, task_access_store, task_store
 from app.utils.client_payload_sanitizer import sanitize_client_payload
 from app.utils.prompt_utils import extract_display_prompt
 
@@ -385,20 +385,71 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         message_id = subtask.message_id
         task_id = subtask.task_id
 
-        # Delete the edited message AND all subsequent messages
-        # This allows frontend to send a fresh new message without duplicates
-        deleted_count = self.delete_subtasks_from(
+        # Capture the newest assistant executor inside the deletion range before
+        # removing the records. ChatGPT-style edit deletes the assistant subtask
+        # that carries executor_name; persisting it on the task lets the resend
+        # create a subtask that reuses the same sandbox instead of allocating a
+        # new one.
+        latest_executor = subtask_store.get_latest_assistant_executor_from(
             db,
             task_id=task_id,
             from_message_id=message_id,
-            user_id=user_id,
+            owner_user_id=user_id,
         )
+
+        # Delete the edited message AND all subsequent messages
+        # This allows frontend to send a fresh new message without duplicates
+        deleted_count = subtask_store.delete_from_message_id(
+            db,
+            task_id=task_id,
+            from_message_id=message_id,
+            owner_user_id=user_id,
+        )
+
+        if latest_executor is not None:
+            self._persist_task_executor_reference(
+                db,
+                task_id=task_id,
+                executor_namespace=latest_executor.namespace,
+                executor_name=latest_executor.name,
+                executor_deleted_at=latest_executor.deleted_at,
+            )
+        db.commit()
 
         logger.info(
             f"User {user_id} deleted message {subtask_id} for editing, deleted {deleted_count} messages total"
         )
 
         return subtask_id, message_id, deleted_count
+
+    def _persist_task_executor_reference(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        executor_namespace: str,
+        executor_name: str,
+        executor_deleted_at: bool,
+    ) -> None:
+        """Persist the last executor reference on the task for sandbox reuse."""
+        if not executor_name:
+            raise ValueError("Cannot persist an empty executor name")
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
+        if task is None:
+            raise RuntimeError(f"Task {task_id} not found while preserving executor")
+        json_data = dict(task.json or {})
+        metadata = json_data.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            json_data["metadata"] = metadata
+        labels = metadata.get("labels")
+        if not isinstance(labels, dict):
+            labels = {}
+            metadata["labels"] = labels
+        labels["lastExecutorName"] = executor_name
+        labels["lastExecutorNamespace"] = executor_namespace or ""
+        labels["lastExecutorDeletedAt"] = "true" if executor_deleted_at else "false"
+        task_store.update_json(db, task=task, payload=json_data)
 
 
 subtask_service = SubtaskService(Subtask)
