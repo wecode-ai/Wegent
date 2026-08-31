@@ -152,6 +152,7 @@ let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
@@ -417,6 +418,11 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
+    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
+      clearAll: () => contents.session.clearStorageData({ storages: ['localstorage'] }),
+      clearOrigin: origin =>
+        contents.session.clearStorageData({ origin, storages: ['localstorage'] }),
+    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -1046,7 +1052,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
-  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
+  rendererStorage = new RendererStorageStore(app.getPath('userData'))
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
