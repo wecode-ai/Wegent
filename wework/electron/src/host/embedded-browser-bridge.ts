@@ -268,6 +268,20 @@ export class EmbeddedBrowserBridge {
       case 'scrollIntoView':
       case 'press':
         return this.runAction(label, request)
+      case 'nativeClick':
+        this.browser.clickAt(
+          label,
+          requiredCoordinate(request.x, 'x'),
+          requiredCoordinate(request.y, 'y')
+        )
+        return {
+          ok: true,
+          kind: 'browser.action',
+          action: 'click',
+          backend: 'electron-send-input-event',
+          executionKind: 'trusted-event',
+          synthetic: false,
+        }
       case 'waitFor':
         return this.waitForCondition(label, request)
       case 'screenshot':
@@ -574,6 +588,7 @@ function isObservableAction(action: string): boolean {
     'navigate',
     'inspect',
     'click',
+    'nativeClick',
     'typeText',
     'fill',
     'hover',
@@ -593,6 +608,7 @@ function isMutatingAction(action: string): boolean {
     'open',
     'navigate',
     'click',
+    'nativeClick',
     'typeText',
     'fill',
     'hover',
@@ -610,6 +626,14 @@ function actionTarget(request: BrowserBridgeRequest): string | null {
   if (request.index !== undefined) return `index ${request.index}`
   if (request.selector) return request.selector
   return request.url ?? null
+}
+
+function requiredCoordinate(value: unknown, name: string): number {
+  const coordinate = Number(value)
+  if (!Number.isFinite(coordinate) || coordinate < 0) {
+    throw new Error(`Embedded browser ${name} coordinate is invalid`)
+  }
+  return coordinate
 }
 
 function actionSignature(action: string, request: BrowserBridgeRequest): string {

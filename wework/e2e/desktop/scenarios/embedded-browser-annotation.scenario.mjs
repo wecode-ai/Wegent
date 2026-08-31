@@ -727,28 +727,38 @@ async function markerState(bridge) {
 }
 
 async function clickMarker(bridge) {
-  const result = await pageValue(
+  const marker = await pageValue(
     bridge,
     `(() => {
       const root = document.getElementById(${JSON.stringify(MARKER_ROOT_ID)})?.shadowRoot
       const marker = root?.querySelector(${JSON.stringify(MARKER_SELECTOR)})
       if (!marker) return { ok: false, markerCount: 0 }
+      const rect = marker.getBoundingClientRect()
       const markerCount = root.querySelectorAll(${JSON.stringify(MARKER_SELECTOR)}).length
-      const annotationId = marker.getAttribute('data-annotation-id')
-      const number = marker.textContent
-      marker.click()
       return {
-        ok: marker.getAttribute('aria-expanded') === 'true',
-        annotationId,
+        ok: true,
+        annotationId: marker.getAttribute('data-annotation-id'),
         markerCount,
-        number,
+        number: marker.textContent,
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
       }
     })()`
   )
+  assert.equal(marker.ok, true, `The browser annotation marker is unavailable: ${marker}`)
+  const result = await bridge({
+    action: 'nativeClick',
+    x: marker.x,
+    y: marker.y,
+    timeoutMs: 5_000,
+  })
   assert.equal(
     result.ok,
     true,
-    `The current browser annotation marker did not handle its click: ${JSON.stringify(result)}`
+    `The browser annotation marker did not receive trusted input: ${JSON.stringify({
+      marker,
+      result,
+    })}`
   )
 }
 

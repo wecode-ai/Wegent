@@ -349,6 +349,28 @@ export class EmbeddedBrowserManager {
     return this.required(label).contents.executeJavaScript(expression, true)
   }
 
+  clickAt(label: string, x: number, y: number): void {
+    const contents = this.required(label).contents
+    const point = {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+    }
+    contents.focus()
+    contents.sendInputEvent({ type: 'mouseMove', ...point })
+    contents.sendInputEvent({
+      type: 'mouseDown',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+    contents.sendInputEvent({
+      type: 'mouseUp',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+
   state(label: string): BrowserPageState {
     const entry = this.required(label)
     const contents = entry.contents
