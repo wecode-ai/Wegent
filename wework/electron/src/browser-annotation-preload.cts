@@ -53,7 +53,18 @@ const MARKER_ATTRIBUTE = 'data-wework-browser-annotation-marker'
 const SELECTION_ATTRIBUTE = 'data-wework-browser-annotation-selection'
 const INTERACTION_LAYER_ATTRIBUTE = 'data-wework-browser-annotation-interaction-layer'
 const HOVER_ATTRIBUTE = 'data-wework-browser-annotation-hover'
+const CURSOR_ATTRIBUTE = 'data-wework-browser-annotation-cursor'
 const ANNOTATION_BLUE = '#0069fb'
+const ANNOTATION_CURSOR = {
+  fill: '#0285FF',
+  height: 25,
+  hotspotX: 13,
+  hotspotY: 12,
+  path: 'M12.6504 0.824799C6.21496 0.824799 0.825466 5.77554 0.825195 12.0885C0.825245 14.2375 1.46183 16.2421 2.55176 17.943L2.02148 20.235L1.99316 20.3756C1.77603 21.655 2.78945 22.7791 4.02832 22.7691L4.0791 22.8209L4.53418 22.7047L7.12305 22.0426C8.77593 22.8778 10.6577 23.3531 12.6504 23.3531C19.086 23.3531 24.4754 18.4014 24.4756 12.0885C24.4753 5.77554 19.0858 0.824799 12.6504 0.824799Z',
+  stroke: 'white',
+  strokeWidth: 1.65,
+  width: 26,
+} as const
 const DESIGN_PROPERTIES = [
   'color',
   'font-family',
@@ -76,6 +87,7 @@ let shadowRoot: ShadowRoot | null = null
 let renderTimer: ReturnType<typeof setTimeout> | null = null
 let draftAnchor: ElementAnchor | null = null
 let hoveredElement: Element | null = null
+let pointerPosition: { x: number; y: number } | null = null
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
   string,
@@ -459,6 +471,32 @@ function hoverOutline(element: Element) {
   return outline
 }
 
+function annotationCursor(point: { x: number; y: number }) {
+  const cursor = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  cursor.setAttribute(CURSOR_ATTRIBUTE, '')
+  cursor.setAttribute('aria-hidden', 'true')
+  cursor.setAttribute('height', String(ANNOTATION_CURSOR.height))
+  cursor.setAttribute('viewBox', `0 0 ${ANNOTATION_CURSOR.width} ${ANNOTATION_CURSOR.height}`)
+  cursor.setAttribute('width', String(ANNOTATION_CURSOR.width))
+  Object.assign(cursor.style, {
+    display: 'block',
+    height: `${ANNOTATION_CURSOR.height}px`,
+    left: `${point.x - ANNOTATION_CURSOR.hotspotX}px`,
+    pointerEvents: 'none',
+    position: 'fixed',
+    top: `${point.y - ANNOTATION_CURSOR.hotspotY}px`,
+    width: `${ANNOTATION_CURSOR.width}px`,
+    zIndex: '2',
+  })
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', ANNOTATION_CURSOR.path)
+  path.setAttribute('fill', ANNOTATION_CURSOR.fill)
+  path.setAttribute('stroke', ANNOTATION_CURSOR.stroke)
+  path.setAttribute('stroke-width', String(ANNOTATION_CURSOR.strokeWidth))
+  cursor.append(path)
+  return cursor
+}
+
 function targetBelowInteractionLayer(layer: HTMLElement, point: { x: number; y: number }) {
   layer.style.pointerEvents = 'none'
   try {
@@ -474,7 +512,7 @@ function interactionLayer() {
   layer.setAttribute(INTERACTION_LAYER_ATTRIBUTE, '')
   Object.assign(layer.style, {
     background: 'transparent',
-    cursor: 'crosshair',
+    cursor: 'none',
     inset: '0',
     pointerEvents: 'auto',
     position: 'fixed',
@@ -482,18 +520,14 @@ function interactionLayer() {
     zIndex: '0',
   })
   layer.addEventListener('pointermove', event => {
-    const target = targetBelowInteractionLayer(layer, {
+    const point = {
       x: event.clientX,
       y: event.clientY,
-    })
+    }
+    const target = targetBelowInteractionLayer(layer, point)
     if (target === rootHost || rootHost?.contains(target)) return
-    if (hoveredElement === target) return
+    pointerPosition = point
     hoveredElement = target
-    scheduleRender()
-  })
-  layer.addEventListener('pointerleave', () => {
-    if (!hoveredElement) return
-    hoveredElement = null
     scheduleRender()
   })
   layer.addEventListener('click', event => {
@@ -519,8 +553,10 @@ function render() {
     } else {
       hoveredElement = null
     }
+    if (pointerPosition) root.append(annotationCursor(pointerPosition))
   } else {
     hoveredElement = null
+    pointerPosition = null
   }
   if (draftAnchor) {
     const selectedElement = resolveAnchor(draftAnchor)
@@ -635,6 +671,7 @@ function selectElement(element: Element, point?: { x: number; y: number }) {
   if (!target) return
   const anchor = anchorFor(target)
   hoveredElement = null
+  pointerPosition = null
   draftAnchor = anchor
   scheduleRender()
   emit('create-draft', {
@@ -662,6 +699,17 @@ document.addEventListener(
   true
 )
 
+document.addEventListener(
+  'pointerleave',
+  () => {
+    if (!hoveredElement && !pointerPosition) return
+    hoveredElement = null
+    pointerPosition = null
+    scheduleRender()
+  },
+  true
+)
+
 for (const eventName of ['scroll', 'resize']) {
   globalThis.addEventListener(eventName, scheduleRender, true)
 }
@@ -671,7 +719,10 @@ ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: R
   if (command.type === 'sync' && command.state) {
     state = command.state
     draftAnchor = null
-    if (state.mode === 'off') hoveredElement = null
+    if (state.mode === 'off') {
+      hoveredElement = null
+      pointerPosition = null
+    }
     if (command.point) {
       const target = deepestElementAtPoint(command.point.x, command.point.y)
       if (target) {

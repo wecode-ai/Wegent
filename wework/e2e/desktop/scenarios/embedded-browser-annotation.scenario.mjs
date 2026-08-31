@@ -31,6 +31,7 @@ const OVERLAY_SCREENSHOT_SELECTOR = '[data-testid="browser-annotation-screenshot
 const MARKER_SELECTOR = '[data-wework-browser-annotation-marker]'
 const INTERACTION_LAYER_SELECTOR = '[data-wework-browser-annotation-interaction-layer]'
 const HOVER_SELECTOR = '[data-wework-browser-annotation-hover]'
+const CURSOR_SELECTOR = '[data-wework-browser-annotation-cursor]'
 const MARKER_ROOT_ID = '__wework_browser_annotation_root__'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const FIXTURE_PATH = '/browser-annotation/basic'
@@ -363,8 +364,8 @@ async function enterElementAnnotationMode(control, bridge, uiTimeoutMs) {
         return layer ? getComputedStyle(layer).cursor : null
       })()`
     ),
-    'crosshair',
-    'Starting annotation mode did not expose the crosshair interaction layer'
+    'none',
+    'Starting annotation mode did not hide the native cursor for the custom annotation cursor'
   )
 }
 
@@ -419,6 +420,61 @@ async function hoverElementAnnotationTarget(bridge, targetSelector, uiTimeoutMs)
     true,
     uiTimeoutMs,
     'Hovering an annotation target did not expose the ChatGPT-style blue selection layer'
+  )
+  await waitForPageValue(
+    bridge,
+    `(() => {
+      const cursor = document
+        .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+        ?.shadowRoot?.querySelector(${JSON.stringify(CURSOR_SELECTOR)})
+      return Boolean(cursor)
+    })()`,
+    true,
+    uiTimeoutMs,
+    'Hovering an annotation target did not expose the visible ChatGPT-style blue cursor layer'
+  )
+  const cursorMetrics = await pageValue(
+    bridge,
+    `(() => {
+      const cursor = document
+        .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+        ?.shadowRoot?.querySelector(${JSON.stringify(CURSOR_SELECTOR)})
+      if (!cursor) return null
+      const style = getComputedStyle(cursor)
+      const path = cursor.querySelector('path')
+      return {
+        fill: path?.getAttribute('fill'),
+        height: cursor.getAttribute('height'),
+        left: Number.parseFloat(style.left),
+        localName: cursor.localName,
+        stroke: path?.getAttribute('stroke'),
+        top: Number.parseFloat(style.top),
+        width: cursor.getAttribute('width'),
+      }
+    })()`
+  )
+  assert.ok(cursorMetrics, 'The visible annotation cursor disappeared after rendering')
+  assert.deepEqual(
+    {
+      fill: cursorMetrics.fill,
+      height: cursorMetrics.height,
+      localName: cursorMetrics.localName,
+      stroke: cursorMetrics.stroke,
+      width: cursorMetrics.width,
+    },
+    {
+      fill: '#0285FF',
+      height: '25',
+      localName: 'svg',
+      stroke: 'white',
+      width: '26',
+    },
+    'The visible annotation cursor did not match ChatGPT cursor geometry and colors'
+  )
+  assert.ok(
+    Math.abs(cursorMetrics.left - (targetPoint.x - 13)) < 0.01 &&
+      Math.abs(cursorMetrics.top - (targetPoint.y - 12)) < 0.01,
+    `The visible annotation cursor hotspot was misplaced: ${JSON.stringify(cursorMetrics)}`
   )
 }
 

@@ -704,16 +704,16 @@ async function showBrowserAnnotationOverlay(
       }
     })
     const createdOverlay = overlay
-    browserAnnotationOverlayReadyPromise = createdOverlay
+    const rendererReady = waitForRendererSelector(
+      createdOverlay.webContents,
+      '[data-testid="browser-annotation-overlay"]'
+    )
+    const loadFailure = createdOverlay
       .loadURL(target.toString(), {
         extraHeaders: 'X-Wework-Window-Label: browser-annotation-overlay',
       })
-      .then(() =>
-        waitForRendererSelector(
-          createdOverlay.webContents,
-          '[data-testid="browser-annotation-overlay"]'
-        )
-      )
+      .then(() => new Promise<void>(() => {}))
+    browserAnnotationOverlayReadyPromise = Promise.race([rendererReady, loadFailure])
   }
   const readyPromise = browserAnnotationOverlayReadyPromise
   if (!readyPromise) throw new Error('Browser annotation overlay failed to initialize')
