@@ -193,6 +193,7 @@ def test_a_required_quality_review_allows_matching_plan_and_qa(
     pages = [PageSource(path="index", title="index", content="overview")]
     fingerprint = pages_fingerprint(pages)
     generation.ext = {
+        "content_write": {"summary": {"structure_order": ["index"]}},
         "qualityReview": {
             "required": True,
             "checkpoints": [
@@ -210,7 +211,7 @@ def test_a_required_quality_review_allows_matching_plan_and_qa(
                     "fingerprint": fingerprint,
                 },
             ],
-        }
+        },
     }
     _page(test_db, generation, "index", "overview")
 
@@ -632,18 +633,42 @@ def test_the_agents_declared_order_is_what_gets_recorded(
     ]
 
 
-def test_plan_only_rejects_a_csv_string_as_one_page_order_path(
+def test_required_review_rejects_a_csv_string_as_one_page_order_path(
     test_db: Session, knowledge_base: Kind, effects: FakeEffects
 ):
     """A malformed order must not fall back to concurrent writer completion order."""
     generation = _generation(test_db, knowledge_base.id)
-    for path in ("index", "quickstart", "architecture"):
+    pages = [
+        PageSource(path="index", title="index", content="body"),
+        PageSource(path="quickstart", title="quickstart", content="body"),
+        PageSource(path="architecture", title="architecture", content="body"),
+    ]
+    for path in (page.path for page in pages):
         _page(test_db, generation, path, "body")
+    fingerprint = pages_fingerprint(pages)
     generation.ext = {
         "content_write": {
             "summary": {"structure_order": ["index,quickstart,architecture"]}
         },
-        "qualityReview": {"policy": "plan_only"},
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_and_qa",
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "status": "passed",
+                    "paths": [page.path for page in pages],
+                    "focusPaths": ["index"],
+                    "fingerprint": fingerprint,
+                },
+                {
+                    "phase": "qa",
+                    "status": "passed",
+                    "paths": [page.path for page in pages],
+                    "fingerprint": fingerprint,
+                },
+            ],
+        },
     }
     test_db.flush()
 

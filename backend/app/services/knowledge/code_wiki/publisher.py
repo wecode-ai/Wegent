@@ -64,7 +64,6 @@ from app.services.knowledge.code_wiki.publish_gate import (
     evaluate_publish_gate,
 )
 from app.services.knowledge.code_wiki.quality_gate import (
-    PLAN_ONLY_REVIEW_POLICY,
     QUALITY_REVIEW_EXT_KEY,
     quality_gate_reason,
 )
@@ -158,17 +157,17 @@ def _declared_order(db: Session, generation_id: int) -> dict[str, int]:
     return {collation_key(path): index for index, path in enumerate(declared)}
 
 
-def _plan_only_order_error(
+def _reviewed_order_error(
     generation: WikiGeneration, pages: Sequence[PageSource]
 ) -> str:
-    """Explain why a coordinated full rebuild cannot safely publish its order."""
+    """Explain why a reviewed full rebuild cannot safely publish its order."""
     review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
-    if review.get("policy") != PLAN_ONLY_REVIEW_POLICY:
+    if not review.get("required"):
         return ""
 
     declared = _declared_order_paths(generation)
     if not declared:
-        return "plan-only completion requires --structure-order beginning with index"
+        return "reviewed full rebuild requires --structure-order beginning with index"
 
     declared_keys = [collation_key(path) for path in declared]
     duplicate_keys = sorted(
@@ -186,11 +185,11 @@ def _plan_only_order_error(
         )
 
     if declared_keys[0] != "index":
-        return "plan-only page order must begin with index"
+        return "reviewed full rebuild page order must begin with index"
 
     missing = sorted(actual - set(declared_keys))
     if missing:
-        return f"plan-only page order omits written paths: {missing}"
+        return f"reviewed full rebuild page order omits written paths: {missing}"
     return ""
 
 
@@ -299,13 +298,6 @@ def publish_generation(
     desired = read_version_pages(db, generation.id)
     existing = read_projected_pages(db, knowledge_base.id)
 
-    order_error = _plan_only_order_error(generation, desired)
-    if order_error:
-        verdict = GateVerdict(passed=False, reason=order_error)
-        _record_verdict(generation, verdict)
-        db.commit()
-        return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
-
     quality_reason = quality_gate_reason(generation, desired)
     if quality_reason:
         verdict = GateVerdict(passed=False, reason=quality_reason)
@@ -314,6 +306,13 @@ def publish_generation(
             generation.id,
             quality_reason,
         )
+        _record_verdict(generation, verdict)
+        db.commit()
+        return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
+
+    order_error = _reviewed_order_error(generation, desired)
+    if order_error:
+        verdict = GateVerdict(passed=False, reason=order_error)
         _record_verdict(generation, verdict)
         db.commit()
         return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
