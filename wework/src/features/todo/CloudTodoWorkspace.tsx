@@ -240,6 +240,7 @@ type PendingExecutionConfiguration = {
         type: 'save'
       }
 }
+type ExecutionConfigurationRequestResult = 'not-needed' | 'opened' | 'unavailable'
 
 const nativeBoardGroupFields: AITableField[] = [
   { id: 'status', name: '状态', type: 'status', config: null, raw: {} },
@@ -1801,14 +1802,16 @@ export function CloudTodoWorkspace({
   const pendingExecutionServices = pendingExecutionProject
     ? services.projectSpaceDetailServices?.[pendingExecutionProject.location]
     : undefined
-  function openExecutionConfiguration(pending: PendingExecutionConfiguration): boolean {
+  function openExecutionConfiguration(
+    pending: PendingExecutionConfiguration
+  ): Exclude<ExecutionConfigurationRequestResult, 'not-needed'> {
     const project = projectForItem(pending.item)
     if (!project || !services.projectSpaceDetailServices?.[project.location]) {
-      setBoardError('项目空间运行服务当前不可用')
-      return false
+      setBoardError(t('todo.run_unavailable', '运行服务当前不可用'))
+      return 'unavailable'
     }
     setPendingExecutionConfiguration(pending)
-    return true
+    return 'opened'
   }
   const selectedProjectApi =
     selectedProject?.task_provider === 'dingtalk_aitable'
@@ -2481,9 +2484,11 @@ export function CloudTodoWorkspace({
     return locatedItem
   }
 
-  function requestCreatedItemExecutionConfiguration(item: LocatedLoopItem): boolean {
+  function requestCreatedItemExecutionConfiguration(
+    item: LocatedLoopItem
+  ): ExecutionConfigurationRequestResult {
     if (!isProcessingStatus(item.status) || !itemNeedsExecutionConfiguration(item)) {
-      return false
+      return 'not-needed'
     }
     return openExecutionConfiguration({
       item,
@@ -3435,8 +3440,8 @@ export function CloudTodoWorkspace({
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      const needsExecutionConfiguration = requestCreatedItemExecutionConfiguration(locatedItem)
-      if (input.createTask && !needsExecutionConfiguration) {
+      const executionConfigurationResult = requestCreatedItemExecutionConfiguration(locatedItem)
+      if (input.createTask && executionConfigurationResult === 'not-needed') {
         setBackgroundTaskItemId(locatedItem.id)
         openTaskComposer({
           workItemId: locatedItem.id,
