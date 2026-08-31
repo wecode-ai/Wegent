@@ -1,0 +1,14 @@
+dist/
+.expo/
+.expo-shared/
+artifacts/
+
+# Local native builds and signing outputs
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+
+# Android machine-local state
+android/.gradle/
+android/local.properties

@@ -1,7 +1,7 @@
 {
   "name": "@wegent/wework-electron",
   "private": true,
-  "version": "0.3.1-beta.1",
+  "version": "0.3.4-beta.1",
   "description": "Wework desktop workbench",
   "author": "Wecode",
   "type": "module",
@@ -32,6 +32,7 @@
     "vitest": "4.1.7"
   },
   "dependencies": {
+    "@trycua/cua-driver": "0.22.1",
     "archiver": "8.0.0",
     "electron-updater": "6.8.9",
     "extract-zip": "2.0.1",

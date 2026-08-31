@@ -13,11 +13,13 @@ import { getPlatform } from '@/lib/platform'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
-  ensureLocalExecutorStarted,
+  ensureLocalExecutorAvailable,
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
 } from '@/desktop/localExecutor'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 
 function getLocalExecutorLogDisplayPath(): string {
   return getPlatform() === 'win'
@@ -83,7 +85,7 @@ async function resolveLocalRuntimeState(
   errorText: LocalRuntimeErrorText
 ): Promise<LocalRuntimeState> {
   try {
-    const status = await ensureLocalExecutorStarted()
+    const status = await ensureLocalExecutorAvailable()
     const statusError = localRuntimeError(status, errorText)
     if (statusError) {
       throw new Error(statusError)
@@ -268,6 +270,15 @@ export function LocalRuntimeInitializer({
       console.error('[Wework] Failed to apply cloud connection to local executor:', error)
     })
   }, [enabled, state.phase])
+
+  useEffect(() => {
+    if (state.phase !== 'failed' || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the local runtime error', error)
+    })
+  }, [state.phase])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

@@ -1021,6 +1021,39 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         `Annotation target click failed: ${JSON.stringify(createAnnotation)}`
       )
       assert.equal(createAnnotation.value, true, 'Annotation target click did not open the editor')
+      const draftAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `(() => {
+          const draft = document.querySelector('[data-wework-annotation="draft-marker"]')
+          return {
+            exists: Boolean(draft),
+            text: draft?.textContent ?? null,
+            fill: draft?.querySelector('path')?.getAttribute('fill') ?? null,
+            transform: draft?.style.transform ?? null,
+            savedCount: document.querySelectorAll('[data-wework-annotation="marker"]').length,
+            annotationCount:
+              window.__WEWORK_BROWSER_ANNOTATION__?.getSnapshot?.().annotations.length ?? null,
+          }
+        })()`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(
+        draftAnnotationMarker.ok,
+        true,
+        `Draft annotation marker evaluation failed: ${JSON.stringify(draftAnnotationMarker)}`
+      )
+      assert.deepEqual(
+        draftAnnotationMarker.value,
+        {
+          exists: true,
+          text: '',
+          fill: '#0069FB',
+          transform: 'translate(-15.689%, -89.696%)',
+          savedCount: 0,
+          annotationCount: 0,
+        },
+        'The first annotation did not show the unnumbered draft marker'
+      )
       const fillAnnotationComment = await bridgeCall({
         action: 'fill',
         selector: '[data-wework-annotation="comment-input"]',
@@ -1046,6 +1079,23 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: '1',
         timeoutMs: uiTimeoutMs,
       })
+      const publishedAnnotationMarker = await bridgeCall({
+        action: 'evaluate',
+        expression: `({
+          draftExists: Boolean(
+            document.querySelector('[data-wework-annotation="draft-marker"]')
+          ),
+          savedText:
+            document.querySelector('[data-wework-annotation="marker"]')?.textContent ?? null,
+        })`,
+        timeoutMs: 5_000,
+      })
+      assert.equal(publishedAnnotationMarker.ok, true)
+      assert.deepEqual(
+        publishedAnnotationMarker.value,
+        { draftExists: false, savedText: '1' },
+        'Publishing did not replace the draft marker with numbered marker 1'
+      )
 
       const annotationMarker = await bridgeCall({
         action: 'click',
@@ -1122,6 +1172,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'Annotation adjustment did not update the target'
       )
       await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
+        enabled: true,
         timeoutMs: uiTimeoutMs,
       })
       const originalViewPressedBefore = await control.command(

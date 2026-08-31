@@ -55,9 +55,8 @@ const EXECUTOR_INTERNAL_ENV_KEYS: &[&str] = &[
     "WEGENT_EXECUTOR_SOURCE_DIR",
     "WEWORK_EXECUTOR_SIDECAR",
 ];
-const WEWORK_BROWSER_MCP_SERVER_NAME: &str = "wework_browser";
-const WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV: &str =
-    "WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE";
+const WEWORK_COMPUTER_USE_MCP_SERVER_NAME: &str = "wework_computer";
+const WEWORK_COMPUTER_USE_RUNTIME_FILE: &str = "runtime/computer-use-bridge.json";
 const CODEX_APPLY_PATCH_STREAMING_EVENTS_OVERRIDE: &str =
     "features.apply_patch_streaming_events=true";
 const CODEX_APPLY_PATCH_FREEFORM_OVERRIDE: &str = "features.apply_patch_freeform=true";
@@ -94,6 +93,15 @@ pub(crate) const WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS: &str = r#"Wewor
 - Do not narrate plans or progress between browser tools. After the requested actions and any needed final inspect, give one concise result based on the final page.
 - Do not use the bundled Browser or Chrome plugin runtimes for Wework browser tasks, including `agent.browsers.get("iab")`, `agent.browsers.get("extension")`, `browser:control-in-app-browser`, or `chrome:control-chrome`.
 - Do not fall back to an external Chrome window unless the user explicitly asks for Chrome."#;
+pub(crate) const WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 电脑操控 routing:
+- Use the `wework_computer` MCP tools only when the user asks to control a desktop application outside the Wework built-in browser.
+- The `wework_computer` tools exist only in conversations started after computer use was enabled in Wework settings and its system permissions were granted.
+- If the user asks to control the desktop but `wework_computer` tools are unavailable, do NOT search for npm packages, run bash tricks, or improvise another mechanism. Tell the user to open Wework 设置 → 集成 → 电脑操控, enable computer use, and finish the macOS permission prompts (in development builds the requesting app may appear as "Electron"), then start a new conversation and retry.
+- Inspect the desktop or target application state before acting. Reuse observed coordinates or accessibility targets only while that state remains unchanged.
+- Treat clicks, typing, key presses, scrolling, dragging, clipboard writes, menu invocation, and window movement as mutating actions.
+- Stop immediately when the user takes control, cancels, or the observed application no longer matches the requested target.
+- Never enter passwords, authentication codes, payment details, or other secrets unless the user explicitly authorizes that exact action in the current conversation.
+- Do not use computer use for Wework built-in browser tasks; use the `browser_*` tools instead."#;
 pub(crate) const WEWORK_SPACE_DEVELOPER_INSTRUCTIONS: &str = r#"Wework 项目空间 routing:
 - "项目空间" and "project space" refer to Wework project spaces. For project-space boards, tasks, files, comments, deliveries, tables, or assignment requests, use the available `wework_space` MCP tools.
 - `wework_space` is a fixed capability connected by the Wework Executor. Do not call MCP resource listing, a browser, Shell, `curl`, or parse `wegent://` URLs to determine whether it is available.
@@ -1140,9 +1148,14 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
             "/D".to_owned(),
             "/S".to_owned(),
             "/C".to_owned(),
-            format!("<nul set /p ={}", local_model_proxy::API_KEY),
+            windows_codex_router_auth_script(),
         ],
     )
+}
+
+#[cfg(any(windows, test))]
+fn windows_codex_router_auth_script() -> String {
+    format!("<nul set /p ={} & exit /b 0", local_model_proxy::API_KEY)
 }
 
 async fn read_persistent_codex_app_server_stdout(
@@ -2657,6 +2670,7 @@ fn codex_thread_developer_instructions(user_instructions: &str, task_instruction
         user_instructions.trim(),
         task_instructions.trim(),
         WEWORK_EMBEDDED_BROWSER_DEVELOPER_INSTRUCTIONS,
+        WEWORK_COMPUTER_USE_DEVELOPER_INSTRUCTIONS,
         WEWORK_SPACE_DEVELOPER_INSTRUCTIONS,
     ]
     .into_iter()
@@ -3004,7 +3018,10 @@ fn build_codex_launch_config(request: &ExecutionRequest) -> Result<CodexLaunchCo
         .extend(global_mcp_config_overrides());
     launch_config
         .config_overrides
-        .extend(cdp_browser_mcp_config_overrides(request));
+        .extend(cdp_browser_mcp_config_overrides(request)?);
+    launch_config
+        .config_overrides
+        .extend(computer_use_mcp_config_overrides());
     launch_config
         .config_overrides
         .extend(project_space_mcp_config_overrides(request)?);
@@ -3771,14 +3788,9 @@ fn global_mcp_config_overrides() -> Vec<String> {
     overrides
 }
 
-fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
-    let command =
-        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
-    let bridge_runtime_file = env::var(WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| executor_home().join("runtime/embedded-browser-bridge.json"));
+fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
+    let server_name = crate::browser_mcp::WEWORK_BROWSER_MCP_SERVER_NAME;
+    let key = toml_key_path(&["mcp_servers", server_name]);
     let mut overrides = vec![
         format!(
             "skills.config={}",
@@ -3795,68 +3807,122 @@ fn cdp_browser_mcp_config_overrides(request: &ExecutionRequest) -> Vec<String> {
             .unwrap_or_else(|_| "[]".to_owned())
         ),
         "features.non_prefixed_mcp_tool_names=true".to_owned(),
+    ];
+    if !crate::browser_mcp::bridge_is_available() {
+        return Ok(overrides);
+    }
+    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
+        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    overrides.extend([
+        format!("{key}.enabled=true"),
+        format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "command"]),
-            toml_value(&command.display().to_string())
+            toml_key_path(&["mcp_servers", server_name, "http_headers", "Authorization"]),
+            toml_value(&format!("Bearer {}", endpoint.token))
         ),
+        format!("{key}.tool_timeout_sec=60"),
         format!(
-            "{}={}",
-            toml_key_path(&["mcp_servers", WEWORK_BROWSER_MCP_SERVER_NAME, "args"]),
-            toml_json_value(&json!(["browser-mcp-server"]))
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "startup_timeout_sec"
-            ]),
-            15
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "tool_timeout_sec"
-            ]),
-            60
-        ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "default_tools_approval_mode"
-            ]),
+            "{key}.default_tools_approval_mode={}",
             toml_value("approve")
         ),
-        format!(
-            "{}={}",
-            toml_key_path(&[
-                "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                WEWORK_EMBEDDED_BROWSER_BRIDGE_RUNTIME_FILE_ENV
-            ]),
-            toml_value(&bridge_runtime_file.display().to_string())
-        ),
-    ];
+    ]);
 
     if let Some(label) = embedded_browser_label(request) {
         overrides.push(format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
-                WEWORK_BROWSER_MCP_SERVER_NAME,
-                "env",
-                "WEWORK_EMBEDDED_BROWSER_LABEL"
+                server_name,
+                "http_headers",
+                "X-Wework-Browser-Label"
             ]),
             toml_value(&label)
         ));
     }
-    overrides
+    Ok(overrides)
+}
+
+fn computer_use_mcp_config_overrides() -> Vec<String> {
+    let path = executor_home().join(WEWORK_COMPUTER_USE_RUNTIME_FILE);
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(record) = serde_json::from_str::<Value>(&contents) else {
+        return Vec::new();
+    };
+    let Some(address) = record.get("address").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let Some(token) = record.get("token").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    if address.trim().is_empty() || token.trim().is_empty() {
+        return Vec::new();
+    }
+    let command =
+        env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
+    vec![
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "command"
+            ]),
+            toml_value(&command.display().to_string())
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&["mcp_servers", WEWORK_COMPUTER_USE_MCP_SERVER_NAME, "args"]),
+            toml_json_value(&json!(["computer-use-mcp-server"]))
+        ),
+        format!(
+            "{}=15",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "startup_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}=120",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "tool_timeout_sec"
+            ])
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "default_tools_approval_mode"
+            ]),
+            toml_value("writes")
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_COMPUTER_USE_BRIDGE_URL"
+            ]),
+            toml_value(&format!("http://{}", address.trim()))
+        ),
+        format!(
+            "{}={}",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "env",
+                "WEWORK_COMPUTER_USE_BRIDGE_TOKEN"
+            ]),
+            toml_value(token.trim())
+        ),
+    ]
 }
 
 fn project_space_mcp_config_overrides(request: &ExecutionRequest) -> Result<Vec<String>, String> {
@@ -4028,9 +4094,17 @@ fn mcp_server_overrides(name: &str, server: &Map<String, Value>) -> Vec<String> 
 
 async fn prepare_codex_execution_request(
     request: ExecutionRequest,
-    cancellation: Option<&mut oneshot::Receiver<()>>,
+    mut cancellation: Option<&mut oneshot::Receiver<()>>,
 ) -> Result<PreparedCodexExecutionRequest, String> {
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if let Some(cancellation) = cancellation.as_deref_mut() {
+        tokio::select! {
+            biased;
+            _ = cancellation => return Err(CODEX_APP_SERVER_TURN_CANCELLED.to_owned()),
+            result = ensure_codex_mcp_endpoints() => result?,
+        }
+    } else {
+        ensure_codex_mcp_endpoints().await?;
+    }
     let mut request = if let Some(cancellation) = cancellation {
         tokio::select! {
             biased;
@@ -4144,6 +4218,14 @@ async fn prepare_codex_execution_request(
         request,
         generated_files,
     })
+}
+
+async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
+    if crate::browser_mcp::bridge_is_available() {
+        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+    }
+    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    Ok(())
 }
 
 fn ensure_codex_turn_not_cancelled(

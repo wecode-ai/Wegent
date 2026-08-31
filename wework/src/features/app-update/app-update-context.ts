@@ -5,6 +5,7 @@ import type {
   WeworkUpdateInfo,
 } from '@/lib/app-updater'
 import type { WeworkInstalledReleaseNotes } from './app-release-notes'
+import type { AppUpdateError } from './app-update-error'
 
 export const APP_UPDATE_LAST_AUTO_CHECK_KEY = 'wework:lastAutoUpdateCheckAt'
 export const APP_UPDATE_CHANNEL_KEY = 'wework:updateChannel'
@@ -18,6 +19,7 @@ export type AppUpdateStatus =
   | 'idle'
   | 'checking'
   | 'available'
+  | 'downloading'
   | 'upToDate'
   | 'installing'
   | 'error'
@@ -29,8 +31,7 @@ export interface AppUpdateContextValue {
   installedReleaseNotes: WeworkInstalledReleaseNotes | null
   status: AppUpdateStatus
   downloadProgress: WeworkUpdateDownloadProgress | null
-  message: string | null
-  error: string | null
+  error: AppUpdateError | null
   checkNow: () => Promise<WeworkUpdateInfo | null>
   installUpdate: () => Promise<void>
   dismissInstalledReleaseNotes: () => void

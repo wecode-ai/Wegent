@@ -828,6 +828,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     const configureExecution = `${activeBoard} [data-testid="cloud-todo-card-configure-execution-${inheritedWorkflowIssue.id}"]`
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
@@ -837,6 +838,10 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       visible: true,
     })
     await control.command('waitFor', '[data-testid="issue-execution-config-dialog"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('waitFor', '[data-testid="issue-execution-config-default-device"]', {
       timeoutMs: uiTimeoutMs,
       visible: true,
     })
@@ -859,6 +864,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'The execution configuration dialog did not close',
       uiTimeoutMs
     )
+    await control.command('scrollIntoView', configureExecution)
     await control.command('waitFor', configureExecution, {
       text: '去配置',
       timeoutMs: uiTimeoutMs,
@@ -1557,6 +1563,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       'Automation detail panel remained visible after clearing the canvas selection',
       uiTimeoutMs
     )
+    await control.command('waitFor', '[data-testid="automation-trigger-node"]', {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+      stableMs: 250,
+    })
     await control.command('click', '[data-testid="automation-trigger-node"]', {
       visible: true,
     })
@@ -1567,9 +1578,6 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('click', '[data-testid="automation-editor-section-menu"]')
     await control.command('fill', '[aria-label="自动化名称"]', {
       value: '统一自动化回归',
-    })
-    await control.command('fill', '[data-testid="automation-rule-description"]', {
-      value: '创建 Issue 后按完整流程执行，并持久化节点与 DAG 配置。',
     })
     await control.command('click', '[data-testid="automation-node-insert-after-trigger"]')
     await control.command('click', '[data-testid="automation-node-insert-after-task-trigger"]')
@@ -1675,6 +1683,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.roleSource, 'generic')
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
+    assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
     assert.deepEqual(
       unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
         .workspace_binding,

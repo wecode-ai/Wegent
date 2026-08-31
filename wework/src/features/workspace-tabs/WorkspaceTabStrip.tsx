@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type DragEvent,
   type RefObject,
 } from 'react'
@@ -18,14 +19,14 @@ import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import { openWorkspaceTabWindow } from './workspaceWindow'
 import { useWorkspaceTabs } from './workspaceTabsContextValue'
-import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
+import { defaultContentRoute, type WorkspaceTab, type WorkspaceTabKind } from './workspaceTabs'
 import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
 import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
 import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
 import { DshIcon } from '@/features/dsh-runtime/DshIcon'
 import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 
-interface MenuPosition {
+type MenuPosition = CSSProperties & {
   left: number
   top: number
 }
@@ -165,7 +166,15 @@ function WorkspaceTabButton({
             onUnavailableAgent()
             return
           }
-          selectTab(tab.id)
+          selectTab(
+            tab.id,
+            !active && tab.fixed && tab.kind === 'board'
+              ? {
+                  title: t('workbench.workspace_tab_board', '工作空间'),
+                  contentRoute: defaultContentRoute('board'),
+                }
+              : undefined
+          )
         }}
         onContextMenu={event => {
           event.preventDefault()

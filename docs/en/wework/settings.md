@@ -42,6 +42,12 @@ The version shown in the About page is read from the running Electron applicatio
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Electron configuration use that value in both places.
 When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
+Wework finishes downloading the update package before it asks to restart. No restart confirmation
+appears while the download is in progress; the **Update and restart** confirmation appears only
+when the update is ready to install. Canceling keeps the downloaded update available, so selecting
+the update action again reopens the confirmation without downloading it again. When automatic
+updates have already finished the download in the background, selecting the update action enters
+the same restart-confirmation flow immediately.
 
 Common macOS shortcuts include:
 
@@ -130,6 +136,25 @@ when a session resumes. Codex-only side-conversation flows are not exposed in ha
 `auth.json`. Without that file, the group is omitted from the model picker; provider models,
 local custom models, and cloud models remain available according to their own configuration. If
 no source provides a model, the picker displays **No models available**.
+
+## Editing a Codex model Catalog
+
+Under **Settings → Models → Codex models**, expand a provider and select **Edit Catalog** for a
+GPT/Codex model in the current list. The structured editor covers the context window, description,
+reasoning levels, default reasoning level, parallel tool calls, input modalities, base
+instructions, and advanced model capabilities. The model identifier and provider are read-only,
+and this editor does not add, remove, or reorder models.
+
+Changes stay in the current device's Executor Home. The executor stores only fields that differ
+from the current base Catalog and builds the effective Catalog in this order: upstream Catalog,
+Wework built-in configuration, user overrides, then vision-proxy derivation. Fields the user did
+not override therefore continue to follow later Codex or Wework updates.
+
+After saving, the model is marked **Customized**. Wework silently restarts the Codex app-server
+when no task is active. If tasks are running, Wework asks whether to restart immediately; choosing
+to restart later marks the model as **Waiting for executor restart** until the restart completes.
+Selecting **Restore defaults** removes the complete user override for that model and returns to the
+base Catalog supplied by the current version.
 
 ## Friendly titles
 

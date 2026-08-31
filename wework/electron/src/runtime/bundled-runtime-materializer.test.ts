@@ -70,6 +70,28 @@ describe('materializeBundledRuntimes', () => {
       'Bundled Electron runtime roles are invalid'
     )
   })
+
+  test('extracts runtimes without an external tar executable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-runtime-materializer-'))
+    roots.push(root)
+    const resources = join(root, 'resources')
+    const cache = join(root, 'cache')
+    await mkdir(resources)
+    const core = await runtimeArchive(resources, 'core', '0.1.1-rc.2', 'a')
+    const workbench = await runtimeArchive(resources, 'workbench', '0.1.0-rc.8', 'b')
+    await writeFile(
+      join(resources, 'runtimes.json'),
+      JSON.stringify({ runtimes: [core, workbench] })
+    )
+
+    const originalPath = process.env.PATH
+    process.env.PATH = ''
+    try {
+      await expect(materializeBundledRuntimes(resources, cache)).resolves.toBe(cache)
+    } finally {
+      process.env.PATH = originalPath
+    }
+  })
 })
 
 async function runtimeArchive(

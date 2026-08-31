@@ -81,7 +81,7 @@ export function browserAnnotationInjectionScript({
   const state = {
     annotations: [], nextNumber: 1, revision: 0, layer: null, hoverBox: null, hoverElement: null,
     activeEditor: null, activeInput: null, attached: false, animationFrame: null, resizeObserver: null,
-    baselineByElement: new Map(), blocker: null,
+    baselineByElement: new Map(), blocker: null, draftMarker: null, draftMarkerPoint: null,
   };
 
   const dark = config.isDark === true;
@@ -183,31 +183,56 @@ export function browserAnnotationInjectionScript({
     state.annotations.filter(annotation => annotation.element?.isConnected).sort((a, b) => a.number - b.number).forEach(annotation => annotation.adjustments.forEach(adjustment => applyAdjustment(annotation.element, adjustment)));
   };
   const clearHover = () => { state.hoverBox?.remove(); state.hoverBox = null; state.hoverElement = null; };
-  const closeEditor = () => { state.activeEditor?.remove(); state.activeEditor = null; state.activeInput = null; };
+  const removeDraftMarker = () => { state.draftMarker?.remove(); state.draftMarker = null; state.draftMarkerPoint = null; };
+  const closeEditor = () => { state.activeEditor?.remove(); state.activeEditor = null; state.activeInput = null; removeDraftMarker(); };
+  const positionPointMarker = (marker, point) => {
+    if (!marker || !point) return;
+    marker.style.left = point.x - window.scrollX + 'px';
+    marker.style.top = point.y - window.scrollY + 'px';
+  };
+  const createMarker = (label, kind) => {
+    const marker = document.createElement('button');
+    marker.type = 'button';
+    marker.dataset.weworkAnnotation = kind;
+    marker.setAttribute('aria-label', label === null ? config.strings.comment : String(label));
+    marker.innerHTML = '<svg aria-hidden="true" viewBox="0 0 26 25" width="26" height="25" style="position:absolute;inset:0;display:block;width:100%;height:100%;pointer-events:none"><path d="M12.6504 0.824799C6.21496 0.824799 0.825466 5.77554 0.825195 12.0885C0.825245 14.2375 1.46183 16.2421 2.55176 17.943L2.02148 20.235L1.99316 20.3756C1.77603 21.655 2.78945 22.7791 4.02832 22.7691L4.0791 22.8209L4.53418 22.7047L7.12305 22.0426C8.77593 22.8778 10.6577 23.3531 12.6504 23.3531C19.086 23.3531 24.4754 18.4014 24.4756 12.0885C24.4753 5.77554 19.0858 0.824799 12.6504 0.824799Z" fill="#0069FB" stroke="white" stroke-width="1.65"/></svg>';
+    if (label !== null) {
+      const markerLabel = document.createElement('span');
+      markerLabel.textContent = String(label);
+      style(markerLabel, { position: 'relative', color: 'white', fontSize: ${JSON.stringify(typography['--text-2xs'])}, fontWeight: '700', lineHeight: '1', transform: 'translateY(-0.5px)', pointerEvents: 'none' });
+      marker.appendChild(markerLabel);
+    }
+    style(marker, { position: 'fixed', left: '0', top: '0', width: '26px', height: '25px', border: '0', background: 'transparent', color: 'white', cursor: 'pointer', pointerEvents: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'translate(-15.689%,-89.696%)', transformOrigin: '15.689% 89.696%', zIndex: '1', padding: '0' });
+    return marker;
+  };
+  const renderDraftMarker = clickPoint => {
+    removeDraftMarker();
+    const markerPoint = clickPoint ? { x: clickPoint.x + window.scrollX, y: clickPoint.y + window.scrollY } : null;
+    if (!markerPoint) return;
+    const marker = createMarker(state.annotations.length === 0 ? null : state.nextNumber, 'draft-marker');
+    marker.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); state.activeInput?.focus(); });
+    state.draftMarker = marker;
+    state.draftMarkerPoint = markerPoint;
+    positionPointMarker(marker, markerPoint);
+    state.layer?.appendChild(marker);
+  };
   const positionMarker = annotation => {
     if (!annotation.marker) return;
-    let x;
-    let y;
     if (annotation.markerPoint) {
-      x = annotation.markerPoint.x - window.scrollX;
-      y = annotation.markerPoint.y - window.scrollY;
+      positionPointMarker(annotation.marker, annotation.markerPoint);
     } else {
       const rect = annotation.lastKnownRect;
-      x = rect.x + rect.width / 2;
-      y = rect.y + rect.height / 2;
+      annotation.marker.style.left = rect.x + rect.width / 2 + 'px';
+      annotation.marker.style.top = rect.y + rect.height / 2 + 'px';
     }
-    annotation.marker.style.left = x + 'px';
-    annotation.marker.style.top = y + 'px';
   };
   const renderAnnotation = annotation => {
     annotation.marker?.remove();
-    const marker = document.createElement('button');
-    marker.type = 'button'; marker.dataset.weworkAnnotation = 'marker'; marker.textContent = String(annotation.number); marker.setAttribute('aria-label', String(annotation.number));
-    style(marker, { position: 'fixed', left: '0', top: '0', width: '25px', height: '25px', borderRadius: '50%', border: '0', background: '#1683ff', color: 'white', cursor: 'pointer', pointerEvents: 'auto', fontSize: ${JSON.stringify(typography['--text-2xs'])}, fontWeight: '700', lineHeight: '1', display: 'flex', alignItems: 'center', justifyContent: 'center', transform: 'translate(-50%,-50%)', zIndex: '1', padding: '0' });
+    const marker = createMarker(annotation.number, 'marker');
     marker.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); showEditor(annotation.element, annotation); });
     annotation.marker = marker; positionMarker(annotation); state.layer?.appendChild(marker);
   };
-  const schedulePositionUpdate = () => { if (state.animationFrame !== null) return; state.animationFrame = window.requestAnimationFrame(() => { state.animationFrame = null; state.annotations.forEach(annotation => { if (annotation.element?.isConnected) annotation.lastKnownRect = rectFor(annotation.element); positionMarker(annotation); }); if (state.hoverBox && state.hoverElement?.isConnected) positionBox(state.hoverBox, rectFor(state.hoverElement)); }); };
+  const schedulePositionUpdate = () => { if (state.animationFrame !== null) return; state.animationFrame = window.requestAnimationFrame(() => { state.animationFrame = null; state.annotations.forEach(annotation => { if (annotation.element?.isConnected) annotation.lastKnownRect = rectFor(annotation.element); positionMarker(annotation); }); positionPointMarker(state.draftMarker, state.draftMarkerPoint); if (state.hoverBox && state.hoverElement?.isConnected) positionBox(state.hoverBox, rectFor(state.hoverElement)); }); };
   const normalize = (property, value) => {
     const raw = String(value).trim();
     if (!raw || /(?:calc|var|url)\(|\b(?:auto|inherit|initial|unset)\b/i.test(raw)) return null;
@@ -407,6 +432,7 @@ export function browserAnnotationInjectionScript({
     content.append(chipRow, inputShell); editor.append(adjust, content, footer); if (submit) editor.appendChild(submit);
     if (isEdit) { footer.style.display = 'flex'; }
     if (designOpen) { openDesign(); }
+    if (!isEdit) renderDraftMarker(clickPoint);
     state.layer?.appendChild(editor); state.activeEditor = editor; state.activeInput = input; autoGrow(); input.focus();
   };
   const topPageElementAt = (x, y) => {
@@ -422,7 +448,8 @@ export function browserAnnotationInjectionScript({
   const onBlockerClick = event => { event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation(); if (state.activeEditor) return; const target = topPageElementAt(event.clientX, event.clientY); if (!target) return; clearHover(); showEditor(target, null, { x: event.clientX, y: event.clientY }); };
   const attach = () => { if (state.attached) return; const layer = document.createElement('div'); layer.dataset.weworkAnnotationLayer = 'true'; style(layer, { position: 'fixed', inset: '0', zIndex: '2147483647', pointerEvents: 'none', userSelect: 'none' }); const blocker = document.createElement('div'); blocker.dataset.weworkAnnotation = 'blocker'; style(blocker, { position: 'absolute', inset: '0', pointerEvents: 'auto', cursor: 'crosshair', touchAction: 'pan-x pan-y' }); blocker.addEventListener('mousemove', onBlockerMove); blocker.addEventListener('click', onBlockerClick); layer.appendChild(blocker); state.blocker = blocker; document.documentElement.appendChild(layer); state.layer = layer; state.attached = true; state.annotations.forEach(annotation => { if (annotation.element?.isConnected) replayElement(annotation.element); renderAnnotation(annotation); }); document.addEventListener('scroll', schedulePositionUpdate, true); window.addEventListener('resize', schedulePositionUpdate); window.visualViewport?.addEventListener('resize', schedulePositionUpdate); window.visualViewport?.addEventListener('scroll', schedulePositionUpdate); if (typeof ResizeObserver !== 'undefined') { state.resizeObserver = new ResizeObserver(schedulePositionUpdate); state.resizeObserver.observe(document.documentElement); state.annotations.forEach(annotation => annotation.element?.isConnected && state.resizeObserver.observe(annotation.element)); } schedulePositionUpdate(); };
   const detach = () => { if (!state.attached) return; closeEditor(); clearHover(); document.removeEventListener('scroll', schedulePositionUpdate, true); window.removeEventListener('resize', schedulePositionUpdate); window.visualViewport?.removeEventListener('resize', schedulePositionUpdate); window.visualViewport?.removeEventListener('scroll', schedulePositionUpdate); state.resizeObserver?.disconnect(); state.resizeObserver = null; if (state.animationFrame !== null) window.cancelAnimationFrame(state.animationFrame); state.animationFrame = null; state.layer?.remove(); state.layer = null; state.blocker = null; state.annotations.forEach(annotation => { annotation.marker = null; }); state.attached = false; };
-  const api = { scope, getSnapshot: snapshot, setOriginalViewEnabled: enabled => { if (enabled) restoreAll(); else replayAll(); return snapshot(); }, clear: () => { closeEditor(); state.annotations.forEach(annotation => annotation.marker?.remove()); state.annotations = []; state.nextNumber = 1; restoreAll(); state.baselineByElement.clear(); bumpRevision(); return snapshot(); }, suspend: () => { closeEditor(); restoreAll(); detach(); return snapshot(); }, resume: () => { attach(); return snapshot(); }, destroy: () => { api.clear(); detach(); delete window.__WEWORK_BROWSER_ANNOTATION__; } };
+  const openAt = (x, y) => { if (!Number.isFinite(x) || !Number.isFinite(y)) return false; attach(); const target = topPageElementAt(x, y); if (!target) return false; clearHover(); showEditor(target, null, { x, y }); return true; };
+  const api = { scope, getSnapshot: snapshot, openAt, setOriginalViewEnabled: enabled => { if (enabled) restoreAll(); else replayAll(); return snapshot(); }, clear: () => { closeEditor(); state.annotations.forEach(annotation => annotation.marker?.remove()); state.annotations = []; state.nextNumber = 1; restoreAll(); state.baselineByElement.clear(); bumpRevision(); return snapshot(); }, suspend: () => { closeEditor(); restoreAll(); detach(); return snapshot(); }, resume: () => { attach(); return snapshot(); }, destroy: () => { api.clear(); detach(); delete window.__WEWORK_BROWSER_ANNOTATION__; } };
   window.__WEWORK_BROWSER_ANNOTATION__ = api; attach(); return true;
 })();`
 }

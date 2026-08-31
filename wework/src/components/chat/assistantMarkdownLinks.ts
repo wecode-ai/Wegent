@@ -1,4 +1,5 @@
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { isWindowsDriveAbsolutePath } from '@/lib/workspace-paths'
 
 const ATTACHMENT_DOWNLOAD_PATH_PATTERN = /\/(?:api\/)?attachments\/(\d+)\/download(?:[?#].*)?$/
 
@@ -58,7 +59,9 @@ export function classifyMarkdownLink(href?: string): MarkdownLinkTarget {
   if (value.startsWith('file://')) {
     return { kind: 'file', ...splitMarkdownFileLineSuffix(localPathFromMarkdownImageSrc(value)) }
   }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return { kind: 'external' }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value) && !isWindowsDriveAbsolutePath(value)) {
+    return { kind: 'external' }
+  }
   return {
     kind: 'file',
     ...splitMarkdownFileLineSuffix(decodeMarkdownFilePath(value)),
@@ -138,7 +141,7 @@ export function isAuthenticatedAttachmentImageSrc(src: string): boolean {
 
 function isLocalImagePath(src: string): boolean {
   if (src.startsWith('file://')) return true
-  if (/^[a-zA-Z]:[\\/]/.test(src)) return true
+  if (isWindowsDriveAbsolutePath(src)) return true
 
   return src.startsWith('/') && !isAuthenticatedAttachmentImageSrc(src)
 }

@@ -8,11 +8,13 @@ import type {
 } from './capability-router.js'
 import {
   captureWebContentsDataUrl,
+  cpuLoadRatioBetween,
   registerAppUpdateCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
   registerRendererStorageCapabilities,
+  showElectronNotification,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
@@ -20,11 +22,69 @@ import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 
+describe('cpuLoadRatioBetween', () => {
+  test('calculates system utilization from cumulative CPU times', () => {
+    expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 130, total: 300 })).toBeCloseTo(
+      0.7
+    )
+    expect(cpuLoadRatioBetween({ idle: 100, total: 200 }, { idle: 100, total: 200 })).toBe(0)
+  })
+})
+
+describe('showElectronNotification', () => {
+  test('opens the targeted runtime task when the notification is clicked', () => {
+    const openRuntimeTask = vi.fn()
+    const listeners = new Map<string, () => void>()
+    const notification = {
+      once: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Task completed',
+        body: 'The reply is ready.',
+        taskAddressId: 'device-1:task-1',
+      },
+      openRuntimeTask,
+      () => notification
+    )
+    listeners.get('click')?.()
+
+    expect(notification.show).toHaveBeenCalledOnce()
+    expect(openRuntimeTask).toHaveBeenCalledWith('device-1:task-1')
+  })
+
+  test('does not add click navigation without a task target', () => {
+    const notification = {
+      once: vi.fn(),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Assigned',
+        body: 'A project task was assigned.',
+      },
+      vi.fn(),
+      () => notification
+    )
+
+    expect(notification.once).not.toHaveBeenCalled()
+    expect(notification.show).toHaveBeenCalledOnce()
+  })
+})
+
 function createWebContents(input: {
   captureDataUrl?: string
   captureEmpty?: boolean
   captureError?: Error
+  capturePending?: boolean
   debuggerData?: string
+  debuggerError?: Error
+  debuggerPending?: boolean
 }) {
   let debuggerAttached = false
   const debuggerSession = {
@@ -35,19 +95,25 @@ function createWebContents(input: {
       debuggerAttached = false
     }),
     isAttached: vi.fn(() => debuggerAttached),
-    sendCommand: vi.fn(async () => ({ data: input.debuggerData })),
-  }
-  const contents = {
-    capturePage: vi.fn(async () => {
-      if (input.captureError) throw input.captureError
-      return {
-        isEmpty: () => input.captureEmpty ?? false,
-        toDataURL: () => input.captureDataUrl ?? '',
-      }
+    sendCommand: vi.fn(async () => {
+      if (input.debuggerPending) return new Promise<never>(() => undefined)
+      if (input.debuggerError) throw input.debuggerError
+      return { data: input.debuggerData }
     }),
+  }
+  const capturePage = vi.fn(async () => {
+    if (input.capturePending) return new Promise<never>(() => undefined)
+    if (input.captureError) throw input.captureError
+    return {
+      isEmpty: () => input.captureEmpty ?? false,
+      toDataURL: () => input.captureDataUrl ?? '',
+    }
+  })
+  const contents = {
+    capturePage,
     debugger: debuggerSession,
   } as unknown as WebContents
-  return { contents, debuggerSession }
+  return { capturePage, contents, debuggerSession }
 }
 
 describe('captureWebContentsDataUrl', () => {
@@ -63,33 +129,94 @@ describe('captureWebContentsDataUrl', () => {
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
 
-  test('falls back to the debugger when capturePage returns an empty image', async () => {
-    const { contents, debuggerSession } = createWebContents({
-      captureEmpty: true,
+  test('can use debugger-only view capture without blocking on Electron capturePage', async () => {
+    const { capturePage, contents, debuggerSession } = createWebContents({
+      captureDataUrl: 'data:image/png;base64,native-capture',
       debuggerData: 'debugger-capture',
     })
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { debuggerOnly: true })).resolves.toBe(
       'data:image/png;base64,debugger-capture'
     )
     expect(debuggerSession.attach).toHaveBeenCalledOnce()
-    expect(debuggerSession.detach).toHaveBeenCalledOnce()
-  })
-
-  test('falls back to the debugger when Electron native capture throws', async () => {
-    const { contents, debuggerSession } = createWebContents({
-      captureError: new Error('UnknownVizError'),
-      debuggerData: 'debugger-after-native-error',
-    })
-
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
-      'data:image/png;base64,debugger-after-native-error'
-    )
     expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
       captureBeyondViewport: false,
       format: 'png',
-      fromSurface: true,
+      fromSurface: false,
     })
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
+  test('times out debugger-only capture and detaches the session', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        debuggerPending: true,
+      })
+
+      const capture = expect(
+        captureWebContentsDataUrl(contents, { debuggerOnly: true })
+      ).rejects.toThrow(
+        'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await capture
+      expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('reports both capture failures', async () => {
+    const { contents } = createWebContents({
+      captureError: new Error('UnknownVizError'),
+      debuggerError: new Error('DebuggerCaptureError'),
+    })
+
+    await expect(captureWebContentsDataUrl(contents)).rejects.toThrow(
+      'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
+    )
+  })
+
+  test('falls back to the debugger when Electron native capture hangs', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        capturePending: true,
+        debuggerData: 'debugger-after-native-timeout',
+      })
+
+      const capture = captureWebContentsDataUrl(contents)
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await expect(capture).resolves.toBe('data:image/png;base64,debugger-after-native-timeout')
+      expect(debuggerSession.sendCommand).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('fails within a bounded time when both screenshot backends hang', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        capturePending: true,
+        debuggerPending: true,
+      })
+
+      const capture = captureWebContentsDataUrl(contents)
+      const rejection = expect(capture).rejects.toThrow(
+        'Electron capturePage failed: Electron capturePage timed out after 10000ms; ' +
+          'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
+      )
+      await vi.advanceTimersByTimeAsync(20_000)
+
+      await rejection
+      expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
@@ -263,12 +390,15 @@ describe('registerDesktopServiceCapabilities', () => {
       openDevTools: vi.fn(),
       openLogDirectory: vi.fn(async () => undefined),
     }
+    const cleanupStaleTemporaryImages = vi.fn(async () => undefined)
     const expectedCapabilities = [
       'feedback.previewBundle',
       'feedback.confirmBundle',
       'feedback.discardBundle',
       'developer.openLogDirectory',
       'developer.openDevTools',
+      'maintenance.cleanupTemporaryImages',
+      'maintenance.getSystemPressure',
       'plugins.list',
       'plugins.start',
       'plugins.stop',
@@ -278,7 +408,7 @@ describe('registerDesktopServiceCapabilities', () => {
 
     registerDesktopServiceCapabilities(
       router,
-      { coreDshPlugins: () => coreDshPlugins, feedback, plugins },
+      { cleanupStaleTemporaryImages, coreDshPlugins: () => coreDshPlugins, feedback, plugins },
       developer
     )
 
@@ -327,6 +457,7 @@ describe('registerDesktopServiceCapabilities', () => {
     )
     await handlers.get('plugins.stop')?.({ pluginId: 'example' }, { principal: 'test' })
     await handlers.get('plugins.list')?.({}, { principal: 'test' })
+    await handlers.get('maintenance.cleanupTemporaryImages')?.({}, { principal: 'test' })
     await handlers.get('developer.openLogDirectory')?.({}, { principal: 'test' })
     await handlers.get('developer.openDevTools')?.({}, { principal: 'test' })
 
@@ -342,6 +473,7 @@ describe('registerDesktopServiceCapabilities', () => {
     })
     expect(plugins.stop).toHaveBeenCalledWith('example')
     expect(plugins.list).toHaveBeenCalledOnce()
+    expect(cleanupStaleTemporaryImages).toHaveBeenCalledOnce()
     expect(developer.openLogDirectory).toHaveBeenCalledOnce()
     expect(developer.openDevTools).toHaveBeenCalledOnce()
   })
@@ -363,6 +495,7 @@ describe('registerCoreDshPluginCapabilities', () => {
       uninstallCoreDshPlugin: vi.fn(async () => []),
     }
     const services = {
+      cleanupStaleTemporaryImages: vi.fn(async () => undefined),
       coreDshPlugins: () => coreDshPlugins,
       feedback: {} as FeedbackBundleManager,
       plugins: {} as WorkbenchPluginManager,

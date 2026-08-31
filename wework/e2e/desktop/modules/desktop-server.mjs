@@ -230,14 +230,20 @@ import {
   assert,
   createServer,
   join,
+  pathToFileURL,
   randomUUID,
   withTimeout,
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
+const CLOUD_STORED_USER_NAME = 'wework-desktop-e2e-cloud-user'
+const CLOUD_AUTHENTICATED_USER_NAME = 'admin'
+const CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID = 'wework-cloud-e2e-identity-tool-call'
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
 const PLUGIN_WORKSPACE_PUBLISH_COMMAND_PREFIX = 'Run this exact command: '
 const PLUGIN_WORKSPACE_RESULT_MARKER = '[WEGENT_PLUGIN_RESULT]'
+const EMBEDDED_BROWSER_SETUP_SEARCH_ID = 'wework-embedded-browser-setup-search'
+const EMBEDDED_BROWSER_SETUP_OPEN_ID = 'wework-embedded-browser-setup-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
   'getAttribute',
@@ -264,6 +270,31 @@ function findNestedString(value, predicate) {
     if (match) return match
   }
   return null
+}
+
+function toolOutputText(request, callId) {
+  const findOutput = value => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const output = findOutput(item)
+        if (output != null) return output
+      }
+      return null
+    }
+    if (!value || typeof value !== 'object') return null
+    if (
+      (value.type === 'function_call_output' || value.type === 'custom_tool_call_output') &&
+      value.call_id === callId
+    ) {
+      return typeof value.output === 'string' ? value.output : JSON.stringify(value.output)
+    }
+    for (const item of Object.values(value)) {
+      const output = findOutput(item)
+      if (output != null) return output
+    }
+    return null
+  }
+  return findOutput(request.input ?? [])
 }
 
 function pluginWorkspacePublishCommand(body) {
@@ -702,6 +733,7 @@ class DesktopE2EServer {
         'pasted_zip_attachment',
         'pasted_workspace_paths',
         'dropped_workspace_paths',
+        'workspace_selection_streaming',
         'memory',
         'concurrent_memory',
         'side_chat_attachment',
@@ -1078,7 +1110,7 @@ class DesktopE2EServer {
     if (request.method === 'GET' && url.pathname === '/api/users/me') {
       json(response, 200, {
         id: 9001,
-        user_name: 'wework-desktop-e2e-cloud-user',
+        user_name: CLOUD_STORED_USER_NAME,
         email: 'desktop-e2e@wework.local',
       })
       return
@@ -1850,6 +1882,21 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'connector_auth_unmatched_resume') {
+      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
+        'The unmatched connector auth resume scenario did not receive its trigger prompt'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (JSON.stringify(body).includes(PLUGIN_CREATOR_PROMPT)) {
       this.writeSse(response, [
         responseCreated(responseId),
@@ -2134,9 +2181,68 @@ class DesktopE2EServer {
 
     if (this.scenario === 'embedded_browser_setup') {
       this.recordScenarioRequest('embedded_browser_setup', modelRequest)
+      const requestNumber = this.scenarioRequests.get('embedded_browser_setup').length
+      const serialized = JSON.stringify(body)
       assert.ok(
-        JSON.stringify(body).includes(EMBEDDED_BROWSER_SETUP_PROMPT),
+        serialized.includes(EMBEDDED_BROWSER_SETUP_PROMPT),
         'The embedded-browser setup request lost its local-task prompt'
+      )
+
+      if (requestNumber === 1) {
+        const search = selectToolSearch(body, 'Wework browser open')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(EMBEDDED_BROWSER_SETUP_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_SEARCH_ID),
+          true,
+          'The embedded-browser tool search output did not return to the model'
+        )
+        const searchOutput = toolOutputText(body, EMBEDDED_BROWSER_SETUP_SEARCH_ID)
+        assert.ok(searchOutput, 'The embedded-browser tool search output was empty')
+        const browserToolAvailable = searchOutput.includes('"name":"wework_browser"')
+        if (!browserToolAvailable) {
+          this.writeSse(response, [
+            responseCreated(responseId),
+            assistantMessage(EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT),
+            responseCompleted(responseId),
+          ])
+          return
+        }
+        const browserTool = selectMcpTool(body, 'wework_browser', 'browser_open', {
+          url: new URL('/embedded-browser-agent-fixture', this.url).href,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...namespacedFunctionCall(
+            EMBEDDED_BROWSER_SETUP_OPEN_ID,
+            browserTool.namespace,
+            browserTool.name,
+            browserTool.arguments
+          ),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 3, `Unexpected embedded-browser setup request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, EMBEDDED_BROWSER_SETUP_OPEN_ID),
+        true,
+        'The embedded-browser open output did not return to the model'
+      )
+      assert.ok(
+        findNestedString(
+          body,
+          value => value.includes('"ok": true') || value.includes('\\"ok\\": true')
+        ),
+        'The real Codex browser_open call did not complete successfully'
       )
       this.writeSse(response, [
         responseCreated(responseId),
@@ -2375,12 +2481,16 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_TASK_PROMPT),
         'The real cloud Codex request did not contain the UI task prompt'
       )
-      const tool = selectShellTool(body, this.cloudWorkspacePath)
+      const tool = selectShellToolCommand(
+        body,
+        `printf '%s' "$WEGENT_SKILL_USER_NAME"`,
+        this.cloudWorkspacePath
+      )
       const patch = selectCloudApplyPatchTool(body)
       this.cloudModelStage = 'awaiting_tool_output'
       this.writeSse(response, [
         responseCreated(responseId),
-        ...functionCall('wework-cloud-e2e-tool-call', tool.name, tool.arguments),
+        ...functionCall(CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID, tool.name, tool.arguments),
         customToolCall('wework-cloud-e2e-apply-patch', 'apply_patch', patch),
         responseCompleted(responseId),
       ])
@@ -2393,6 +2503,12 @@ class DesktopE2EServer {
         requestContainsToolOutput(body),
         true,
         'The real cloud Codex request did not report its tool output to the model service'
+      )
+      const identityToolOutput = toolOutputText(body, CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID) ?? ''
+      assert.equal(
+        identityToolOutput.trim().endsWith(`Output:\n${CLOUD_AUTHENTICATED_USER_NAME}`),
+        true,
+        'The real cloud executor did not expose the authenticated Wework user identity'
       )
       this.cloudModelStage = 'complete'
       this.writeSse(response, [
@@ -2745,6 +2861,47 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'workspace_selection_streaming') {
+      this.recordScenarioRequest('workspace_selection_streaming', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes('WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'),
+        'The real Codex request did not contain the workspace-selection streaming prompt'
+      )
+      const stream = streamingTextEvents(
+        responseId,
+        Array.from(
+          { length: 40 },
+          (_, index) => `Workspace selection background update ${index + 1}.\n`
+        ).join('')
+      )
+      response.writeHead(200, {
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+      })
+      response.write(createSse(stream.start))
+      let offset = 0
+      for (const delta of stream.chunks) {
+        response.write(
+          createSse([
+            {
+              type: 'response.output_text.delta',
+              item_id: stream.itemId,
+              output_index: 0,
+              content_index: 0,
+              delta,
+              offset,
+            },
+          ])
+        )
+        offset += [...delta].length
+        await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      }
+      response.end(createSse(stream.finish))
+      return
+    }
+
     if (this.scenario === 'window_lifecycle') {
       this.recordScenarioRequest('window_lifecycle', modelRequest)
       assert.ok(
@@ -3048,21 +3205,6 @@ class DesktopE2EServer {
       return
     }
 
-    if (this.scenario === 'connector_auth_unmatched_resume') {
-      this.recordScenarioRequest('connector_auth_unmatched_resume', modelRequest)
-      const requestText = JSON.stringify(body)
-      assert.ok(
-        requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
-        'The unmatched connector auth resume scenario did not receive its trigger prompt'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     if (this.scenario === 'skill_mention_display') {
       this.recordScenarioRequest('skill_mention_display', modelRequest)
       const requestText = JSON.stringify(body)
@@ -3165,7 +3307,7 @@ class DesktopE2EServer {
         assistantMessage(
           FILE_PANEL_ANCHOR_RESPONSE.replace(
             `${FILE_PANEL_LINK_NAME.replaceAll(' ', '%20')}:1`,
-            `${encodeURI(`${this.workspacePath}/${FILE_PANEL_LINK_NAME}`)}:1`
+            `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
         responseCompleted(responseId),
@@ -3358,9 +3500,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'pasted_workspace_paths') {
       this.recordScenarioRequest('pasted_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, PASTED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, PASTED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The pasted folder reference was not forwarded to the real Codex request'
@@ -3385,9 +3527,9 @@ class DesktopE2EServer {
 
     if (this.scenario === 'dropped_workspace_paths') {
       this.recordScenarioRequest('dropped_workspace_paths', modelRequest)
-      const requestText = JSON.stringify(body)
-      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME)
-      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME)
+      const requestText = JSON.stringify(body).replaceAll('\\', '/')
+      const folderPath = join(this.workspacePath, DROPPED_PATH_FOLDER_NAME).replaceAll('\\', '/')
+      const filePath = join(this.workspacePath, DROPPED_PATH_FILE_NAME).replaceAll('\\', '/')
       assert.ok(
         requestText.includes(folderPath),
         'The dropped folder reference was not forwarded to the real Codex request'

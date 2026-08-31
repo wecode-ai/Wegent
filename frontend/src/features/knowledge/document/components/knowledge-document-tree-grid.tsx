@@ -4,6 +4,8 @@
 
 'use client'
 
+import { ExternalDocumentBadge } from './ExternalDocumentBadge'
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   flexRender,
@@ -21,20 +23,18 @@ import {
   CloudDownload,
   Download,
   ExternalLink,
-  FileText,
   Folder,
   FolderInput,
   FolderOpen,
   FolderPlus,
-  Globe,
   Pencil,
   RotateCcw,
-  Table2,
   Trash2,
 } from 'lucide-react'
 
 import { downloadAttachment, isImageExtension, isVideoFileName } from '@/apis/attachments'
 import { Badge } from '@/components/ui/badge'
+import { DocumentFormatIcon } from '@/components/icons/DocumentFormatIcon'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/hooks/use-toast'
@@ -371,13 +371,10 @@ export function KnowledgeDocumentTreeGrid({
                 style={indent > 0 ? { paddingLeft: `${indent}px` } : undefined}
               >
                 {expandAllFolders && <div className="h-6 w-6 flex-shrink-0" />}
-                {isTable ? (
-                  <Table2 className="w-4 h-4 text-primary flex-shrink-0" />
-                ) : isWeb ? (
-                  <Globe className="w-4 h-4 text-primary flex-shrink-0" />
-                ) : (
-                  <FileText className="w-4 h-4 text-primary flex-shrink-0" />
-                )}
+                <DocumentFormatIcon
+                  extension={document.file_extension}
+                  sourceType={document.source_type}
+                />
                 <TooltipProvider>
                   <Tooltip delayDuration={300}>
                     <TooltipTrigger asChild>
@@ -530,6 +527,9 @@ export function KnowledgeDocumentTreeGrid({
             )
           }
           const document = node.document
+          if (document.source_type === 'external') {
+            return <ExternalDocumentBadge />
+          }
           if (document.source_type === 'table') {
             return (
               <Badge
@@ -761,6 +761,7 @@ export function KnowledgeDocumentTreeGrid({
           if (!(canManage?.(document) ?? true)) return null
           const isWeb = document.source_type === 'web'
           const isTable = document.source_type === 'table'
+          const isExternal = document.source_type === 'external'
           const isNotIndexed = document.index_status === 'not_indexed'
           const isIndexFailed = document.index_status === 'failed'
           const isPendingConversion = document.index_status === 'pending_conversion'
@@ -771,12 +772,25 @@ export function KnowledgeDocumentTreeGrid({
             document.index_status === 'indexing' ||
             isConverting ||
             isPendingConversion
-          const canReindex =
-            ragConfigured &&
-            !isTable &&
-            !!onReindex &&
-            (isIndexFailed || isNotIndexed) &&
-            !showIndexingState
+          // One retry control whose identity depends on the document: failed
+          // external documents fetch the provider's latest body through the
+          // import-retry entry, while regular documents reindex their content.
+          let retryAction: { testId: string; label: string } | null = null
+          if (onReindex && !showIndexingState) {
+            if (isExternal) {
+              if (isIndexFailed) {
+                retryAction = {
+                  testId: `retry-import-document-${document.id}`,
+                  label: t('document.document.retryImport'),
+                }
+              }
+            } else if (ragConfigured && !isTable && (isIndexFailed || isNotIndexed)) {
+              retryAction = {
+                testId: `reindex-document-${document.id}`,
+                label: t('document.document.reindex'),
+              }
+            }
+          }
           const normalizedExt = `.${(document.file_extension || '').replace(/^\.+/, '')}`
           const isMultimodalDoc = isVideoFileName(document.name) || isImageExtension(normalizedExt)
           // Gate on source_type=file + attachment_id like showDownload: a table
@@ -795,7 +809,6 @@ export function KnowledgeDocumentTreeGrid({
             refreshingDocId === document.id
               ? t('document.upload.web.refetching')
               : t('document.upload.web.refetch')
-          const reindexLabel = t('document.document.reindex')
           const downloadLabel = t('document.document.download')
           const deleteLabel = t('common:actions.delete')
 
@@ -836,16 +849,16 @@ export function KnowledgeDocumentTreeGrid({
                   />
                 </button>
               )}
-              {canReindex && (
+              {retryAction && (
                 <button
                   className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
                   onClick={event => {
                     event.stopPropagation()
                     onReindex?.(document)
                   }}
-                  title={reindexLabel}
-                  aria-label={reindexLabel}
-                  data-testid={`reindex-document-${document.id}`}
+                  title={retryAction.label}
+                  aria-label={retryAction.label}
+                  data-testid={retryAction.testId}
                 >
                   <RotateCcw className="w-4 h-4" />
                 </button>
@@ -1050,6 +1063,7 @@ export function KnowledgeDocumentTreeGrid({
               : `bg-base hover:bg-surface group ${onViewDetail ? 'cursor-pointer' : ''}`
           }`}
           style={{ gridTemplateColumns }}
+          data-testid={node.kind === 'document' ? `document-row-${node.document.id}` : undefined}
           onClick={() => {
             if (canActivateFolder) {
               onActivateFolder?.(node.folderId)

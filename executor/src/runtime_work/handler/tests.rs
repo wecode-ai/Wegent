@@ -7,12 +7,28 @@ use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
 #[test]
+fn codex_runtime_proxy_defaults_to_initialized_without_proxy() {
+    let config = CodexRuntimeProxyConfig::default();
+
+    assert!(config.initialized);
+    assert_eq!(config.proxy_url, None);
+}
+
+#[test]
 fn defaults_to_ten_parallel_runtime_tasks() {
     assert_eq!(
         RuntimeSettings::default().max_concurrent_tasks,
         DEFAULT_MAX_CONCURRENT_TASKS
     );
     assert_eq!(DEFAULT_MAX_CONCURRENT_TASKS, 10);
+}
+
+#[test]
+fn restore_startup_concurrency_defaults_to_two_without_reducing_runtime_capacity() {
+    assert_eq!(normalized_restore_startup_concurrency(None, 10), 2);
+    assert_eq!(normalized_restore_startup_concurrency(Some(8), 10), 8);
+    assert_eq!(normalized_restore_startup_concurrency(Some(20), 10), 10);
+    assert_eq!(normalized_restore_startup_concurrency(Some(0), 10), 1);
 }
 
 #[test]
@@ -72,6 +88,40 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
         .filter_map(Value::as_str)
         .collect::<HashSet<_>>();
     assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
+}
+
+#[tokio::test]
+async fn default_work_item_binding_uses_the_handler_store_path() {
+    let root = temp_runtime_work_index_path("default-work-item-store").with_extension("directory");
+    let database_path = root.join("tasks.sqlite");
+    let handler = RuntimeWorkRpcHandler {
+        task_store_path: Arc::new(database_path.clone()),
+        ..RuntimeWorkRpcHandler::new("device-1", "/bin/false")
+    };
+
+    handler.track_default_work_item_async(
+        "runtime-task-1".to_owned(),
+        "Executor-owned Issue".to_owned(),
+        "Created after runtime acceptance".to_owned(),
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if database_path.exists() {
+            let store = LocalTaskStore::open(&database_path).unwrap();
+            if let Ok(binding) = store.find_system_task_binding("device-1", "runtime-task-1") {
+                assert_eq!(binding.task_title.as_deref(), Some("Executor-owned Issue"));
+                break;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "executor-owned binding was not written to the handler store"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
@@ -2111,6 +2161,39 @@ fn finishing_execution_removes_its_codex_turn_context() {
     assert!(handler.active_codex_turn("task-1").is_none());
 }
 
+#[tokio::test]
+async fn side_source_waits_for_the_running_source_turn_before_forking() {
+    let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    let mut source = RuntimeTaskLink::new_pending(
+        "source-task".to_owned(),
+        "/tmp/project".to_owned(),
+        "Source task".to_owned(),
+    );
+    source.thread_id = Some("source-thread".to_owned());
+    handler.upsert_local_task(source);
+    let execution_id = start_test_execution(&handler, "source-task");
+    let waiting_handler = handler.clone();
+    let wait = tokio::spawn(async move {
+        waiting_handler
+            .wait_for_running_side_source_turn("source-thread")
+            .await;
+    });
+
+    tokio::task::yield_now().await;
+    assert!(!wait.is_finished());
+    handler.record_active_codex_turn(
+        "source-task",
+        execution_id,
+        "source-thread".to_owned(),
+        "source-turn".to_owned(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), wait)
+        .await
+        .expect("side source readiness should unblock after turn/start")
+        .expect("side source readiness task should not panic");
+}
+
 #[test]
 fn stale_provider_turn_cannot_replace_the_current_execution() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -2881,6 +2964,54 @@ fn user_message_presentation_preserves_attachment_only_messages() {
 }
 
 #[test]
+fn user_message_presentation_replaces_transient_blob_preview_with_local_path() {
+    let presentation = user_message_presentation(&json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "message": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    }))
+    .expect("an image attachment should create presentation metadata");
+
+    assert_eq!(
+        presentation["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
+    );
+}
+
+#[test]
+fn user_message_presentation_preserves_preview_without_usable_local_path() {
+    for local_path in [Value::Null, Value::String(String::new())] {
+        let presentation = user_message_presentation(&json!({
+            "clientUserMessageId": "runtime-local-pane-1",
+            "message": "Inspect this image",
+            "attachments": [{
+                "id": -1,
+                "filename": "image.png",
+                "file_size": 18,
+                "mime_type": "image/png",
+                "file_extension": ".png",
+                "local_path": local_path,
+                "local_preview_url": "https://example.test/image.png"
+            }]
+        }))
+        .expect("an image attachment should create presentation metadata");
+
+        assert_eq!(
+            presentation["attachments"][0]["local_preview_url"],
+            "https://example.test/image.png"
+        );
+    }
+}
+
+#[test]
 fn legacy_thread_preview_restores_filtered_initial_user_message() {
     let thread = json!({
         "id": "thread-1",
@@ -3019,6 +3150,37 @@ fn transcript_restores_attachment_presentation_over_internal_provider_context() 
     assert_eq!(
         provider_messages[0]["attachments"][0]["filename"],
         "pasted-feedback.zip"
+    );
+}
+
+#[test]
+fn transcript_repairs_persisted_blob_preview_when_local_path_is_available() {
+    let mut provider_messages = vec![json!({
+        "id": "provider-user",
+        "clientUserMessageId": "runtime-local-pane-1",
+        "role": "user",
+        "content": "Inspect this image"
+    })];
+    let presentations = vec![json!({
+        "clientUserMessageId": "runtime-local-pane-1",
+        "content": "Inspect this image",
+        "attachments": [{
+            "id": -1,
+            "filename": "image.png",
+            "file_size": 18,
+            "mime_type": "image/png",
+            "file_extension": ".png",
+            "status": "ready",
+            "local_path": "/tmp/image.png",
+            "local_preview_url": "blob:http://127.0.0.1:53328/revoked"
+        }]
+    })];
+
+    attach_user_message_presentations(&mut provider_messages, presentations);
+
+    assert_eq!(
+        provider_messages[0]["attachments"][0]["local_preview_url"],
+        "/tmp/image.png"
     );
 }
 

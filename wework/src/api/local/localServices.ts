@@ -536,6 +536,17 @@ interface AutomationIpcOptions extends RuntimeWorkIpcOptions {
   prepareRuntimeModel: (data: RuntimeModelPrepareRequest) => Promise<boolean>
 }
 
+function runtimeExecutionUser(
+  options: RuntimeWorkIpcOptions,
+  transportLabel: 'Local' | 'Cloud'
+): User {
+  if (options.user) return options.user
+  if (transportLabel === 'Cloud') {
+    throw new Error('Cloud runtime user identity is required')
+  }
+  return LOCAL_USER
+}
+
 function cloudConnectionRequired(name: string): never {
   throw new Error(`${name} requires cloud connection`)
 }
@@ -2247,7 +2258,7 @@ export function createRuntimeWorkApiFromIpc(
   options: RuntimeWorkIpcOptions = {}
 ) {
   const transportLabel = options.transportLabel ?? 'Local'
-  const user = options.user ?? LOCAL_USER
+  const user = runtimeExecutionUser(options, transportLabel)
   const requireLocalCodexCatalog = options.syncConfiguredModelCatalog !== true
   const resolveDeviceId = options.resolveDeviceId ?? (() => getDefaultDeviceId())
   const normalizeDeviceRecord = options.normalizeDeviceRecord ?? normalizeLocalDeviceRecord
@@ -3345,6 +3356,8 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   }
 
   const getLocalDeviceId = async () => localDeviceIdFromStatus(await ensureStatus())
+  const getDeviceCommandLocalDeviceId = async () =>
+    localDeviceIdFromStatus(lastStatus ?? (await ensureStatus()))
 
   const executeCommand = async (
     deviceId: string,
@@ -3361,7 +3374,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
   ) =>
     request<DeviceCommandResponse>(
       'device.execute_command',
-      normalizeLocalDeviceRecord({ deviceId, ...data }, await getLocalDeviceId())
+      normalizeLocalDeviceRecord({ deviceId, ...data }, await getDeviceCommandLocalDeviceId())
     )
 
   const deviceApi: WorkbenchServices['deviceApi'] = {

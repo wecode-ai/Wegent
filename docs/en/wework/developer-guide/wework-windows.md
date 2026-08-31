@@ -32,6 +32,13 @@ bundled plugins), Codex/DWS binaries, the Node runtime, and the Harness runtime
 JSONL with the Executor sidecar through child process stdin/stdout, without a
 Unix domain socket or fixed TCP port.
 
+In development the script builds the renderer output
+(`wework/dsh/app-wework/web`), starts a Vite watch build, and serves the
+running desktop app from the latest build through
+`WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` with automatic reload when the
+build changes, matching `dev-mac-app.sh`. Branch switches and renderer edits
+therefore take effect without manually syncing packaged plugin artifacts.
+
 Runtime and Executor build caches default to `%LOCALAPPDATA%\wegent\` (override
 with `WEWORK_DEV_CACHE_ROOT` or `WEGENT_CARGO_TARGET_ROOT`); the first
 preparation is slow and later runs are incremental. Pass
@@ -69,6 +76,26 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --dir wework/electron build:release
 ```
+
+Build the native desktop E2E application through the shared entrypoint:
+
+```powershell
+$env:CI = "true"
+pnpm --filter wework ai:verify:electron:build
+```
+
+This command prepares Electron, Codex, DWS, and the Executor sidecar, then
+produces a native application for the current operating system. On Windows the
+result is `wework/electron/release/WeWork-win32-x64/WeWork.exe`; a Linux or
+macOS package is not an equivalent substitute.
+
+`.github/workflows/wework-e2e.yml` builds this native application on
+`windows-latest` and runs Windows Desktop Core E2E with the same Core shard
+matrix used by Linux. A complete regression runs all 17 Core shards. When path
+classification selects only specific checkpoints, both platforms still run the
+same selected shards. Windows path, drive-letter, UNC, named-pipe, and `.exe`
+sidecar behavior must be verified by this Windows job and cannot be inferred
+from another platform passing.
 
 `.github/workflows/wework-app.yml` creates the signed installer, Electron YAML
 update manifest, and legacy Tauri JSON/signature bridge on `windows-latest`.

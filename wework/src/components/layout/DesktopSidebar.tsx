@@ -80,6 +80,7 @@ import {
   useRuntimeTaskLifecycleStoreSnapshot,
 } from '@/features/workbench/runtimeTaskLifecycle'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import type { CloudConnectionStatus } from '@/features/cloud-connection/cloudConnectionStorage'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { DshSidebarNavigationSurface } from '@/features/dsh-runtime/DshSidebarNavigationSurface'
 import { prefetchDshSidebarNavigation } from '@/features/dsh-runtime/dshSidebarNavigation'
@@ -1026,7 +1027,7 @@ function getImNotificationSessionLabel(
 function getGlobalImNotificationTitle(
   t: ReturnType<typeof useTranslation>['t'],
   settings: RuntimeIMNotificationSettingsResponse | null | undefined,
-  cloudStatus?: 'disconnected' | 'connecting' | 'connected' | 'expired' | 'error'
+  cloudStatus?: CloudConnectionStatus
 ): string {
   if (cloudStatus === 'disconnected') {
     return t(
@@ -1040,7 +1041,7 @@ function getGlobalImNotificationTitle(
       '登录云端后可开启离开电脑提醒'
     )
   }
-  if (cloudStatus === 'connecting') {
+  if (cloudStatus === 'restoring' || cloudStatus === 'connecting') {
     return t('workbench.cloud_connection_connecting', '正在连接云端')
   }
 
@@ -1100,7 +1101,7 @@ function GlobalImNotificationBell({
   }, [menuContainerRef])
   const targetLabel = getImNotificationSessionLabel(imNotificationSettings)
   const enabled = Boolean(imNotificationSettings?.global.enabled)
-  const connecting = cloud.status === 'connecting'
+  const connecting = cloud.status === 'restoring' || cloud.status === 'connecting'
   const requiresCloudLogin = !cloud.isConnected
   const needsSession = cloud.isConnected && !targetLabel
   const notifying = enabled && cloud.isConnected && Boolean(targetLabel)
@@ -1253,7 +1254,7 @@ function GlobalImNotificationBell({
                   type="button"
                   data-testid="sidebar-global-im-notification-settings-button"
                   onClick={openSessionSettings}
-                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.away_im_reminder_change_session', '更换会话')}
                 </button>
@@ -1715,7 +1716,10 @@ function RuntimeTaskRow({
                 ? 'page'
                 : undefined
           }
-          onClick={handleOpen}
+          onClick={event => {
+            if (event.detail > 1) return
+            handleOpen()
+          }}
           onContextMenu={event => {
             event.preventDefault()
             event.stopPropagation()

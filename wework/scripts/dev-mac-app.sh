@@ -10,6 +10,8 @@ EXECUTOR_ISOLATION="false"
 ELECTRON_ARGS=()
 ISOLATED_EXECUTOR_HOME=""
 MANAGED_SOURCE_EXECUTOR="false"
+MANAGED_DWS_BINARY="false"
+MANAGED_HARNESS_RUNTIME="false"
 WEWORK_APP_WATCH_PID=""
 WEWORK_APP_WATCH_READY_FILE=""
 
@@ -31,8 +33,11 @@ Options:
 Environment:
   VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
   WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
+  WEWORK_APP_IDENTIFIER            Application identity. Defaults to one isolated by worktree.
   WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
+  WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to ~/Library/Caches/wegent.
   WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
+  WEWORK_DEV_COMPONENT_RESOURCES   Component links. Defaults to the worktree dependency cache.
   WEWORK_DEV_CODEX_BINARY          Codex binary. Defaults to the repository-locked binary.
   WEWORK_DEV_DWS_BINARY            DWS binary. Defaults to the repository-prepared binary.
   WEWORK_DRY_RUN=1                 Print the resolved launch configuration without starting.
@@ -161,6 +166,7 @@ export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
 export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
 WEWORK_DEV_INSTANCE_ID="$(build_dev_instance_id)"
+export WEWORK_APP_IDENTIFIER="${WEWORK_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID}"
 export WEWORK_USER_DATA_DIR="${WEWORK_USER_DATA_DIR:-$HOME/Library/Application Support/io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID}"
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_backend_base_url)}"
 export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
@@ -177,7 +183,16 @@ else
     cargo_target_binary_path "$PROJECT_DIR/executor" debug wegent-executor
   )"
 fi
-export WEWORK_HARNESS_RUNTIME_ROOT="${WEWORK_DEV_HARNESS_RUNTIME_ROOT:-$WEWORK_DIR/node_modules/.cache/harness-runtime-dev}"
+export WEWORK_DEV_CACHE_ROOT="${WEWORK_DEV_CACHE_ROOT:-$HOME/Library/Caches/wegent/wework-dev}"
+export WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT="${WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT:-$WEWORK_DEV_CACHE_ROOT/harness-runtime}"
+if [ -n "${WEWORK_DEV_HARNESS_RUNTIME_ROOT:-}" ]; then
+  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DEV_HARNESS_RUNTIME_ROOT"
+else
+  export WEWORK_HARNESS_RUNTIME_ROOT="$WEWORK_DIR/node_modules/.cache/harness-runtime-dev"
+  MANAGED_HARNESS_RUNTIME="true"
+fi
+export WEWORK_COMPONENT_RESOURCES_ROOT="${WEWORK_DEV_COMPONENT_RESOURCES:-$WEWORK_DIR/node_modules/.cache/wework-electron-dev-resources}"
+export WEWORK_CORE_PLUGIN_ROOT="$WEWORK_COMPONENT_RESOURCES_ROOT/wework-core-plugins"
 export WEWORK_APP_HOT_RELOAD="1"
 export WEWORK_APP_WEB_ROOT="$WEWORK_DIR/dsh/app-wework/web"
 
@@ -186,7 +201,12 @@ if [ -n "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
 else
   export CODEX_BINARY_PATH="$WEWORK_DIR/resources/binaries/codex/$MACOS_TARGET/vendor/$MACOS_TARGET/bin/codex"
 fi
-export DWS_BINARY_PATH="${WEWORK_DEV_DWS_BINARY:-$WEWORK_DIR/resources/binaries/dws-$MACOS_TARGET}"
+if [ -n "${WEWORK_DEV_DWS_BINARY:-}" ]; then
+  export DWS_BINARY_PATH="$WEWORK_DEV_DWS_BINARY"
+else
+  export DWS_BINARY_PATH="$WEWORK_DIR/resources/binaries/dws-$MACOS_TARGET"
+  MANAGED_DWS_BINARY="true"
+fi
 
 if [ "$EXECUTOR_ISOLATION" = "true" ]; then
   ISOLATED_EXECUTOR_HOME="$(mktemp -d "${TMPDIR:-/tmp}/wework-dev-executor.XXXXXX")"
@@ -198,12 +218,16 @@ print_configuration() {
   echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
   echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
   echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_APP_IDENTIFIER=$WEWORK_APP_IDENTIFIER"
   echo "  WEWORK_USER_DATA_DIR=$WEWORK_USER_DATA_DIR"
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
   echo "  WEWORK_EXECUTOR_PATH=$WEWORK_EXECUTOR_PATH"
   echo "  WEGENT_EXECUTOR_BINARY=${WEGENT_EXECUTOR_BINARY:-<managed by command>}"
   echo "  WEGENT_EXECUTOR_HOME=${WEGENT_EXECUTOR_HOME:-<release app default>}"
+  echo "  WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT=$WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT"
   echo "  WEWORK_HARNESS_RUNTIME_ROOT=$WEWORK_HARNESS_RUNTIME_ROOT"
+  echo "  WEWORK_COMPONENT_RESOURCES_ROOT=$WEWORK_COMPONENT_RESOURCES_ROOT"
+  echo "  WEWORK_CORE_PLUGIN_ROOT=$WEWORK_CORE_PLUGIN_ROOT"
   echo "  CODEX_BINARY_PATH=$CODEX_BINARY_PATH"
   echo "  DWS_BINARY_PATH=$DWS_BINARY_PATH"
 }
@@ -214,7 +238,7 @@ if [ "${WEWORK_DRY_RUN:-0}" = "1" ]; then
 fi
 
 cd "$WEWORK_DIR"
-pnpm run prepare:electron
+node "$SCRIPT_DIR/prepare-dev-dependencies.mjs"
 if [ ! -f resources/icons/32x32.png ]; then
   echo "Error: Electron development icons are unavailable." >&2
   exit 1
@@ -224,9 +248,14 @@ if [ ! -f resources/bundled-plugins/wework-personal/.agents/plugins/marketplace.
   exit 1
 fi
 if [ -z "${WEWORK_DEV_CODEX_BINARY:-}" ]; then
-  WEWORK_CODEX_TARGET="$MACOS_TARGET" pnpm run prepare:codex
+  WEWORK_CODEX_TARGET="$MACOS_TARGET" node "$SCRIPT_DIR/prepare-codex-binary.mjs"
 fi
-WEWORK_DWS_TARGET="$MACOS_TARGET" pnpm run prepare:dws
+if [ "$MANAGED_DWS_BINARY" = "true" ]; then
+  WEWORK_DWS_TARGET="$MACOS_TARGET" node "$SCRIPT_DIR/prepare-dws-binary.mjs"
+fi
+if [ "$MANAGED_HARNESS_RUNTIME" = "true" ]; then
+  node "$SCRIPT_DIR/prepare-harness-runtime.mjs" --materialize
+fi
 
 if [ "$MANAGED_SOURCE_EXECUTOR" = "true" ]; then
   cargo build --manifest-path "$PROJECT_DIR/executor/Cargo.toml" --bin wegent-executor
@@ -243,8 +272,17 @@ if [ ! -x "$DWS_BINARY_PATH" ]; then
   echo "Error: DWS binary is not executable: $DWS_BINARY_PATH" >&2
   exit 1
 fi
-WEWORK_EXECUTOR_PROFILE=debug pnpm --dir electron prepare:package
-export WEWORK_COMPONENT_RESOURCES_ROOT="$WEWORK_DIR/electron/resources"
+node "$SCRIPT_DIR/prepare-dev-component-resources.mjs"
+if ! WEWORK_CORE_PLUGINS_SHA256="$(
+  node -e "
+    const manifest = JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8'))
+    process.stdout.write(manifest.components.weworkCorePlugins.sha256)
+  " "$WEWORK_COMPONENT_RESOURCES_ROOT/components.json"
+)"; then
+  echo "Error: Failed to read core plugin checksum from component resources" >&2
+  exit 1
+fi
+export WEWORK_CORE_PLUGINS_SHA256
 WEWORK_APP_WATCH_READY_FILE="$(mktemp "${TMPDIR:-/tmp}/wework-app-watch.XXXXXX")"
 rm -f "$WEWORK_APP_WATCH_READY_FILE"
 export WEWORK_APP_WATCH_READY_FILE
@@ -273,8 +311,10 @@ fi
 unset ELECTRON_RUN_AS_NODE
 unset WEWORK_NODE_PATH
 unset WEWORK_NODE_RUNTIME_KIND
+pnpm --dir electron run build
+ELECTRON_BINARY="$WEWORK_DIR/electron/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
 if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
-  pnpm --dir electron dev -- "${ELECTRON_ARGS[@]}"
+  "$ELECTRON_BINARY" "$WEWORK_DIR/electron" "${ELECTRON_ARGS[@]}"
 else
-  pnpm --dir electron dev
+  "$ELECTRON_BINARY" "$WEWORK_DIR/electron"
 fi

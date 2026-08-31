@@ -248,7 +248,7 @@ export function CloudConnectionDialog({
               </div>
             </details>
 
-            {cloud.status === 'connecting' && (
+            {['restoring', 'connecting'].includes(cloud.status) && (
               <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-secondary">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 {t('workbench.cloud_connection_connecting', '正在连接云端')}

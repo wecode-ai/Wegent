@@ -33,6 +33,14 @@ Codex 任务通过 `codex app-server --stdio` 的 JSON-RPC 协议发现和控制
 
 `localTaskId` 是 Wegent 侧本地任务身份，不等同于底层 runtime 的 provider 会话 id。前端、Backend 和 executor 需要传递 provider 会话定位信息时必须使用 opaque `runtimeHandle`，例如 Codex `threadId`、Claude Code `sessionId` 或 OpenCode `sessionId`，也可以使用明确的 `providerSessionId`。`runtime.tasks.transcript` 不能在缺少 LocalTask 索引映射或 `runtimeHandle` 时把 `localTaskId` 当成 provider 会话 id 读取；这种仍在创建中的 optimistic 任务应先返回空本地 transcript，等待 create/link 完成后再读取真实运行时会话。
 
+### “我的任务”关联与生命周期
+
+非临时 LocalTask 成功创建并进入 executor 调度后，executor 会在后台把它关联到本地系统项目“我的任务”。`runtime.tasks.create` 不等待这次关联：运行任务先返回并开始执行，随后 executor 在单个 SQLite `IMMEDIATE` 事务中幂等创建 Issue 和系统 binding。重复执行关联任务只能复用同一个 binding，不能创建重复 Issue。
+
+默认“我的任务”关联由 executor 独占写入。Wework 前端只读取 executor 已创建的 binding，不得再为默认项目调用 `todos.create`、`todos.bind` 或实现另一套自动关联逻辑。用户明确选择其他项目或已有 Issue 时，仍可建立独立的用户 binding；系统 binding 与用户 binding 使用不同类型，可以同时存在。
+
+Issue 生命周期状态同样只由 executor 投影。后台关联完成后，executor 重新读取 LocalTask 此刻的实际状态，再复用统一的运行状态投影，把 `queued`、`running`、终态和 `archived` 分别映射到看板状态。绑定期间任务可能已经完成，因此不能缓存任务创建时的状态，也不能由前端补写“进行中”或“待确认”。临时 `ephemeral` 任务不创建“我的任务”Issue。
+
 ## 列表刷新
 
 任务列表由 Wework 在启动、显式刷新或设备状态变化时请求，不再由固定 interval 轮询触发。
@@ -212,7 +220,7 @@ Wework 通过设备级 RPC `runtime.worktrees.settings.get/update`、`runtime.wo
 
 项目操作菜单可以从项目当前 Git 工作区的 `HEAD` 创建永久工作树，并把新目录立即注册为独立项目。此类请求通过 `runtime.worktrees.prepare` 传递 `permanent: true`；Executor 把该标记持久化到 `worktrees.json`，自动清理候选计算必须排除永久工作树。永久只表示不会因关联任务归档或保留数量限制而被自动删除，用户仍可通过项目移除或工作树管理操作显式删除它。
 
-在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Electron app 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
+在打包 Wework App 的 `local-first` 模式下，粘贴或选择的文件会保存到 executor home 的附件草稿目录（配置 `WEGENT_EXECUTOR_HOME` 时为 `$WEGENT_EXECUTOR_HOME/workspace/attachments/draft`，未配置时为 `~/.wegent-executor/workspace/attachments/draft`），并作为本机 `attachments` 通过 executor IPC 发送，不使用 Backend `attachmentIds`。图片进入附件区时直接使用浏览器对象 URL 显示预览，不展示本机持久化复制的进度；后台复制完成后继续复用同一预览，直到附件发送、删除或输入框重置时释放。非图片文件仍按上传或持久化状态显示进度。图片附件会保留 `local_preview_url`，发送后的消息可以通过 desktop local-file capability 立即预览，Codex 也会收到同一路径对应的 `localImage` 输入。文本类本机附件不会全文注入上下文；executor 只注入前 10 行或 4 KiB（先到为准）的有界预览，并同时给出 `Local File Path`，需要完整内容时由 Codex 读取本机文件。Wework 会把 `text_length` 和 `text_preview` 保存在本机附件 metadata 中，刷新后仍能渲染紧凑的文本预览附件；在 Electron app 中点击该附件会通过 `open_local_file` 命令打开原始本机文件。连接 Backend 并使用上传附件时，刷新后仍以持久化附件 ID 为准。
 
 消息渲染时，如果消息已经带有持久化图片附件，Wework 优先展示附件预览，并忽略 Codex prompt 中的本地图片文件提及，避免同时展示上传附件和临时本机路径。只有没有附件记录时，才把 Codex 本地图片提及作为本机预览兜底；如果当前环境不能通过 the desktop local-file URL converter 转换本机路径，或转换后的图片加载失败，前端不展示该本机路径。
 

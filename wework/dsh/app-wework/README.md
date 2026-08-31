@@ -5,8 +5,10 @@
 
 宿主声明以下标准扩展点：
 
+- `wework.action`
 - `wework.app`
 - `wework.route`
+- `wework.sidebar.navigation`
 - `wework.settings.page`
 - `wework.shell.before` / `wework.shell.after` / `wework.shell.overlay`
 - `wework.workspace.tab`
@@ -45,3 +47,6 @@ desktop capability 调用这些能力。
 
 该包必须显式导出 `./package.json`。DSH client module registry 通过这个子路径读取
 `dsh.client` 声明；缺少导出会导致插件不进入 browser boot graph。
+
+可安装的第三方示例位于
+[`../examples/ui-extension-demo`](../examples/ui-extension-demo)，覆盖以上全部扩展点。

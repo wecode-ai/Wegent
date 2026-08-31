@@ -502,7 +502,6 @@ const MESSAGE_EDIT_ONLY = process.argv.includes('--message-edit-only')
 const QUEUE_MANAGEMENT_ONLY = process.argv.includes('--queue-management-only')
 const SEND_REJECTION_ONLY = process.argv.includes('--send-rejection-only')
 const TASK_PLAN_ONLY = process.argv.includes('--task-plan-only')
-const BUILD_ONLY = process.argv.includes('--build-only')
 const DESKTOP_SCENARIO_ONLY = process.env.WEWORK_E2E_DESKTOP_SCENARIO_ONLY === 'true'
 const MIXED_TOOL_TURNS_ONLY = process.env.WEWORK_E2E_MIXED_TOOL_TURNS_ONLY === '1'
 const DESKTOP_SEGMENT = readCommandLineOption('--segment')
@@ -607,7 +606,6 @@ function getActiveOnlyModes() {
     ['--queue-management-only', QUEUE_MANAGEMENT_ONLY],
     ['--send-rejection-only', SEND_REJECTION_ONLY],
     ['--task-plan-only', TASK_PLAN_ONLY],
-    ['--build-only', BUILD_ONLY],
     ['WEWORK_E2E_DESKTOP_SCENARIO_ONLY=true', DESKTOP_SCENARIO_ONLY],
     ['WEWORK_E2E_MIXED_TOOL_TURNS_ONLY=1', MIXED_TOOL_TURNS_ONLY],
   ].filter(([, enabled]) => enabled)
@@ -633,9 +631,6 @@ function validateDesktopSegmentOptions() {
   }
   if (PLUGINS_ONLY && DESKTOP_CHECKPOINTS.includes(SELECTED_DESKTOP_SEGMENT)) {
     throw new Error('--plugins-only accepts only plugin E2E segments')
-  }
-  if (BUILD_ONLY && !process.env.WEWORK_E2E_BUILD_MANIFEST) {
-    throw new Error('--build-only requires WEWORK_E2E_BUILD_MANIFEST')
   }
 }
 
@@ -1281,13 +1276,19 @@ async function confirmLocalProjectName(control, name) {
   )
 }
 
-async function createSingleRootLocalProject(control, workspacePath, name) {
+async function createSingleRootLocalProject(
+  control,
+  workspacePath,
+  name,
+  timeoutMs = DEFAULT_STEP_TIMEOUT_MS
+) {
   const sidebarSnapshot = await waitForSnapshot(
     control,
     snapshot =>
       snapshot.testIds.includes('projects-empty-create-button') ||
       snapshot.testIds.includes('runtime-project-sortable-list'),
-    'The project section did not settle into an empty or populated state'
+    'The project section did not settle into an empty or populated state',
+    timeoutMs
   )
   const createButtonSelector = sidebarSnapshot.testIds.includes('projects-empty-create-button')
     ? '[data-testid="projects-empty-create-button"]'
@@ -1709,7 +1710,6 @@ export {
   QUEUE_MANAGEMENT_ONLY,
   SEND_REJECTION_ONLY,
   TASK_PLAN_ONLY,
-  BUILD_ONLY,
   DESKTOP_SCENARIO_ONLY,
   MIXED_TOOL_TURNS_ONLY,
   DESKTOP_SEGMENT,

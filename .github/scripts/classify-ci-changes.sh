@@ -29,6 +29,7 @@ classify_path() {
     .github/workflows/lint.yml | \
       .github/workflows/test.yml | \
       .github/workflows/ci-cache-warmup.yml | \
+      .github/workflows/publish-base-image.yml | \
       .github/workflows/publish-image.yml | \
       .github/workflows/snapshot-image.yml | \
       .github/workflows/wework-app.yml | \

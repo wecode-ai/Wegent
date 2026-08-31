@@ -143,7 +143,6 @@ function renderSidebar(
       installedReleaseNotes: null,
       status: 'idle',
       downloadProgress: null,
-      message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
@@ -201,6 +200,10 @@ async function waitForSidebarPointerSensorCleanup() {
     await new Promise(resolve => setTimeout(resolve, 60))
   })
 }
+
+// Compile the injected DSH modules outside the per-test hook timeout. The setup hook
+// still clears and restores the module cache before every test to preserve isolation.
+await preloadDefaultDshUiTestModules()
 
 describe('DesktopSidebar', () => {
   beforeEach(async () => {
@@ -761,7 +764,13 @@ describe('DesktopSidebar', () => {
     renderSidebar({}, undefined, {
       availableUpdate: null,
       status: 'error',
-      error: 'updater does not have any endpoints set',
+      error: {
+        stage: 'check',
+        kind: 'unsupported',
+        code: 'APP_UPDATE_UNAVAILABLE',
+        occurredAt: 1,
+        detail: null,
+      },
     })
 
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
@@ -826,7 +835,7 @@ describe('DesktopSidebar', () => {
   test('shows download progress in the account-row update icon', () => {
     renderSidebar({}, undefined, {
       availableUpdate: { currentVersion: '0.1.0', version: '0.1.1' },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: { downloadedBytes: 40, totalBytes: 100 },
     })
 
@@ -2968,6 +2977,46 @@ describe('DesktopSidebar', () => {
     })
   })
 
+  test('opens a runtime conversation once before double click rename', async () => {
+    const user = userEvent.setup()
+    const onOpenRuntimeTask = vi.fn()
+    const onRenameRuntimeTask = vi.fn().mockResolvedValue(undefined)
+
+    renderSidebar({
+      projects: [],
+      runtimeWork: {
+        projects: [],
+        chats: [
+          {
+            deviceId: 'local-device',
+            available: true,
+            workspacePath: '/workspace/chats/chat-double-click',
+            workspaceKind: 'chat',
+            tasks: [
+              {
+                taskId: 'codex-double-click',
+                workspacePath: '/workspace/chats/chat-double-click',
+                workspaceKind: 'chat',
+                title: 'Double click rename',
+                runtime: 'codex',
+              },
+            ],
+          },
+        ],
+        totalTasks: 1,
+      },
+      onOpenRuntimeTask,
+      onRenameRuntimeTask,
+    })
+
+    await user.dblClick(screen.getByTestId('runtime-local-task-row-codex-double-click'))
+
+    expect(onOpenRuntimeTask).toHaveBeenCalledTimes(1)
+    expect(screen.getByTestId('rename-runtime-local-task-input-codex-double-click')).toHaveValue(
+      'Double click rename'
+    )
+  })
+
   test('renders project runtime tasks directly under projects and opens by address', async () => {
     const onOpenRuntimeTask = vi.fn()
 
@@ -4787,7 +4836,9 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
     expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
-    await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
+    const settingsButton = screen.getByTestId('sidebar-global-im-notification-settings-button')
+    expect(settingsButton).toHaveClass('shrink-0', 'whitespace-nowrap')
+    await user.click(settingsButton)
 
     expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()

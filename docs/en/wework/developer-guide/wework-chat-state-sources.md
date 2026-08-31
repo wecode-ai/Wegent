@@ -135,6 +135,13 @@ to the current task, that empty result must not clear the lifecycle Goal
 status. This lets an active Goal continue to constrain task lifecycle even
 when stream settlement races ahead of Goal persistence.
 
+When restoring a runtime task from the URL, the pane may initially know only
+the device ID and task ID before the task list hydrates its workspace, thread,
+and runtime fields. Goal and transcript loading must run again after that
+address hydration, while both addresses still belong to the same stable task
+identity. Rehydration must not create a new conversation or replay turn
+lifecycle events that were already processed.
+
 ### Claude Code Conversation Executor
 
 Claude Code uses the same ordinary runtime-task conversation UI as Codex in

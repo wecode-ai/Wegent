@@ -308,6 +308,7 @@ jobs:
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
           WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
           WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
@@ -332,6 +333,15 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: pnpm --filter wework e2e:desktop -- --segment component-update
+
+      - name: Verify formal release differential app update
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment app-update-differential
 
       - name: Prepare installer and legacy bridge assets
         shell: bash

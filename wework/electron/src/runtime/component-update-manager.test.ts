@@ -32,6 +32,9 @@ describe('ComponentUpdateManager', () => {
     expect(paths.bundledPlugins).toBe(join(fixture.resources, 'bundled-plugins'))
     expect(paths.executor).toBe(join(fixture.resources, 'bin', 'wegent-executor'))
     expect(paths.dws).toBe(join(fixture.resources, 'bin', 'dws'))
+    expect(paths.contentSha256.weworkCorePlugins).toBe(
+      await hashComponentPath(join(fixture.resources, 'wework-core-plugins'))
+    )
   })
 
   test('downloads changed components and atomically activates them on next startup', async () => {
@@ -41,13 +44,27 @@ describe('ComponentUpdateManager', () => {
     const manager = createManager(fixture, fetch)
 
     expect(await manager.stageAvailableUpdate()).toBe(true)
-    const activated = (await manager.prepareStartup()).executor
-    expect(await readFile(activated, 'utf8')).toBe('executor-v2')
-    expect((await stat(activated)).mode & 0o111).not.toBe(0)
+    const activated = await manager.prepareStartup()
+    expect(await readFile(activated.executor, 'utf8')).toBe('executor-v2')
+    expect(activated.contentSha256.executor).toBe(update.manifest.components.executor.contentSha256)
+    expect((await stat(activated.executor)).mode & 0o111).not.toBe(0)
     await manager.confirmStartup()
 
     const restarted = createManager(fixture, fetch)
     expect(await readFile((await restarted.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
+  })
+
+  test('downloads a changed component outside the manifest origin and path', async () => {
+    const fixture = await createFixture()
+    const update = await createExecutorUpdate(fixture.root, 'executor-v2')
+    update.manifest.components.executor.downloadUrl = `http://components.example/independent-release/${update.assetName}`
+    const manager = createManager(
+      fixture,
+      componentFetch(update.manifest, update.assetName, update.archive)
+    )
+
+    expect(await manager.stageAvailableUpdate()).toBe(true)
+    expect(await readFile((await manager.prepareStartup()).executor, 'utf8')).toBe('executor-v2')
   })
 
   test('rolls back an unconfirmed component set after a failed startup', async () => {

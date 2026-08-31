@@ -259,6 +259,47 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
   })
 
+  test('offers Electron selection actions for streaming process text before tools', async () => {
+    runtimeMock.electron = true
+    const onAddSelectionToConversation = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-process-selection',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'process-before-tool',
+                type: 'text',
+                content: '我现在沿唯一正确链路继续取证。',
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'running-tool',
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                status: 'streaming',
+                createdAt: 1770000000001,
+              },
+            ],
+            createdAt: '2026-08-31T06:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    selectText(screen.getByTestId('process-text-block'), '唯一正确链路')
+    await userEvent.click(await screen.findByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('唯一正确链路')
+  })
+
   test('keeps captured selection actions when streaming replaces the selected text node', async () => {
     const onAddSelectionToConversation = vi.fn()
     const { rerender } = render(
@@ -506,14 +547,17 @@ describe('MessageList', () => {
 
   test('windows oversized streaming Markdown before mounting every chunk', () => {
     runtimeMock.electron = true
+    const intersectionCallbacks: IntersectionObserverCallback[] = []
     class IntersectionObserverMock {
-      constructor() {}
+      constructor(callback: IntersectionObserverCallback) {
+        intersectionCallbacks.push(callback)
+      }
       observe = vi.fn()
       disconnect = vi.fn()
       unobserve = vi.fn()
       takeRecords = vi.fn(() => [])
       root = null
-      rootMargin = '800px 0px'
+      rootMargin = '1600px 0px'
       thresholds = [0]
     }
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
@@ -540,7 +584,39 @@ describe('MessageList', () => {
     expect(chunks.length).toBeGreaterThan(2)
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
+
+    act(() => {
+      intersectionCallbacks.forEach(callback =>
+        callback(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver
+        )
+      )
+    })
+
+    expect(chunks[0]).not.toBeEmptyDOMElement()
+    expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {
@@ -2708,37 +2784,50 @@ describe('MessageList', () => {
     )
   })
 
-  test('passes assistant file link line numbers to open-file actions', async () => {
+  test('passes assistant file link line numbers to open-file actions', () => {
+    vi.useFakeTimers()
     const onOpenWorkspaceFile = vi.fn()
-    render(
-      <MessageList
-        onOpenWorkspaceFile={onOpenWorkspaceFile}
-        messages={[
-          {
-            id: 'assistant-file-line-link',
-            role: 'assistant',
-            content:
-              '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
-            status: 'done',
-            createdAt: '2026-06-24T08:00:01.000Z',
-          },
-        ]}
-      />
-    )
+    try {
+      render(
+        <MessageList
+          onOpenWorkspaceFile={onOpenWorkspaceFile}
+          messages={[
+            {
+              id: 'assistant-file-line-link',
+              role: 'assistant',
+              content:
+                '放在 [references/github-pr-flow.md](references/github-pr-flow.md:18) 的 PR 段落。',
+              status: 'done',
+              createdAt: '2026-06-24T08:00:01.000Z',
+            },
+          ]}
+        />
+      )
 
-    expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveTextContent(
-      'references/github-pr-flow.md (line 18)'
-    )
-    expect(screen.getByTestId('assistant-markdown-link-tooltip')).toHaveClass(
-      'max-w-[min(36rem,calc(100vw-3rem))]',
-      'break-all'
-    )
-    fireEvent.click(screen.getByTestId('assistant-markdown-link'))
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
-      lineStart: 18,
-      lineEnd: undefined,
-    })
+      const link = screen.getByTestId('assistant-markdown-link')
+      const tooltipTrigger = link.parentElement as HTMLElement
+      expect(screen.getByTestId('assistant-markdown-link-line')).toHaveTextContent('(line 18)')
+      expect(screen.queryByTestId('assistant-markdown-link-tooltip')).not.toBeInTheDocument()
+
+      fireEvent.pointerEnter(tooltipTrigger)
+      act(() => {
+        vi.advanceTimersByTime(700)
+      })
+
+      const tooltip = screen.getByTestId('assistant-markdown-link-tooltip')
+      expect(tooltip).toHaveTextContent('references/github-pr-flow.md (line 18)')
+      expect(tooltip).toHaveClass('fixed', 'z-system-popover')
+      expect(document.body).toContainElement(tooltip)
+      expect(link).not.toContainElement(tooltip)
+
+      fireEvent.click(link)
+      expect(onOpenWorkspaceFile).toHaveBeenCalledWith('references/github-pr-flow.md', {
+        lineStart: 18,
+        lineEnd: undefined,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('renders assistant file links with extension-specific Codex-style icons', () => {
@@ -5212,7 +5301,7 @@ describe('MessageList', () => {
     expect(screen.getByText('读取 file-3.ts')).toBeInTheDocument()
   })
 
-  test('keeps process text even when it matches the final assistant content', () => {
+  test('does not render process text that duplicates the final assistant content', () => {
     const finalTextBlock: ProcessingBlock = {
       id: 'text-final',
       subtaskId: 1,
@@ -5237,9 +5326,9 @@ describe('MessageList', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('final-processing-toggle'))
-    expect(screen.getByTestId('process-text-block')).toHaveTextContent('这是最终回答。')
-    expect(screen.getAllByText('这是最终回答。')).toHaveLength(2)
+    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('process-text-block')).not.toBeInTheDocument()
+    expect(screen.getAllByText('这是最终回答。')).toHaveLength(1)
   })
 
   test('renders failed assistant messages in the approved error-card layout', () => {
