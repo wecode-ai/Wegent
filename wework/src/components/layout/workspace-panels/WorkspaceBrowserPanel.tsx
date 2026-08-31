@@ -410,6 +410,7 @@ export function WorkspaceBrowserTabPanel({
   const [originalViewHeld, setOriginalViewHeld] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const downloadsPanelClosedByUserRef = useRef(false)
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
     id: number
     message: string
@@ -479,7 +480,17 @@ export function WorkspaceBrowserTabPanel({
       if (download.status === 'deleted') return remaining
       return [download, ...remaining].slice(0, 10)
     })
-    setDownloadsOpen(true)
+    if (download.status === 'deleted') return
+    // Terminal events always surface the panel once as completion feedback.
+    // Progress events respect a manual close until the next download starts.
+    if (download.status === 'started') downloadsPanelClosedByUserRef.current = false
+    if (
+      download.status === 'finished' ||
+      download.status === 'failed' ||
+      !downloadsPanelClosedByUserRef.current
+    ) {
+      setDownloadsOpen(true)
+    }
   }, [])
 
   const reconcileDownloadSnapshot = useCallback(
@@ -2537,7 +2548,12 @@ export function WorkspaceBrowserTabPanel({
           <BrowserToolbarButton
             testId="workspace-browser-downloads-button"
             label={t('workbench.browser_downloads')}
-            onClick={() => setDownloadsOpen(open => !open)}
+            onClick={() =>
+              setDownloadsOpen(open => {
+                downloadsPanelClosedByUserRef.current = open
+                return !open
+              })
+            }
           >
             <span className="relative">
               <Download className="h-4 w-4" />
@@ -2756,6 +2772,23 @@ export function WorkspaceBrowserTabPanel({
           data-testid="workspace-browser-downloads-panel"
           className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"
         >
+          <div className="flex items-center justify-between pb-1">
+            <span className="text-xs font-medium text-text-secondary">
+              {t('workbench.browser_downloads')}
+            </span>
+            <button
+              type="button"
+              data-testid="workspace-browser-downloads-close"
+              aria-label={t('workbench.browser_downloads_close')}
+              className="rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => {
+                downloadsPanelClosedByUserRef.current = true
+                setDownloadsOpen(false)
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
           {downloads.length === 0 ? (
             <span className="text-xs text-text-muted">
               {t('workbench.browser_downloads_empty')}

@@ -1401,6 +1401,7 @@
     "browser_annotation_failed": "Unable to enter annotation mode",
     "browser_annotation_screenshot_alt": "Browser page screenshot",
     "browser_downloads": "Downloads",
+    "browser_downloads_close": "Close downloads",
     "browser_downloads_empty": "No downloads yet",
     "browser_download_started": "Downloading",
     "browser_download_finished": "Downloaded",

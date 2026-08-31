@@ -1004,6 +1004,51 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('closes the downloads panel and only reopens it for terminal events', async () => {
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return Promise.resolve(vi.fn())
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    const emit = (status: string) =>
+      act(() => {
+        handleDownload({
+          id: 'download-1',
+          label: 'workspace-browser',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'https://example.com/app.dmg',
+          path: '/Users/test/Downloads/app.dmg',
+          status,
+          receivedBytes: 512,
+          totalBytes: 1024,
+        })
+      })
+
+    emit('started')
+    expect(await screen.findByTestId('workspace-browser-downloads-panel')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-downloads-close'))
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+
+    emit('progress')
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+
+    emit('finished')
+    expect(await screen.findByTestId('workspace-browser-downloads-panel')).toBeInTheDocument()
+  })
+
   test('allows paused downloads to resume or be deleted', async () => {
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
       handler({

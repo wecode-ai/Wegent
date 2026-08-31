@@ -348,13 +348,10 @@ function showBrowserContextMenu(
     ]
     if (hasSelection) copyGroup.push(copyMenuItem(contents, labels))
     groups.push(copyGroup)
-    const targetGroup: NativeContextMenuItem[] = [
-      { label: labels.saveLinkAs, click: () => contents.downloadURL(linkUrl) },
-    ]
+    groups.push([{ label: labels.saveLinkAs, click: () => contents.downloadURL(linkUrl) }])
     if (isImage) {
-      targetGroup.push(...browserImageMenuItems(contents, params, actions, labels))
+      groups.push(browserImageMenuItems(contents, params, actions, labels))
     }
-    groups.push(targetGroup)
   } else if (isImage) {
     groups.push(browserImageMenuItems(contents, params, actions, labels))
   } else if (hasSelection) {
