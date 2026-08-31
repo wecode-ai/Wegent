@@ -27,6 +27,7 @@ import {
   shouldPrepareWorkItemTask,
   workItemTaskInput,
 } from './workItemTaskInput'
+import { publishProjectSpaceTaskBindingChanged } from './projectSpaceSelection'
 
 const telemetryMocks = vi.hoisted(() => ({
   track: vi.fn(),
@@ -676,6 +677,43 @@ describe('CloudTodoWorkspace', () => {
     expect(workspace).toHaveAttribute('data-embedded', 'true')
     expect(workspace.querySelector('aside')).not.toBeInTheDocument()
     expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('refreshes the active board when a runtime task binding changes externally', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    await screen.findByTestId('cloud-project-header')
+    const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
+      .calls.length
+
+    act(() => {
+      publishProjectSpaceTaskBindingChanged({
+        deviceId: 'local-device',
+        taskId: 'runtime-moved-to-board',
+      })
+    })
+
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(
+        initialSnapshotRequests + 1
+      )
+    })
   })
 
   it('shows and opens one logical My Tasks project across local and cloud stores', async () => {

@@ -153,6 +153,7 @@ import {
   projectSpaceRef,
   projectSupportsRobotAutomation,
   sameProjectSpace,
+  subscribeProjectSpaceTaskBindingChanged,
   subscribeProjectSpaceTaskContextChanged,
 } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
@@ -2712,13 +2713,17 @@ export function CloudTodoWorkspace({
     services.aitableApi,
     services.dwsApi,
   ])
-  useEffect(
-    () =>
-      subscribeProjectSpaceTaskContextChanged(() => {
-        setBoardRefreshNonce(value => value + 1)
-      }),
-    []
-  )
+  useEffect(() => {
+    const refreshBoard = () => {
+      setBoardRefreshNonce(value => value + 1)
+    }
+    const unsubscribeContextChanged = subscribeProjectSpaceTaskContextChanged(refreshBoard)
+    const unsubscribeBindingChanged = subscribeProjectSpaceTaskBindingChanged(refreshBoard)
+    return () => {
+      unsubscribeContextChanged()
+      unsubscribeBindingChanged()
+    }
+  }, [])
   useEffect(() => {
     const subscribe = selectedProjectChatClient?.subscribeLoopItemChanges
     boardLiveSubscriptionActiveRef.current = false

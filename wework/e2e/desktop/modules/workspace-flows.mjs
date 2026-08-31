@@ -1173,10 +1173,221 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-07-independent-tab.png',
     activeBoardContentSelector
   )
+  await verifyExistingTaskBoardAssociation(control, taskTabTestId)
+}
+
+async function verifyExistingTaskBoardAssociation(
+  control,
+  taskTabTestId,
+  { captureScreenshots = true } = {}
+) {
   await control.command('click', `[data-testid="${taskTabTestId}"]`)
   await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-open-board-menu"]')
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const activeBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  const activeBoardTabPrefix = 'workspace-tab-select-board-'
+  assert.ok(
+    activeBoardTabTestId?.startsWith(activeBoardTabPrefix),
+    'The source board tab identity was unavailable before moving the existing task'
+  )
+  const activeBoardTabSuffix = activeBoardTabTestId.slice(activeBoardTabPrefix.length)
+  const activeBoardContentSelector = `[data-testid="workspace-tab-content-board-${activeBoardTabSuffix}"]`
+  const targetProjectName = 'Existing Task Target Board'
+  await control.command('click', `${activeBoardContentSelector} [data-testid="cloud-project-add"]`)
+  await control.command('waitFor', '[data-testid="cloud-project-name"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="cloud-project-name"]', {
+    value: targetProjectName,
+  })
+  await control.command('click', '[data-testid="cloud-project-location-local"]')
+  await control.command('click', '[data-testid="cloud-project-task-provider-local"]')
+  await control.command('clickWhenEnabled', '[data-testid="cloud-project-create-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-project-header-title"]`,
+    {
+      text: targetProjectName,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const existingTargetTitle = 'WEWORK_EXISTING_BOARD_CARD'
+  await control.command('click', `${activeBoardContentSelector} [data-testid="cloud-create-issue"]`)
+  await control.command('waitFor', '[data-testid="workspace-issue-input"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="workspace-issue-input"]', {
+    value: existingTargetTitle,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="workspace-issue-submit"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-column-inbox"]`,
+    {
+      text: existingTargetTitle,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="work-item-change-board"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'markElementWithText',
+    '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
+    {
+      text: targetProjectName,
+      value: 'existing-task-target-board',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    '[data-testid="work-item-context-menu"] [data-e2e-anchor-id="existing-task-target-board"]'
+  )
+  await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
+    text: targetProjectName,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if (captureScreenshots) {
+    await captureVerificationScreenshot(control, 'workspace-08-existing-task-add-dialog.png')
+  }
+  await control.command('click', '[data-testid="task-board-association-create"]')
+  await control.command('waitFor', '[data-testid="task-board-move-confirm"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid="task-board-move-confirm"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-open-board-menu"]')
+  await control.command('waitFor', '[data-tab-kind="board"][aria-selected="true"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const movedBoardTabTestId = await control.command(
+    'getAttribute',
+    '[data-tab-kind="board"][aria-selected="true"]',
+    { value: 'data-testid' }
+  )
+  assert.ok(
+    movedBoardTabTestId?.startsWith(activeBoardTabPrefix),
+    'The target board tab identity was unavailable after moving the existing task'
+  )
+  const movedBoardTabSuffix = movedBoardTabTestId.slice(activeBoardTabPrefix.length)
+  const movedBoardContentSelector = `[data-testid="workspace-tab-content-board-${movedBoardTabSuffix}"]`
+  await control.command(
+    'waitFor',
+    `${movedBoardContentSelector} [data-testid="cloud-project-header-title"]`,
+    {
+      text: targetProjectName,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    `${movedBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  if (captureScreenshots) {
+    await captureVerificationScreenshot(
+      control,
+      'workspace-09-existing-task-moved.png',
+      movedBoardContentSelector
+    )
+  }
+  await control.command('click', `[data-testid="${taskTabTestId}"]`)
+  await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command(
+    'markElementWithText',
+    '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
+    {
+      text: targetProjectName,
+      value: 'existing-task-current-board',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    '[data-testid="work-item-context-menu"] [data-e2e-anchor-id="existing-task-current-board"]'
+  )
+  await control.command('waitFor', '[data-testid="task-board-association-search"]', {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="task-board-association-search"]', {
+    value: existingTargetTitle,
+  })
+  await control.command(
+    'waitFor',
+    '[data-testid="task-board-association-dialog"] [data-testid^="task-board-association-item-"]',
+    {
+      text: existingTargetTitle,
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'click',
+    '[data-testid="task-board-association-dialog"] [data-testid^="task-board-association-item-"]',
+    {
+      visible: true,
+    }
+  )
+  await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
+    text: existingTargetTitle,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  if (captureScreenshots) {
+    await captureVerificationScreenshot(control, 'workspace-10-existing-card-linked.png')
+  }
 }
 
 function workspaceTabIds(snapshot, kind) {
@@ -1704,6 +1915,7 @@ export {
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
   verifyTrackedTaskSettledStatus,
+  verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   workspaceTabIds,
   allWorkspaceTabIds,
