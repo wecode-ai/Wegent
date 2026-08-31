@@ -229,7 +229,7 @@ describe('registerBrowserHistoryCapabilities', () => {
 })
 
 describe('registerBrowserAnnotationCapabilities', () => {
-  test('forwards an empty comment for a design-only annotation', async () => {
+  test('preserves empty and whitespace-sensitive annotation text', async () => {
     const handlers = new Map<HostCapability, HostCapabilityHandler>()
     const router = {
       register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
@@ -251,7 +251,10 @@ describe('registerBrowserAnnotationCapabilities', () => {
             previousValue: 'rgb(17, 24, 39)',
           },
         ],
-        textChange: null,
+        textChange: {
+          before: '  original text  ',
+          after: '',
+        },
       },
       { principal: 'test' }
     )
@@ -265,7 +268,10 @@ describe('registerBrowserAnnotationCapabilities', () => {
           previousValue: 'rgb(17, 24, 39)',
         },
       ],
-      textChange: null,
+      textChange: {
+        before: '  original text  ',
+        after: '',
+      },
     })
   })
 })

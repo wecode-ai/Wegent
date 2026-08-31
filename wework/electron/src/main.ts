@@ -442,6 +442,9 @@ function disposeCoreDshViews(): void {
   }
   workspaceWindows.clear()
   disposeSystemDragWindow()
+  browserAnnotationOverlayWindow?.destroy()
+  browserAnnotationOverlayWindow = null
+  browserAnnotationOverlayReadyPromise = null
   popoutWindow?.destroy()
   popoutWindow = null
   popoutWindowCreationPromise = null

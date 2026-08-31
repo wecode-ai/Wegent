@@ -1369,8 +1369,8 @@ function browserTextChange(value: unknown): { before: string; after: string } | 
   if (typeof value !== 'object' || Array.isArray(value)) invalidParam('textChange')
   const record = value as Record<string, unknown>
   return {
-    before: stringParam(record, 'before'),
-    after: stringParam(record, 'after'),
+    before: rawStringParam(record, 'before'),
+    after: rawStringParam(record, 'after'),
   }
 }
 
