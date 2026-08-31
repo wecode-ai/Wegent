@@ -107,6 +107,19 @@ const mocks = vi.hoisted(() => {
     recoverRuntimeConnections: localRecoverRuntimeConnections,
   }
 
+  const cloudDeviceApi = {
+    listDevices: cloudListDevices,
+    getHomeDirectory: vi.fn(),
+    getProjectWorkspaceRoot: vi.fn(),
+    listDirectories: vi.fn(),
+    createDirectory: vi.fn(),
+    executeCommand: vi.fn(),
+    upgradeDevice: vi.fn(),
+    listSkills: vi.fn(),
+    listWorkspaceEntries: vi.fn(),
+    readWorkspaceTextFile: vi.fn(),
+    createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
+  }
   const cloudServices = {
     teamApi: {
       listTeams: cloudListTeams,
@@ -115,19 +128,7 @@ const mocks = vi.hoisted(() => {
     skillApi: {},
     projectApi: { listProjects: vi.fn() },
     taskApi: { getTurnFileChangesDiff: vi.fn() },
-    deviceApi: {
-      listDevices: cloudListDevices,
-      getHomeDirectory: vi.fn(),
-      getProjectWorkspaceRoot: vi.fn(),
-      listDirectories: vi.fn(),
-      createDirectory: vi.fn(),
-      executeCommand: vi.fn(),
-      upgradeDevice: vi.fn(),
-      listSkills: vi.fn(),
-      listWorkspaceEntries: vi.fn(),
-      readWorkspaceTextFile: vi.fn(),
-      createDockerRemoteDeviceCommand: cloudCreateDockerRemoteDeviceCommand,
-    },
+    deviceApi: cloudDeviceApi,
     runtimeWorkApi: {
       prepareRuntimeModel: vi.fn().mockResolvedValue(true),
       listRuntimeWork: cloudListRuntimeWork,
@@ -145,6 +146,14 @@ const mocks = vi.hoisted(() => {
       deleteAttachment: vi.fn(),
     },
     userApi: { updateCurrentUser: cloudUpdateCurrentUser },
+    projectSpaceDetailServices: {
+      cloud: {
+        deliveryApi: {},
+        deviceApi: cloudDeviceApi,
+        modelApi: { listModels: cloudListModels },
+        teamApi: { listTeams: cloudListTeams },
+      },
+    },
     chatStream: { subscribe: vi.fn(() => vi.fn()) },
     socketClient: { ensureConnected: vi.fn(), dispose: vi.fn() },
     recoverRuntimeConnections: cloudRecoverRuntimeConnections,
@@ -777,6 +786,29 @@ describe('createHybridWorkbenchServices', () => {
     const devices = await services.deviceApi.listDevices()
 
     expect(devices.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+  })
+
+  it('loads current cloud devices for cloud project execution configuration', async () => {
+    const services = createServices()
+
+    const devices = await services.projectSpaceDetailServices?.cloud?.deviceApi.listDevices()
+
+    expect(devices?.map(device => device.device_id)).toEqual(['local-device', 'cloud-device'])
+    expect(mocks.cloudListDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps local project execution available when cloud device discovery fails', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    mocks.cloudListDevices.mockRejectedValue(new Error('cloud devices unavailable'))
+    const services = createServices()
+
+    const devices = await services.projectSpaceDetailServices?.cloud?.deviceApi.listDevices()
+
+    expect(devices?.map(device => device.device_id)).toEqual(['local-device'])
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to load cloud devices for project execution configuration',
+      expect.objectContaining({ message: 'cloud devices unavailable' })
+    )
   })
 
   it('keeps remote Docker devices in the workbench device list after background sync', async () => {

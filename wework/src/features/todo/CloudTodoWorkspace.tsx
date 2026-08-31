@@ -240,6 +240,7 @@ type PendingExecutionConfiguration = {
         type: 'save'
       }
 }
+type ExecutionConfigurationRequestResult = 'not-needed' | 'opened' | 'unavailable'
 
 const nativeBoardGroupFields: AITableField[] = [
   { id: 'status', name: '状态', type: 'status', config: null, raw: {} },
@@ -1801,6 +1802,17 @@ export function CloudTodoWorkspace({
   const pendingExecutionServices = pendingExecutionProject
     ? services.projectSpaceDetailServices?.[pendingExecutionProject.location]
     : undefined
+  function openExecutionConfiguration(
+    pending: PendingExecutionConfiguration
+  ): Exclude<ExecutionConfigurationRequestResult, 'not-needed'> {
+    const project = projectForItem(pending.item)
+    if (!project || !services.projectSpaceDetailServices?.[project.location]) {
+      setBoardError(t('todo.run_unavailable', '运行服务当前不可用'))
+      return 'unavailable'
+    }
+    setPendingExecutionConfiguration(pending)
+    return 'opened'
+  }
   const selectedProjectApi =
     selectedProject?.task_provider === 'dingtalk_aitable'
       ? apiForProject(selectedProject)
@@ -2472,15 +2484,16 @@ export function CloudTodoWorkspace({
     return locatedItem
   }
 
-  function requestCreatedItemExecutionConfiguration(item: LocatedLoopItem): boolean {
+  function requestCreatedItemExecutionConfiguration(
+    item: LocatedLoopItem
+  ): ExecutionConfigurationRequestResult {
     if (!isProcessingStatus(item.status) || !itemNeedsExecutionConfiguration(item)) {
-      return false
+      return 'not-needed'
     }
-    setPendingExecutionConfiguration({
+    return openExecutionConfiguration({
       item,
       continuation: { type: 'save' },
     })
-    return true
   }
 
   async function createTodoInBoardColumn(
@@ -3048,7 +3061,7 @@ export function CloudTodoWorkspace({
     }
     const needsExecutionConfig = enteringExecution && itemNeedsExecutionConfiguration(executionItem)
     if (needsExecutionConfig && !executionResult) {
-      setPendingExecutionConfiguration({
+      openExecutionConfiguration({
         item: executionItem,
         continuation: { type: 'move', columnKey, beforeItemId },
       })
@@ -3154,7 +3167,7 @@ export function CloudTodoWorkspace({
           itemId: locatedUpdated.id,
           route: 'workflow_configuration',
         })
-        setPendingExecutionConfiguration({
+        openExecutionConfiguration({
           item: locatedUpdated,
           continuation: { type: 'save' },
         })
@@ -3427,8 +3440,8 @@ export function CloudTodoWorkspace({
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      const needsExecutionConfiguration = requestCreatedItemExecutionConfiguration(locatedItem)
-      if (input.createTask && !needsExecutionConfiguration) {
+      const executionConfigurationResult = requestCreatedItemExecutionConfiguration(locatedItem)
+      if (input.createTask && executionConfigurationResult === 'not-needed') {
         setBackgroundTaskItemId(locatedItem.id)
         openTaskComposer({
           workItemId: locatedItem.id,
@@ -4298,7 +4311,8 @@ export function CloudTodoWorkspace({
                 <AITableView api={aitableApi} project={selectedProject} />
               ) : projectView === 'automation' &&
                 selectedProjectAutomationSupported &&
-                selectedProjectApi ? (
+                selectedProjectApi &&
+                selectedProjectServices ? (
                 <ProjectAutomationView
                   key={selectedProject.id}
                   api={selectedProjectApi}
@@ -4306,7 +4320,7 @@ export function CloudTodoWorkspace({
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
-                  deviceApi={services.deviceApi}
+                  deviceApi={selectedProjectServices.deviceApi}
                   modelApi={services.modelApi}
                   teamApi={selectedProjectServices?.teamApi}
                   pluginApi={selectedProjectServices?.pluginApi}
@@ -4785,7 +4799,7 @@ export function CloudTodoWorkspace({
                                         }
                                       }}
                                       onConfigureExecution={() =>
-                                        setPendingExecutionConfiguration({
+                                        openExecutionConfiguration({
                                           item,
                                           continuation: { type: 'save' },
                                         })
@@ -4916,7 +4930,7 @@ export function CloudTodoWorkspace({
             onConfirm={pendingAutomationSelection.onConfirm}
           />
         ) : null}
-        {pendingExecutionConfiguration ? (
+        {pendingExecutionConfiguration && pendingExecutionServices ? (
           <IssueExecutionConfigDialog
             item={pendingExecutionConfiguration.item}
             projectChatAgentApi={
@@ -4926,7 +4940,7 @@ export function CloudTodoWorkspace({
               pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
             }
             modelApi={services.modelApi}
-            deviceApi={services.deviceApi}
+            deviceApi={pendingExecutionServices.deviceApi}
             localProjects={localProjects}
             onClose={() => setPendingExecutionConfiguration(null)}
             onConfirm={async result => {
