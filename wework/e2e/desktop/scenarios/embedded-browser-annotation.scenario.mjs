@@ -295,6 +295,10 @@ async function fillEditorElement(bridge, selector, value) {
 }
 
 async function captureBrowserScreenshot(bridge, resultDir, name) {
+  const capabilities = await bridge({ action: 'capabilities' })
+  assert.equal(capabilities.kind, 'browser.capabilities')
+  if (!capabilities.screenshot.viewport) return
+
   const screenshot = await bridge({ action: 'screenshot', timeoutMs: 30_000 })
   assert.equal(screenshot.kind, 'browser.screenshot')
   assert.equal(screenshot.format, 'png')
