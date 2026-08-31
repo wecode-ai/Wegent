@@ -1294,6 +1294,10 @@ async function verifyExistingTaskBoardAssociation(
   await control.command('clickWhenEnabled', '[data-testid="task-board-move-confirm"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await control.command('waitFor', '[data-testid="task-board-association-dialog"]', {
+    visible: false,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     visible: true,
