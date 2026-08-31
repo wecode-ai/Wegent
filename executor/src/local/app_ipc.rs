@@ -25,7 +25,8 @@ use crate::{
     agents::resolve_codex_binary,
     local::bundled_plugins::{initialize_bundled_plugin_marketplace, BundledPluginMarketplace},
     local::codex_home::{
-        codex_home_migration_status, initialize_codex_home, CodexHomeInitializeRequest,
+        codex_home_migration_status, import_external_content, initialize_codex_home,
+        CodexHomeInitializeRequest, ExternalContentImportRequest,
     },
     local::command::{CommandHandler, CommandRequest, CommandResult, DeviceCommandHandler},
     local::git_commit_message::generate_commit_message,
@@ -97,6 +98,7 @@ const APP_IPC_RENDERER_METHODS: &[&str] = &[
     "executions.*",
     "executor.backend.configure",
     "executor.backend.status",
+    "executor.codex_home.import_external_content",
     "executor.codex_home.initialize",
     "executor.codex_home.status",
     "executor.harnesses.list",
@@ -651,6 +653,19 @@ impl AppIpcServer {
                     .map_err(|error| AppIpcError::new("codex_home_initialize_failed", error))?,
             )
             .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
+        }
+
+        if method == "executor.codex_home.import_external_content" {
+            let request = serde_json::from_value::<ExternalContentImportRequest>(params)
+                .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+            let imported = tokio::task::spawn_blocking(move || import_external_content(request))
+                .await
+                .map_err(|error| {
+                    AppIpcError::new("external_content_import_task_failed", error.to_string())
+                })?
+                .map_err(|error| AppIpcError::new("external_content_import_failed", error))?;
+            return serde_json::to_value(imported)
+                .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
 
         if method == "executor.harnesses.prepare_launch" {

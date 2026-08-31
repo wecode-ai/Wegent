@@ -219,6 +219,43 @@ async fn app_ipc_initializes_a_blank_codex_home() {
 }
 
 #[tokio::test]
+async fn app_ipc_imports_external_codex_content() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let codex_home = root.path().join("wework-codex");
+    fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+    fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+    fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+
+    let result = AppIpcServer::new()
+        .dispatch(
+            "executor.codex_home.import_external_content",
+            json!({"source": "codex"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["source"], "codex");
+    assert_eq!(
+        result["sourcePath"],
+        home.join(".codex").display().to_string()
+    );
+    assert_eq!(result["destinationPath"], codex_home.display().to_string());
+    assert_eq!(result["importedEntries"], json!(["config.toml", "skills"]));
+    assert_eq!(
+        fs::read_to_string(codex_home.join("config.toml")).unwrap(),
+        "model = \"gpt-5\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_home.join("skills/example/SKILL.md")).unwrap(),
+        "example"
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_routes_local_first_plugin_install_as_runtime_rpc() {
     let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginInstallRuntimeHandler);
 
@@ -1878,6 +1915,10 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
         .as_array()
         .unwrap()
         .contains(&json!("executor.codex_home.status")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("executor.codex_home.import_external_content")));
     assert!(description["renderer_methods"]
         .as_array()
         .unwrap()
