@@ -83,6 +83,7 @@ function createWebContents(input: {
   captureError?: Error
   capturePending?: boolean
   debuggerData?: string
+  debuggerError?: Error
   debuggerPending?: boolean
 }) {
   let debuggerAttached = false
@@ -96,21 +97,23 @@ function createWebContents(input: {
     isAttached: vi.fn(() => debuggerAttached),
     sendCommand: vi.fn(async () => {
       if (input.debuggerPending) return new Promise<never>(() => undefined)
+      if (input.debuggerError) throw input.debuggerError
       return { data: input.debuggerData }
     }),
   }
+  const capturePage = vi.fn(async () => {
+    if (input.capturePending) return new Promise<never>(() => undefined)
+    if (input.captureError) throw input.captureError
+    return {
+      isEmpty: () => input.captureEmpty ?? false,
+      toDataURL: () => input.captureDataUrl ?? '',
+    }
+  })
   const contents = {
-    capturePage: vi.fn(async () => {
-      if (input.capturePending) return new Promise<never>(() => undefined)
-      if (input.captureError) throw input.captureError
-      return {
-        isEmpty: () => input.captureEmpty ?? false,
-        toDataURL: () => input.captureDataUrl ?? '',
-      }
-    }),
+    capturePage,
     debugger: debuggerSession,
   } as unknown as WebContents
-  return { contents, debuggerSession }
+  return { capturePage, contents, debuggerSession }
 }
 
 describe('captureWebContentsDataUrl', () => {
@@ -126,33 +129,54 @@ describe('captureWebContentsDataUrl', () => {
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
 
-  test('falls back to the debugger when capturePage returns an empty image', async () => {
-    const { contents, debuggerSession } = createWebContents({
-      captureEmpty: true,
+  test('can use debugger-only view capture without blocking on Electron capturePage', async () => {
+    const { capturePage, contents, debuggerSession } = createWebContents({
+      captureDataUrl: 'data:image/png;base64,native-capture',
       debuggerData: 'debugger-capture',
     })
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { debuggerOnly: true })).resolves.toBe(
       'data:image/png;base64,debugger-capture'
     )
     expect(debuggerSession.attach).toHaveBeenCalledOnce()
-    expect(debuggerSession.detach).toHaveBeenCalledOnce()
-  })
-
-  test('falls back to the debugger when Electron native capture throws', async () => {
-    const { contents, debuggerSession } = createWebContents({
-      captureError: new Error('UnknownVizError'),
-      debuggerData: 'debugger-after-native-error',
-    })
-
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
-      'data:image/png;base64,debugger-after-native-error'
-    )
     expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
       captureBeyondViewport: false,
       format: 'png',
-      fromSurface: true,
+      fromSurface: false,
     })
+    expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    expect(capturePage).not.toHaveBeenCalled()
+  })
+
+  test('times out debugger-only capture and detaches the session', async () => {
+    vi.useFakeTimers()
+    try {
+      const { contents, debuggerSession } = createWebContents({
+        debuggerPending: true,
+      })
+
+      const capture = expect(
+        captureWebContentsDataUrl(contents, { debuggerOnly: true })
+      ).rejects.toThrow(
+        'CDP Page.captureScreenshot failed: CDP Page.captureScreenshot timed out after 10000ms'
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await capture
+      expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('reports both capture failures', async () => {
+    const { contents } = createWebContents({
+      captureError: new Error('UnknownVizError'),
+      debuggerError: new Error('DebuggerCaptureError'),
+    })
+
+    await expect(captureWebContentsDataUrl(contents)).rejects.toThrow(
+      'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
+    )
   })
 
   test('falls back to the debugger when Electron native capture hangs', async () => {
