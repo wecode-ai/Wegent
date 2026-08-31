@@ -200,6 +200,33 @@ describe('system record replay', () => {
     }
   })
 
+  test('settles recording startup when disposed before the ready handshake', async () => {
+    const root = await temporaryDirectory('system-record-replay-')
+    const startedFile = join(root.path, 'recorder-started')
+    process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG = 'record'
+    process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE = startedFile
+    try {
+      const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
+      const startupResult = recorder.start('Interrupted startup').then(
+        () => null,
+        error => error
+      )
+      await vi.waitFor(async () => expect(await readFile(startedFile, 'utf8')).toBe('record\n'), {
+        timeout: 3_000,
+      })
+
+      await recorder.dispose()
+
+      expect(await startupResult).toBeInstanceOf(Error)
+      await expect(recorder.status()).resolves.toMatchObject({ phase: 'idle' })
+      expect(await recorder.list()).toEqual([])
+    } finally {
+      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG
+      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE
+      await root.remove()
+    }
+  })
+
   test('reports unsupported platforms without starting a helper', async () => {
     const root = await temporaryDirectory('system-record-replay-')
     const recorder = new SystemRecordReplay(root.path, fixture, 'linux')

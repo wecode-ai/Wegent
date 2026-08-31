@@ -252,11 +252,11 @@ export class SystemRecordReplay {
 
   async dispose(): Promise<void> {
     this.replayCancelled = true
-    this.activeRecording = null
-    this.statusValue = idleStatus(this.platform === 'darwin')
     const children = [...this.helperChildren]
     for (const child of children) child.kill('SIGTERM')
     await Promise.all(children.map(child => waitForExit(child, this.exitTimeoutMs)))
+    this.activeRecording = null
+    this.statusValue = idleStatus(this.platform === 'darwin')
   }
 
   private consumeRecordingOutput(active: ActiveRecording): Promise<void> {

@@ -35,60 +35,65 @@ if (command === 'status' || command === 'request-permissions') {
   }
   process.on('SIGINT', stop)
   process.on('SIGTERM', stop)
-  emit({ ready: true })
-  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STDERR === 'after-ready') {
-    setTimeout(() => process.stderr.write('non-fatal recorder diagnostic\n'), 25)
+  if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG === command) {
+    markStarted(command)
+    timer = setInterval(() => {}, 1_000)
+  } else {
+    emit({ ready: true })
+    if (process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STDERR === 'after-ready') {
+      setTimeout(() => process.stderr.write('non-fatal recorder diagnostic\n'), 25)
+    }
+    const samples = [
+      {
+        type: 'mouse',
+        appName: 'Finder',
+        appBundleId: 'com.apple.finder',
+        windowTitle: 'Projects',
+        targetRole: 'AXButton',
+        targetSubrole: '',
+        targetTitle: 'Documents',
+        x: 312,
+        y: 246,
+        button: 'left',
+        clickCount: 1,
+      },
+      {
+        type: 'key',
+        appName: 'TextEdit',
+        appBundleId: 'com.apple.TextEdit',
+        windowTitle: 'Untitled',
+        targetRole: 'AXTextArea',
+        targetSubrole: '',
+        targetTitle: 'Document',
+        keyCode: 4,
+        modifiers: 0,
+      },
+      {
+        type: 'scroll',
+        appName: 'System Settings',
+        appBundleId: 'com.apple.systempreferences',
+        windowTitle: 'General',
+        targetRole: 'AXScrollArea',
+        targetSubrole: '',
+        targetTitle: 'Settings content',
+        x: 910,
+        y: 540,
+        deltaX: 0,
+        deltaY: -72,
+      },
+    ]
+    let index = 0
+    timer = setInterval(() => {
+      const sample = samples[index % samples.length]
+      emit({
+        ...sample,
+        offsetMs: (index + 1) * 350,
+        risk: 'low',
+        replayable: true,
+      })
+      index += 1
+    }, 350)
   }
-  const samples = [
-    {
-      type: 'mouse',
-      appName: 'Finder',
-      appBundleId: 'com.apple.finder',
-      windowTitle: 'Projects',
-      targetRole: 'AXButton',
-      targetSubrole: '',
-      targetTitle: 'Documents',
-      x: 312,
-      y: 246,
-      button: 'left',
-      clickCount: 1,
-    },
-    {
-      type: 'key',
-      appName: 'TextEdit',
-      appBundleId: 'com.apple.TextEdit',
-      windowTitle: 'Untitled',
-      targetRole: 'AXTextArea',
-      targetSubrole: '',
-      targetTitle: 'Document',
-      keyCode: 4,
-      modifiers: 0,
-    },
-    {
-      type: 'scroll',
-      appName: 'System Settings',
-      appBundleId: 'com.apple.systempreferences',
-      windowTitle: 'General',
-      targetRole: 'AXScrollArea',
-      targetSubrole: '',
-      targetTitle: 'Settings content',
-      x: 910,
-      y: 540,
-      deltaX: 0,
-      deltaY: -72,
-    },
-  ]
-  let index = 0
-  timer = setInterval(() => {
-    const sample = samples[index % samples.length]
-    emit({
-      ...sample,
-      offsetMs: (index + 1) * 350,
-      risk: 'low',
-      replayable: true,
-    })
-    index += 1
-  }, 350)
 } else {
   emit({ error: 'Unknown fixture command' })
   process.exitCode = 1
