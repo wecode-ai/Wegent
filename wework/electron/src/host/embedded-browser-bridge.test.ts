@@ -258,6 +258,45 @@ describe('EmbeddedBrowserBridge', () => {
     })
     expect(browser.evaluate).toHaveBeenCalledOnce()
   })
+
+  test('routes native clicks through Electron input events', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.has.mockReturnValue(true)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'nativeClick',
+        x: 120.4,
+        y: 48.6,
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: {
+        ok: true,
+        kind: 'browser.action',
+        action: 'click',
+        backend: 'electron-send-input-event',
+        executionKind: 'trusted-event',
+        synthetic: false,
+      },
+    })
+    expect(browser.clickAt).toHaveBeenCalledWith('workspace-browser', 120.4, 48.6)
+  })
 })
 
 function fakeBrowser() {
@@ -274,6 +313,7 @@ function fakeBrowser() {
   }))
   const navigate = vi.fn(async () => undefined)
   const evaluate = vi.fn()
+  const clickAt = vi.fn()
   const manager = {
     activeLabel,
     has,
@@ -285,6 +325,7 @@ function fakeBrowser() {
     goBack: vi.fn(),
     goForward: vi.fn(),
     evaluate,
+    clickAt,
     isAgentControlPaused: vi.fn(() => false),
     consumeApprovedAgentRisk: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),
@@ -292,6 +333,7 @@ function fakeBrowser() {
   } as unknown as EmbeddedBrowserManager
   return {
     activeLabel,
+    clickAt,
     evaluate,
     has,
     manager,

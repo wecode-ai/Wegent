@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor } from '@tanstack/react-virtual'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -89,6 +89,7 @@ import {
 } from '@/features/workbench/runtimeConversationCache'
 import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
 import { SelectionActionsPopover } from './SelectionActionsPopover'
+import { useBottomOriginVirtualizer } from './useBottomOriginVirtualizer'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -136,6 +137,7 @@ interface MessageListProps {
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
   virtualAnchorToEnd?: boolean
+  bottomOrigin?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -229,6 +231,7 @@ export const MessageList = memo(function MessageList({
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
   virtualAnchorToEnd = true,
+  bottomOrigin = false,
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -267,7 +270,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && scrollElementRef !== undefined
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -280,14 +283,20 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const bottomOriginAppendOnlyItemKeys = useMemo(
+    () =>
+      new Set(
+        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
+      ),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
   )
-  const initialVirtualOffset = useMemo(() => {
-    const viewportHeight = scrollElementRef?.current?.clientHeight ?? 0
+  const initialVirtualContentHeight = useMemo(() => {
     const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    const contentHeight =
+    return (
       MESSAGE_LIST_PADDING_TOP_PX +
       MESSAGE_LIST_PADDING_BOTTOM_PX +
       visibleMessages.reduce((total, message, index) => {
@@ -296,25 +305,13 @@ export const MessageList = memo(function MessageList({
         const gap = index < visibleMessages.length - 1 ? MESSAGE_LIST_GAP_PX : 0
         return total + size + gap
       }, 0)
-    return Math.max(0, contentHeight - viewportHeight - initialDistanceFromBottomPx)
-  }, [
-    initialDistanceFromBottomPx,
-    initialMeasurementsCache,
-    messageIntrinsicHeights,
-    scrollElementRef,
-    visibleMessages,
-  ])
-  // TanStack Virtual owns mutable measurement callbacks that React Compiler must not memoize.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const messageVirtualizer = useVirtualizer({
+    )
+  }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
+  const messageVirtualizer = useBottomOriginVirtualizer({
+    bottomOrigin,
+    bottomOriginAppendOnlyItemKeys,
     count: visibleMessages.length,
     enabled: virtualMessages,
-    getScrollElement: () => scrollElementRef?.current ?? null,
-    initialRect: {
-      width: scrollElementRef?.current?.clientWidth ?? 0,
-      height: scrollElementRef?.current?.clientHeight ?? 0,
-    },
-    initialOffset: initialVirtualOffset,
     getItemKey: index => visibleMessages[index]?.id ?? index,
     estimateSize: index => {
       const message = visibleMessages[index]
@@ -325,6 +322,7 @@ export const MessageList = memo(function MessageList({
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: virtualAnchorToEnd ? 'end' : 'start',
+    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -336,9 +334,14 @@ export const MessageList = memo(function MessageList({
       return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
+    initialContentHeightPx: initialVirtualContentHeight,
+    initialDistanceFromBottomPx,
+    positionKey: conversationKey,
+    scrollElementRef,
+    shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
+      ? undefined
+      : preserveScrollPositionOutsideVirtualizer,
   })
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-    preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
 
   useLayoutEffect(() => {
@@ -725,6 +728,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
     previous.scrollElementRef !== next.scrollElementRef ? 'scrollElementRef' : null,
+    previous.bottomOrigin !== next.bottomOrigin ? 'bottomOrigin' : null,
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,

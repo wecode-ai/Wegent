@@ -727,33 +727,38 @@ async function markerState(bridge) {
 }
 
 async function clickMarker(bridge) {
-  const marker = await markerState(bridge)
-  assert.ok(marker, 'The browser annotation marker is unavailable')
-  const inspect = await bridge({
-    action: 'inspect',
-    options: { interactiveOnly: false, includeTextBlocks: false, maxNodes: 800 },
-    timeoutMs: 5_000,
-  })
-  const markerNode = inspect.nodes.find(
-    node => node.role === 'button' && node.name === `Browser annotation ${marker.number}`
+  const marker = await pageValue(
+    bridge,
+    `(() => {
+      const root = document.getElementById(${JSON.stringify(MARKER_ROOT_ID)})?.shadowRoot
+      const marker = root?.querySelector(${JSON.stringify(MARKER_SELECTOR)})
+      if (!marker) return { ok: false, markerCount: 0 }
+      const rect = marker.getBoundingClientRect()
+      const markerCount = root.querySelectorAll(${JSON.stringify(MARKER_SELECTOR)}).length
+      return {
+        ok: true,
+        annotationId: marker.getAttribute('data-annotation-id'),
+        markerCount,
+        number: marker.textContent,
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+      }
+    })()`
   )
-  assert.ok(
-    markerNode?.ref,
-    `Browser annotation ${marker.number} did not expose an inspect ref: ${JSON.stringify({
-      marker,
-      markerNode,
-      buttons: inspect.nodes.filter(node => node.role === 'button'),
-    })}`
-  )
+  assert.equal(marker.ok, true, `The browser annotation marker is unavailable: ${marker}`)
   const result = await bridge({
-    action: 'click',
-    ref: markerNode.ref,
+    action: 'nativeClick',
+    x: marker.x,
+    y: marker.y,
     timeoutMs: 5_000,
   })
   assert.equal(
     result.ok,
     true,
-    `The browser annotation marker could not be clicked: ${JSON.stringify(result)}`
+    `The browser annotation marker did not receive trusted input: ${JSON.stringify({
+      marker,
+      result,
+    })}`
   )
 }
 
