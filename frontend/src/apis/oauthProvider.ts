@@ -8,15 +8,13 @@ export type OAuthClientType = 'public' | 'confidential'
 
 export interface OAuthClient {
   id: number
+  owner_user_id: number
+  owner_user_name?: string | null
   name: string
   namespace: string
   client_id: string
   client_type: OAuthClientType
   redirect_uris: string[]
-  token_issuer_id: number
-  token_issuer_name: string
-  access_ttl_seconds: number
-  refresh_ttl_seconds: number
   description: string
   is_active: boolean
   created_at: string
@@ -28,14 +26,15 @@ export interface OAuthClientCreateRequest {
   name: string
   client_type: OAuthClientType
   redirect_uris: string[]
-  token_issuer_id: number
-  access_ttl_seconds: number
-  refresh_ttl_seconds: number
   description?: string
-  enabled: boolean
 }
 
-export type OAuthClientUpdateRequest = Partial<OAuthClientCreateRequest>
+export interface OAuthClientUpdateRequest extends Partial<OAuthClientCreateRequest> {
+  enabled?: boolean
+}
+export interface OAuthClientAdminUpdateRequest {
+  enabled: boolean
+}
 
 export interface OAuthClientListResponse {
   items: OAuthClient[]
@@ -54,21 +53,35 @@ export interface OAuthAuthorizationDecision {
   redirect_url: string
 }
 
+export const oauthClientApis = {
+  async getOAuthClients(): Promise<OAuthClientListResponse> {
+    return apiClient.get('/oauth-clients')
+  },
+
+  async createOAuthClient(data: OAuthClientCreateRequest): Promise<OAuthClient> {
+    return apiClient.post('/oauth-clients', data)
+  },
+
+  async updateOAuthClient(id: number, data: OAuthClientUpdateRequest): Promise<OAuthClient> {
+    return apiClient.put(`/oauth-clients/${id}`, data)
+  },
+
+  async rotateOAuthClientSecret(id: number): Promise<OAuthClient> {
+    return apiClient.post(`/oauth-clients/${id}/rotate-secret`)
+  },
+
+  async deleteOAuthClient(id: number): Promise<void> {
+    return apiClient.delete(`/oauth-clients/${id}`)
+  },
+}
+
 export const oauthClientAdminApis = {
   async getOAuthClients(): Promise<OAuthClientListResponse> {
     return apiClient.get('/admin/oauth-clients')
   },
 
-  async createOAuthClient(data: OAuthClientCreateRequest): Promise<OAuthClient> {
-    return apiClient.post('/admin/oauth-clients', data)
-  },
-
-  async updateOAuthClient(id: number, data: OAuthClientUpdateRequest): Promise<OAuthClient> {
+  async updateOAuthClient(id: number, data: OAuthClientAdminUpdateRequest): Promise<OAuthClient> {
     return apiClient.put(`/admin/oauth-clients/${id}`, data)
-  },
-
-  async rotateOAuthClientSecret(id: number): Promise<OAuthClient> {
-    return apiClient.post(`/admin/oauth-clients/${id}/rotate-secret`)
   },
 
   async deleteOAuthClient(id: number): Promise<void> {
@@ -78,14 +91,18 @@ export const oauthClientAdminApis = {
 
 export const oauthAuthorizationApis = {
   async getRequest(requestId: string): Promise<OAuthAuthorizationRequest> {
-    return apiClient.get(`/oauth/authorization-requests/${encodeURIComponent(requestId)}`)
+    return apiClient.get(`/external/oauth/authorization-requests/${encodeURIComponent(requestId)}`)
   },
 
   async approve(requestId: string): Promise<OAuthAuthorizationDecision> {
-    return apiClient.post(`/oauth/authorization-requests/${encodeURIComponent(requestId)}/approve`)
+    return apiClient.post(
+      `/external/oauth/authorization-requests/${encodeURIComponent(requestId)}/approve`
+    )
   },
 
   async deny(requestId: string): Promise<OAuthAuthorizationDecision> {
-    return apiClient.post(`/oauth/authorization-requests/${encodeURIComponent(requestId)}/deny`)
+    return apiClient.post(
+      `/external/oauth/authorization-requests/${encodeURIComponent(requestId)}/deny`
+    )
   },
 }

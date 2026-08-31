@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.datastructures import QueryParams
 
 from app.api.api import api_router
+from app.api.endpoints.oauth_provider import metadata_router as oauth_metadata_router
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -841,6 +842,7 @@ def create_app():
         logger.info("Rate limiting enabled for API endpoints")
 
     # Include API routes
+    app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
 
     # Mount MCP Server endpoints

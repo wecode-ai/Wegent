@@ -71,11 +71,15 @@ Skills 是 Claude Code 的能力扩展包：
 
 ### OAuth Apps 管理
 
-管理员可以在 **设置 → API Keys → OAuth Apps** 中登记外部 OAuth Client，用于让外部系统通过 Wegent 证明当前用户身份。
+应用开发者可以在 **设置 → 开发者凭据 → OAuth 应用** 中自行创建和管理外部 OAuth Client，用于让外部系统通过 Wegent 证明当前用户身份。`client_id` 在页面创建成功后获得；Confidential Client 的 `client_secret` 只显示一次。
 
-每个 OAuth App 需要配置 Client 类型、精确的 Redirect URI、专用 TokenIssuer、access token 有效期和 refresh token 有效期。外部 access token 只允许读取 OAuth userinfo，并且只返回用户 `id`、`user_name` 和 `email`；它不能调用 Wegent 业务 API，也不会授予角色、资源权限或 Git 凭据等内部权限。
+每个 OAuth App 只需要配置 Client 类型和精确的 Redirect URI。Token 生命周期、TokenIssuer 和 SigningKey 都由 Provider 统一管理，不需要开发者或管理员逐个配置。
 
-切换 Client 类型、更换 TokenIssuer、轮换 secret、禁用或删除 OAuth App 时，现有 refresh token 会失效。生产环境应使用 HTTPS 的 Backend 公网地址，并为外部 Client 登记完全匹配的 Redirect URI。
+开发者只能查看和维护自己创建的 OAuth App。管理员在 **管理后台 → 密钥管理 → OAuth 应用** 中只负责全局查看、停用和删除。
+
+外部 access token 只允许读取 OAuth userinfo，并且只返回用户 `id`、`user_name` 和 `email`；它不能调用 Wegent 业务 API，也不会授予角色、资源权限或 Git 凭据等内部权限。
+
+切换 Client 类型、轮换 secret、禁用或删除 OAuth App 时，现有 refresh token 会失效。完整接入流程见[外部 OAuth 2.0 接入指南](../../developer-guide/external-oauth-integration.md)。
 
 ### 已归档聊天管理
 

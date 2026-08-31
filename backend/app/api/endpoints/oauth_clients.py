@@ -2,17 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Administrative OAuth client management."""
+"""Developer self-service OAuth Client management."""
 
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.exceptions import CustomHTTPException
-from app.core.security import get_admin_user
+from app.core.security import get_current_user
 from app.models.user import User
 from app.schemas.oauth_provider import (
-    OAuthClientAdminUpdateRequest,
+    OAuthClientCreateRequest,
     OAuthClientListResponse,
     OAuthClientResponse,
     OAuthClientUpdateRequest,
@@ -22,7 +22,7 @@ from app.services.auth.oauth_provider import (
     oauth_provider_service,
 )
 
-router = APIRouter(prefix="/oauth-clients")
+router = APIRouter()
 
 
 def _raise_error(exc: OAuthProviderError) -> None:
@@ -36,24 +36,62 @@ def _raise_error(exc: OAuthProviderError) -> None:
 @router.get("", response_model=OAuthClientListResponse)
 async def list_oauth_clients(
     db: Session = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    current_user: User = Depends(get_current_user),
 ) -> OAuthClientListResponse:
-    items = oauth_provider_service.list_clients(db)
+    items = oauth_provider_service.list_clients(db, owner_user_id=current_user.id)
     return OAuthClientListResponse(items=items, total=len(items))
+
+
+@router.post(
+    "",
+    response_model=OAuthClientResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_oauth_client(
+    request: OAuthClientCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OAuthClientResponse:
+    try:
+        return oauth_provider_service.create_client(
+            db, request, owner_user_id=current_user.id
+        )
+    except OAuthProviderError as exc:
+        _raise_error(exc)
 
 
 @router.put("/{client_kind_id}", response_model=OAuthClientResponse)
 async def update_oauth_client(
     client_kind_id: int,
-    request: OAuthClientAdminUpdateRequest,
+    request: OAuthClientUpdateRequest,
     db: Session = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    current_user: User = Depends(get_current_user),
 ) -> OAuthClientResponse:
     try:
         return oauth_provider_service.update_client(
             db,
             client_kind_id,
-            OAuthClientUpdateRequest(enabled=request.enabled),
+            request,
+            owner_user_id=current_user.id,
+        )
+    except OAuthProviderError as exc:
+        _raise_error(exc)
+
+
+@router.post(
+    "/{client_kind_id}/rotate-secret",
+    response_model=OAuthClientResponse,
+)
+async def rotate_oauth_client_secret(
+    client_kind_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OAuthClientResponse:
+    try:
+        return oauth_provider_service.rotate_client_secret(
+            db,
+            client_kind_id,
+            owner_user_id=current_user.id,
         )
     except OAuthProviderError as exc:
         _raise_error(exc)
@@ -63,10 +101,14 @@ async def update_oauth_client(
 async def delete_oauth_client(
     client_kind_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(get_admin_user),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     try:
-        oauth_provider_service.delete_client(db, client_kind_id)
+        oauth_provider_service.delete_client(
+            db,
+            client_kind_id,
+            owner_user_id=current_user.id,
+        )
     except OAuthProviderError as exc:
         _raise_error(exc)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

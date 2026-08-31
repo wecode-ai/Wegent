@@ -5,6 +5,7 @@
 """Public endpoints for the constrained external OAuth provider."""
 
 import base64
+from urllib.parse import unquote_plus
 
 from fastapi import APIRouter, Depends, Form, Header, Query, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -18,6 +19,7 @@ from app.models.user import User
 from app.schemas.oauth_provider import (
     OAuthAuthorizationDecisionResponse,
     OAuthAuthorizationRequestResponse,
+    OAuthJwks,
     OAuthProviderMetadata,
     OAuthTokenResponse,
     OAuthUserInfoResponse,
@@ -25,10 +27,11 @@ from app.schemas.oauth_provider import (
 from app.services.auth.oauth_provider import (
     OAUTH_SCOPE,
     OAuthProviderError,
+    oauth_provider_issuer,
     oauth_provider_service,
 )
 
-router = APIRouter(prefix="/oauth", tags=["oauth-provider"])
+router = APIRouter(prefix="/external/oauth", tags=["oauth-provider"])
 metadata_router = APIRouter(tags=["oauth-provider"])
 
 
@@ -38,7 +41,11 @@ def _oauth_error(exc: OAuthProviderError) -> JSONResponse:
         if exc.error == "invalid_client":
             headers["WWW-Authenticate"] = 'Basic realm="oauth", error="invalid_client"'
         else:
-            headers["WWW-Authenticate"] = f'Bearer error="{exc.error}"'
+            description = exc.description.replace("\\", "\\\\").replace('"', '\\"')
+            headers["WWW-Authenticate"] = (
+                f'Bearer realm="userinfo", error="{exc.error}", '
+                f'error_description="{description}"'
+            )
     return JSONResponse(
         status_code=exc.status_code,
         content={"error": exc.error, "error_description": exc.description},
@@ -50,39 +57,49 @@ def _parse_client_credentials(
     authorization: str, form_client_id: str, form_client_secret: str | None
 ) -> tuple[str, str | None]:
     scheme, encoded = get_authorization_scheme_param(authorization)
-    if scheme.lower() != "basic":
+    if not authorization:
         return form_client_id, form_client_secret
+    if scheme.lower() != "basic":
+        raise OAuthProviderError(
+            "invalid_client", "Unsupported client authentication method", 401
+        )
+    if form_client_id or form_client_secret is not None:
+        raise OAuthProviderError(
+            "invalid_request", "Multiple client authentication methods are not allowed"
+        )
     try:
-        decoded = base64.b64decode(encoded).decode("utf-8")
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
         basic_client_id, basic_secret = decoded.split(":", 1)
     except Exception as exc:
         raise OAuthProviderError(
             "invalid_client", "Malformed HTTP Basic client credentials", 401
         ) from exc
-    if form_client_id and form_client_id != basic_client_id:
-        raise OAuthProviderError(
-            "invalid_client", "Conflicting client credentials", 401
-        )
-    return basic_client_id, basic_secret
+    return unquote_plus(basic_client_id), unquote_plus(basic_secret)
 
 
 def _provider_base_url() -> str:
-    return f"{settings.WEGENT_BACKEND_PUBLIC_URL.rstrip('/')}{settings.API_PREFIX}"
+    return oauth_provider_issuer()
 
 
 @metadata_router.get(
-    "/.well-known/oauth-authorization-server",
+    f"/.well-known/oauth-authorization-server{settings.API_PREFIX.rstrip('/')}",
     response_model=OAuthProviderMetadata,
 )
 async def oauth_provider_metadata() -> OAuthProviderMetadata:
     base = _provider_base_url()
     return OAuthProviderMetadata(
         issuer=base,
-        authorization_endpoint=f"{base}/oauth/authorize",
-        token_endpoint=f"{base}/oauth/token",
-        revocation_endpoint=f"{base}/oauth/revoke",
-        userinfo_endpoint=f"{base}/oauth/userinfo",
+        authorization_endpoint=f"{base}/external/oauth/authorize",
+        token_endpoint=f"{base}/external/oauth/token",
+        revocation_endpoint=f"{base}/external/oauth/revoke",
+        jwks_uri=f"{base}/external/oauth/jwks",
+        userinfo_endpoint=f"{base}/external/oauth/userinfo",
     )
+
+
+@router.get("/jwks", response_model=OAuthJwks)
+async def jwks(db: Session = Depends(get_db)) -> OAuthJwks:
+    return oauth_provider_service.jwks(db)
 
 
 @router.get("/authorize")
@@ -223,6 +240,7 @@ async def token(
 @router.post("/revoke", status_code=200)
 async def revoke(
     token: str = Form(...),
+    token_type_hint: str | None = Form(default=None),
     client_id: str = Form(default=""),
     client_secret: str | None = Form(default=None),
     authorization: str = Header(default=""),
@@ -236,7 +254,8 @@ async def revoke(
             db,
             client_id=resolved_client_id,
             client_secret=resolved_secret,
-            refresh_token=token,
+            token=token,
+            token_type_hint=token_type_hint,
         )
         return Response(status_code=200)
     except OAuthProviderError as exc:

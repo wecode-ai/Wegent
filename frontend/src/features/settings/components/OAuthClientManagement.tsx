@@ -4,14 +4,14 @@
 
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
-  adminApis,
+  oauthClientAdminApis,
+  oauthClientApis,
   OAuthClient,
   OAuthClientCreateRequest,
   OAuthClientType,
-  TokenIssuer,
-} from '@/apis/admin'
+} from '@/apis/oauthProvider'
 import UnifiedAddButton from '@/components/common/UnifiedAddButton'
 import {
   AlertDialog,
@@ -50,52 +50,44 @@ type ClientForm = {
   name: string
   clientType: OAuthClientType
   redirectUris: string
-  tokenIssuerId: string
-  accessTtlSeconds: string
-  refreshTtlSeconds: string
   description: string
-  enabled: boolean
 }
 
 const DEFAULT_FORM: ClientForm = {
   name: '',
-  clientType: 'confidential',
+  clientType: 'public',
   redirectUris: '',
-  tokenIssuerId: '',
-  accessTtlSeconds: '600',
-  refreshTtlSeconds: '2592000',
   description: '',
-  enabled: true,
 }
 
-export default function OAuthClientManagement() {
-  const { t } = useTranslation('admin')
+interface OAuthClientManagementProps {
+  mode?: 'owner' | 'admin'
+}
+
+export default function OAuthClientManagement({ mode = 'owner' }: OAuthClientManagementProps) {
+  const { t } = useTranslation('settings')
   const { toast } = useToast()
+  const isAdmin = mode === 'admin'
   const [clients, setClients] = useState<OAuthClient[]>([])
-  const [issuers, setIssuers] = useState<TokenIssuer[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<OAuthClient | null>(null)
   const [form, setForm] = useState<ClientForm>(DEFAULT_FORM)
   const [saving, setSaving] = useState(false)
-  const [secret, setSecret] = useState<{ clientId: string; value: string } | null>(null)
+  const [credentials, setCredentials] = useState<{
+    clientId: string
+    clientSecret?: string | null
+  } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<OAuthClient | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
-
-  const oauthIssuers = useMemo(
-    () => issuers.filter(issuer => issuer.is_active && issuer.audience === 'wegent-userinfo'),
-    [issuers]
-  )
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [clientResponse, issuerResponse] = await Promise.all([
-        adminApis.getOAuthClients(),
-        adminApis.getTokenIssuers(),
-      ])
+      const clientResponse = isAdmin
+        ? await oauthClientAdminApis.getOAuthClients()
+        : await oauthClientApis.getOAuthClients()
       setClients(clientResponse.items)
-      setIssuers(issuerResponse.items)
     } catch (error) {
       toast({
         variant: 'destructive',
@@ -105,7 +97,7 @@ export default function OAuthClientManagement() {
     } finally {
       setLoading(false)
     }
-  }, [t, toast])
+  }, [isAdmin, t, toast])
 
   useEffect(() => {
     void load()
@@ -113,10 +105,7 @@ export default function OAuthClientManagement() {
 
   function openCreate() {
     setEditing(null)
-    setForm({
-      ...DEFAULT_FORM,
-      tokenIssuerId: oauthIssuers[0] ? String(oauthIssuers[0].id) : '',
-    })
+    setForm(DEFAULT_FORM)
     setDialogOpen(true)
   }
 
@@ -126,11 +115,7 @@ export default function OAuthClientManagement() {
       name: client.name,
       clientType: client.client_type,
       redirectUris: client.redirect_uris.join('\n'),
-      tokenIssuerId: String(client.token_issuer_id),
-      accessTtlSeconds: String(client.access_ttl_seconds),
-      refreshTtlSeconds: String(client.refresh_ttl_seconds),
       description: client.description,
-      enabled: client.is_active,
     })
     setDialogOpen(true)
   }
@@ -140,7 +125,7 @@ export default function OAuthClientManagement() {
       .split('\n')
       .map(value => value.trim())
       .filter(Boolean)
-    if (!form.name.trim() || !form.tokenIssuerId || redirectUris.length === 0) {
+    if (!form.name.trim() || redirectUris.length === 0) {
       toast({ variant: 'destructive', title: t('oauth_clients.errors.required') })
       return
     }
@@ -148,23 +133,22 @@ export default function OAuthClientManagement() {
       name: form.name.trim(),
       client_type: form.clientType,
       redirect_uris: redirectUris,
-      token_issuer_id: Number(form.tokenIssuerId),
-      access_ttl_seconds: Number(form.accessTtlSeconds),
-      refresh_ttl_seconds: Number(form.refreshTtlSeconds),
       description: form.description.trim(),
-      enabled: form.enabled,
     }
     setSaving(true)
     try {
       const saved = editing
-        ? await adminApis.updateOAuthClient(editing.id, payload)
-        : await adminApis.createOAuthClient(payload)
+        ? await oauthClientApis.updateOAuthClient(editing.id, payload)
+        : await oauthClientApis.createOAuthClient(payload)
       setClients(previous =>
         editing ? previous.map(item => (item.id === saved.id ? saved : item)) : [saved, ...previous]
       )
       setDialogOpen(false)
-      if (saved.client_secret) {
-        setSecret({ clientId: saved.client_id, value: saved.client_secret })
+      if (!editing || saved.client_secret) {
+        setCredentials({
+          clientId: saved.client_id,
+          clientSecret: saved.client_secret,
+        })
       }
       toast({
         title: editing ? t('oauth_clients.update_success') : t('oauth_clients.create_success'),
@@ -183,9 +167,13 @@ export default function OAuthClientManagement() {
   async function toggle(client: OAuthClient) {
     setBusyId(client.id)
     try {
-      const updated = await adminApis.updateOAuthClient(client.id, {
-        enabled: !client.is_active,
-      })
+      const updated = isAdmin
+        ? await oauthClientAdminApis.updateOAuthClient(client.id, {
+            enabled: !client.is_active,
+          })
+        : await oauthClientApis.updateOAuthClient(client.id, {
+            enabled: !client.is_active,
+          })
       setClients(previous => previous.map(item => (item.id === updated.id ? updated : item)))
     } catch (error) {
       toast({
@@ -201,10 +189,13 @@ export default function OAuthClientManagement() {
   async function rotate(client: OAuthClient) {
     setBusyId(client.id)
     try {
-      const updated = await adminApis.rotateOAuthClientSecret(client.id)
+      const updated = await oauthClientApis.rotateOAuthClientSecret(client.id)
       setClients(previous => previous.map(item => (item.id === updated.id ? updated : item)))
       if (updated.client_secret) {
-        setSecret({ clientId: updated.client_id, value: updated.client_secret })
+        setCredentials({
+          clientId: updated.client_id,
+          clientSecret: updated.client_secret,
+        })
       }
     } catch (error) {
       toast({
@@ -221,7 +212,11 @@ export default function OAuthClientManagement() {
     if (!deleteTarget) return
     setBusyId(deleteTarget.id)
     try {
-      await adminApis.deleteOAuthClient(deleteTarget.id)
+      if (isAdmin) {
+        await oauthClientAdminApis.deleteOAuthClient(deleteTarget.id)
+      } else {
+        await oauthClientApis.deleteOAuthClient(deleteTarget.id)
+      }
       setClients(previous => previous.filter(item => item.id !== deleteTarget.id))
       setDeleteTarget(null)
       toast({ title: t('oauth_clients.delete_success') })
@@ -249,24 +244,23 @@ export default function OAuthClientManagement() {
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">{t('oauth_clients.title')}</h3>
-          <p className="mt-1 text-sm text-text-muted">{t('oauth_clients.description')}</p>
+          <h3 className="text-lg font-semibold text-text-primary">
+            {t(isAdmin ? 'oauth_clients.admin_title' : 'oauth_clients.title')}
+          </h3>
+          <p className="mt-1 text-sm text-text-muted">
+            {t(isAdmin ? 'oauth_clients.admin_description' : 'oauth_clients.description')}
+          </p>
         </div>
-        <UnifiedAddButton
-          onClick={openCreate}
-          data-testid="oauth-client-create-button"
-          disabled={oauthIssuers.length === 0}
-          className="min-h-11"
-        >
-          {t('oauth_clients.create')}
-        </UnifiedAddButton>
+        {!isAdmin && (
+          <UnifiedAddButton
+            onClick={openCreate}
+            data-testid="oauth-client-create-button"
+            className="min-h-11"
+          >
+            {t('oauth_clients.create')}
+          </UnifiedAddButton>
+        )}
       </div>
-
-      {oauthIssuers.length === 0 && (
-        <div className="rounded-lg border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-700">
-          {t('oauth_clients.no_issuer')}
-        </div>
-      )}
 
       {loading ? (
         <div className="flex justify-center py-10">
@@ -290,18 +284,32 @@ export default function OAuthClientManagement() {
                     <KeyRound className="h-4 w-4 text-primary" />
                     <span className="font-medium text-text-primary">{client.name}</span>
                     <span className="rounded bg-muted px-2 py-0.5 text-xs text-text-secondary">
-                      {client.client_type}
+                      {t(
+                        client.client_type === 'public'
+                          ? 'oauth_clients.public_label'
+                          : 'oauth_clients.confidential_label'
+                      )}
                     </span>
                   </div>
-                  <code className="mt-2 block break-all text-xs text-text-secondary">
+                  <p className="mt-2 text-xs text-text-muted">{t('oauth_clients.client_id')}</p>
+                  <code
+                    className="mt-1 block break-all text-xs text-text-secondary"
+                    data-testid={`oauth-client-id-${client.id}`}
+                  >
                     {client.client_id}
                   </code>
-                  <p className="mt-2 text-sm text-text-muted">
-                    {t('oauth_clients.issuer')}: {client.token_issuer_name}
-                  </p>
                   <p className="mt-1 break-all text-sm text-text-muted">
                     {client.redirect_uris.join(', ')}
                   </p>
+                  {isAdmin && (
+                    <p
+                      className="mt-1 text-xs text-text-muted"
+                      data-testid={`oauth-client-owner-${client.id}`}
+                    >
+                      {t('oauth_clients.owner')}:{' '}
+                      {client.owner_user_name || `#${client.owner_user_id}`}
+                    </p>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Switch
@@ -310,7 +318,7 @@ export default function OAuthClientManagement() {
                     onCheckedChange={() => void toggle(client)}
                     data-testid={`oauth-client-toggle-${client.id}`}
                   />
-                  {client.client_type === 'confidential' && (
+                  {!isAdmin && client.client_type === 'confidential' && (
                     <Button
                       variant="outline"
                       size="sm"
@@ -323,16 +331,18 @@ export default function OAuthClientManagement() {
                       {t('oauth_clients.rotate')}
                     </Button>
                   )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="min-h-11"
-                    onClick={() => openEdit(client)}
-                    data-testid={`oauth-client-edit-${client.id}`}
-                  >
-                    <Pencil className="mr-1 h-4 w-4" />
-                    {t('outbound_tokens.actions.edit')}
-                  </Button>
+                  {!isAdmin && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11"
+                      onClick={() => openEdit(client)}
+                      data-testid={`oauth-client-edit-${client.id}`}
+                    >
+                      <Pencil className="mr-1 h-4 w-4" />
+                      {t('oauth_clients.edit')}
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -379,8 +389,8 @@ export default function OAuthClientManagement() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="confidential">{t('oauth_clients.confidential')}</SelectItem>
                     <SelectItem value="public">{t('oauth_clients.public')}</SelectItem>
+                    <SelectItem value="confidential">{t('oauth_clients.confidential')}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -396,57 +406,6 @@ export default function OAuthClientManagement() {
                 data-testid="oauth-client-redirect-uris"
               />
             </Field>
-            <Field label={t('oauth_clients.issuer')}>
-              <Select
-                value={form.tokenIssuerId}
-                onValueChange={value =>
-                  setForm(previous => ({ ...previous, tokenIssuerId: value }))
-                }
-              >
-                <SelectTrigger data-testid="oauth-client-issuer">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {oauthIssuers.map(issuer => (
-                    <SelectItem key={issuer.id} value={String(issuer.id)}>
-                      {issuer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label={t('oauth_clients.access_ttl')}>
-                <Input
-                  type="number"
-                  min={60}
-                  max={3600}
-                  value={form.accessTtlSeconds}
-                  data-testid="oauth-client-access-ttl"
-                  onChange={event =>
-                    setForm(previous => ({
-                      ...previous,
-                      accessTtlSeconds: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-              <Field label={t('oauth_clients.refresh_ttl')}>
-                <Input
-                  type="number"
-                  min={3600}
-                  max={7776000}
-                  value={form.refreshTtlSeconds}
-                  data-testid="oauth-client-refresh-ttl"
-                  onChange={event =>
-                    setForm(previous => ({
-                      ...previous,
-                      refreshTtlSeconds: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
-            </div>
             <Field label={t('oauth_clients.description_label')}>
               <Textarea
                 rows={3}
@@ -457,14 +416,6 @@ export default function OAuthClientManagement() {
                 }
               />
             </Field>
-            <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-              <span className="text-sm text-text-primary">{t('oauth_clients.enabled')}</span>
-              <Switch
-                checked={form.enabled}
-                onCheckedChange={enabled => setForm(previous => ({ ...previous, enabled }))}
-                data-testid="oauth-client-form-enabled"
-              />
-            </div>
           </div>
           <DialogFooter>
             <Button
@@ -489,33 +440,41 @@ export default function OAuthClientManagement() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!secret} onOpenChange={open => !open && setSecret(null)}>
+      <Dialog open={!!credentials} onOpenChange={open => !open && setCredentials(null)}>
         <DialogContent className="bg-surface sm:max-w-[560px]">
           <DialogHeader>
             <DialogTitle>{t('oauth_clients.secret_title')}</DialogTitle>
-            <DialogDescription>{t('oauth_clients.secret_warning')}</DialogDescription>
+            <DialogDescription>
+              {t(
+                credentials?.clientSecret
+                  ? 'oauth_clients.secret_warning'
+                  : 'oauth_clients.public_credential_note'
+              )}
+            </DialogDescription>
           </DialogHeader>
-          {secret && (
+          {credentials && (
             <div className="space-y-3">
               <SecretRow
                 label="client_id"
-                value={secret.clientId}
+                value={credentials.clientId}
                 testId="oauth-client-copy-client-id"
                 onCopy={copy}
               />
-              <SecretRow
-                label="client_secret"
-                value={secret.value}
-                testId="oauth-client-copy-client-secret"
-                onCopy={copy}
-              />
+              {credentials.clientSecret && (
+                <SecretRow
+                  label="client_secret"
+                  value={credentials.clientSecret}
+                  testId="oauth-client-copy-client-secret"
+                  onCopy={copy}
+                />
+              )}
             </div>
           )}
           <DialogFooter>
             <Button
               variant="primary"
               className="min-h-11"
-              onClick={() => setSecret(null)}
+              onClick={() => setCredentials(null)}
               data-testid="oauth-client-secret-confirm"
             >
               {t('common:actions.confirm')}

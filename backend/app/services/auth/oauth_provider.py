@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -24,8 +26,10 @@ from app.models.kind import Kind
 from app.models.oauth_refresh_token import OAuthRefreshToken
 from app.models.user import User
 from app.schemas.oauth_provider import (
+    OAUTH_ACCESS_TOKEN_TTL_SECONDS,
     OAUTH_AUDIENCE,
     OAUTH_CLIENT_KIND,
+    OAUTH_REFRESH_TOKEN_TTL_SECONDS,
     OAUTH_SCOPE,
     OAuthAuthorizationDecisionResponse,
     OAuthAuthorizationRequestResponse,
@@ -34,6 +38,8 @@ from app.schemas.oauth_provider import (
     OAuthClientResponse,
     OAuthClientStatus,
     OAuthClientUpdateRequest,
+    OAuthJwk,
+    OAuthJwks,
     OAuthTokenResponse,
     OAuthUserInfoResponse,
 )
@@ -57,6 +63,10 @@ PKCE_VERIFIER_PATTERN = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 logger = logging.getLogger(__name__)
 
 
+def oauth_provider_issuer() -> str:
+    return f"{settings.WEGENT_BACKEND_PUBLIC_URL.rstrip('/')}{settings.API_PREFIX}"
+
+
 class OAuthProviderError(Exception):
     def __init__(self, error: str, description: str, status_code: int = 400):
         super().__init__(description)
@@ -66,28 +76,36 @@ class OAuthProviderError(Exception):
 
 
 class OAuthProviderService:
-    def list_clients(self, db: Session) -> list[OAuthClientResponse]:
-        rows = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == OAUTH_CLIENT_KIND,
-                Kind.user_id == SYSTEM_USER_ID,
-                Kind.namespace == SYSTEM_NAMESPACE,
-            )
-            .order_by(Kind.created_at.desc())
-            .all()
+    def list_clients(
+        self, db: Session, *, owner_user_id: int | None = None
+    ) -> list[OAuthClientResponse]:
+        query = db.query(Kind).filter(
+            Kind.kind == OAUTH_CLIENT_KIND,
+            Kind.namespace == SYSTEM_NAMESPACE,
         )
+        if owner_user_id is not None:
+            query = query.filter(Kind.user_id == owner_user_id)
+        rows = query.order_by(Kind.created_at.desc()).all()
         return [self._to_client_response(db, row) for row in rows]
 
     def create_client(
-        self, db: Session, request: OAuthClientCreateRequest
+        self,
+        db: Session,
+        request: OAuthClientCreateRequest,
+        *,
+        owner_user_id: int,
     ) -> OAuthClientResponse:
-        self._ensure_unique_name(db, request.name)
+        self._ensure_unique_name(db, request.name, owner_user_id=owner_user_id)
+        token_issuer_id = outbound_token_service.ensure_oauth_provider_token_issuer(
+            db,
+            issuer=oauth_provider_issuer(),
+            audience=OAUTH_AUDIENCE,
+        )
         self._validate_issuer(
             db,
-            request.token_issuer_id,
-            enabled=request.enabled,
-            access_ttl_seconds=request.access_ttl_seconds,
+            token_issuer_id,
+            enabled=True,
+            access_ttl_seconds=OAUTH_ACCESS_TOKEN_TTL_SECONDS,
         )
         client_id = f"wgo_{secrets.token_urlsafe(24)}"
         client_secret = (
@@ -104,21 +122,21 @@ class OAuthProviderService:
                     self._hash_secret(client_secret) if client_secret else None
                 ),
                 "redirectUris": [str(uri) for uri in request.redirect_uris],
-                "tokenIssuerRef": {"kindId": request.token_issuer_id},
-                "accessTtlSeconds": request.access_ttl_seconds,
-                "refreshTtlSeconds": request.refresh_ttl_seconds,
-                "enabled": request.enabled,
+                "tokenIssuerRef": {"kindId": token_issuer_id},
+                "accessTtlSeconds": OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+                "refreshTtlSeconds": OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+                "enabled": True,
                 "description": request.description or "",
             },
-            status={"state": "Available" if request.enabled else "Disabled"},
+            status={"state": "Available"},
         )
         row = Kind(
-            user_id=SYSTEM_USER_ID,
+            user_id=owner_user_id,
             kind=OAUTH_CLIENT_KIND,
             name=request.name,
             namespace=SYSTEM_NAMESPACE,
             json=resource.model_dump(),
-            is_active=request.enabled,
+            is_active=True,
         )
         db.add(row)
         db.commit()
@@ -126,23 +144,28 @@ class OAuthProviderService:
         return self._to_client_response(db, row, client_secret=client_secret)
 
     def update_client(
-        self, db: Session, client_id: int, request: OAuthClientUpdateRequest
+        self,
+        db: Session,
+        client_id: int,
+        request: OAuthClientUpdateRequest,
+        *,
+        owner_user_id: int | None = None,
     ) -> OAuthClientResponse:
-        row = self._get_client_row(db, client_id)
+        row = self._get_client_row(db, client_id, owner_user_id=owner_user_id)
         resource = OAuthClientKind.model_validate(row.json)
         generated_secret = None
         revoke_existing_tokens = False
         if request.name is not None and request.name != row.name:
-            self._ensure_unique_name(db, request.name, exclude_id=row.id)
+            self._ensure_unique_name(
+                db,
+                request.name,
+                owner_user_id=row.user_id,
+                exclude_id=row.id,
+            )
             row.name = request.name
             resource.metadata.name = request.name
         if request.redirect_uris is not None:
             resource.spec.redirectUris = [str(uri) for uri in request.redirect_uris]
-        if request.token_issuer_id is not None:
-            revoke_existing_tokens = (
-                request.token_issuer_id != resource.spec.tokenIssuerRef.kindId
-            )
-            resource.spec.tokenIssuerRef.kindId = request.token_issuer_id
         if request.client_type is not None:
             revoke_existing_tokens = (
                 revoke_existing_tokens
@@ -154,10 +177,6 @@ class OAuthProviderService:
             elif not resource.spec.clientSecretHash:
                 generated_secret = f"wgos_{secrets.token_urlsafe(36)}"
                 resource.spec.clientSecretHash = self._hash_secret(generated_secret)
-        if request.access_ttl_seconds is not None:
-            resource.spec.accessTtlSeconds = request.access_ttl_seconds
-        if request.refresh_ttl_seconds is not None:
-            resource.spec.refreshTtlSeconds = request.refresh_ttl_seconds
         if request.description is not None:
             resource.spec.description = request.description
         if request.enabled is not None:
@@ -181,8 +200,14 @@ class OAuthProviderService:
         db.refresh(row)
         return self._to_client_response(db, row, client_secret=generated_secret)
 
-    def rotate_client_secret(self, db: Session, client_id: int) -> OAuthClientResponse:
-        row = self._get_client_row(db, client_id)
+    def rotate_client_secret(
+        self,
+        db: Session,
+        client_id: int,
+        *,
+        owner_user_id: int,
+    ) -> OAuthClientResponse:
+        row = self._get_client_row(db, client_id, owner_user_id=owner_user_id)
         resource = OAuthClientKind.model_validate(row.json)
         if resource.spec.clientType != "confidential":
             raise OAuthProviderError(
@@ -196,8 +221,14 @@ class OAuthProviderService:
         db.refresh(row)
         return self._to_client_response(db, row, client_secret=client_secret)
 
-    def delete_client(self, db: Session, client_id: int) -> None:
-        row = self._get_client_row(db, client_id)
+    def delete_client(
+        self,
+        db: Session,
+        client_id: int,
+        *,
+        owner_user_id: int | None = None,
+    ) -> None:
+        row = self._get_client_row(db, client_id, owner_user_id=owner_user_id)
         self._revoke_client_tokens(db, row.id)
         db.delete(row)
         db.commit()
@@ -260,7 +291,6 @@ class OAuthProviderService:
             db.query(Kind)
             .filter(
                 Kind.kind == OAUTH_CLIENT_KIND,
-                Kind.user_id == SYSTEM_USER_ID,
                 Kind.namespace == SYSTEM_NAMESPACE,
                 Kind.is_active == True,  # noqa: E712
             )
@@ -273,7 +303,11 @@ class OAuthProviderService:
                 and client.spec.clientId == client_id
                 and redirect_uri in client.spec.redirectUris
             ):
-                query = {"error": error, "error_description": description}
+                query = {
+                    "error": error,
+                    "error_description": description,
+                    "iss": oauth_provider_issuer(),
+                }
                 if state:
                     query["state"] = state
                 return self._append_query(redirect_uri, query)
@@ -313,7 +347,7 @@ class OAuthProviderService:
         redirect_uri = str(payload["redirect_uri"])
         state = str(payload.get("state") or "")
         if not approved:
-            query = {"error": "access_denied"}
+            query = {"error": "access_denied", "iss": oauth_provider_issuer()}
             if state:
                 query["state"] = state
             return OAuthAuthorizationDecisionResponse(
@@ -331,7 +365,7 @@ class OAuthProviderService:
         )
         if not stored:
             raise OAuthProviderError("server_error", "Unable to issue code", 500)
-        query = {"code": code}
+        query = {"code": code, "iss": oauth_provider_issuer()}
         if state:
             query["state"] = state
         return OAuthAuthorizationDecisionResponse(
@@ -419,46 +453,96 @@ class OAuthProviderService:
         *,
         client_id: str,
         client_secret: str | None,
-        refresh_token: str,
+        token: str,
+        token_type_hint: str | None,
     ) -> None:
+        if token_type_hint == "access_token":
+            raise OAuthProviderError(
+                "unsupported_token_type",
+                "Access token revocation is not supported",
+            )
         client_row, _ = self.authenticate_client(
             db, client_id=client_id, client_secret=client_secret
         )
         record = (
             db.query(OAuthRefreshToken)
-            .filter(OAuthRefreshToken.token_hash == self._hash_secret(refresh_token))
+            .filter(OAuthRefreshToken.token_hash == self._hash_secret(token))
             .first()
         )
         if record and record.client_kind_id == client_row.id:
             self._revoke_family(db, record.family_id, self._utcnow())
             db.commit()
 
+    def jwks(self, db: Session) -> OAuthJwks:
+        issuer_rows = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == TOKEN_ISSUER_KIND,
+                Kind.user_id == SYSTEM_USER_ID,
+                Kind.namespace == SYSTEM_NAMESPACE,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .all()
+        )
+        keys: dict[str, OAuthJwk] = {}
+        for issuer_row in issuer_rows:
+            try:
+                issuer = TokenIssuerKind.model_validate(issuer_row.json)
+                if (
+                    issuer.spec.issuer != oauth_provider_issuer()
+                    or issuer.spec.audience != OAUTH_AUDIENCE
+                ):
+                    continue
+                key_row = self._get_signing_key_row(
+                    db, issuer.spec.signingKeyRef.kindId
+                )
+                key = SigningKeyKind.model_validate(key_row.json)
+                public_key = serialization.load_pem_public_key(
+                    key.spec.publicKeyPem.encode("utf-8")
+                )
+                if not isinstance(public_key, rsa.RSAPublicKey):
+                    continue
+                numbers = public_key.public_numbers()
+                keys[key.spec.kid] = OAuthJwk(
+                    kid=key.spec.kid,
+                    n=self._base64url_uint(numbers.n),
+                    e=self._base64url_uint(numbers.e),
+                )
+            except (OAuthProviderError, TypeError, ValueError, ValidationError):
+                continue
+        return OAuthJwks(keys=list(keys.values()))
+
     def userinfo(self, db: Session, access_token: str) -> OAuthUserInfoResponse:
         try:
+            header = jwt.get_unverified_header(access_token)
+            if header.get("typ") not in {"at+jwt", "application/at+jwt"}:
+                raise ValueError("Token type is invalid")
             unverified = jwt.decode(access_token, options={"verify_signature": False})
             issuer_id = int(unverified["issuer_id"])
             issuer_row = self._get_issuer_row(db, issuer_id, active=True)
             issuer = TokenIssuerKind.model_validate(issuer_row.json)
-            key_row = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == issuer.spec.signingKeyRef.kindId,
-                    Kind.kind == SIGNING_KEY_KIND,
-                    Kind.user_id == SYSTEM_USER_ID,
-                    Kind.namespace == SYSTEM_NAMESPACE,
-                    Kind.is_active == True,  # noqa: E712
-                )
-                .first()
-            )
-            if not key_row:
-                raise ValueError("Signing key unavailable")
+            key_row = self._get_signing_key_row(db, issuer.spec.signingKeyRef.kindId)
             key = SigningKeyKind.model_validate(key_row.json)
+            if header.get("kid") != key.spec.kid:
+                raise ValueError("Signing key binding is invalid")
             claims = jwt.decode(
                 access_token,
                 key.spec.publicKeyPem,
                 algorithms=["RS256"],
                 audience=OAUTH_AUDIENCE,
                 issuer=issuer.spec.issuer,
+                options={
+                    "require": [
+                        "iss",
+                        "sub",
+                        "aud",
+                        "exp",
+                        "iat",
+                        "jti",
+                        "client_id",
+                        "scope",
+                    ]
+                },
             )
             if (
                 claims.get("token_use") != "external_userinfo"
@@ -474,6 +558,8 @@ class OAuthProviderService:
             user = db.query(User).filter(User.id == int(claims["user_id"])).first()
             if not user or not user.is_active:
                 raise ValueError("User is inactive")
+            if claims["sub"] != f"user:{user.id}":
+                raise ValueError("Subject binding is invalid")
             return OAuthUserInfoResponse(
                 id=user.id, user_name=user.user_name, email=user.email
             )
@@ -539,6 +625,7 @@ class OAuthProviderService:
                     "client_kind_id": row.id,
                     "user_id": user.id,
                 },
+                headers={"typ": "at+jwt"},
             )
         except OutboundTokenError as exc:
             raise OAuthProviderError(
@@ -608,6 +695,11 @@ class OAuthProviderService:
                 "invalid_request",
                 f"TokenIssuer audience must be '{OAUTH_AUDIENCE}'",
             )
+        if issuer.spec.issuer != oauth_provider_issuer():
+            raise OAuthProviderError(
+                "invalid_request",
+                f"TokenIssuer issuer must be '{oauth_provider_issuer()}'",
+            )
         if access_ttl_seconds > issuer.spec.maxTtlSeconds:
             raise OAuthProviderError(
                 "invalid_request",
@@ -628,15 +720,36 @@ class OAuthProviderService:
             raise OAuthProviderError("invalid_request", "TokenIssuer is unavailable")
         return row
 
+    def _get_signing_key_row(self, db: Session, signing_key_id: int) -> Kind:
+        row = (
+            db.query(Kind)
+            .filter(
+                Kind.id == signing_key_id,
+                Kind.kind == SIGNING_KEY_KIND,
+                Kind.user_id == SYSTEM_USER_ID,
+                Kind.namespace == SYSTEM_NAMESPACE,
+                Kind.is_active == True,  # noqa: E712
+            )
+            .first()
+        )
+        if not row:
+            raise OAuthProviderError("invalid_request", "SigningKey is unavailable")
+        return row
+
     def _get_client_row(
-        self, db: Session, client_kind_id: int, active: bool = False
+        self,
+        db: Session,
+        client_kind_id: int,
+        active: bool = False,
+        owner_user_id: int | None = None,
     ) -> Kind:
         query = db.query(Kind).filter(
             Kind.id == client_kind_id,
             Kind.kind == OAUTH_CLIENT_KIND,
-            Kind.user_id == SYSTEM_USER_ID,
             Kind.namespace == SYSTEM_NAMESPACE,
         )
+        if owner_user_id is not None:
+            query = query.filter(Kind.user_id == owner_user_id)
         if active:
             query = query.filter(Kind.is_active == True)  # noqa: E712
         row = query.first()
@@ -654,7 +767,6 @@ class OAuthProviderService:
             db.query(Kind)
             .filter(
                 Kind.kind == OAUTH_CLIENT_KIND,
-                Kind.user_id == SYSTEM_USER_ID,
                 Kind.namespace == SYSTEM_NAMESPACE,
                 Kind.is_active == True,  # noqa: E712
             )
@@ -676,20 +788,16 @@ class OAuthProviderService:
         self, db: Session, row: Kind, client_secret: str | None = None
     ) -> OAuthClientResponse:
         client = OAuthClientKind.model_validate(row.json)
-        issuer = self._get_issuer_row(
-            db, client.spec.tokenIssuerRef.kindId, active=False
-        )
+        owner = db.query(User).filter(User.id == row.user_id).first()
         return OAuthClientResponse(
             id=row.id,
             name=row.name,
             namespace=row.namespace,
+            owner_user_id=row.user_id,
+            owner_user_name=owner.user_name if owner else None,
             client_id=client.spec.clientId,
             client_type=client.spec.clientType,
             redirect_uris=client.spec.redirectUris,
-            token_issuer_id=issuer.id,
-            token_issuer_name=issuer.name,
-            access_ttl_seconds=client.spec.accessTtlSeconds,
-            refresh_ttl_seconds=client.spec.refreshTtlSeconds,
             description=client.spec.description,
             is_active=row.is_active and client.spec.enabled,
             created_at=row.created_at,
@@ -698,11 +806,16 @@ class OAuthProviderService:
         )
 
     def _ensure_unique_name(
-        self, db: Session, name: str, exclude_id: int | None = None
+        self,
+        db: Session,
+        name: str,
+        *,
+        owner_user_id: int,
+        exclude_id: int | None = None,
     ) -> None:
         query = db.query(Kind).filter(
             Kind.kind == OAUTH_CLIENT_KIND,
-            Kind.user_id == SYSTEM_USER_ID,
+            Kind.user_id == owner_user_id,
             Kind.namespace == SYSTEM_NAMESPACE,
             Kind.name == name,
         )
@@ -735,6 +848,15 @@ class OAuthProviderService:
         digest = hashlib.sha256(verifier.encode("ascii")).digest()
         actual = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
         return secrets.compare_digest(actual, challenge)
+
+    @staticmethod
+    def _base64url_uint(value: int) -> str:
+        length = max(1, (value.bit_length() + 7) // 8)
+        return (
+            base64.urlsafe_b64encode(value.to_bytes(length, "big"))
+            .rstrip(b"=")
+            .decode("ascii")
+        )
 
     @staticmethod
     def _utcnow() -> datetime:

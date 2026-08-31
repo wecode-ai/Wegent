@@ -11,7 +11,7 @@ import { KeyRound, Key, ShieldCheck, AppWindow } from 'lucide-react'
 import ServiceKeyList from './ServiceKeyList'
 import PersonalKeyList from './PersonalKeyList'
 import OutboundTokenIssuerList from './OutboundTokenIssuerList'
-import OAuthClientManagement from './OAuthClientManagement'
+import OAuthClientManagement from '@/features/settings/components/OAuthClientManagement'
 
 type KeyType = 'service' | 'personal' | 'outbound' | 'oauth'
 
@@ -73,7 +73,7 @@ const ApiKeyManagement: React.FC = () => {
         {activeKeyType === 'service' && <ServiceKeyList showHeader={false} />}
         {activeKeyType === 'personal' && <PersonalKeyList showHeader={false} />}
         {activeKeyType === 'outbound' && <OutboundTokenIssuerList showHeader={false} />}
-        {activeKeyType === 'oauth' && <OAuthClientManagement />}
+        {activeKeyType === 'oauth' && <OAuthClientManagement mode="admin" />}
       </div>
     </div>
   )
