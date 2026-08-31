@@ -828,6 +828,25 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
   await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
+export async function waitForComposerFocus(control, timeoutMs, failureMessage) {
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < timeoutMs) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+    control.command('getComposerFocusSnapshot', 'body'),
+    control.command('getWorkbenchDebugSnapshot', 'body'),
+    control.command('getComposerDiagnosticsSnapshot', 'body'),
+  ])
+  throw new Error(
+    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
+  )
+}
+
 async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
@@ -856,26 +875,11 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const focusStartedAt = Date.now()
-  let activeElementTestId = ''
-  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    activeElementTestId = await control.command('getActiveElementTestId', 'body')
-    if (activeElementTestId === 'chat-message-input') break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  if (activeElementTestId !== 'chat-message-input') {
-    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
-      control.command('getComposerFocusSnapshot', 'body'),
-      control.command('getWorkbenchDebugSnapshot', 'body'),
-      control.command('getComposerDiagnosticsSnapshot', 'body'),
-    ])
-    throw new Error(
-      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
-        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
-        `workbench=${workbenchSnapshot}; ` +
-        `composerDiagnostics=${composerDiagnostics}`
-    )
-  }
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Opening a conversation from the sidebar did not transfer keyboard focus to the composer'
+  )
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     const expectedMessageCount = expectedConversationTurnCount * 2
     let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
