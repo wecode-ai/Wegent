@@ -2101,10 +2101,24 @@ fn claude_execution_persists_running_and_settled_state() {
 
 #[test]
 fn settled_task_projection_normalizes_every_terminal_outcome() {
-    for (status, thread_status, turn_status, expected) in [
-        ("active", "idle", "completed", "done"),
-        ("active", "failed", "failed", "failed"),
-        ("active", "cancelled", "cancelled", "cancelled"),
+    for (status, thread_status, turn_status, expected, expected_thread, expected_turn) in [
+        ("active", "idle", "completed", "done", "idle", "completed"),
+        (
+            "failed",
+            "active",
+            "inProgress",
+            "failed",
+            "failed",
+            "failed",
+        ),
+        (
+            "cancelled",
+            "active",
+            "inProgress",
+            "cancelled",
+            "idle",
+            "interrupted",
+        ),
     ] {
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             format!("task-{expected}"),
@@ -2122,6 +2136,8 @@ fn settled_task_projection_normalizes_every_terminal_outcome() {
 
         assert_eq!(link.status, expected);
         assert!(!link.running);
+        assert_eq!(link.thread_status, expected_thread);
+        assert_eq!(link.turn_status.as_deref(), Some(expected_turn));
         assert!(link.completed_at.is_some());
     }
 }

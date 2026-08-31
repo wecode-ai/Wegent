@@ -111,6 +111,33 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('does not publish a new store snapshot for identical executor work', () => {
+    const store = new RuntimeTaskLifecycleStore('identical-executor-work-test')
+    const work = runtimeWork(
+      task({
+        running: true,
+        status: 'running',
+        threadStatus: 'active',
+        turnStatus: 'inProgress',
+        updatedAt: 1_786_676_400_000,
+        gitInfo: {
+          branch: 'fix/runtime-lifecycle',
+          changes: [{ path: 'RuntimeTaskLifecycleStore.ts', status: 'modified' }],
+        },
+      })
+    )
+    store.syncRuntimeWork(work)
+    const snapshot = store.getSnapshot()
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+
+    store.syncRuntimeWork(structuredClone(work))
+
+    expect(store.getSnapshot()).toBe(snapshot)
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
   test('uses one lifecycle machine for canonical workspace and remote host addresses', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const remoteAddress = {

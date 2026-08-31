@@ -28,7 +28,10 @@ import { WorkbenchProvider, type WorkbenchServices } from './WorkbenchProvider'
 import { useWorkbench } from './useWorkbench'
 import { MessageList } from '@/components/chat/MessageList'
 import { TaskPlanProgress } from '@/components/chat/composer/TaskPlanProgress'
-import { useWorkbenchPaneSession } from '@/components/layout/useWorkbenchPaneSession'
+import {
+  RUNTIME_RETRY_CONTINUATION_PROMPT,
+  useWorkbenchPaneSession,
+} from '@/components/layout/useWorkbenchPaneSession'
 import { buildRuntimeTaskRoute, parseRuntimeTaskRoute } from '@/lib/navigation'
 import { getWorkbenchDebugSnapshot } from '@/lib/debugPanel'
 import { runtimeProjectUiId, standaloneRuntimeProjectKey } from '@/lib/runtime-project'
@@ -10399,7 +10402,7 @@ describe('WorkbenchProvider runtime tasks', () => {
     })
   })
 
-  test('retries a live failure with the submitted prompt when the failed subtask is reused', async () => {
+  test('continues a failed conversation in a new turn when the failed subtask is reused', async () => {
     window.history.pushState({}, '', '/runtime-tasks?deviceId=device-1&taskId=runtime-restored')
     let streamHandlers: ChatStreamHandlers = {}
     const subscribe = vi.fn((handlers: ChatStreamHandlers) => {
@@ -10463,16 +10466,16 @@ describe('WorkbenchProvider runtime tasks', () => {
     await userEvent.click(await screen.findByTestId('assistant-error-retry'))
 
     await waitFor(() => expect(sendRuntimeMessage).toHaveBeenCalledTimes(2))
-    await waitFor(() =>
-      expect(screen.queryByTestId('assistant-error-card')).not.toBeInTheDocument()
-    )
+    expect(screen.getByTestId('assistant-error-card')).toBeInTheDocument()
+    expect(screen.getAllByTestId('message-user').at(-1)).toHaveTextContent('继续')
     expect(sendRuntimeMessage.mock.calls[1][0]).toEqual(
       expect.objectContaining({
         address: expect.objectContaining({ taskId: 'runtime-restored' }),
-        message: '修复 CI',
-        retrySourceTurnId: 'reused-subtask',
+        message: RUNTIME_RETRY_CONTINUATION_PROMPT,
+        clientUserMessageId: expect.stringMatching(/^runtime-retry-continuation-/),
       })
     )
+    expect(sendRuntimeMessage.mock.calls[1][0]).not.toHaveProperty('retrySourceTurnId')
   })
 
   test('uses runtime transcript server times for blocks without timestamps', async () => {

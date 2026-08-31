@@ -27,6 +27,7 @@ use super::model::{
 const LOCAL_SCHEMA_VERSION: i64 = 7;
 const DEFAULT_WORK_ITEM_PROJECT_ID: &str = "default-work-items";
 const DEFAULT_WORK_ITEM_PROJECT_KEY: &str = "WORK";
+static LOCAL_TASK_STORE_INITIALIZATION: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Error)]
 pub enum TaskRuntimeError {
@@ -72,6 +73,9 @@ impl LocalTaskStore {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, TaskRuntimeError> {
+        let _initialization = LOCAL_TASK_STORE_INITIALIZATION
+            .lock()
+            .map_err(|_| TaskRuntimeError::LockPoisoned)?;
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -3946,6 +3950,8 @@ fn truncate(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
     use serde_json::json;
     use tempfile::TempDir;
 
@@ -5732,6 +5738,34 @@ mod tests {
             .filter(|project| project.project_key.as_deref() == Some(DEFAULT_WORK_ITEM_PROJECT_KEY))
             .count();
         assert_eq!(default_board_count, 1);
+    }
+
+    #[test]
+    fn initializes_a_new_store_once_across_concurrent_openers() {
+        let directory = tempfile::tempdir().unwrap();
+        let db_path = Arc::new(directory.path().join("tasks.sqlite"));
+        let barrier = Arc::new(Barrier::new(8));
+        let openers = (0..8)
+            .map(|_| {
+                let db_path = Arc::clone(&db_path);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let store = LocalTaskStore::open(db_path.as_ref())
+                        .expect("concurrent first open must succeed");
+                    store
+                        .get_project(DEFAULT_WORK_ITEM_PROJECT_ID)
+                        .expect("default project must exist")
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for opener in openers {
+            assert_eq!(
+                opener.join().expect("store opener must not panic").id,
+                DEFAULT_WORK_ITEM_PROJECT_ID
+            );
+        }
     }
 
     #[test]

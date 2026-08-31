@@ -4,11 +4,16 @@ import { dirname } from 'node:path'
 export interface RotatingLogOptions {
   path: string
   maxBytes?: number
+  maxEntryBytes?: number
   retainedFiles?: number
 }
 
+const DEFAULT_MAX_ENTRY_BYTES = 256 * 1024
+const TRUNCATION_MARKER = '… [truncated]'
+
 export class RotatingLog {
   private readonly maxBytes: number
+  private readonly maxEntryBytes: number
   private readonly retainedFiles: number
   private size = 0
   private initialized = false
@@ -16,11 +21,15 @@ export class RotatingLog {
 
   constructor(private readonly options: RotatingLogOptions) {
     this.maxBytes = options.maxBytes ?? 5 * 1024 * 1024
+    this.maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES
     this.retainedFiles = options.retainedFiles ?? 3
+    if (this.maxEntryBytes < 64) {
+      throw new Error('maxEntryBytes must be at least 64 bytes')
+    }
   }
 
   write(source: 'stdout' | 'stderr' | 'supervisor', value: string): Promise<void> {
-    const line = `${new Date().toISOString()} [${source}] ${redactLog(value).trimEnd()}\n`
+    const line = formatLogLine(source, value, this.maxEntryBytes)
     this.queue = this.queue.then(async () => {
       await this.initialize()
       const bytes = Buffer.byteLength(line)
@@ -57,6 +66,30 @@ export class RotatingLog {
     }
     this.size = 0
   }
+}
+
+function formatLogLine(
+  source: 'stdout' | 'stderr' | 'supervisor',
+  value: string,
+  maxEntryBytes: number
+): string {
+  const prefix = `${new Date().toISOString()} [${source}] `
+  const content = redactLog(value).trimEnd()
+  const line = `${prefix}${content}\n`
+  if (Buffer.byteLength(line) <= maxEntryBytes) return line
+
+  const suffix = `${TRUNCATION_MARKER}\n`
+  const contentBudget = maxEntryBytes - Buffer.byteLength(prefix) - Buffer.byteLength(suffix)
+  return `${prefix}${truncateUtf8(content, Math.max(0, contentBudget))}${suffix}`
+}
+
+function truncateUtf8(value: string, maxBytes: number): string {
+  if (maxBytes === 0) return ''
+  const bytes = Buffer.from(value)
+  if (bytes.length <= maxBytes) return value
+  let end = maxBytes
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1
+  return bytes.subarray(0, end).toString('utf8')
 }
 
 export function redactLog(value: string): string {

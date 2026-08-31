@@ -1092,6 +1092,15 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     'retry-01-failure-restored-after-switch.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const retryFailureDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const assistantCountBeforeRetry = Number(
+    retryFailureDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
+  )
+  const userCountBeforeRetry = Number(
+    retryFailureDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0
+  )
   await control.command(
     'click',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`
@@ -1111,13 +1120,27 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   )
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'The failed attempt card remained after retry succeeded'
+    true,
+    'Retry removed the failed attempt instead of preserving the conversation history'
+  )
+  const successfulRetryDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const successfulRetryAssistantCount = Number(
+    successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Retry success left an empty assistant turn in the live conversation'
+    successfulRetryAssistantCount,
+    assistantCountBeforeRetry + 1,
+    'Retry did not append the successful assistant response as a new turn'
+  )
+  const successfulRetryUserCount = Number(
+    successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0
+  )
+  assert.equal(
+    successfulRetryUserCount,
+    userCountBeforeRetry + 1,
+    'Retry did not append a continuation user message'
   )
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1146,23 +1169,31 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   successfulRetrySnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'A cached failure card returned after reopening the successfully retried conversation'
+    true,
+    'Reopening the conversation lost the preserved failed attempt'
+  )
+  const reopenedRetryDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Reopening a successful retry restored an empty failed assistant turn'
+    Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0),
+    successfulRetryAssistantCount,
+    'Reopening the conversation lost the successful continuation turn'
+  )
+  assert.equal(
+    Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0),
+    successfulRetryUserCount,
+    'Reopening the conversation lost the continuation user message'
   )
   await captureVerificationScreenshot(
     control,
-    'retry-02-success-restored-without-failed-turn.png',
+    'retry-02-success-restored-with-failed-turn.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(
     control.scenarioRequests.get('retry')?.length,
     2,
-    'Retry did not issue exactly one additional request for the failed user message'
+    'Retry did not issue exactly one continuation request'
   )
 }
 
