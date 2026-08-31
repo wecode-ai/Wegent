@@ -1571,6 +1571,16 @@ export function createDesktopScenario({
         stableMs: 750,
         timeoutMs: uiTimeoutMs,
       })
+      await control.command('selectText', PROCESS_TEXT_SELECTOR, { value: MARKER })
+      await control.command('waitFor', '[data-testid="message-selection-actions"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', '[data-testid="add-selection-to-conversation-button"]')
+      assert.ok(
+        (await control.command('getValue', COMPOSER_SELECTOR)).includes(MARKER),
+        'Adding selected process text did not insert it into the running task composer'
+      )
+      await control.command('fill', COMPOSER_SELECTOR, { value: '' })
       await waitForBottom(
         control,
         'The conversation scroller while the assistant response starts',
