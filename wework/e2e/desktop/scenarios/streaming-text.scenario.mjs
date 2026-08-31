@@ -12,16 +12,21 @@ const LEGACY_CONVERSATION_PROMPT = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_INITI
 const LEGACY_CONVERSATION_COMPLETION = 'WEWORK_DESKTOP_E2E_LEGACY_CONVERSATION_COMPLETE'
 const LEGACY_TRANSCRIPT_ITEM_ID = 'wework-desktop-e2e-legacy-assistant-text'
 const LONG_CODE_PROMPT = 'WEWORK_DESKTOP_E2E_LONG_CODE_TERMINAL_BURST'
+const LONG_CODE_STREAM_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_055'
 const LONG_CODE_MARKER = 'WEWORK_DESKTOP_E2E_LONG_CODE_LINE_110'
 const LONG_CODE_COMPLETION = [
   'The completed response contains one long SQL block and a windowed Markdown tail.',
   '',
   '```sql',
-  ...Array.from(
-    { length: 110 },
-    (_, index) =>
-      `SELECT ${index + 1} AS value_${index + 1}${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''};`
-  ),
+  ...Array.from({ length: 110 }, (_, index) => {
+    const line = index + 1
+    return `SELECT ${line} AS value_${line}, 'customer_${String(line).padStart(
+      3,
+      '0'
+    )}' AS customer_name, JSON_OBJECT('id', ${line}, 'status', 'active', 'description', 'streaming long code row ${line}') AS payload${
+      index === 54 ? `, '${LONG_CODE_STREAM_MARKER}' AS stream_marker` : ''
+    }${index === 109 ? `, '${LONG_CODE_MARKER}' AS marker` : ''} FROM generated_records WHERE record_id = ${line};`
+  }),
   '```',
   '',
   ...Array.from(
@@ -72,6 +77,8 @@ const USER_MESSAGE_SELECTOR_MARKED = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anc
 const PROCESSING_SUMMARY_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-summary-header"]`
 const PROCESS_TEXT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="process-text-block"]`
 const LONG_CODE_SCROLL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="markdown-code-scroll-container"]`
+const LONG_CODE_E2E_ID = 'streaming-text-long-code'
+const LONG_CODE_MARKED_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-e2e-anchor-id="${LONG_CODE_E2E_ID}"]`
 const VIEWPORT_ANCHOR_TEXT = `${VIEWPORT_MARKER}: this paragraph must remain fixed after the user scrolls upward.`
 const VIEWPORT_ANCHOR_E2E_ID = 'streaming-text-viewport-anchor'
 const VIEWPORT_ANCHOR_SCOPE_SELECTOR = `${PROCESS_TEXT_SELECTOR} [data-scroll-anchor]`
@@ -732,6 +739,7 @@ export function createDesktopScenario({
   let toolRegressionStage = 'initial'
   let timerStage = 'initial'
   let releaseAppend
+  let releaseLongCodeStream
   let releasePhaseFlipCompletion
   let releaseResponse
   let releaseScrollButtonAppend
@@ -747,6 +755,9 @@ export function createDesktopScenario({
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
+  })
+  const longCodeStreamRelease = new Promise(resolve => {
+    releaseLongCodeStream = resolve
   })
   const phaseFlipCompletionRelease = new Promise(resolve => {
     releasePhaseFlipCompletion = resolve
@@ -792,21 +803,74 @@ export function createDesktopScenario({
     await control.command('fill', COMPOSER_SELECTOR, { value: LONG_CODE_PROMPT })
     await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
     await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-      text: LONG_CODE_MARKER,
-      stableMs: 750,
+      text: LONG_CODE_STREAM_MARKER,
+      stableMs: 250,
       timeoutMs: uiTimeoutMs,
     })
-    assert.equal(
-      await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
-        value: 'data-syntax-highlighted',
-      }),
-      'false',
-      'The long completed code block enabled expensive syntax highlighting'
+    await control.command('markElementWithText', `${LONG_CODE_SCROLL_SELECTOR} code`, {
+      text: LONG_CODE_STREAM_MARKER,
+      value: LONG_CODE_E2E_ID,
+      timeoutMs: uiTimeoutMs,
+    })
+    const streamingClass = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+      value: 'class',
+    })
+    assert.match(
+      streamingClass,
+      /\bscrollbar-none\b/,
+      'The native horizontal scrollbar remained visible while long code streamed'
     )
     assert.equal(
-      Number(await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .token`)),
+      Number(await control.command('getElementCount', THINKING_INDICATOR_SELECTOR)),
       0,
-      'The long completed code block rendered syntax token nodes'
+      'The generic thinking indicator remained after long-code output became visible'
+    )
+
+    releaseLongCodeStream()
+    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
+      text: LONG_CODE_MARKER,
+      stableMs: 500,
+      timeoutMs: uiTimeoutMs,
+    })
+    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
+    assert.equal(
+      Number(await control.command('getElementCount', LONG_CODE_MARKED_SELECTOR)),
+      1,
+      'The long code DOM was replaced while more lines streamed'
+    )
+
+    let syntaxHighlighted = 'false'
+    const highlightDeadline = Date.now() + uiTimeoutMs
+    while (Date.now() < highlightDeadline) {
+      syntaxHighlighted = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+        value: 'data-syntax-highlighted',
+      })
+      if (syntaxHighlighted === 'true') break
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    assert.equal(
+      syntaxHighlighted,
+      'true',
+      'The completed long code block did not receive syntax highlighting'
+    )
+    assert.ok(
+      Number(
+        await control.command('getElementCount', `${LONG_CODE_SCROLL_SELECTOR} .hljs-keyword`)
+      ) > 0,
+      'The completed long code block did not render highlighted keyword nodes'
+    )
+    const completedClass = await control.command('getAttribute', LONG_CODE_SCROLL_SELECTOR, {
+      value: 'class',
+    })
+    assert.doesNotMatch(
+      completedClass,
+      /\bscrollbar-none\b/,
+      'The completed long code block kept its horizontal scrollbar hidden'
+    )
+    assert.match(
+      completedClass,
+      /\bscrollbar-soft\b/,
+      'The completed long code block did not restore its horizontal scrollbar'
     )
     await waitForBottom(control, 'The terminal-burst long-code conversation', uiTimeoutMs)
     const rapidScrollSamples = JSON.parse(
@@ -899,15 +963,40 @@ export function createDesktopScenario({
       const latestInput = latestModelInputText(body)
       const followUpNumber = orderFollowUpNumber(body)
       if (latestInput.includes(LONG_CODE_PROMPT)) {
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
+        const stream = streamingEvents(responseId, LONG_CODE_COMPLETION, 'final_answer')
+        response.writeHead(200, {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          'Content-Type': 'text/event-stream; charset=utf-8',
+        })
+        response.flushHeaders()
+        response.write(
           sse([
-            responseCreated(responseId),
+            ...stream.start.slice(0, 1),
             ...reasoningEvents('wework-long-code-reasoning', LONG_CODE_REASONING, 4),
-            assistantMessage(LONG_CODE_COMPLETION, 'final_answer'),
-            responseCompleted(responseId),
+            ...stream.start.slice(1),
           ])
         )
+        let offset = 0
+        let streamedText = ''
+        let streamHeld = false
+        const codeEnd = LONG_CODE_COMPLETION.indexOf('\n```\n\n')
+        assert.ok(codeEnd >= 0, 'The long-code fixture is missing its closing fence')
+        const streamedCode = LONG_CODE_COMPLETION.slice(0, codeEnd + '\n```'.length)
+        const windowedTail = LONG_CODE_COMPLETION.slice(streamedCode.length)
+        for (const chunk of streamedCode.match(/[\s\S]{1,48}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset)))
+          response.flush?.()
+          offset += [...chunk].length
+          streamedText += chunk
+          if (!streamHeld && streamedText.includes(LONG_CODE_STREAM_MARKER)) {
+            streamHeld = true
+            await longCodeStreamRelease
+          }
+          await new Promise(resolve => setTimeout(resolve, 16))
+        }
+        response.write(sse(textDeltaEvents(stream.itemId, windowedTail, offset)))
+        response.end(sse(stream.finish))
         return true
       }
       if (followUpNumber !== null) {
@@ -984,7 +1073,7 @@ export function createDesktopScenario({
         targetRequest = body
         resolveRequest()
         await startRelease
-        const stream = streamingEvents(responseId)
+        const stream = streamingEvents(responseId, COMPLETION_TEXT, null)
         response.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -1209,7 +1298,7 @@ export function createDesktopScenario({
       })
       await control.command('fill', COMPOSER_SELECTOR, { value: PHASE_FLIP_PROMPT })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-      await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+      await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
         text: PHASE_FLIP_TEXT,
         timeoutMs: uiTimeoutMs,
       })
@@ -1229,7 +1318,7 @@ export function createDesktopScenario({
       assert.equal(
         streamingPhaseFlipSnapshot.text.split(PHASE_FLIP_TEXT).length - 1,
         1,
-        'Provisional assistant text was rendered as final content before the turn completed'
+        'Streaming final text was rendered more than once before the turn completed'
       )
       releasePhaseFlipCompletion()
       await control.command(
