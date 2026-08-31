@@ -15,7 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.models.oauth_refresh_token import OAuthRefreshToken
+from app.models.oauth_refresh_token import (
+    OAUTH_REFRESH_TOKEN_UNSET_TIME,
+    OAuthRefreshToken,
+)
 from app.models.user import User
 from app.services.auth import oauth_provider as oauth_provider_module
 from app.services.auth.outbound_token_service import outbound_token_service
@@ -752,7 +755,7 @@ def test_security_sensitive_client_update_revokes_refresh_tokens(
     assert response.status_code == 200
     assert response.json()["client_type"] == "public"
     test_db.refresh(refresh_token)
-    assert refresh_token.revoked_at is not None
+    assert refresh_token.revoked_at != OAUTH_REFRESH_TOKEN_UNSET_TIME
 
 
 def test_oauth_client_self_service_is_owner_scoped(

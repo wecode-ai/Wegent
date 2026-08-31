@@ -23,7 +23,10 @@ from sqlalchemy.orm import Session
 from app.core.cache import cache_manager
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.oauth_refresh_token import OAuthRefreshToken
+from app.models.oauth_refresh_token import (
+    OAUTH_REFRESH_TOKEN_UNSET_TIME,
+    OAuthRefreshToken,
+)
 from app.models.user import User
 from app.schemas.oauth_provider import (
     OAUTH_ACCESS_TOKEN_TTL_SECONDS,
@@ -424,7 +427,7 @@ class OAuthProviderService:
         if not record or record.client_kind_id != client_row.id:
             raise OAuthProviderError("invalid_grant", "Invalid refresh token")
         now = self._utcnow()
-        if record.used_at is not None:
+        if record.used_at != OAUTH_REFRESH_TOKEN_UNSET_TIME:
             self._revoke_family(db, record.family_id, now)
             db.commit()
             logger.warning(
@@ -433,7 +436,10 @@ class OAuthProviderService:
                 record.user_id,
             )
             raise OAuthProviderError("invalid_grant", "Refresh token replay detected")
-        if record.revoked_at is not None or record.expires_at <= now:
+        if (
+            record.revoked_at != OAUTH_REFRESH_TOKEN_UNSET_TIME
+            or record.expires_at <= now
+        ):
             raise OAuthProviderError("invalid_grant", "Refresh token is inactive")
         user = db.query(User).filter(User.id == record.user_id).first()
         if not user or not user.is_active:
@@ -828,13 +834,13 @@ class OAuthProviderService:
         now = self._utcnow()
         db.query(OAuthRefreshToken).filter(
             OAuthRefreshToken.client_kind_id == client_kind_id,
-            OAuthRefreshToken.revoked_at.is_(None),
+            OAuthRefreshToken.revoked_at == OAUTH_REFRESH_TOKEN_UNSET_TIME,
         ).update({"revoked_at": now}, synchronize_session=False)
 
     def _revoke_family(self, db: Session, family_id: str, now: datetime) -> None:
         db.query(OAuthRefreshToken).filter(
             OAuthRefreshToken.family_id == family_id,
-            OAuthRefreshToken.revoked_at.is_(None),
+            OAuthRefreshToken.revoked_at == OAUTH_REFRESH_TOKEN_UNSET_TIME,
         ).update({"revoked_at": now}, synchronize_session=False)
 
     @staticmethod
