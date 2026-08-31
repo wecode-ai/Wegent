@@ -32,6 +32,13 @@ interface RuntimeFileUploadResult {
   status: number
 }
 
+interface RuntimeDeviceCommandResponse {
+  success: boolean
+  stdout: string | Record<string, unknown> | unknown[]
+  stderr?: string
+  error?: string | null
+}
+
 type RuntimeFileUploader = (input: {
   headers: Record<string, string>
   mimeType: string
@@ -79,6 +86,33 @@ export class RuntimeApi {
       method: 'POST',
       body: JSON.stringify(data),
     })
+  }
+
+  async getHomeDirectory(deviceId: string): Promise<string> {
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey: 'home_dir',
+      timeoutSeconds: 10,
+    })
+    if (!response.success) {
+      throw new Error(response.error || response.stderr || '无法读取设备主目录')
+    }
+    if (typeof response.stdout !== 'string' || !response.stdout.trim()) {
+      throw new Error('设备返回了无效的主目录')
+    }
+    return response.stdout.trim()
+  }
+
+  async createDirectory(deviceId: string, path: string): Promise<void> {
+    const normalizedPath = path.trim()
+    if (!normalizedPath) throw new Error('目录路径不能为空')
+    const response = await this.executeDeviceCommand(deviceId, {
+      commandKey: 'mkdir_p',
+      args: [normalizedPath],
+      timeoutSeconds: 15,
+    })
+    if (!response.success) {
+      throw new Error(response.error || response.stderr || '无法创建会话目录')
+    }
   }
 
   sendMessage(
@@ -196,6 +230,21 @@ export class RuntimeApi {
       throw new RuntimeApiError(message, response.status, body)
     }
     return body as T
+  }
+
+  private executeDeviceCommand(
+    deviceId: string,
+    input: { commandKey: string; args?: string[]; timeoutSeconds: number }
+  ): Promise<RuntimeDeviceCommandResponse> {
+    return this.request(`/devices/${encodeURIComponent(deviceId)}/commands`, {
+      method: 'POST',
+      body: JSON.stringify({
+        command_key: input.commandKey,
+        ...(input.args ? { args: input.args } : {}),
+        timeout_seconds: input.timeoutSeconds,
+        max_output_bytes: 4096,
+      }),
+    })
   }
 }
 

@@ -1,6 +1,9 @@
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
-import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
+  AccessibilityInfo,
+  Animated,
+  Easing,
   Keyboard,
   Modal,
   Platform,
@@ -454,60 +457,155 @@ function ChoiceSheet({
   visible: boolean
 }) {
   const theme = useTheme()
+  const [presented, setPresented] = useState(visible)
+  const [reduceMotion, setReduceMotion] = useState(false)
+  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current
+  const closing = useRef(false)
+
+  useEffect(() => {
+    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion)
+    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion)
+    return () => subscription.remove()
+  }, [])
+
+  useEffect(() => {
+    if (!visible) {
+      setPresented(false)
+      closing.current = false
+      return
+    }
+
+    setPresented(true)
+    progress.stopAnimation()
+    progress.setValue(reduceMotion ? 1 : 0)
+    if (reduceMotion) return
+
+    Animated.timing(progress, {
+      duration: 240,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start()
+  }, [progress, reduceMotion, visible])
+
+  const dismiss = useCallback(() => {
+    if (closing.current) return
+    closing.current = true
+    progress.stopAnimation()
+
+    if (reduceMotion) {
+      onDismiss()
+      return
+    }
+
+    Animated.timing(progress, {
+      duration: 180,
+      easing: Easing.in(Easing.cubic),
+      toValue: 0,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) onDismiss()
+      else closing.current = false
+    })
+  }, [onDismiss, progress, reduceMotion])
+
+  const backdropOpacity = progress
+  const sheetTranslateY = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [52, 0],
+  })
+
   return (
-    <Modal animationType="slide" onRequestClose={onDismiss} transparent visible={visible}>
-      <Pressable onPress={onDismiss} style={styles.sheetBackdrop} />
-      <View style={[styles.sheet, { backgroundColor: theme.colors.surface }]}>
-        <View style={styles.sheetHandle} />
-        <Text style={styles.sheetTitle} variant="titleLarge">
-          {title}
-        </Text>
-        <ScrollView
-          contentContainerStyle={styles.sheetContent}
-          showsVerticalScrollIndicator={false}
+    <Modal
+      animationType="none"
+      navigationBarTranslucent
+      onRequestClose={dismiss}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent
+      transparent
+      visible={presented}
+    >
+      <View style={styles.sheetLayer}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.sheetBackdrop,
+            {
+              backgroundColor: theme.dark ? 'rgba(0,0,0,0.38)' : 'rgba(0,0,0,0.18)',
+              opacity: backdropOpacity,
+            },
+          ]}
+        />
+        <Pressable
+          accessibilityLabel={`关闭${title}选择`}
+          accessibilityRole="button"
+          onPress={dismiss}
+          style={styles.sheetDismissLayer}
+        />
+        <Animated.View
+          accessibilityViewIsModal
+          style={[
+            styles.sheet,
+            {
+              backgroundColor: theme.colors.surface,
+              transform: [{ translateY: reduceMotion ? 0 : sheetTranslateY }],
+            },
+          ]}
         >
-          {choices.map(choice => (
-            <View key={choice.id}>
-              <Pressable
-                onPress={() => {
-                  choice.onPress()
-                  onDismiss()
-                }}
-                style={({ pressed }) => [
-                  styles.choice,
-                  choice.selected && { backgroundColor: theme.colors.surfaceVariant },
-                  pressed && styles.pressed,
-                ]}
-                testID={`${testIDPrefix}-${choice.id}`}
-              >
-                {choice.icon ? (
-                  <Ionicons
-                    color={theme.colors.onSurfaceVariant}
-                    name={choice.icon}
-                    size={23}
-                    style={styles.choiceIcon}
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle} variant="titleLarge">
+            {title}
+          </Text>
+          <ScrollView
+            contentContainerStyle={styles.sheetContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {choices.map(choice => (
+              <View key={choice.id}>
+                <Pressable
+                  onPress={() => {
+                    choice.onPress()
+                    dismiss()
+                  }}
+                  style={({ pressed }) => [
+                    styles.choice,
+                    choice.selected && { backgroundColor: theme.colors.surfaceVariant },
+                    pressed && styles.pressed,
+                  ]}
+                  testID={`${testIDPrefix}-${choice.id}`}
+                >
+                  {choice.icon ? (
+                    <Ionicons
+                      color={theme.colors.onSurfaceVariant}
+                      name={choice.icon}
+                      size={23}
+                      style={styles.choiceIcon}
+                    />
+                  ) : null}
+                  <View style={styles.choiceText}>
+                    <Text variant="bodyLarge">{choice.label}</Text>
+                    {choice.detail ? (
+                      <Text numberOfLines={1} style={styles.choiceDetail} variant="bodySmall">
+                        {choice.detail}
+                      </Text>
+                    ) : null}
+                  </View>
+                  {choice.selected ? (
+                    <Ionicons color={theme.colors.onSurface} name="checkmark" size={22} />
+                  ) : null}
+                </Pressable>
+                {choice.separatorAfter ? (
+                  <View
+                    style={[
+                      styles.choiceSeparator,
+                      { backgroundColor: theme.colors.outlineVariant },
+                    ]}
                   />
                 ) : null}
-                <View style={styles.choiceText}>
-                  <Text variant="bodyLarge">{choice.label}</Text>
-                  {choice.detail ? (
-                    <Text numberOfLines={1} style={styles.choiceDetail} variant="bodySmall">
-                      {choice.detail}
-                    </Text>
-                  ) : null}
-                </View>
-                {choice.selected ? (
-                  <Ionicons color={theme.colors.onSurface} name="checkmark" size={22} />
-                ) : null}
-              </Pressable>
-              {choice.separatorAfter ? (
-                <View
-                  style={[styles.choiceSeparator, { backgroundColor: theme.colors.outlineVariant }]}
-                />
-              ) : null}
-            </View>
-          ))}
-        </ScrollView>
+              </View>
+            ))}
+          </ScrollView>
+        </Animated.View>
       </View>
     </Modal>
   )
@@ -582,7 +680,9 @@ const styles = StyleSheet.create({
   permissionAction: { width: 32, height: 44, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.55 },
   disabled: { opacity: 0.34 },
-  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.38)' },
+  sheetLayer: { flex: 1, justifyContent: 'flex-end' },
+  sheetBackdrop: { position: 'absolute', inset: 0 },
+  sheetDismissLayer: { position: 'absolute', inset: 0 },
   sheet: {
     maxHeight: '66%',
     borderTopLeftRadius: 28,

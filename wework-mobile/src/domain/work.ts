@@ -30,18 +30,6 @@ export function allWorkspaces(work: RuntimeWorkListResponse): RuntimeDeviceWorks
   return [...projectWorkspaces, ...work.chats]
 }
 
-export function chatWorkspaceForDevice(
-  work: RuntimeWorkListResponse,
-  deviceId: string
-): RuntimeDeviceWorkspace | null {
-  return (
-    work.chats.find(
-      workspace =>
-        workspace.deviceId === deviceId && workspace.available && workspace.workspacePath.length > 0
-    ) ?? null
-  )
-}
-
 export function taskAddress(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary

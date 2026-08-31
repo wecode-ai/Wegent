@@ -59,7 +59,7 @@ describe('RuntimeApi', () => {
     )
   })
 
-  it('creates a standalone chat without binding a project workspace', async () => {
+  it('creates a chat using its prepared workspace path', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -77,7 +77,7 @@ describe('RuntimeApi', () => {
     await new RuntimeApi(config).createConversation({
       schemaVersion: 2,
       deviceId: 'cloud-1',
-      standaloneChatWorkspace: true,
+      workspacePath: '/Users/me/Documents/Codex/2026-08-31/new-chat-12345678',
       taskId: 'task-1',
       runtime: 'codex',
       message: '你好',
@@ -90,8 +90,40 @@ describe('RuntimeApi', () => {
 
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit
     const body = JSON.parse(String(request.body))
-    expect(body.standaloneChatWorkspace).toBe(true)
-    expect(body).not.toHaveProperty('workspacePath')
+    expect(body.workspacePath).toBe('/Users/me/Documents/Codex/2026-08-31/new-chat-12345678')
+    expect(body).not.toHaveProperty('standaloneChatWorkspace')
+  })
+
+  it('prepares a standalone conversation workspace through device commands', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true, stdout: '/Users/me\n' }), { status: 200 })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ success: true, stdout: '' }), { status: 200 })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config)
+
+    await expect(api.getHomeDirectory('cloud/1')).resolves.toBe('/Users/me')
+    await api.createDirectory('cloud/1', '/Users/me/Documents/Codex/chat')
+
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([
+      'https://wegent.example/api/v1/devices/cloud%2F1/commands',
+      'https://wegent.example/api/v1/devices/cloud%2F1/commands',
+    ])
+    expect(JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body))).toEqual({
+      command_key: 'home_dir',
+      timeout_seconds: 10,
+      max_output_bytes: 4096,
+    })
+    expect(JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body))).toEqual({
+      command_key: 'mkdir_p',
+      args: ['/Users/me/Documents/Codex/chat'],
+      timeout_seconds: 15,
+      max_output_bytes: 4096,
+    })
   })
 
   it('sends the canonical runtime address when continuing a conversation', async () => {
@@ -158,13 +190,11 @@ describe('RuntimeApi', () => {
   })
 
   it('cancels the current runtime task through the Wework endpoint', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ accepted: true, taskId: 'task-1', workspacePath: '/work' }), {
-          status: 200,
-        })
-      )
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ accepted: true, taskId: 'task-1', workspacePath: '/work' }), {
+        status: 200,
+      })
+    )
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(

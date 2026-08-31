@@ -16,7 +16,8 @@ import {
   runtimeTaskKey,
   type RuntimeSendTransition,
 } from '@/domain/runtimeTaskLifecycle'
-import { allWorkspaces, chatWorkspaceForDevice, flattenConversations } from '@/domain/work'
+import { createConversationWorkspace } from '@/domain/runtimeConversationWorkspace'
+import { allWorkspaces, flattenConversations } from '@/domain/work'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { RuntimeApi } from '@/services/runtimeApi'
 import {
@@ -365,17 +366,17 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
 
         const requestedDeviceId = selectedWorkspace?.deviceId ?? selectedDeviceId
         if (!requestedDeviceId) throw new Error('没有可用的云端 executor')
-        const targetWorkspace = selectedWorkspace ?? chatWorkspaceForDevice(work, requestedDeviceId)
-        const deviceId = targetWorkspace?.deviceId ?? requestedDeviceId
-        if (!deviceId) throw new Error('没有可用的云端 executor')
+        const deviceId = requestedDeviceId
         const taskId = createRuntimeTaskId()
+        const workspacePath = selectedWorkspace
+          ? selectedWorkspace.workspacePath
+          : await createConversationWorkspace(api, deviceId, message, taskId)
         provisionalAddress = {
           deviceId,
           taskId,
           runtime: 'codex',
-          workspacePath: targetWorkspace?.workspacePath,
-          workspaceKind:
-            targetWorkspace?.workspaceKind ?? (selectedWorkspace ? 'workspace' : 'chat'),
+          workspacePath,
+          workspaceKind: selectedWorkspace?.workspaceKind ?? 'chat',
         }
         currentAddressRef.current = provisionalAddress
         setCurrentAddress(provisionalAddress)
@@ -387,9 +388,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
         const response = await api.createConversation({
           schemaVersion: 2,
           deviceId,
-          ...(targetWorkspace
-            ? { workspacePath: targetWorkspace.workspacePath }
-            : { standaloneChatWorkspace: true }),
+          workspacePath,
           taskId,
           runtime: 'codex',
           message,
@@ -466,7 +465,6 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
       sending,
       subscribe,
       currentTaskRunning,
-      work,
     ]
   )
 

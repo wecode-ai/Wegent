@@ -15,6 +15,10 @@ import {
   speedLabel,
   SPEED_OPTIONS,
 } from '@/domain/modelSelection'
+import {
+  modelControlAppearance,
+  type ModelControlAppearance,
+} from '@/domain/modelControlPresentation'
 import type { ModelOptions, UnifiedModel } from '@/types/runtime'
 import { ModelControlSurface } from './ModelControlSurface'
 
@@ -31,7 +35,8 @@ type AdvancedMenu = 'model' | 'reasoning' | 'speed' | null
 export function ModelPickerScreen(props: ModelPickerScreenProps) {
   const theme = useTheme()
   const insets = useSafeAreaInsets()
-  const styles = useMemo(() => createStyles(theme.colors), [theme.colors])
+  const appearance = useMemo(() => modelControlAppearance(theme.dark), [theme.dark])
+  const styles = useMemo(() => createStyles(theme.colors, appearance), [appearance, theme.colors])
   const [menu, setMenu] = useState<AdvancedMenu>(null)
   const models = useMemo(
     () => orderModels(selectableModels(props.models), props.selectedModel),
@@ -91,11 +96,11 @@ export function ModelPickerScreen(props: ModelPickerScreenProps) {
 
           <View style={styles.group}>
             <GlassView
-              colorScheme="dark"
+              colorScheme={appearance.colorScheme}
               glassEffectStyle="clear"
               pointerEvents="none"
               style={glassStyles.fill}
-              tintColor="#303030"
+              tintColor={appearance.groupTintColor}
             />
             <AdvancedOptionMenu
               contentStyle={styles.modelMenu}
@@ -170,11 +175,11 @@ export function ModelPickerScreen(props: ModelPickerScreenProps) {
 
           <View style={[styles.group, styles.speedGroup]}>
             <GlassView
-              colorScheme="dark"
+              colorScheme={appearance.colorScheme}
               glassEffectStyle="clear"
               pointerEvents="none"
               style={glassStyles.fill}
-              tintColor="#303030"
+              tintColor={appearance.groupTintColor}
             />
             <AdvancedOptionMenu
               contentStyle={styles.optionMenu}
@@ -222,6 +227,8 @@ function AdvancedOptionMenu({
   onDismiss: () => void
   visible: boolean
 }) {
+  const theme = useTheme()
+  const appearance = modelControlAppearance(theme.dark)
   return (
     <Menu
       anchor={anchor}
@@ -231,11 +238,11 @@ function AdvancedOptionMenu({
       visible={visible}
     >
       <GlassView
-        colorScheme="dark"
+        colorScheme={appearance.colorScheme}
         glassEffectStyle="regular"
         pointerEvents="none"
         style={glassStyles.fill}
-        tintColor="#252525"
+        tintColor={appearance.menuTintColor}
       />
       {children}
     </Menu>
@@ -317,7 +324,7 @@ function modelKey(model: UnifiedModel): string {
   return `${model.type}:${model.namespace ?? ''}:${model.name}`
 }
 
-function createStyles(colors: MD3Theme['colors']) {
+function createStyles(colors: MD3Theme['colors'], appearance: ModelControlAppearance) {
   return StyleSheet.create({
     overlay: {
       position: 'absolute',
@@ -327,7 +334,7 @@ function createStyles(colors: MD3Theme['colors']) {
     backdrop: {
       position: 'absolute',
       inset: 0,
-      backgroundColor: 'rgba(0,0,0,0.34)',
+      backgroundColor: appearance.backdropColor,
     },
     sheet: {
       height: '52%',
@@ -359,7 +366,7 @@ function createStyles(colors: MD3Theme['colors']) {
     group: {
       borderRadius: 24,
       overflow: 'hidden',
-      backgroundColor: 'rgba(60,60,60,0.42)',
+      backgroundColor: appearance.groupBackgroundColor,
     },
     speedGroup: { marginTop: 34 },
     rowDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: 16 },
@@ -368,14 +375,14 @@ function createStyles(colors: MD3Theme['colors']) {
       maxHeight: 520,
       overflow: 'hidden',
       borderRadius: 24,
-      backgroundColor: 'rgba(36,36,36,0.74)',
+      backgroundColor: appearance.menuBackgroundColor,
     },
     modelMenuScroll: { maxHeight: 500 },
     optionMenu: {
       minWidth: 180,
       overflow: 'hidden',
       borderRadius: 24,
-      backgroundColor: 'rgba(36,36,36,0.74)',
+      backgroundColor: appearance.menuBackgroundColor,
     },
     menuDivider: { height: StyleSheet.hairlineWidth, marginHorizontal: 18, marginVertical: 6 },
     menuSection: { paddingHorizontal: 24, paddingVertical: 8, color: colors.onSurfaceVariant },

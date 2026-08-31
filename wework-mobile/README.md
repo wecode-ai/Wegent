@@ -1,6 +1,6 @@
-# Wegent Mobile
+# Wework Mobile
 
-Wegent Mobile is the iOS and Android form of Wework. It is an independent Expo application,
+Wework Mobile is the iOS and Android form of Wework. It is an independent Expo application,
 but uses the same Backend authorization, REST, Socket.IO, and Runtime protocols as Wework.
 
 ## Architecture
@@ -39,7 +39,7 @@ platform keychain/keystore; access tokens stay in memory.
 ## Development
 
 ```bash
-cd mobile
+cd wework-mobile
 pnpm install
 pnpm start
 pnpm typecheck

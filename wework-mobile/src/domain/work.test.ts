@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeWorkListResponse } from '@/types/runtime'
 import { runtimeTaskKey } from './runtimeTaskLifecycle'
-import { chatWorkspaceForDevice, flattenConversations } from './work'
+import { flattenConversations } from './work'
 
 describe('flattenConversations', () => {
   it('combines project and standalone chats in update order', () => {
@@ -86,27 +86,5 @@ describe('flattenConversations', () => {
     const result = flattenConversations(work, new Map([[runtimeTaskKey(address), false]]))
 
     expect(result[0]?.running).toBe(false)
-  })
-})
-
-describe('chatWorkspaceForDevice', () => {
-  it('reuses the available standalone chat workspace returned by the runtime', () => {
-    const chatWorkspace = {
-      deviceId: 'cloud-1',
-      deviceName: 'Cloud Mac',
-      deviceStatus: 'online' as const,
-      available: true,
-      workspacePath: '/Users/me/.wework/workspace/chats',
-      workspaceKind: 'chat',
-      tasks: [],
-    }
-    const work: RuntimeWorkListResponse = {
-      totalTasks: 0,
-      projects: [],
-      chats: [{ ...chatWorkspace, deviceId: 'cloud-2', available: false }, chatWorkspace],
-    }
-
-    expect(chatWorkspaceForDevice(work, 'cloud-1')).toBe(chatWorkspace)
-    expect(chatWorkspaceForDevice(work, 'cloud-2')).toBeNull()
   })
 })

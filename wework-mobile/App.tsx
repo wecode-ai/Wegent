@@ -180,11 +180,8 @@ function RuntimeApplication({
           <RuntimeStack.Screen
             name="modelPicker"
             options={{
-              animation: 'slide_from_right',
-              animationMatchesGesture: true,
+              animation: 'fade',
               contentStyle: styles.transparentScreen,
-              gestureDirection: 'horizontal',
-              gestureEnabled: true,
               presentation: 'transparentModal',
             }}
           >

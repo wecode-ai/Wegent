@@ -1,5 +1,5 @@
 {
-  "name": "wegent-mobile",
+  "name": "wework-mobile",
   "version": "0.1.0",
   "private": true,
   "main": "index.ts",
@@ -44,6 +44,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@types/node": "^26.4.0",
     "@types/react": "~19.2.2",
     "prettier": "^3.9.0",
     "typescript": "~6.0.3",

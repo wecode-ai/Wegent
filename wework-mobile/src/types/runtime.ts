@@ -134,8 +134,7 @@ export interface RuntimeTranscriptResponse {
 export interface RuntimeCreateRequest {
   schemaVersion: 2
   deviceId: string
-  workspacePath?: string
-  standaloneChatWorkspace?: boolean
+  workspacePath: string
   taskId: string
   runtime: 'codex'
   message: string
