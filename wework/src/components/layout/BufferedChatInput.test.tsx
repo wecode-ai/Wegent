@@ -60,6 +60,72 @@ describe('BufferedChatInput', () => {
     })
   })
 
+  test('keeps the local draft when parent props change before the debounce flush', async () => {
+    const onChange = vi.fn()
+
+    function Harness() {
+      const [expanded, setExpanded] = useState(false)
+      return (
+        <>
+          <button
+            type="button"
+            data-testid="buffered-chat-input-toggle-mode"
+            onClick={() => setExpanded(current => !current)}
+          >
+            Toggle composer mode
+          </button>
+          <BufferedChatInput
+            value=""
+            onChange={onChange}
+            onSubmit={vi.fn()}
+            disabled={false}
+            showExecutionTools={expanded}
+          />
+        </>
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'draft')
+    expect(onChange).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Toggle composer mode' }))
+
+    expect(input).toHaveValue('draft')
+  })
+
+  test('does not replace newer input when two parent acknowledgements are delayed', async () => {
+    const acknowledgeDrafts: Array<() => void> = []
+
+    function Harness() {
+      const [value, setValue] = useState('')
+      return (
+        <BufferedChatInput
+          value={value}
+          onChange={nextValue => {
+            acknowledgeDrafts.push(() => setValue(nextValue))
+          }}
+          onSubmit={vi.fn()}
+          disabled={false}
+        />
+      )
+    }
+
+    render(<Harness />)
+    const input = screen.getByTestId('chat-message-input')
+    await userEvent.type(input, 'a')
+    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(1), { timeout: 500 })
+    await userEvent.type(input, 'b')
+    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(2), { timeout: 500 })
+
+    act(() => acknowledgeDrafts[0]?.())
+    expect(input).toHaveValue('ab')
+
+    act(() => acknowledgeDrafts[1]?.())
+    expect(input).toHaveValue('ab')
+  })
+
   test('restores submitted text when it is externally returned for editing', async () => {
     const onSubmit = vi.fn()
     const props = {

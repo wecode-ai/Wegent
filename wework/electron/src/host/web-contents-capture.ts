@@ -3,7 +3,15 @@ import { HostCapabilityError } from './capability-router.js'
 
 const CAPTURE_ATTEMPT_TIMEOUT_MS = 10_000
 
+export interface CaptureRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 export interface WebContentsCaptureOptions {
+  rect?: CaptureRect
   preferDebugger?: boolean
 }
 
@@ -15,15 +23,21 @@ export async function captureWebContentsDataUrl(
     ? [
         {
           label: 'CDP Page.captureScreenshot',
-          capture: () => captureDebugger(contents, false),
+          capture: () => captureDebugger(contents, false, options.rect),
         },
-        { label: 'Electron capturePage', capture: () => captureNative(contents) },
+        {
+          label: 'Electron capturePage',
+          capture: () => captureNative(contents, options.rect),
+        },
       ]
     : [
-        { label: 'Electron capturePage', capture: () => captureNative(contents) },
+        {
+          label: 'Electron capturePage',
+          capture: () => captureNative(contents, options.rect),
+        },
         {
           label: 'CDP Page.captureScreenshot',
-          capture: () => captureDebugger(contents, true),
+          capture: () => captureDebugger(contents, true, options.rect),
         },
       ]
   const failures: string[] = []
@@ -37,7 +51,11 @@ export async function captureWebContentsDataUrl(
   throw new HostCapabilityError('e2e_capture_failed', failures.join('; '))
 }
 
-async function captureDebugger(contents: WebContents, fromSurface: boolean): Promise<string> {
+async function captureDebugger(
+  contents: WebContents,
+  fromSurface: boolean,
+  rect?: CaptureRect
+): Promise<string> {
   const debugSession = contents.debugger
   const alreadyAttached = debugSession.isAttached()
   try {
@@ -47,6 +65,7 @@ async function captureDebugger(contents: WebContents, fromSurface: boolean): Pro
         captureBeyondViewport: false,
         format: 'png',
         fromSurface,
+        ...(rect ? { clip: { ...rect, scale: 1 } } : {}),
       }),
       'CDP Page.captureScreenshot'
     )) as { data?: unknown }
@@ -59,8 +78,8 @@ async function captureDebugger(contents: WebContents, fromSurface: boolean): Pro
   }
 }
 
-async function captureNative(contents: WebContents): Promise<string> {
-  const image = await withCaptureTimeout(contents.capturePage(), 'Electron capturePage')
+async function captureNative(contents: WebContents, rect?: CaptureRect): Promise<string> {
+  const image = await withCaptureTimeout(contents.capturePage(rect), 'Electron capturePage')
   if (!image.isEmpty()) {
     const dataUrl = image.toDataURL()
     if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl

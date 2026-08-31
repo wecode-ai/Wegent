@@ -576,9 +576,33 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string): Promise<string> {
+  async capture(label: string, rect?: BrowserBounds): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents)
+    return captureWebContentsDataUrl(entry.contents, { rect })
+  }
+
+  labelForContentsId(contentsId: number): string | null {
+    return [...this.entries.values()].find(entry => entry.contents.id === contentsId)?.label ?? null
+  }
+
+  send(label: string, channel: string, payload: unknown): void {
+    this.required(label).contents.send(channel, payload)
+  }
+
+  pageRectToScreen(
+    label: string,
+    rect: BrowserBounds
+  ): { x: number; y: number; width: number; height: number } {
+    const entry = this.required(label)
+    const hostContents = entry.contents.hostWebContents
+    const owner = hostContents ? BrowserWindow.fromWebContents(hostContents) : null
+    const contentBounds = owner?.getContentBounds() ?? { x: 0, y: 0, width: 0, height: 0 }
+    return {
+      x: contentBounds.x + entry.bounds.x + rect.x,
+      y: contentBounds.y + entry.bounds.y + rect.y,
+      width: rect.width,
+      height: rect.height,
+    }
   }
 
   async verifyDetachedInspector(label: string): Promise<{

@@ -192,15 +192,30 @@ Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在�
 
 ## 批注流程
 
-右侧浏览器地址栏旁提供批注图标。进入批注模式后：
+右侧浏览器地址栏旁提供批注图标。批注实现分为三层：
 
-- 鼠标移动到页面元素上时，只高亮当前 DOM 元素。
-- 点击元素弹出评论输入框。
-- 在评论输入框按 Enter 会发布批注并回到 Wework 主输入框附件区。
-- 发送后，会话区显示评论附件样式，主输入框附件会被清理。
-- 发送给模型的内容包含隐藏的 `<workspace_comment_context>`，用于说明批注对应的可视网页区域；UI 不展示原始隐藏上下文。
+- Electron `browser-annotation-controller` 按浏览器 logical label 持有批注、草稿、原网页预览和运行时 revision，是唯一状态真值。
+- 独立 preload 在页面 ShadowRoot 中处理元素命中、高亮、编号标记、锚点重绑定和设计样式，避免批注节点污染宿主页面观察器。
+- 独立透明 overlay window 渲染紧凑的评论或设计编辑卡。React 浏览器面板只负责批注模式工具栏、数量和提交到主输入框。
+
+进入批注模式后：
+
+- 鼠标移动只高亮当前 DOM 元素；点击后创建包含 selector、DOM 路径、文本和几何信息的稳定锚点，并打开编辑卡。
+- 评论卡支持新增、保存、取消和删除。已保存批注在网页上显示编号标记，点击标记可重新编辑。
+- 设计卡读取目标元素的计算样式，可调整文字、外观和布局属性。设计变更由 preload 应用，页面节点替换后通过锚点重新绑定。
+- 按住“原网页”按钮会用同一条 render/sync 链暂时隐藏全部设计变更并恢复被替换的文本；松开后恢复批注设计。
+- 同 URL 重新加载保留批注并重绑定锚点；真实跨 URL 导航退出批注模式并清除草稿，避免旧页面状态泄漏。
+- 发布后的批注进入 Wework 主输入框附件区。发送给模型的运行时 DTO 只包含元素上下文、评论和设计变更，不包含截图、创建时间等 UI 私有字段。
 
 批注用于网页可视区域评论，不等同于代码选择评论。`browser_annotation` 项应被模型理解为对当前可见网页元素的评论。
+
+批注回归拆成三个可独立运行的 checkpoint：
+
+- `browser-annotation-core`：选择元素、创建评论、编号标记、编辑、删除和退出。
+- `browser-annotation-anchors`：DOM 重排、同 URL reload 和目标节点替换后的锚点恢复。
+- `browser-annotation-design`：计算样式基线、设计应用、原网页预览和设计重绑定。
+
+`browser-annotation` 是以上三个 checkpoint 的组合入口，必须展开并逐个执行，不能只运行通用桌面流程后报告成功。
 
 ## 开发检查
 
@@ -215,6 +230,7 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --filter wework e2e:desktop:embedded-browser
 pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+pnpm --filter wework e2e:desktop -- --segment browser-annotation
 ```
 
 `e2e:desktop:embedded-browser` 必须在任务 A 创建后切换到任务 B，再使用任务 A 的专属 label 执行第一次 bridge `open`、`waitFor` 和 `inspect`，验证非活跃任务能在工具超时前完成后台导航且不会接管任务 B 的浏览器。切回任务 A 后还要验证同一页面状态可见。仅验证第二次打开、活跃任务打开或手工先展开浏览器面板，不能覆盖首次打开和非活跃任务路由竞态。

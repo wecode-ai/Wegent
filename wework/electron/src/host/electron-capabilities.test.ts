@@ -118,13 +118,15 @@ function createWebContents(input: {
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {
-    const { contents, debuggerSession } = createWebContents({
+    const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { rect })).resolves.toBe(
       'data:image/png;base64,native-capture'
     )
+    expect(capturePage).toHaveBeenCalledWith(rect)
     expect(debuggerSession.attach).not.toHaveBeenCalled()
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
@@ -168,14 +170,21 @@ describe('captureWebContentsDataUrl', () => {
   })
 
   test('reports both capture failures', async () => {
-    const { contents } = createWebContents({
+    const { contents, debuggerSession } = createWebContents({
       captureError: new Error('UnknownVizError'),
       debuggerError: new Error('DebuggerCaptureError'),
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).rejects.toThrow(
+    await expect(captureWebContentsDataUrl(contents, { rect })).rejects.toThrow(
       'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
     )
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: true,
+      clip: { ...rect, scale: 1 },
+    })
   })
 
   test('falls back to the debugger when Electron native capture hangs', async () => {
