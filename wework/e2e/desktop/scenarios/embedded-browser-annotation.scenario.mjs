@@ -1170,15 +1170,11 @@ async function verifyDesign(
     'Stopping annotation mode before design rebind did not complete its page render'
   )
   await bridge({ action: 'click', selector: '#design-replace-trigger', timeoutMs: 5_000 })
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Replacing the design target did not complete its page render'
-  )
-  assert.equal(
-    await pageValue(bridge, `document.body.dataset.designReplaced`),
+  await waitForPageValue(
+    bridge,
+    `document.body.dataset.designReplaced`,
     'true',
+    uiTimeoutMs,
     'The design replacement fixture did not replace its target'
   )
   await control.command('click', BROWSER_ANNOTATE_SELECTOR)

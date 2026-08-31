@@ -112,6 +112,7 @@ export class BrowserAnnotationController {
   ): void {
     const session = this.session(label)
     session.mode = mode
+    session.runtimeRevision += 1
     this.sync(label, point)
     this.publish(label)
   }
@@ -120,6 +121,7 @@ export class BrowserAnnotationController {
     const session = this.session(label)
     session.mode = 'off'
     session.originalView = false
+    session.runtimeRevision += 1
     if (this.draft?.label === label) this.closeDraft(false)
     this.sync(label)
     this.publish(label)
@@ -139,6 +141,7 @@ export class BrowserAnnotationController {
   setOriginalView(label: string, enabled: boolean): void {
     const session = this.session(label)
     session.originalView = enabled
+    session.runtimeRevision += 1
     this.sync(label)
     this.publish(label)
   }

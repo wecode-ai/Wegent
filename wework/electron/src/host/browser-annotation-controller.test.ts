@@ -135,6 +135,18 @@ describe('BrowserAnnotationController', () => {
     ).toBeNull()
   })
 
+  test('increments the runtime revision for annotation mode and original view changes', () => {
+    const { controller } = harness()
+    const initialRevision = controller.state(LABEL).runtimeRevision
+
+    controller.start(LABEL, 'batch')
+    expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 1)
+    controller.setOriginalView(LABEL, true)
+    expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 2)
+    controller.stop(LABEL)
+    expect(controller.state(LABEL).runtimeRevision).toBe(initialRevision + 3)
+  })
+
   test('replaces an anchor without changing comment identity', async () => {
     const { browser, controller, states } = harness()
     controller.start(LABEL, 'batch')
