@@ -51,6 +51,9 @@ const DESIGN_ATTRIBUTE = 'data-wework-browser-design'
 const DESIGN_STYLE_ATTRIBUTE = 'data-wework-browser-design-style'
 const MARKER_ATTRIBUTE = 'data-wework-browser-annotation-marker'
 const SELECTION_ATTRIBUTE = 'data-wework-browser-annotation-selection'
+const INTERACTION_LAYER_ATTRIBUTE = 'data-wework-browser-annotation-interaction-layer'
+const HOVER_ATTRIBUTE = 'data-wework-browser-annotation-hover'
+const ANNOTATION_BLUE = '#0069fb'
 const DESIGN_PROPERTIES = [
   'color',
   'font-family',
@@ -72,6 +75,7 @@ let rootHost: HTMLElement | null = null
 let shadowRoot: ShadowRoot | null = null
 let renderTimer: ReturnType<typeof setTimeout> | null = null
 let draftAnchor: ElementAnchor | null = null
+let hoveredElement: Element | null = null
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
   string,
@@ -384,7 +388,7 @@ function markerButton(comment: RuntimeComment, element: Element) {
   marker.setAttribute('aria-expanded', 'false')
   Object.assign(marker.style, {
     alignItems: 'center',
-    background: '#0069fb',
+    background: ANNOTATION_BLUE,
     border: '2px solid white',
     borderRadius: '999px',
     boxShadow: '0 2px 8px rgba(0,0,0,.24)',
@@ -422,7 +426,7 @@ function selectionOutline(element: Element) {
   outline.setAttribute(SELECTION_ATTRIBUTE, '')
   Object.assign(outline.style, {
     background: 'rgba(0, 105, 251, .08)',
-    border: '2px solid #0069fb',
+    border: `2px solid ${ANNOTATION_BLUE}`,
     borderRadius: '6px',
     boxSizing: 'border-box',
     height: `${rect.height}px`,
@@ -435,10 +439,89 @@ function selectionOutline(element: Element) {
   return outline
 }
 
+function hoverOutline(element: Element) {
+  const rect = element.getBoundingClientRect()
+  const outline = document.createElement('div')
+  outline.setAttribute(HOVER_ATTRIBUTE, '')
+  Object.assign(outline.style, {
+    background: 'rgba(0, 105, 251, .03)',
+    border: `2px solid ${ANNOTATION_BLUE}`,
+    boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, .28)',
+    boxSizing: 'border-box',
+    height: `${rect.height}px`,
+    left: `${rect.left}px`,
+    pointerEvents: 'none',
+    position: 'fixed',
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    zIndex: '1',
+  })
+  return outline
+}
+
+function targetBelowInteractionLayer(layer: HTMLElement, point: { x: number; y: number }) {
+  layer.style.pointerEvents = 'none'
+  try {
+    const target = deepestElementAtPoint(point.x, point.y)
+    return target ? annotationTarget(target) : null
+  } finally {
+    layer.style.pointerEvents = 'auto'
+  }
+}
+
+function interactionLayer() {
+  const layer = document.createElement('div')
+  layer.setAttribute(INTERACTION_LAYER_ATTRIBUTE, '')
+  Object.assign(layer.style, {
+    background: 'transparent',
+    cursor: 'crosshair',
+    inset: '0',
+    pointerEvents: 'auto',
+    position: 'fixed',
+    touchAction: 'pan-x pan-y',
+    zIndex: '0',
+  })
+  layer.addEventListener('pointermove', event => {
+    const target = targetBelowInteractionLayer(layer, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+    if (target === rootHost || rootHost?.contains(target)) return
+    if (hoveredElement === target) return
+    hoveredElement = target
+    scheduleRender()
+  })
+  layer.addEventListener('pointerleave', () => {
+    if (!hoveredElement) return
+    hoveredElement = null
+    scheduleRender()
+  })
+  layer.addEventListener('click', event => {
+    event.preventDefault()
+    event.stopPropagation()
+    const target = targetBelowInteractionLayer(layer, {
+      x: event.clientX,
+      y: event.clientY,
+    })
+    if (target) selectElement(target, { x: event.clientX, y: event.clientY })
+  })
+  return layer
+}
+
 function render() {
   renderTimer = null
   const root = ensureRoot()
   root.replaceChildren()
+  if (state.mode !== 'off' && !draftAnchor) {
+    root.append(interactionLayer())
+    if (hoveredElement?.isConnected && isVisible(hoveredElement)) {
+      root.append(hoverOutline(hoveredElement))
+    } else {
+      hoveredElement = null
+    }
+  } else {
+    hoveredElement = null
+  }
   if (draftAnchor) {
     const selectedElement = resolveAnchor(draftAnchor)
     if (selectedElement) root.append(selectionOutline(selectedElement))
@@ -520,14 +603,43 @@ function deepestElementAtPoint(x: number, y: number): Element | null {
   return element
 }
 
+function composedParentElement(element: Element) {
+  if (element.parentElement) return element.parentElement
+  const root = element.getRootNode()
+  return root instanceof ShadowRoot ? root.host : null
+}
+
+function isPreferredAnnotationTarget(element: Element) {
+  return (
+    ['a', 'button', 'input', 'textarea', 'select', 'label', 'img'].includes(element.localName) ||
+    element.hasAttribute('role')
+  )
+}
+
+function annotationTarget(element: Element) {
+  let current: Element | null = element
+  let fallback: Element | null = null
+  while (current && current !== document.body && current !== document.documentElement) {
+    if (current === rootHost || rootHost?.contains(current)) return null
+    if (isVisible(current)) {
+      fallback ??= current
+      if (isPreferredAnnotationTarget(current)) return current
+    }
+    current = composedParentElement(current)
+  }
+  return fallback
+}
+
 function selectElement(element: Element, point?: { x: number; y: number }) {
-  if (element === rootHost || rootHost?.contains(element)) return
-  const anchor = anchorFor(element)
+  const target = annotationTarget(element)
+  if (!target) return
+  const anchor = anchorFor(target)
+  hoveredElement = null
   draftAnchor = anchor
   scheduleRender()
   emit('create-draft', {
     anchor,
-    designValues: designValuesFor(element),
+    designValues: designValuesFor(target),
     markerPoint: point ?? {
       x: anchor.rect.x + anchor.rect.width,
       y: anchor.rect.y,
@@ -559,6 +671,7 @@ ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: R
   if (command.type === 'sync' && command.state) {
     state = command.state
     draftAnchor = null
+    if (state.mode === 'off') hoveredElement = null
     if (command.point) {
       const target = deepestElementAtPoint(command.point.x, command.point.y)
       if (target) {

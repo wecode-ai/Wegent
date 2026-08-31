@@ -365,11 +365,14 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
-    const contents = e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main')
+    const windowLabel = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(windowLabel)
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, {
+      debuggerOnly: windowLabel !== 'browser-annotation-overlay',
+    })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')

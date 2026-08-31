@@ -29,6 +29,8 @@ const OVERLAY_BACKGROUND_COLOR_SELECTOR =
   '[data-testid="browser-annotation-design-background-color"]'
 const OVERLAY_SCREENSHOT_SELECTOR = '[data-testid="browser-annotation-screenshot-ready"]'
 const MARKER_SELECTOR = '[data-wework-browser-annotation-marker]'
+const INTERACTION_LAYER_SELECTOR = '[data-wework-browser-annotation-interaction-layer]'
+const HOVER_SELECTOR = '[data-wework-browser-annotation-hover]'
 const MARKER_ROOT_ID = '__wework_browser_annotation_root__'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const FIXTURE_PATH = '/browser-annotation/basic'
@@ -327,7 +329,7 @@ async function setupBrowser(
   }
 }
 
-async function startElementAnnotation(control, bridge, targetSelector, uiTimeoutMs) {
+async function enterElementAnnotationMode(control, bridge, uiTimeoutMs) {
   await control.command('waitFor', BROWSER_ANNOTATE_SELECTOR, {
     enabled: true,
     timeoutMs: uiTimeoutMs,
@@ -351,12 +353,117 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
     true,
     'The browser annotation preload did not initialize its isolated marker root'
   )
-  const click = await bridge({
-    action: 'click',
-    selector: targetSelector,
-    timeoutMs: 5_000,
-  })
-  assert.equal(click.ok, true, `Could not select ${targetSelector}: ${JSON.stringify(click)}`)
+  assert.equal(
+    await pageValue(
+      bridge,
+      `(() => {
+        const layer = document
+          .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+          ?.shadowRoot?.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
+        return layer ? getComputedStyle(layer).cursor : null
+      })()`
+    ),
+    'crosshair',
+    'Starting annotation mode did not expose the crosshair interaction layer'
+  )
+}
+
+async function hoverElementAnnotationTarget(bridge, targetSelector, uiTimeoutMs) {
+  const targetPoint = await pageValue(
+    bridge,
+    `(() => {
+      const target = document.querySelector(${JSON.stringify(targetSelector)})
+      if (!target) return null
+      const rect = target.getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })()`
+  )
+  assert.ok(targetPoint, `Could not locate ${targetSelector} for annotation hover`)
+  assert.equal(
+    await pageValue(
+      bridge,
+      `(() => {
+        const layer = document
+          .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+          ?.shadowRoot?.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
+        if (!layer) return false
+        layer.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            clientX: ${targetPoint.x},
+            clientY: ${targetPoint.y},
+            pointerType: 'mouse',
+          })
+        )
+        return true
+      })()`
+    ),
+    true,
+    `Could not hover ${targetSelector} through the annotation interaction layer`
+  )
+  await waitForPageValue(
+    bridge,
+    `(() => {
+      const hover = document
+        .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+        ?.shadowRoot?.querySelector(${JSON.stringify(HOVER_SELECTOR)})
+      if (!hover) return null
+      const style = getComputedStyle(hover)
+      return (
+        style.borderTopWidth === '2px' &&
+        style.borderTopColor === 'rgb(0, 105, 251)' &&
+        (style.backgroundColor === 'rgba(0, 105, 251, 0.03)' ||
+          style.backgroundColor.includes('/ 0.03)'))
+      )
+    })()`,
+    true,
+    uiTimeoutMs,
+    'Hovering an annotation target did not expose the ChatGPT-style blue selection layer'
+  )
+}
+
+async function selectElementAnnotationTarget(control, bridge, targetSelector, uiTimeoutMs) {
+  const targetPoint = await pageValue(
+    bridge,
+    `(() => {
+      const target = document.querySelector(${JSON.stringify(targetSelector)})
+      if (!target) return null
+      const rect = target.getBoundingClientRect()
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    })()`
+  )
+  assert.ok(targetPoint, `Could not locate ${targetSelector} for annotation selection`)
+  await selectElementAnnotationPoint(
+    control,
+    bridge,
+    targetPoint,
+    uiTimeoutMs,
+    `Could not select ${targetSelector} through the annotation interaction layer`
+  )
+}
+
+async function selectElementAnnotationPoint(control, bridge, targetPoint, uiTimeoutMs, message) {
+  assert.equal(
+    await pageValue(
+      bridge,
+      `(() => {
+        const layer = document
+          .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+          ?.shadowRoot?.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
+        if (!layer) return false
+        layer.dispatchEvent(
+          new MouseEvent('click', {
+            bubbles: true,
+            clientX: ${targetPoint.x},
+            clientY: ${targetPoint.y},
+          })
+        )
+        return true
+      })()`
+    ),
+    true,
+    message
+  )
   await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_INPUT_SELECTOR, {
     timeoutMs: uiTimeoutMs,
   })
@@ -367,6 +474,12 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
     OVERLAY_SCREENSHOT_SELECTOR,
     { timeoutMs: uiTimeoutMs }
   )
+}
+
+async function startElementAnnotation(control, bridge, targetSelector, uiTimeoutMs) {
+  await enterElementAnnotationMode(control, bridge, uiTimeoutMs)
+  await hoverElementAnnotationTarget(bridge, targetSelector, uiTimeoutMs)
+  await selectElementAnnotationTarget(control, bridge, targetSelector, uiTimeoutMs)
 }
 
 async function submitOverlayComment(control, comment, uiTimeoutMs) {
@@ -480,9 +593,11 @@ async function verifyCore(
     timeoutMs: 5_000,
   })
 
-  await startElementAnnotation(control, bridge, '#annotation-primary', uiTimeoutMs)
+  await enterElementAnnotationMode(control, bridge, uiTimeoutMs)
+  await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
   control.activateWindow('main')
-  await captureScreenshot(control, 'browser-annotation-01-target-selected.png')
+  await captureScreenshot(control, 'browser-annotation-01-mode-active.png')
+  await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
   await captureWindowScreenshot(
     control,
     resultDir,
@@ -664,16 +779,13 @@ async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTi
     })()`
   )
   assert.ok(shadowRect, 'The fixture shadow target is unavailable')
-  const shadowClick = await bridge({
-    action: 'click',
-    x: shadowRect.x,
-    y: shadowRect.y,
-    timeoutMs: 5_000,
-  })
-  assert.equal(shadowClick.ok, true, 'The open ShadowRoot target could not be selected')
-  await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_INPUT_SELECTOR, {
-    timeoutMs: uiTimeoutMs,
-  })
+  await selectElementAnnotationPoint(
+    control,
+    bridge,
+    shadowRect,
+    uiTimeoutMs,
+    'The open ShadowRoot target could not be selected through the annotation interaction layer'
+  )
 }
 
 async function verifyDesign(
