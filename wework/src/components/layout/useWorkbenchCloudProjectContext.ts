@@ -498,6 +498,9 @@ export function useWorkbenchCloudProjectContext({
     }
     const api = projectSpaceApiFor(projectToBind)
     if (!api) return
+    if (isDefaultWorkItemProject(projectToBind) && !itemToBind) {
+      return
+    }
     const bindingTaskTitle =
       runtimeTaskTitleRef.current ||
       truncateRuntimeTaskTitle(pendingBinding?.description) ||

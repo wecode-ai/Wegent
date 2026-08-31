@@ -26,6 +26,60 @@ fn next_runtime_status_observation() -> i64 {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn track_default_work_item_async(
+        &self,
+        local_task_id: String,
+        task_title: String,
+        description: String,
+    ) {
+        let handler = self.clone();
+        let device_id = self.device_id.clone();
+        let worker_task_id = local_task_id.clone();
+        tokio::spawn(async move {
+            let binding_result = tokio::task::spawn_blocking(move || {
+                let store = LocalTaskStore::from_env()?;
+                store.ensure_default_work_item_binding(
+                    &device_id,
+                    &worker_task_id,
+                    &task_title,
+                    &description,
+                )
+            })
+            .await;
+            match binding_result {
+                Ok(Ok(binding)) => {
+                    log_executor_event(
+                        "runtime task default Issue bound",
+                        &[
+                            ("local_task_id", binding.task_id.clone()),
+                            (
+                                "loop_item_id",
+                                binding.loop_item_id.clone().unwrap_or_default(),
+                            ),
+                        ],
+                    );
+                    if let Some(link) = handler.local_task_link(&binding.task_id) {
+                        handler.project_runtime_link_status_now(&link);
+                    }
+                }
+                Ok(Err(error)) => log_executor_event(
+                    "runtime task default Issue binding failed",
+                    &[
+                        ("local_task_id", local_task_id),
+                        ("error", error.to_string()),
+                    ],
+                ),
+                Err(error) => log_executor_event(
+                    "runtime task default Issue binding worker failed",
+                    &[
+                        ("local_task_id", local_task_id),
+                        ("error", error.to_string()),
+                    ],
+                ),
+            }
+        });
+    }
+
     pub(crate) async fn reconcile_bound_task_statuses(&self) {
         for link in self.collect_links(false).await {
             self.project_runtime_link_status_now(&link);

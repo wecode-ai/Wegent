@@ -354,14 +354,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     firstHook.rerender({ currentRuntimeTask: firstTask })
     secondHook.rerender({ currentRuntimeTask: secondTask })
 
-    await waitFor(() =>
-      expect(firstTrackProjectTask).toHaveBeenCalledWith(
-        firstProject.id,
-        firstTask,
-        'First task',
-        'First task'
-      )
-    )
+    expect(firstTrackProjectTask).not.toHaveBeenCalled()
     await waitFor(() =>
       expect(secondTrackProjectTask).toHaveBeenCalledWith(
         secondProject.id,
@@ -429,7 +422,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     )
   })
 
-  test('tracks the default work-item project when the user configured nothing', async () => {
+  test('waits for the executor to bind the default work-item project', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
       project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -445,7 +438,13 @@ describe('useWorkbenchCloudProjectContext', () => {
       listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
-      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      findCloudContextForTask: vi.fn().mockResolvedValue({
+        id: 1,
+        cloud_project_id: defaultBoard.id,
+        loop_item_id: trackedItem.id,
+        project: defaultBoard,
+        loop_item: trackedItem,
+      }),
       trackProjectTask: vi.fn().mockResolvedValue({ item: trackedItem }),
     }
     const services = {
@@ -478,17 +477,11 @@ describe('useWorkbenchCloudProjectContext', () => {
     act(() => submission?.onRuntimeTaskCreated(runtimeTask))
     rerender({ currentRuntimeTask: runtimeTask })
 
-    await waitFor(() =>
-      expect(localApi.trackProjectTask).toHaveBeenCalledWith(
-        defaultBoard.id,
-        runtimeTask,
-        '完成零配置任务',
-        '完成零配置任务'
-      )
-    )
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(trackedItem))
+    expect(localApi.trackProjectTask).not.toHaveBeenCalled()
   })
 
-  test('submits synchronously and joins a default project after its background lookup resolves', async () => {
+  test('submits immediately and delegates a late default-project association to executor', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
       project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -549,14 +542,8 @@ describe('useWorkbenchCloudProjectContext', () => {
     await waitFor(() => expect(localApi.listCloudProjects).toHaveBeenCalledOnce())
     await act(async () => resolveLocalProjects?.({ items: [defaultBoard] }))
 
-    await waitFor(() =>
-      expect(localApi.trackProjectTask).toHaveBeenCalledWith(
-        defaultBoard.id,
-        runtimeTask,
-        '继续发送',
-        '继续发送'
-      )
-    )
+    await waitFor(() => expect(result.current.pendingCloudProject).toEqual(defaultBoard))
+    expect(localApi.trackProjectTask).not.toHaveBeenCalled()
   })
 
   test('recovers when the first context lookup races with default-board binding', async () => {
@@ -623,7 +610,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(result.current.pendingCloudProject).toBeNull()
   })
 
-  test('keeps the created work item visible when the runtime title arrives during binding', async () => {
+  test('keeps the executor-created work item visible when the runtime title arrives', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
       project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
@@ -634,19 +621,27 @@ describe('useWorkbenchCloudProjectContext', () => {
       deviceId: 'device-1',
       taskId: 'runtime-1',
     }
-    let resolveTracking: ((value: { item: CloudLoopItem }) => void) | undefined
+    let resolveContext:
+      | ((value: {
+          id: number
+          cloud_project_id: string
+          loop_item_id: string
+          project: CloudProject
+          loop_item: CloudLoopItem
+        }) => void)
+      | undefined
     const localApi = {
       listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
       listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
-      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
-      trackProjectTask: vi.fn(
+      findCloudContextForTask: vi.fn(
         () =>
-          new Promise<{ item: CloudLoopItem }>(resolve => {
-            resolveTracking = resolve
+          new Promise(resolve => {
+            resolveContext = resolve
           })
       ),
+      trackProjectTask: vi.fn(),
     }
     const services = {
       projectSpaceApis: {
@@ -687,29 +682,34 @@ describe('useWorkbenchCloudProjectContext', () => {
     })
     act(() => submission?.onRuntimeTaskCreated(runtimeTask))
     rerender({ currentRuntimeTask: runtimeTask, runtimeTaskTitle: null })
-    await waitFor(() => expect(localApi.trackProjectTask).toHaveBeenCalledOnce())
+    await waitFor(() => expect(localApi.findCloudContextForTask).toHaveBeenCalled())
 
     rerender({ currentRuntimeTask: runtimeTask, runtimeTaskTitle: '运行时生成的标题' })
-    await act(async () => resolveTracking?.({ item: trackedItem }))
+    await act(async () =>
+      resolveContext?.({
+        id: 1,
+        cloud_project_id: defaultBoard.id,
+        loop_item_id: trackedItem.id,
+        project: defaultBoard,
+        loop_item: trackedItem,
+      })
+    )
 
     await waitFor(() => expect(result.current.boundCloudItem).toEqual(trackedItem))
     expect(result.current.boundCloudProject).toEqual(defaultBoard)
+    expect(localApi.trackProjectTask).not.toHaveBeenCalled()
   })
 
-  test('ignores an older missing-context response after binding succeeds', async () => {
-    const defaultBoard = {
-      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
-      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
-      name: '我的任务',
-    }
-    const trackedItem = loopItem(defaultBoard.id)
+  test('ignores an older missing-context response after an explicit project binding succeeds', async () => {
+    const selectedProject = project('selected-project', 'local')
+    const trackedItem = loopItem(selectedProject.id)
     const runtimeTask = {
       deviceId: 'device-1',
       taskId: 'runtime-1',
     }
     let rejectInitialLookup: ((reason: Error) => void) | undefined
     const localApi = {
-      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [selectedProject] }),
       listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
       listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
       listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
@@ -733,7 +733,10 @@ describe('useWorkbenchCloudProjectContext', () => {
           active: true,
           currentRuntimeTask,
           currentProjectId: 42,
-          defaultProjectSpace: null,
+          defaultProjectSpace: {
+            projectStore: selectedProject.project_store,
+            projectId: selectedProject.id,
+          },
           paneKey: 'project:42',
           runtimeTaskTitle: null,
           services,
@@ -742,7 +745,7 @@ describe('useWorkbenchCloudProjectContext', () => {
       { initialProps: { currentRuntimeTask: null } }
     )
 
-    await waitFor(() => expect(result.current.pendingCloudProject).toEqual(defaultBoard))
+    await waitFor(() => expect(result.current.pendingCloudProject).toEqual(selectedProject))
     let submission: Awaited<ReturnType<typeof result.current.prepareSubmission>> | undefined
     await act(async () => {
       submission = await result.current.prepareSubmission('完成零配置任务')
@@ -754,7 +757,7 @@ describe('useWorkbenchCloudProjectContext', () => {
     await act(async () => rejectInitialLookup?.(new Error('Cloud context not found')))
 
     expect(result.current.boundCloudItem).toEqual(trackedItem)
-    expect(result.current.boundCloudProject).toEqual(defaultBoard)
+    expect(result.current.boundCloudProject).toEqual(selectedProject)
   })
 
   test('reloads project spaces when a retained workbench becomes active again', async () => {
