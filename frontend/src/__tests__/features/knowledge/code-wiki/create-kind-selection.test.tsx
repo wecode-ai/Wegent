@@ -160,6 +160,20 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     await waitFor(() => expect(getKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
   })
 
+  it('silently falls back to automatic defaults when no profile is usable', async () => {
+    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
+      version: 1,
+      retrieval_config: null,
+      health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
+    })
+    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
+
+    await waitFor(() => {
+      expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.queryByTestId('knowledge-retrieval-profile-fallback')).not.toBeInTheDocument()
+  })
+
   it('swaps the opening-view field for repository fields when code is chosen', async () => {
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
@@ -169,34 +183,6 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     expect(screen.queryByTestId('switch-kb-type')).not.toBeInTheDocument()
     expect(screen.getByTestId('repository-selector')).toBeInTheDocument()
     expect(screen.getByTestId('code-wiki-language')).toBeInTheDocument()
-  })
-
-  it('shows when an unusable profile falls back to automatic defaults', async () => {
-    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
-      version: 1,
-      retrieval_config: null,
-      health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
-    })
-    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
-
-    await screen.findByTestId('knowledge-retrieval-profile-fallback')
-    expect(
-      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.retriever_unavailable')
-    ).toBeInTheDocument()
-  })
-
-  it('shows the automatic-default notice when no profile is configured', async () => {
-    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
-      version: 0,
-      retrieval_config: null,
-      health: { status: 'missing', fallback_reason: null },
-    })
-    render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
-
-    await screen.findByTestId('knowledge-retrieval-profile-fallback')
-    expect(
-      screen.getByText('knowledge:document.retrievalProfile.fallbackReasons.unavailable')
-    ).toBeInTheDocument()
   })
 
   it('offers both ways to name a repository', () => {

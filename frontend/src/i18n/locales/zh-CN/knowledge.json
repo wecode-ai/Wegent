@@ -285,14 +285,6 @@
       "batchMovePartial": "批量移动完成：成功 {{success}} 个，失败 {{failed}} 个。失败文档仍保留选中状态，请查看高亮项后重试"
     },
     "document": {
-      "retrievalProfile": {
-        "fallbackReasons": {
-          "retriever_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
-          "embedding_model_unavailable": "配置的检索默认 Profile 不可用，将使用自动默认配置。",
-          "profile_incomplete": "配置的检索默认 Profile 不完整，将使用自动默认配置。",
-          "unavailable": "检索默认 Profile 不可用，将使用自动默认配置。"
-        }
-      },
       "title": "文档",
       "upload": "添加资料",
       "edit": "编辑文档",
