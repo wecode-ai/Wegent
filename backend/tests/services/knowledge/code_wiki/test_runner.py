@@ -275,7 +275,7 @@ def test_a_first_run_gets_the_full_rebuild_instructions(
 
 def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
     test_db: Session, knowledge_base: Kind, test_user: User, tasks: FakeTasks
-):
+) -> None:
     reviewer = Kind(
         kind="Bot",
         name="code-wiki-reviewer",

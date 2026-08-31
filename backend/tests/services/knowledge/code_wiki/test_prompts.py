@@ -121,7 +121,7 @@ def test_the_generation_id_travels_with_the_run():
     assert "42" in build_full_prompt(_context())
 
 
-def test_a_full_rebuild_names_the_bounded_quality_loop():
+def test_a_full_rebuild_names_the_bounded_quality_loop() -> None:
     prompt = build_full_prompt(_context())
 
     assert "Writer/Reviewer" in prompt
@@ -130,7 +130,7 @@ def test_a_full_rebuild_names_the_bounded_quality_loop():
     assert "do not open QA or Recheck" in prompt
 
 
-def test_full_prompt_names_executor_generated_reviewer_agent_type():
+def test_full_prompt_names_executor_generated_reviewer_agent_type() -> None:
     prompt = build_full_prompt(
         _context(
             reviewer_agent_type="reviewer-bot-106",

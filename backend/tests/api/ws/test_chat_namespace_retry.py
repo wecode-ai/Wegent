@@ -284,7 +284,7 @@ async def test_chat_retry_persists_failed_state_when_dispatch_raises():
 
 
 @pytest.mark.asyncio
-async def test_chat_retry_rejects_a_code_wiki_task_before_resetting_it():
+async def test_chat_retry_rejects_a_code_wiki_task_before_resetting_it() -> None:
     namespace = ChatNamespace()
     namespace.get_session = AsyncMock(return_value={"user_id": 1})
     namespace._check_token_expiry = AsyncMock(return_value=False)

@@ -202,11 +202,25 @@ def test_the_agent_must_finish_and_handle_feedback(system_prompt: str):
     assert "act on publish refusal or diagram feedback" in normalized_prompt
 
 
-def test_full_rebuilds_use_the_bounded_reviewer_loop(system_prompt: str):
+def test_full_rebuilds_use_the_bounded_reviewer_loop(system_prompt: str) -> None:
     assert "exact Reviewer agent" in system_prompt
     assert "delegate synchronously" in system_prompt
     assert "reviewPolicy=plan_only" in system_prompt
     assert "without opening QA or Recheck" in system_prompt
+
+
+def test_page_authorship_delegation_is_limited_to_passed_work_packages(
+    system_prompt: str,
+) -> None:
+    normalized_prompt = " ".join(system_prompt.split())
+
+    assert "After Plan passes" in normalized_prompt
+    assert (
+        "exact Section Writer agent type named by the run prompt" in normalized_prompt
+    )
+    assert "passing only its generation ID and Work Package ID" in normalized_prompt
+    assert "Never delegate other page authorship" in normalized_prompt
+    assert "never delegate page authorship or the overall plan" not in normalized_prompt
 
 
 def test_reviewer_reads_the_persisted_contract_and_handoff() -> None:

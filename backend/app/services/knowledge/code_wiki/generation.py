@@ -47,6 +47,7 @@ from app.services.knowledge.code_wiki.quality_gate import (
     QUALITY_REVIEW_EXT_KEY,
     review_policy,
     review_state,
+    writing_progress,
 )
 from app.services.knowledge.code_wiki.run_mode import (
     ChangedPath,
@@ -590,7 +591,13 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
         return RunProgress("planning", 1, total_steps, pages_written, pages_total)
 
     if plan_only:
-        if pages_total > 0 and pages_written >= pages_total:
+        page_progress = writing_progress(db, generation)
+        page_set_complete = bool(
+            page_progress
+            and not page_progress["missingPaths"]
+            and not page_progress["unexpectedPaths"]
+        )
+        if pages_total > 0 and page_set_complete:
             return RunProgress("publishing", 3, 3, pages_written, pages_total)
         return RunProgress("writing", 2, 3, pages_written, pages_total)
 

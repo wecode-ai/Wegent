@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Sequence
+from typing import Iterable, Sequence
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.schemas.wiki import (
 )
 from app.services.knowledge.code_wiki.page_path import (
     InvalidPagePath,
+    assert_unique_within_version,
     collation_key,
     normalize_page_path,
 )
@@ -191,9 +192,9 @@ def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource])
     if plan is None or plan.get("status") != "passed":
         return "full rebuild needs a passed plan review before publication"
 
-    planned_paths = set(plan.get("paths") or [])
-    focus_paths = set(plan.get("focusPaths") or [])
-    actual_paths = {collation_key(page.path) for page in pages}
+    planned_paths = _path_keys(plan.get("paths") or [])
+    focus_paths = _path_keys(plan.get("focusPaths") or [])
+    actual_paths = _path_keys(page.path for page in pages)
     if not planned_paths or planned_paths != actual_paths:
         return (
             "the passed plan review does not match the pages written for this version"
@@ -206,7 +207,7 @@ def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource])
     qa = _latest(checkpoints, "qa")
     if qa is None:
         return "full rebuild needs a final QA review before publication"
-    if not focus_paths.issubset(set(qa.get("paths") or [])):
+    if not focus_paths.issubset(_path_keys(qa.get("paths") or [])):
         return "final QA did not verify every core focus page from the passed plan"
     final = qa if qa.get("status") == "passed" else _latest(checkpoints, "recheck")
     if final is None or final.get("status") != "passed":
@@ -255,7 +256,7 @@ def writing_progress(db: Session, generation: WikiGeneration) -> dict | None:
     if plan is None or plan.get("status") != "passed":
         return None
 
-    planned = set(plan.get("paths") or [])
+    planned = _path_keys(plan.get("paths") or [])
     written = _generation_paths(db, generation.id)
     return {
         "plannedPaths": sorted(planned, key=collation_key),
@@ -373,7 +374,7 @@ def _assert_handoff_scope(
     if phase == "plan":
         return
     actual_paths = _generation_paths(db, generation.id)
-    supplied_paths = set(paths)
+    supplied_paths = _path_keys(paths)
     if phase == "qa" and supplied_paths != actual_paths:
         raise HTTPException(
             status_code=400,
@@ -382,7 +383,7 @@ def _assert_handoff_scope(
     if phase == "qa":
         review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
         plan = _latest(list(review.get("checkpoints") or []), "plan")
-        planned_paths = set((plan or {}).get("paths") or [])
+        planned_paths = _path_keys((plan or {}).get("paths") or [])
         if actual_paths != planned_paths:
             missing = sorted(planned_paths - actual_paths, key=collation_key)
             unexpected = sorted(actual_paths - planned_paths, key=collation_key)
@@ -401,8 +402,8 @@ def _assert_handoff_scope(
 
 
 def _assert_review_scope(phase: str, paths: list[str], handoff: dict) -> None:
-    reviewed = set(paths)
-    handed_off = set(handoff.get("paths") or [])
+    reviewed = _path_keys(paths)
+    handed_off = _path_keys(handoff.get("paths") or [])
     if phase == "plan" and reviewed != handed_off:
         raise HTTPException(
             status_code=400,
@@ -486,9 +487,9 @@ def _normalized_writing_plan(
         packages.append({"id": package.id, "paths": package_paths})
         assigned.extend(package_paths)
 
+    assigned_keys = [collation_key(path) for path in assigned]
     duplicates = sorted(
-        {path for path in assigned if assigned.count(path) > 1},
-        key=collation_key,
+        {path for path in assigned_keys if assigned_keys.count(path) > 1}
     )
     if duplicates:
         raise HTTPException(
@@ -496,8 +497,8 @@ def _normalized_writing_plan(
             detail=f"Writing Plan assigns pages more than once: {duplicates}",
         )
 
-    planned = set(planned_paths)
-    assigned_set = set(assigned)
+    planned = _path_keys(planned_paths)
+    assigned_set = set(assigned_keys)
     if assigned_set != planned:
         missing = sorted(planned - assigned_set, key=collation_key)
         unknown = sorted(assigned_set - planned, key=collation_key)
@@ -570,8 +571,13 @@ def _plan_focus_paths(
         return []
     if payload.status == "changes_requested" and not payload.focus_paths:
         return []
+    if not payload.focus_paths:
+        raise HTTPException(
+            status_code=400,
+            detail="A passed plan review requires at least one core focus path",
+        )
     focus_paths = _normalized_paths(payload.focus_paths)
-    unknown = set(focus_paths) - set(planned_paths)
+    unknown = _path_keys(focus_paths) - _path_keys(planned_paths)
     if unknown:
         raise HTTPException(
             status_code=400,
@@ -591,4 +597,13 @@ def _normalized_paths(paths: list[str]) -> list[str]:
             normalized.append(normalize_page_path(path))
         except InvalidPagePath as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return sorted(set(normalized), key=collation_key)
+    try:
+        assert_unique_within_version(normalized)
+    except InvalidPagePath as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return sorted(normalized, key=collation_key)
+
+
+def _path_keys(paths: Iterable[str]) -> set[str]:
+    """Compare persisted page paths using the database's collation semantics."""
+    return {collation_key(path) for path in paths}

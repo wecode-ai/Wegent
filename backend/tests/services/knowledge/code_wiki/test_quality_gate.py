@@ -21,6 +21,7 @@ from app.services.knowledge.code_wiki.quality_gate import (
     quality_gate_reason,
     record_quality_review,
     review_state,
+    writing_progress,
 )
 from app.services.knowledge.code_wiki.version_store import set_page_path
 
@@ -404,7 +405,7 @@ def test_qa_requires_written_pages_to_exactly_match_the_passed_plan(test_db, tes
         focus_paths=["architecture"],
     )
 
-    with pytest.raises(HTTPException, match="missing=.*architecture"):
+    with pytest.raises(HTTPException, match=r"missing=.*architecture"):
         _open(test_db, generation, "qa", paths=["index"])
 
 
@@ -459,7 +460,7 @@ def test_plan_review_requires_core_focus_paths_when_it_passes(test_db, test_user
     generation = _generation(test_db, test_user)
     _open(test_db, generation, "plan")
 
-    with pytest.raises(HTTPException, match="At least one reviewed path"):
+    with pytest.raises(HTTPException, match="core focus path"):
         record_quality_review(
             test_db,
             generation=generation,
@@ -471,6 +472,40 @@ def test_plan_review_requires_core_focus_paths_when_it_passes(test_db, test_user
                 summary="plan passed without a focus page",
             ),
         )
+
+
+def test_review_path_comparisons_follow_storage_collation(test_db, test_user) -> None:
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "architecture")
+    _review(
+        test_db,
+        generation,
+        "plan",
+        "passed",
+        paths=["Architecture"],
+        focus_paths=["ARCHITECTURE"],
+    )
+    _open(test_db, generation, "qa", paths=["ARCHITECTURE"])
+    state = _review(
+        test_db,
+        generation,
+        "qa",
+        "passed",
+        paths=["architecture"],
+    )
+
+    progress = writing_progress(test_db, generation)
+    assert progress is not None
+    assert progress["missingPaths"] == []
+    assert progress["unexpectedPaths"] == []
+    assert state["state"] == "passed"
+    assert (
+        quality_gate_reason(
+            generation,
+            [PageSource(path="architecture", title="architecture", content="body")],
+        )
+        == ""
+    )
 
 
 def test_qa_verdict_must_cover_every_candidate_page(test_db, test_user):

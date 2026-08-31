@@ -55,6 +55,7 @@ from app.core.constants import (
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.models.user import User
 from app.schemas.kind import Task, Team
 
@@ -1771,7 +1772,7 @@ def get_device_id(task):
     return task_crd.spec.device_id if task_crd.spec else None
 
 
-def _is_code_wiki_task(task) -> bool:
+def _is_code_wiki_task(task: TaskResource) -> bool:
     """Whether a task has a generation-bound Code Wiki runtime prompt."""
     task_json = task.json if isinstance(task.json, dict) else {}
     metadata = task_json.get("metadata") or {}

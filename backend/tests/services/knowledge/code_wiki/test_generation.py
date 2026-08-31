@@ -79,7 +79,9 @@ def knowledge_base(test_db: Session, test_user: User) -> Kind:
     return kind
 
 
-def _write_page(test_db: Session, generation: WikiGeneration, path: str, body: str):
+def _write_page(
+    test_db: Session, generation: WikiGeneration, path: str, body: str
+) -> WikiContent:
     entry = WikiContent(
         generation_id=generation.id,
         type="chapter",
@@ -90,6 +92,7 @@ def _write_page(test_db: Session, generation: WikiGeneration, path: str, body: s
     set_page_path(entry, path)
     test_db.add(entry)
     test_db.flush()
+    return entry
 
 
 def _publish_a_first_wiki(test_db, knowledge_base, test_user, effects, *, pages=3):
@@ -516,7 +519,7 @@ def test_a_running_wiki_is_reported_as_busy(
 
 def test_coordinate_progress_is_derived_from_review_evidence(
     test_db: Session, knowledge_base: Kind, test_user: User
-):
+) -> None:
     started = start_generation(
         test_db,
         knowledge_base=knowledge_base,
@@ -602,7 +605,7 @@ def test_coordinate_progress_is_derived_from_review_evidence(
 
 def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(
     test_db: Session, knowledge_base: Kind, test_user: User
-):
+) -> None:
     started = start_generation(
         test_db,
         knowledge_base=knowledge_base,
@@ -642,6 +645,12 @@ def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(
         3,
     )
 
+    unexpected = _write_page(test_db, generation, "draft", "# Draft")
+    test_db.commit()
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "writing"
+
+    test_db.delete(unexpected)
     _write_page(test_db, generation, "architecture", "# Architecture")
     test_db.commit()
     progress = current_run_state(test_db, knowledge_base, now=NOW).progress
