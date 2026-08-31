@@ -932,6 +932,47 @@ class TestOpenAPIResponsesCreate:
             error_code="streaming_not_supported",
         )
 
+    @pytest.mark.asyncio
+    async def test_video_streaming_with_background_is_allowed(self):
+        """background=true takes precedence over stream=true for video."""
+        from app.api.endpoints.openapi_responses import _reject_video_streaming
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        execution_request = SimpleNamespace(
+            model_config={"modelType": "video"},
+        )
+
+        with patch(
+            "app.api.endpoints.openapi_responses._persist_terminal_failure",
+            new=AsyncMock(),
+        ) as mock_persist_failure:
+            await _reject_video_streaming(
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                    background=True,
+                ),
+                execution_request=execution_request,
+                subtask_id=654,
+                task_id=101,
+            )
+
+        mock_persist_failure.assert_not_awaited()
+
+    def test_video_generation_forces_background_execution(self):
+        """Video generation remains asynchronous without a caller flag."""
+        from app.api.endpoints.openapi_responses import _should_run_in_background
+
+        execution_request = SimpleNamespace(
+            model_config={"modelType": "video"},
+        )
+
+        assert _should_run_in_background(
+            requested_background=False,
+            execution_request=execution_request,
+        )
+
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key
     ):

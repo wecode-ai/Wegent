@@ -267,6 +267,21 @@ def _generation_options_dict(
     return generation_options.model_dump(exclude_none=True)
 
 
+def _execution_model_type(execution_request: Any) -> str:
+    """Return the normalized model type from an execution request."""
+    model_config = getattr(execution_request, "model_config", {}) or {}
+    return str(model_config.get("modelType") or "").lower()
+
+
+def _should_run_in_background(
+    *,
+    requested_background: bool,
+    execution_request: Any,
+) -> bool:
+    """Video generation is always asynchronous."""
+    return requested_background or _execution_model_type(execution_request) == "video"
+
+
 async def _reject_video_streaming(
     *,
     request_body: ResponseCreateInput,
@@ -275,9 +290,11 @@ async def _reject_video_streaming(
     task_id: int,
 ) -> None:
     """Reject video streaming while preserving callback streaming for executors."""
-    model_config = getattr(execution_request, "model_config", {}) or {}
-    model_type = str(model_config.get("modelType") or "").lower()
-    if not request_body.stream or model_type != "video":
+    if (
+        not request_body.stream
+        or request_body.background
+        or _execution_model_type(execution_request) != "video"
+    ):
         return
 
     error_message = (
@@ -758,6 +775,10 @@ async def _create_non_streaming_response_unified(
 
     # Check if SSE mode is supported
     supports_sse = execution_dispatcher.supports_streaming(execution_request)
+    background = _should_run_in_background(
+        requested_background=background,
+        execution_request=execution_request,
+    )
 
     # Non-SSE mode: dispatch and return queued response
     if not supports_sse:
