@@ -361,13 +361,11 @@ export class BrowserAnnotationController {
 
   private updateAnchors(label: string, event: Record<string, unknown>): void {
     const session = this.session(label)
-    session.runtimeRevision += 1
-    session.unresolvedIds = stringArray(event.unresolvedIds)
+    const unresolvedIds = stringArray(event.unresolvedIds)
+    let changed = !sameStringArray(session.unresolvedIds, unresolvedIds)
+    session.unresolvedIds = unresolvedIds
     const key = this.currentKey(label)
-    if (!key || !Array.isArray(event.anchors)) {
-      this.publish(label)
-      return
-    }
+    if (!key || !Array.isArray(event.anchors)) return
     const updates = new Map<string, BrowserElementAnchor>()
     for (const value of event.anchors) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) continue
@@ -378,14 +376,16 @@ export class BrowserAnnotationController {
     }
     if (updates.size > 0) {
       const comments = this.comments.get(key) ?? []
-      this.comments.set(
-        key,
-        comments.map(comment => {
-          const anchor = updates.get(comment.id)
-          return anchor ? { ...comment, anchor } : comment
-        })
-      )
+      const nextComments = comments.map(comment => {
+        const anchor = updates.get(comment.id)
+        if (!anchor || sameAnchorIdentity(comment.anchor, anchor)) return comment
+        changed = true
+        return { ...comment, anchor }
+      })
+      if (changed) this.comments.set(key, nextComments)
     }
+    if (!changed) return
+    session.runtimeRevision += 1
     this.publish(label)
   }
 
@@ -486,6 +486,31 @@ function canonicalPageUrl(value: string): string {
   } catch {
     return value
   }
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function sameAnchorIdentity(left: BrowserElementAnchor, right: BrowserElementAnchor): boolean {
+  return (
+    canonicalPageUrl(left.pageUrl) === canonicalPageUrl(right.pageUrl) &&
+    left.frameUrl === right.frameUrl &&
+    sameStringArray(left.framePath, right.framePath) &&
+    left.selector === right.selector &&
+    sameStringArray(left.elementPath, right.elementPath) &&
+    left.tagName === right.tagName &&
+    left.role === right.role &&
+    left.name === right.name &&
+    left.title === right.title &&
+    left.immediateText === right.immediateText &&
+    left.nearbyText === right.nearbyText &&
+    left.fixedPosition === right.fixedPosition &&
+    sameStringArray(
+      left.scrollContainers.map(container => container.selector),
+      right.scrollContainers.map(container => container.selector)
+    )
+  )
 }
 
 function nextNumber(comments: BrowserAnnotationComment[]): number {

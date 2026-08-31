@@ -136,7 +136,7 @@ describe('BrowserAnnotationController', () => {
   })
 
   test('replaces an anchor without changing comment identity', async () => {
-    const { browser, controller } = harness()
+    const { browser, controller, states } = harness()
     controller.start(LABEL, 'batch')
     controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
     await vi.waitFor(() => expect(browser.capture).toHaveBeenCalledOnce())
@@ -153,6 +153,23 @@ describe('BrowserAnnotationController', () => {
       id: comment.id,
       anchor: { selector: '#replacement' },
     })
+
+    const publishedCount = states.length
+    controller.handleRuntimeEvent(7, {
+      type: 'anchors-updated',
+      unresolvedIds: [],
+      anchors: [
+        {
+          commentId: comment.id,
+          anchor: {
+            ...anchor('#replacement'),
+            rect: { x: 200, y: 300, width: 120, height: 40 },
+          },
+        },
+      ],
+    })
+
+    expect(states).toHaveLength(publishedCount)
   })
 
   test('persists design changes and supports original-view commands', async () => {

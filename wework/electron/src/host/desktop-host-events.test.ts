@@ -40,4 +40,29 @@ describe('DesktopHostEventBroker', () => {
 
     expect(broker.read(0).historyLost).toBe(true)
   })
+
+  test('returns only the latest browser annotation state per label', () => {
+    const broker = new DesktopHostEventBroker()
+    broker.publish('browser.annotation-state', {
+      label: 'browser-a',
+      revision: 1,
+      comments: [{ number: 1 }],
+    })
+    broker.publish('tray.action', { type: 'open-settings' })
+    broker.publish('browser.annotation-state', {
+      label: 'browser-a',
+      revision: 2,
+      comments: [{ number: 1 }, { number: 2 }],
+    })
+    broker.publish('browser.annotation-state', {
+      label: 'browser-b',
+      revision: 1,
+      comments: [{ number: 1 }],
+    })
+
+    const batch = broker.read(0)
+
+    expect(batch.latestSequence).toBe(4)
+    expect(batch.events.map(event => event.sequence)).toEqual([2, 3, 4])
+  })
 })

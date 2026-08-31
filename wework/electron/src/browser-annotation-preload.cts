@@ -106,6 +106,7 @@ let editorComment = ''
 let editorDesignOpen = false
 let editorDesignValues: Record<string, string> = {}
 let editorNeedsFocus = false
+let suppressPageClickUntil = 0
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
   string,
@@ -548,9 +549,11 @@ function interactionLayer() {
     hoveredElement = target
     scheduleRender()
   })
-  layer.addEventListener('click', event => {
+  layer.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || draftAnchor) return
     event.preventDefault()
     event.stopPropagation()
+    suppressPageClickUntil = performance.now() + 500
     const target = targetBelowInteractionLayer(layer, {
       x: event.clientX,
       y: event.clientY,
@@ -597,6 +600,17 @@ function syncEditorState(draft: RuntimeDraft | null) {
     draft.designChanges.map(change => [change.property, change.value])
   )
   editorNeedsFocus = true
+}
+
+function closeDraftLocally() {
+  state = { ...state, draft: null }
+  draftAnchor = null
+  editorDraftIdentity = null
+  editorComment = ''
+  editorDesignOpen = false
+  editorDesignValues = {}
+  editorNeedsFocus = false
+  renderImmediately()
 }
 
 function editorTargetLabel(anchor: ElementAnchor) {
@@ -870,6 +884,7 @@ function editorPanel(draft: RuntimeDraft) {
       designChanges: nextDesignChanges,
       textChange: draft.textChange,
     })
+    closeDraftLocally()
   })
   queueMicrotask(() => {
     if (!editorNeedsFocus || !textarea.isConnected) return
@@ -1086,6 +1101,11 @@ document.addEventListener(
   'click',
   event => {
     if (state.mode === 'off') return
+    if (performance.now() <= suppressPageClickUntil) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      return
+    }
     const path = event.composedPath()
     if (rootHost && path.includes(rootHost)) return
     const target = path.find(candidate => candidate instanceof Element) as Element | undefined

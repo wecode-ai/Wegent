@@ -589,8 +589,9 @@ async function selectElementAnnotationPoint(control, bridge, targetPoint, uiTime
           ?.shadowRoot?.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
         if (!layer) return false
         layer.dispatchEvent(
-          new MouseEvent('click', {
+          new PointerEvent('pointerdown', {
             bubbles: true,
+            button: 0,
             clientX: ${targetPoint.x},
             clientY: ${targetPoint.y},
           })
@@ -626,6 +627,19 @@ async function submitOverlayComment(control, bridge, comment, uiTimeoutMs, befor
   await new Promise(resolve => setTimeout(resolve, 50))
   if (beforeSubmit) await beforeSubmit()
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
+  assert.deepEqual(
+    await pageValue(
+      bridge,
+      annotationRootExpression(`root => ({
+        editorOpen: Boolean(root.querySelector(${JSON.stringify(OVERLAY_INPUT_SELECTOR)})),
+        interactionLayerReady: Boolean(
+          root.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
+        ),
+      })`)
+    ),
+    { editorOpen: false, interactionLayerReady: true },
+    'Submitting an annotation did not immediately re-arm selection for the next annotation'
+  )
   await waitForAnnotationSave(control, bridge, previousRuntimeRevision, uiTimeoutMs)
 }
 
