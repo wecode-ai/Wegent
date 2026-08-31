@@ -44,6 +44,7 @@ export const HOST_CAPABILITIES = [
   'dialog.open',
   'dialog.save',
   'desktop.events',
+  'diagnostics.filePreview',
   'developer.openDevTools',
   'developer.openLogDirectory',
   'e2e.capturePopoutWindow',
