@@ -10,52 +10,77 @@ export interface CaptureRect {
   height: number
 }
 
+export interface WebContentsCaptureOptions {
+  debuggerOnly?: boolean
+  rect?: CaptureRect
+}
+
 export async function captureWebContentsDataUrl(
   contents: WebContents,
+  options: WebContentsCaptureOptions = {}
+): Promise<string> {
+  const attempts = options.debuggerOnly
+    ? [
+        {
+          label: 'CDP Page.captureScreenshot',
+          capture: () => captureDebugger(contents, false, options.rect),
+        },
+      ]
+    : [
+        {
+          label: 'Electron capturePage',
+          capture: () => captureNative(contents, options.rect),
+        },
+        {
+          label: 'CDP Page.captureScreenshot',
+          capture: () => captureDebugger(contents, true, options.rect),
+        },
+      ]
+  const failures: string[] = []
+  for (const attempt of attempts) {
+    try {
+      return await attempt.capture()
+    } catch (error) {
+      failures.push(`${attempt.label} failed: ${errorMessage(error)}`)
+    }
+  }
+  throw new HostCapabilityError('e2e_capture_failed', failures.join('; '))
+}
+
+async function captureDebugger(
+  contents: WebContents,
+  fromSurface: boolean,
   rect?: CaptureRect
 ): Promise<string> {
-  let nativeCaptureError: unknown = null
-  try {
-    const image = await withCaptureTimeout(contents.capturePage(rect), 'Electron capturePage')
-    if (!image.isEmpty()) {
-      const dataUrl = image.toDataURL()
-      if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl
-    }
-  } catch (error) {
-    nativeCaptureError = error
-  }
-
   const debugSession = contents.debugger
   const alreadyAttached = debugSession.isAttached()
-  if (!alreadyAttached) debugSession.attach()
   try {
-    let result: { data?: unknown }
-    try {
-      result = (await withCaptureTimeout(
-        debugSession.sendCommand('Page.captureScreenshot', {
-          captureBeyondViewport: false,
-          format: 'png',
-          fromSurface: true,
-          ...(rect ? { clip: { ...rect, scale: 1 } } : {}),
-        }),
-        'CDP Page.captureScreenshot'
-      )) as { data?: unknown }
-    } catch (error) {
-      throw new HostCapabilityError(
-        'e2e_capture_failed',
-        [
-          `Electron capturePage failed: ${errorMessage(nativeCaptureError)}`,
-          `CDP Page.captureScreenshot failed: ${errorMessage(error)}`,
-        ].join('; ')
-      )
+    if (!alreadyAttached) debugSession.attach()
+    const result = (await withCaptureTimeout(
+      debugSession.sendCommand('Page.captureScreenshot', {
+        captureBeyondViewport: false,
+        format: 'png',
+        fromSurface,
+        ...(rect ? { clip: { ...rect, scale: 1 } } : {}),
+      }),
+      'CDP Page.captureScreenshot'
+    )) as { data?: unknown }
+    if (typeof result.data === 'string' && result.data.length > 0) {
+      return `data:image/png;base64,${result.data}`
     }
-    if (typeof result.data !== 'string' || result.data.length === 0) {
-      throw new HostCapabilityError('e2e_capture_failed', 'Electron returned an empty screenshot')
-    }
-    return `data:image/png;base64,${result.data}`
+    throw new Error('CDP returned an empty screenshot')
   } finally {
     if (!alreadyAttached && debugSession.isAttached()) debugSession.detach()
   }
+}
+
+async function captureNative(contents: WebContents, rect?: CaptureRect): Promise<string> {
+  const image = await withCaptureTimeout(contents.capturePage(rect), 'Electron capturePage')
+  if (!image.isEmpty()) {
+    const dataUrl = image.toDataURL()
+    if (dataUrl.length > 'data:image/png;base64,'.length) return dataUrl
+  }
+  throw new Error('Electron returned an empty screenshot')
 }
 
 function withCaptureTimeout<T>(promise: Promise<T>, operation: string): Promise<T> {

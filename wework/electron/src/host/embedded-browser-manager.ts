@@ -578,7 +578,7 @@ export class EmbeddedBrowserManager {
 
   async capture(label: string, rect?: BrowserBounds): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents, rect)
+    return captureWebContentsDataUrl(entry.contents, { rect })
   }
 
   labelForContentsId(contentsId: number): string | null {

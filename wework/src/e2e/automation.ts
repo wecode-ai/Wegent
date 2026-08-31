@@ -1955,6 +1955,51 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
+    case 'sampleRapidScrollContent': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const options = JSON.parse(command.value ?? '{}') as {
+        contentSelector?: string
+        ratios?: number[]
+      }
+      const contentSelector = options.contentSelector?.trim()
+      if (!contentSelector) {
+        throw new Error('sampleRapidScrollContent requires contentSelector')
+      }
+      const ratios = options.ratios ?? []
+      if (
+        ratios.length === 0 ||
+        ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+      ) {
+        throw new Error('sampleRapidScrollContent requires ratios between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const viewport = scroller.getBoundingClientRect()
+      const samples = ratios.map(ratio => {
+        const nextScrollTop = maxScrollTop * ratio
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+
+        const hasVisibleContent = Array.from(
+          scroller.querySelectorAll<HTMLElement>(contentSelector)
+        ).some(element => {
+          if (!element.textContent?.trim()) return false
+          const bounds = element.getBoundingClientRect()
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom
+        })
+        return { hasVisibleContent, ratio, scrollTop: scroller.scrollTop }
+      })
+      return JSON.stringify(samples)
+    }
     case 'click': {
       const elements = findDesktopControlElements(command.selector)
       const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
