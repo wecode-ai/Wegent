@@ -1,31 +1,25 @@
 import type { GlassColorScheme } from 'expo-glass-effect'
-import { useEffect, useRef } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
 
 import type { AuthStatus } from '@/auth/useWegentAuth'
+import { KeyboardSafePaperTextInput, KeyboardSafeView } from './KeyboardSafeInput'
 import { LiquidGlassButton, liquidGlassAccentBorder, liquidGlassAccentTint } from './LiquidGlass'
 
 interface AuthorizationScreenProps {
   status: AuthStatus
   backendUrl: string
   error: string | null
+  onBackendUrlChange: (value: string) => void
   onAuthorize: () => Promise<void>
 }
 
 export function AuthorizationScreen(props: AuthorizationScreenProps) {
   const theme = useTheme()
   const glassColorScheme: GlassColorScheme = theme.dark ? 'dark' : 'light'
-  const started = useRef(false)
-  useEffect(() => {
-    if (started.current || props.status !== 'unauthenticated') return
-    started.current = true
-    void props.onAuthorize().catch(() => undefined)
-  }, [props])
-
   const working = props.status === 'initializing' || props.status === 'authorizing'
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+    <KeyboardSafeView style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <View style={styles.brand}>
         <Text variant="displaySmall">Wegent</Text>
         <Text style={styles.description} variant="bodyLarge">
@@ -33,9 +27,21 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
         </Text>
       </View>
       {working ? <ActivityIndicator size="large" /> : null}
-      <Text selectable style={styles.backend} variant="bodySmall">
-        {props.backendUrl}
-      </Text>
+      <KeyboardSafePaperTextInput
+        autoCapitalize="none"
+        autoCorrect={false}
+        disabled={working}
+        keyboardType="url"
+        label="Backend 地址"
+        mode="outlined"
+        onChangeText={props.onBackendUrlChange}
+        onSubmitEditing={() => void props.onAuthorize().catch(() => undefined)}
+        placeholder="https://example.com"
+        returnKeyType="go"
+        style={styles.backendInput}
+        testID="backend-address"
+        value={props.backendUrl}
+      />
       {props.error ? (
         <Text style={[styles.error, { color: theme.colors.error }]} variant="bodyMedium">
           {props.error}
@@ -45,6 +51,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
         <LiquidGlassButton
           colorScheme={glassColorScheme}
           contentStyle={styles.buttonContent}
+          disabled={working || !props.backendUrl.trim()}
           fallbackStyle={{
             backgroundColor: liquidGlassAccentTint,
             borderColor: liquidGlassAccentBorder,
@@ -64,7 +71,7 @@ export function AuthorizationScreen(props: AuthorizationScreenProps) {
           请在打开的页面中登录并批准授权
         </Text>
       )}
-    </View>
+    </KeyboardSafeView>
   )
 }
 
@@ -78,7 +85,7 @@ const styles = StyleSheet.create({
   },
   brand: { alignItems: 'center', gap: 10, marginBottom: 16 },
   description: { textAlign: 'center', opacity: 0.6 },
-  backend: { opacity: 0.5 },
+  backendInput: { width: '100%', maxWidth: 420 },
   error: { textAlign: 'center' },
   hint: { opacity: 0.6, textAlign: 'center' },
   buttonGlass: {

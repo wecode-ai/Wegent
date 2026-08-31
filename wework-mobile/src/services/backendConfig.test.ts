@@ -1,6 +1,27 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
-import { normalizeBackendUrl } from './backendConfig'
+import { configuredBackendUrl, normalizeBackendUrl } from './backendConfig'
+
+const originalBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL
+
+afterEach(() => {
+  if (originalBackendUrl === undefined) delete process.env.EXPO_PUBLIC_BACKEND_URL
+  else process.env.EXPO_PUBLIC_BACKEND_URL = originalBackendUrl
+})
+
+describe('configuredBackendUrl', () => {
+  it('has no implicit Backend when the build parameter is omitted', () => {
+    delete process.env.EXPO_PUBLIC_BACKEND_URL
+
+    expect(configuredBackendUrl()).toBeNull()
+  })
+
+  it('uses and trims the optional build-time Backend', () => {
+    process.env.EXPO_PUBLIC_BACKEND_URL = '  https://example.com/wegent  '
+
+    expect(configuredBackendUrl()).toBe('https://example.com/wegent')
+  })
+})
 
 describe('normalizeBackendUrl', () => {
   it('derives the same REST and Socket paths as Wework', () => {

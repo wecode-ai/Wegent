@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeWorkListResponse } from '@/types/runtime'
 import { runtimeTaskKey } from './runtimeTaskLifecycle'
-import { flattenConversations } from './work'
+import { flattenConversations, runtimeWorkContainsTask } from './work'
 
 describe('flattenConversations', () => {
   it('combines project and standalone chats in update order', () => {
@@ -86,5 +86,32 @@ describe('flattenConversations', () => {
     const result = flattenConversations(work, new Map([[runtimeTaskKey(address), false]]))
 
     expect(result[0]?.running).toBe(false)
+  })
+
+  it('matches task identity by both device and task id', () => {
+    const work: RuntimeWorkListResponse = {
+      totalTasks: 1,
+      projects: [],
+      chats: [
+        {
+          deviceId: 'cloud-1',
+          deviceName: 'Cloud Mac',
+          deviceStatus: 'online',
+          available: true,
+          workspacePath: 'chat://cloud-1',
+          tasks: [
+            {
+              taskId: 'task-1',
+              title: '会话',
+              runtime: 'codex',
+              workspacePath: 'chat://cloud-1',
+            },
+          ],
+        },
+      ],
+    }
+
+    expect(runtimeWorkContainsTask(work, { deviceId: 'cloud-1', taskId: 'task-1' })).toBe(true)
+    expect(runtimeWorkContainsTask(work, { deviceId: 'cloud-2', taskId: 'task-1' })).toBe(false)
   })
 })

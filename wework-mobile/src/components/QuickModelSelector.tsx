@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { useRef, useState } from 'react'
 import { type GestureResponderEvent, Pressable, StyleSheet, View } from 'react-native'
 import { Text, useTheme } from 'react-native-paper'

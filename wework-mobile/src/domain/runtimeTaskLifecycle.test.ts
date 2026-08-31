@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/runtime'
 import {
+  isRunningRuntimeEvent,
   isTerminalRuntimeEvent,
   RuntimeTaskLifecycleProjection,
   runtimeTaskKey,
+  shouldReloadRuntimeWork,
 } from './runtimeTaskLifecycle'
 
 const address: RuntimeTaskAddress = {
@@ -74,6 +76,19 @@ describe('RuntimeTaskLifecycleProjection', () => {
     expect(isTerminalRuntimeEvent('runtime.task.cancelled')).toBe(true)
     expect(isTerminalRuntimeEvent('runtime.tasks.cancelled')).toBe(true)
     expect(isTerminalRuntimeEvent('response.in_progress')).toBe(false)
+  })
+
+  it('recognizes native task lifecycle start events as running', () => {
+    expect(isRunningRuntimeEvent('runtime.task.started')).toBe(true)
+    expect(isRunningRuntimeEvent('runtime.task.status')).toBe(true)
+  })
+
+  it('invalidates work for unknown tasks and canonical lifecycle changes', () => {
+    expect(shouldReloadRuntimeWork('response.output_text.delta', false)).toBe(true)
+    expect(shouldReloadRuntimeWork('response.created', true)).toBe(true)
+    expect(shouldReloadRuntimeWork('response.completed', true)).toBe(true)
+    expect(shouldReloadRuntimeWork('runtime.task.title.updated', true)).toBe(true)
+    expect(shouldReloadRuntimeWork('response.output_text.delta', true)).toBe(false)
   })
 })
 

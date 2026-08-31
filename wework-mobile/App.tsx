@@ -15,7 +15,7 @@ import { LiquidGlassButton } from '@/components/LiquidGlass'
 import { ModelPickerScreen } from '@/components/ModelPickerDialog'
 import { ProjectDialog } from '@/components/ProjectDialog'
 import { useMobileRuntime } from '@/hooks/useMobileRuntime'
-import { configuredBackendUrl, type RuntimeSessionConfig } from '@/services/backendConfig'
+import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { darkTheme, lightTheme } from '@/theme'
 
 type RuntimeStackParamList = {
@@ -43,8 +43,9 @@ export default function App() {
           />
         ) : (
           <AuthorizationScreen
-            backendUrl={auth.backend?.backendUrl ?? configuredBackendUrl()}
+            backendUrl={auth.backendUrl}
             error={auth.error}
+            onBackendUrlChange={auth.setBackendUrl}
             onAuthorize={auth.login}
             status={auth.status}
           />

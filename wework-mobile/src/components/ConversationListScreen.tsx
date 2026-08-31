@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { useIsFocused } from '@react-navigation/native'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import { useEffect, useMemo, useState } from 'react'

@@ -1,4 +1,4 @@
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import {
   AccessibilityInfo,
@@ -317,6 +317,66 @@ export function ConversationScreen(props: ConversationScreenProps) {
         pointerEvents="box-none"
         style={styles.bottomControlDock}
       >
+        <View
+          accessibilityElementsHidden={quickModelVisible}
+          importantForAccessibility={quickModelVisible ? 'no-hide-descendants' : 'auto'}
+          pointerEvents={quickModelVisible ? 'none' : 'auto'}
+          style={[
+            styles.composerLayer,
+            { paddingBottom: composerBottom },
+            quickModelVisible && styles.collapsedComposer,
+          ]}
+        >
+          <ChatComposer
+            contextLabel={props.isNew ? configurationDevice?.name : selectedDeviceName}
+            disabled={props.sending}
+            emptyContextPlaceholder={props.isNew ? '选择在线 Executor' : undefined}
+            modelLabel={selectedModelLabel}
+            onClearPlanMode={() =>
+              selectModelOptions({ ...props.modelOptions, collaborationMode: 'default' })
+            }
+            onLoadApps={props.onLoadApps}
+            onSelectModel={openQuickModel}
+            onSend={sendMessage}
+            onStop={props.onStop}
+            onSetPlanMode={() =>
+              selectModelOptions({ ...props.modelOptions, collaborationMode: 'plan' })
+            }
+            onUploadAttachment={props.onUploadAttachment}
+            planModeActive={props.modelOptions.collaborationMode === 'plan'}
+            running={props.running}
+            secondaryLeadingAction={
+              <Pressable
+                accessibilityLabel={`权限模式：${permissionModeLabel(props.permissionMode)}`}
+                accessibilityRole="button"
+                hitSlop={{ left: 6, right: 6 }}
+                onPress={() => setSelector('permission')}
+                style={({ pressed }) => [styles.permissionAction, pressed && styles.pressed]}
+                testID={props.isNew ? 'new-chat-permission' : 'conversation-permission'}
+              >
+                <Ionicons
+                  color="#ff8a5b"
+                  name={permissionModeIcon(props.permissionMode)}
+                  size={21}
+                />
+              </Pressable>
+            }
+            sendDisabled={props.isNew && (!configurationDevice || !props.model)}
+            testIDs={
+              props.isNew
+                ? {
+                    attachment: 'new-chat-attachment',
+                    input: 'new-chat-input',
+                    model: 'new-chat-model',
+                    send: 'new-chat-send',
+                    stop: 'new-chat-stop',
+                  }
+                : undefined
+            }
+            stopping={props.stopping}
+          />
+        </View>
+
         {quickModelVisible ? (
           <QuickModelSelector
             bottomInset={composerBottom}
@@ -326,58 +386,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
             onOpenAdvanced={openAdvancedModel}
             onSelectEffort={reasoning => selectModelOptions({ ...props.modelOptions, reasoning })}
           />
-        ) : (
-          <View style={{ paddingBottom: composerBottom }}>
-            <ChatComposer
-              contextLabel={props.isNew ? configurationDevice?.name : selectedDeviceName}
-              disabled={props.sending}
-              emptyContextPlaceholder={props.isNew ? '选择在线 Executor' : undefined}
-              modelLabel={selectedModelLabel}
-              onClearPlanMode={() =>
-                selectModelOptions({ ...props.modelOptions, collaborationMode: 'default' })
-              }
-              onLoadApps={props.onLoadApps}
-              onSelectModel={openQuickModel}
-              onSend={sendMessage}
-              onStop={props.onStop}
-              onSetPlanMode={() =>
-                selectModelOptions({ ...props.modelOptions, collaborationMode: 'plan' })
-              }
-              onUploadAttachment={props.onUploadAttachment}
-              planModeActive={props.modelOptions.collaborationMode === 'plan'}
-              running={props.running}
-              secondaryLeadingAction={
-                <Pressable
-                  accessibilityLabel={`权限模式：${permissionModeLabel(props.permissionMode)}`}
-                  accessibilityRole="button"
-                  hitSlop={{ left: 6, right: 6 }}
-                  onPress={() => setSelector('permission')}
-                  style={({ pressed }) => [styles.permissionAction, pressed && styles.pressed]}
-                  testID={props.isNew ? 'new-chat-permission' : 'conversation-permission'}
-                >
-                  <MaterialCommunityIcons
-                    color="#ff8a5b"
-                    name={permissionModeIcon(props.permissionMode)}
-                    size={21}
-                  />
-                </Pressable>
-              }
-              sendDisabled={props.isNew && (!configurationDevice || !props.model)}
-              testIDs={
-                props.isNew
-                  ? {
-                      attachment: 'new-chat-attachment',
-                      input: 'new-chat-input',
-                      model: 'new-chat-model',
-                      send: 'new-chat-send',
-                      stop: 'new-chat-stop',
-                    }
-                  : undefined
-              }
-              stopping={props.stopping}
-            />
-          </View>
-        )}
+        ) : null}
       </View>
 
       <ChoiceSheet
@@ -645,8 +654,8 @@ function permissionModeLabel(mode: RuntimePermissionMode): string {
 
 function permissionModeIcon(mode: RuntimePermissionMode) {
   if (mode === 'read-only') return 'eye-outline' as const
-  if (mode === 'workspace-write') return 'folder-edit-outline' as const
-  return 'shield-alert-outline' as const
+  if (mode === 'workspace-write') return 'folder-outline' as const
+  return 'warning-outline' as const
 }
 
 function cleanBranch(value: string | null): string | null {
@@ -667,6 +676,8 @@ const styles = StyleSheet.create({
   emptyContent: { flex: 1 },
   headerOverlay: { position: 'absolute', left: 0, right: 0 },
   bottomControlDock: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  composerLayer: { width: '100%' },
+  collapsedComposer: { display: 'none' },
   configuration: {
     position: 'absolute',
     left: 0,
