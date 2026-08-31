@@ -4931,7 +4931,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           id="right-workspace-panel-shell"
           data-testid="right-workspace-panel-shell"
           className={cn(
-            'z-popover flex min-w-0 shrink-0 overflow-hidden',
+            'z-popover flex h-full min-h-0 min-w-0 shrink-0 overflow-hidden',
             rightPanelExpanded ? 'absolute inset-y-0 right-0' : 'relative',
             rightPanelExpanded
               ? 'bg-background'

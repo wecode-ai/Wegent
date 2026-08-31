@@ -14,13 +14,17 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
+  type CSSProperties,
+  type KeyboardEvent,
   type ProfilerOnRenderCallback,
 } from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalAppearance } from '@/features/appearance'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isEditableShortcutTarget } from '@/lib/keybindings'
 import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
 import {
   logFilePreviewDiagnostic,
@@ -35,7 +39,7 @@ import { isMarkdownFile } from './workspaceFileTypes'
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
     --diffs-font-size: var(--text-code);
-    --diffs-line-height: calc(var(--text-code) * 1.8);
+    --diffs-line-height: var(--wework-workspace-code-line-height, calc(var(--text-code) * 1.8));
     --diffs-font-family: var(--font-code);
     --diffs-header-font-family: var(--font-ui);
     --diffs-light-bg: rgb(var(--color-bg-base));
@@ -255,6 +259,7 @@ interface SelectionState {
   selectedText: string
   startLine: number
   endLine: number
+  source: 'line' | 'keyboard'
 }
 
 interface CommentState {
@@ -336,10 +341,11 @@ function normalizeTargetLineRange(
 function WorkspaceFilePreviewContent({
   file,
   themeType,
+  codeFontSize,
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
-}: WorkspaceFilePreviewContentProps) {
+}: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
   const { t } = useTranslation('common')
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
   const codeViewHostRef = useRef<HTMLDivElement>(null)
@@ -356,6 +362,7 @@ function WorkspaceFilePreviewContent({
   const targetLineKey = targetLineRange
     ? `${file.path}:${targetLineRange.start}:${targetLineRange.end}`
     : `${file.path}:none`
+  const codeLineHeight = Math.round(codeFontSize * 1.8)
   const codeViewItems = useMemo<CodeViewItem[]>(
     () => [
       {
@@ -373,6 +380,7 @@ function WorkspaceFilePreviewContent({
   )
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
+  const activeCommentSelection = activeSelection?.source === 'line' ? activeSelection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
   const selectedLines = useMemo<WorkspaceCodeViewLineSelection | null>(
     () =>
@@ -392,22 +400,24 @@ function WorkspaceFilePreviewContent({
           : null,
     [activeSelection, file.path, targetLineRange]
   )
+  const allLinesSelected =
+    activeSelection?.startLine === 1 && activeSelection.endLine === lines.length
 
   useEffect(() => {
     const source = `workspace-preview:${file.path}`
     const host = codeViewHostRef.current
     const cleanup =
-      host && activeSelection
-        ? installCodeViewTextDrag(host, activeSelection.selectedText, rect => {
-            publishSelectedTextSelection(source, activeSelection.selectedText, rect)
+      host && activeCommentSelection
+        ? installCodeViewTextDrag(host, activeCommentSelection.selectedText, rect => {
+            publishSelectedTextSelection(source, activeCommentSelection.selectedText, rect)
           })
         : undefined
-    if (!activeSelection) publishSelectedTextSelection(source, null)
+    if (!activeCommentSelection) publishSelectedTextSelection(source, null)
     return () => {
       cleanup?.()
       publishSelectedTextSelection(source, null)
     }
-  }, [activeSelection, file.path])
+  }, [activeCommentSelection, file.path])
 
   useEffect(() => {
     if (!targetLineRange) return
@@ -443,6 +453,7 @@ function WorkspaceFilePreviewContent({
         selectedText,
         startLine,
         endLine,
+        source: 'line',
       })
       setCommentState({ filePath: file.path, value: '' })
     },
@@ -455,23 +466,24 @@ function WorkspaceFilePreviewContent({
       lineHoverHighlight: 'both' as const,
       overflow: 'scroll' as const,
       stickyHeaders: false,
-      layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+      itemMetrics: { lineHeight: codeLineHeight },
+      layout: { paddingTop: 0, paddingBottom: codeLineHeight, gap: 0 },
       theme: { dark: 'pierre-dark', light: 'pierre-light' },
       themeType,
       unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
     }),
-    [themeType]
+    [codeLineHeight, themeType]
   )
 
   const addComment = () => {
-    if (!file || !activeSelection || !comment.trim()) return
+    if (!file || !activeCommentSelection || !comment.trim()) return
     onAddCodeComment({
       id: `code-comment-${Date.now()}`,
       filePath: file.path,
       fileName: file.name,
-      startLine: activeSelection.startLine,
-      endLine: activeSelection.endLine,
-      selectedText: activeSelection.selectedText,
+      startLine: activeCommentSelection.startLine,
+      endLine: activeCommentSelection.endLine,
+      selectedText: activeCommentSelection.selectedText,
       comment: comment.trim(),
       createdAt: new Date().toISOString(),
     })
@@ -479,15 +491,50 @@ function WorkspaceFilePreviewContent({
     setCommentState({ filePath: file.path, value: '' })
   }
 
+  const selectEntireFile = () => {
+    setSelection({
+      filePath: file.path,
+      targetKey: targetLineKey,
+      selectedText: file.content,
+      startLine: 1,
+      endLine: lines.length,
+      source: 'keyboard',
+    })
+    setCommentState({ filePath: file.path, value: '' })
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (isEditableShortcutTarget(event.target)) return
+    const usesShortcutModifier = event.ctrlKey || event.metaKey
+    if (
+      !usesShortcutModifier ||
+      event.altKey ||
+      event.shiftKey ||
+      event.key.toLowerCase() !== 'a'
+    ) {
+      return
+    }
+    event.preventDefault()
+    selectEntireFile()
+  }
+
+  const handleCopy = (event: ClipboardEvent<HTMLElement>) => {
+    if (!allLinesSelected) return
+    event.preventDefault()
+    event.clipboardData.setData('text/plain', file.content)
+  }
+
   return (
     <section
       data-testid="workspace-file-preview"
-      draggable={Boolean(activeSelection)}
+      draggable={Boolean(activeCommentSelection)}
       onDragStart={event => {
-        if (!activeSelection) return
-        writeSelectedTextDragData(event.dataTransfer, activeSelection.selectedText)
+        if (!activeCommentSelection) return
+        writeSelectedTextDragData(event.dataTransfer, activeCommentSelection.selectedText)
       }}
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
+      onCopy={handleCopy}
+      onKeyDown={handleKeyDown}
     >
       <div
         data-testid="workspace-file-preview-code-view"
@@ -502,7 +549,13 @@ function WorkspaceFilePreviewContent({
           onSelectedLinesChange={captureLineSelection}
           options={codeViewOptions}
           className="h-full min-h-0 w-full scrollbar-soft"
-          style={{ height: '100%', overflow: 'auto' }}
+          style={
+            {
+              height: '100%',
+              overflow: 'auto',
+              '--wework-workspace-code-line-height': `${codeLineHeight}px`,
+            } as CSSProperties
+          }
         />
       </div>
       {file.truncated && (
@@ -510,7 +563,7 @@ function WorkspaceFilePreviewContent({
           {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
         </div>
       )}
-      {activeSelection && (
+      {activeCommentSelection && (
         <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-background p-3 shadow-xl">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
             <MessageSquare className="h-4 w-4" />
@@ -579,6 +632,7 @@ export function WorkspaceFilePreview({
     (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
       ? 'dark'
       : 'light')
+  const codeFontSize = appearance?.appearance.codeFontSize ?? defaultAppearance.codeFontSize
 
   if (loading && !file && !binaryFile) {
     const progress =
@@ -664,6 +718,7 @@ export function WorkspaceFilePreview({
     <WorkspaceFilePreviewContent
       file={file}
       themeType={themeType}
+      codeFontSize={codeFontSize}
       targetLineStart={targetLineStart}
       targetLineEnd={targetLineEnd}
       onAddCodeComment={onAddCodeComment}
