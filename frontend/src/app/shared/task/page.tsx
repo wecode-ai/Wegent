@@ -16,7 +16,6 @@ import { useTheme } from '@/features/theme/ThemeProvider'
 import TopNavigation from '@/features/layout/TopNavigation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import type { Message } from '@/features/tasks/components/message'
-import { TaskRightPanelRenderer, useTaskRightPanel } from '@/features/tasks/components/right-panel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User, SubtaskContextBrief } from '@/types/api'
 import { InAppBrowserGuard } from '@/components/InAppBrowserGuard'
@@ -42,7 +41,6 @@ function SharedTaskContent() {
   const [error, setError] = useState<string | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false)
-  const { request: rightPanelRequest, close: closeRightPanel } = useTaskRightPanel()
 
   // Check if user is logged in
   const isLoggedIn = !!getToken()
@@ -344,82 +342,67 @@ function SharedTaskContent() {
         </TopNavigation>
 
         {/* Main content area */}
-        <div className="flex min-h-0 flex-1">
-          <main className="min-w-0 flex-1 overflow-y-auto custom-scrollbar">
-            <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
-              {/* Task title and sharer info */}
-              <div className="mb-6">
-                <h1 className="text-2xl font-semibold text-text-primary mb-2">
-                  {taskData.task_title}
-                </h1>
-                <p className="text-sm text-text-muted">
-                  {t('shared-task:shared_by')}{' '}
-                  <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
-                </p>
-              </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
+            {/* Task title and sharer info */}
+            <div className="mb-6">
+              <h1 className="text-2xl font-semibold text-text-primary mb-2">
+                {taskData.task_title}
+              </h1>
+              <p className="text-sm text-text-muted">
+                {t('shared-task:shared_by')}{' '}
+                <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
+              </p>
+            </div>
 
-              {/* Read-only notice */}
-              <Alert
-                variant="default"
-                className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-              >
-                <AlertDescription className="text-sm text-text-primary">
-                  📖 {t('shared-task:read_only_notice')}
-                </AlertDescription>
-              </Alert>
+            {/* Read-only notice */}
+            <Alert
+              variant="default"
+              className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
+            >
+              <AlertDescription className="text-sm text-text-primary">
+                📖 {t('shared-task:read_only_notice')}
+              </AlertDescription>
+            </Alert>
 
-              {/* Messages area - using MessageBubble component for consistency */}
-              <div className="flex-1 space-y-6">
-                {taskData.subtasks.map((subtask, index) => {
-                  const message = convertSubtaskToMessage(subtask)
-                  return (
-                    <MessageBubble
-                      key={subtask.id}
-                      msg={message}
-                      index={index}
-                      selectedTaskDetail={null}
-                      selectedTeam={null}
-                      selectedRepo={null}
-                      selectedBranch={null}
-                      theme={theme}
-                      t={t}
-                      shareToken={searchParams.get('token') || undefined}
-                      showFinalAnswerOnlyOverride={showFinalAnswerOnly}
-                    />
-                  )
-                })}
-              </div>
+            {/* Messages area - using MessageBubble component for consistency */}
+            <div className="flex-1 space-y-6">
+              {taskData.subtasks.map((subtask, index) => {
+                const message = convertSubtaskToMessage(subtask)
+                return (
+                  <MessageBubble
+                    key={subtask.id}
+                    msg={message}
+                    index={index}
+                    selectedTaskDetail={null}
+                    selectedTeam={null}
+                    selectedRepo={null}
+                    selectedBranch={null}
+                    theme={theme}
+                    t={t}
+                    shareToken={searchParams.get('token') || undefined}
+                    showFinalAnswerOnlyOverride={showFinalAnswerOnly}
+                  />
+                )
+              })}
+            </div>
 
-              {/* Bottom CTA */}
-              <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium text-text-primary mb-1">
-                      {isLoggedIn
-                        ? t('shared-task:want_to_continue')
-                        : t('shared-task:login_prompt')}
-                    </p>
-                    <p className="text-xs text-text-muted">{t('shared-task:copy_and_chat')}</p>
-                  </div>
-                  <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
-                    <LogIn className="w-4 h-4 mr-2" />
-                    {isLoggedIn
-                      ? t('shared-task:continue_chat')
-                      : t('shared-task:login_to_continue')}
-                  </Button>
+            {/* Bottom CTA */}
+            <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-text-primary mb-1">
+                    {isLoggedIn ? t('shared-task:want_to_continue') : t('shared-task:login_prompt')}
+                  </p>
+                  <p className="text-xs text-text-muted">{t('shared-task:copy_and_chat')}</p>
                 </div>
+                <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
+                  <LogIn className="w-4 h-4 mr-2" />
+                  {isLoggedIn ? t('shared-task:continue_chat') : t('shared-task:login_to_continue')}
+                </Button>
               </div>
             </div>
-          </main>
-          {rightPanelRequest ? (
-            <aside
-              className="fixed inset-x-0 bottom-0 top-14 z-50 min-h-0 bg-surface md:static md:w-[720px] md:shrink-0 md:border-l md:border-border"
-              data-task-right-panel
-              data-testid="shared-task-right-panel"
-            >
-              <TaskRightPanelRenderer request={rightPanelRequest} onClose={closeRightPanel} />
-            </aside>
-          ) : null}
+          </div>
         </div>
       </div>
     </>
