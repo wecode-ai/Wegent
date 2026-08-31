@@ -368,6 +368,11 @@ function createServices() {
     socketBaseUrl: 'https://cloud.example.com',
     socketPath: '/socket.io',
     token: 'cloud-token',
+    user: {
+      id: 9,
+      user_name: 'hongyu9',
+      email: 'hongyu9@example.com',
+    },
   })
 }
 
@@ -1431,6 +1436,11 @@ describe('createHybridWorkbenchServices', () => {
         cloudModelGateway: {
           baseUrl: 'https://cloud.example.com/api/runtime-work/llm-responses-proxy',
           apiKey: 'cloud-token',
+        },
+        user: {
+          id: 9,
+          user_name: 'hongyu9',
+          email: 'hongyu9@example.com',
         },
         transportLabel: 'Cloud',
       })
