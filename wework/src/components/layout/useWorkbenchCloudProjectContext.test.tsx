@@ -546,6 +546,50 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(localApi.trackProjectTask).not.toHaveBeenCalled()
   })
 
+  test('does not bind My Tasks from the frontend after runtime creation', async () => {
+    const defaultBoard = {
+      ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),
+      project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+      name: '我的任务',
+    }
+    const runtimeTask = {
+      deviceId: 'device-1',
+      taskId: 'runtime-1',
+    }
+    const bindProjectTask = vi.fn()
+    const localApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [defaultBoard] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      bindProjectTask,
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: runtimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskTitle: 'Runtime task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(localApi.listCloudProjects).toHaveBeenCalledOnce())
+    act(() => result.current.handleSelectCloudProject(defaultBoard))
+
+    expect(bindProjectTask).not.toHaveBeenCalled()
+  })
+
   test('recovers when the first context lookup races with default-board binding', async () => {
     const defaultBoard = {
       ...project(DEFAULT_WORK_ITEM_PROJECT_ID, 'local'),

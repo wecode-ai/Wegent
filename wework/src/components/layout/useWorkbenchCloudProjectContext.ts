@@ -768,6 +768,9 @@ export function useWorkbenchCloudProjectContext({
         setPendingCloudContext(project, null)
         return
       }
+      if (isDefaultWorkItemProject(project)) {
+        return
+      }
       const api = projectSpaceApiFor(project)
       if (!api) return
       void api
