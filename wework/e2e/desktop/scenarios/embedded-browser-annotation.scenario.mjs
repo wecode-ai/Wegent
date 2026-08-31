@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFile, writeFile } from 'node:fs/promises'
+import { copyFile, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -13,7 +13,10 @@ const BROWSER_LABEL_SELECTOR =
 const BROWSER_PANEL_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
 const BROWSER_ANNOTATE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotate-button"]`
 const BROWSER_ANNOTATION_CLOSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-close-button"]`
+const BROWSER_ANNOTATION_CLEAR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-clear-button"]`
 const BROWSER_ANNOTATION_COUNT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-annotation-count"]`
+const BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR =
+  '[data-testid="workspace-browser-annotation-discard-confirm-button"]'
 const BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR =
   `${ACTIVE_WORKBENCH_SELECTOR} ` +
   '[data-testid="workspace-browser-annotation-original-view-button"]'
@@ -217,6 +220,14 @@ async function captureWindowScreenshot(control, resultDir, windowLabel, name) {
   const prefix = 'data:image/png;base64,'
   assert.ok(dataUrl.startsWith(prefix), `${windowLabel} screenshot did not return PNG data`)
   await writeFile(join(resultDir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'))
+}
+
+async function captureBrowserScreenshot(bridge, resultDir, name) {
+  const screenshot = await bridge({ action: 'screenshot', timeoutMs: 30_000 })
+  assert.equal(screenshot.kind, 'browser.screenshot')
+  assert.equal(screenshot.format, 'png')
+  assert.ok(screenshot.path, 'Embedded browser screenshot did not return a file path')
+  await copyFile(screenshot.path, join(resultDir, name))
 }
 
 async function waitForElementCount(control, selector, expected, timeoutMs, message) {
@@ -773,6 +784,41 @@ async function verifyCore(
     'Deleting the comment left a marker in the page'
   )
   await captureScreenshot(control, 'browser-annotation-07-deleted-and-exited.png')
+
+  await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
+  await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
+  await submitOverlayComment(control, 'Annotation cleared through the toolbar', uiTimeoutMs)
+  control.activateWindow('main')
+  await control.command('click', BROWSER_ANNOTATION_CLEAR_SELECTOR)
+  await control.command('waitFor', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR, {
+    timeoutMs: uiTimeoutMs,
+  })
+  const clearRuntimeRevision = await browserAnnotationRuntimeRevision(control)
+  await control.command('click', BROWSER_ANNOTATION_DISCARD_CONFIRM_SELECTOR)
+  await waitForElementCount(
+    control,
+    BROWSER_ANNOTATION_COUNT_SELECTOR,
+    0,
+    uiTimeoutMs,
+    'Clearing annotations did not clear the toolbar count'
+  )
+  await waitForBrowserAnnotationRender(
+    control,
+    clearRuntimeRevision,
+    uiTimeoutMs,
+    'Clearing annotations did not complete its page render'
+  )
+  assert.equal(
+    await pageValue(
+      bridge,
+      `document.getElementById(${JSON.stringify(
+        MARKER_ROOT_ID
+      )})?.shadowRoot?.querySelectorAll(${JSON.stringify(MARKER_SELECTOR)}).length ?? 0`
+    ),
+    0,
+    'Clearing annotations left a marker in the page'
+  )
+  await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-08-cleared.png')
 }
 
 async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTimeoutMs) {

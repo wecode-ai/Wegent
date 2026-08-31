@@ -133,6 +133,7 @@ let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
 let browserAnnotations: BrowserAnnotationController | null = null
 let browserAnnotationOverlayWindow: BrowserWindow | null = null
 let browserAnnotationOverlayReadyPromise: Promise<void> | null = null
+let browserAnnotationOverlayPresentationVersion = 0
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
@@ -663,13 +664,8 @@ async function showBrowserAnnotationOverlay(
   if (!desktopRuntime || !embeddedBrowser) {
     throw new Error('Browser annotation overlay is unavailable')
   }
+  const presentationVersion = ++browserAnnotationOverlayPresentationVersion
   let overlay = browserAnnotationOverlayWindow
-  if (overlay && !overlay.isDestroyed() && !overlay.isVisible()) {
-    overlay.destroy()
-    overlay = null
-    browserAnnotationOverlayWindow = null
-    browserAnnotationOverlayReadyPromise = null
-  }
   if (!overlay || overlay.isDestroyed()) {
     const target = resolveDshAppRoute(desktopRuntime.coreDshUrl(), 'browser-annotation-overlay')
     overlay = new BrowserWindow({
@@ -735,7 +731,11 @@ async function showBrowserAnnotationOverlay(
     if (!overlay.isDestroyed()) overlay.destroy()
     throw error
   }
+  if (presentationVersion !== browserAnnotationOverlayPresentationVersion) return
   positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
+  overlay.setIgnoreMouseEvents(false)
+  overlay.setFocusable(true)
+  overlay.setOpacity(1)
   if (keepE2EWindowInBackground) overlay.showInactive()
   else {
     overlay.show()
@@ -780,7 +780,14 @@ function resizeBrowserAnnotationOverlay(
 }
 
 function closeBrowserAnnotationOverlay(): void {
-  browserAnnotationOverlayWindow?.hide()
+  browserAnnotationOverlayPresentationVersion += 1
+  const overlay = browserAnnotationOverlayWindow
+  if (!overlay || overlay.isDestroyed()) return
+  overlay.setIgnoreMouseEvents(true)
+  overlay.setFocusable(false)
+  overlay.setOpacity(0)
+  const owner = overlay.getParentWindow() ?? mainWindow
+  if (owner && !owner.isDestroyed()) owner.focus()
 }
 
 async function showSystemDragPanel(): Promise<void> {
@@ -1122,6 +1129,7 @@ async function shutdown(): Promise<void> {
   browserAnnotationOverlayWindow?.destroy()
   browserAnnotationOverlayWindow = null
   browserAnnotationOverlayReadyPromise = null
+  browserAnnotationOverlayPresentationVersion += 1
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
   const computerUseService = computerUse
