@@ -110,6 +110,11 @@ interface DesktopWorkbenchLayoutProps {
   surfaceKind?: 'task' | 'board'
 }
 
+function routePathname(route: string): string {
+  const searchIndex = route.indexOf('?')
+  return searchIndex >= 0 ? route.slice(0, searchIndex) : route
+}
+
 export function DesktopWorkbenchLayout({
   routeActive = true,
   surfaceKind,
@@ -563,8 +568,15 @@ export function DesktopWorkbenchLayout({
   const effectiveSidebarCollapsed = sidebarCollapsed || sidebarAutoCollapsed
 
   useEffect(() => {
+    let previousPath = stripAppBasePath(window.location.pathname)
+    let previousRoute = `${previousPath}${window.location.search}`
     const handlePopState = () => {
       const path = stripAppBasePath(window.location.pathname)
+      if (isSettingsRoute(path) && !isSettingsRoute(previousPath)) {
+        settingsReturnPathRef.current = previousRoute
+      }
+      previousPath = path
+      previousRoute = `${path}${window.location.search}`
       setCurrentPath(path)
       setSettingsOpen(isSettingsRoute(path))
     }
@@ -666,27 +678,22 @@ export function DesktopWorkbenchLayout({
   )
 
   const openCloudDeviceSettings = useCallback(() => {
-    settingsReturnPathRef.current = '/'
     setAutoOpenAddCloudDeviceDialog(true)
     setSettingsOpen(true)
     navigateTo('/settings/connections')
   }, [])
 
-  const openSettings = useCallback(
-    (options: DesktopSidebarAccountSettingsOptions | undefined, returnPath: '/' | '/todo') => {
-      settingsReturnPathRef.current = returnPath
-      setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
-      setSettingsOpen(true)
-      navigateTo(
-        options?.autoOpenAddCloudDeviceDialog
-          ? '/settings/connections'
-          : options?.settingsPage
-            ? `/settings/${options.settingsPage}`
-            : '/settings'
-      )
-    },
-    []
-  )
+  const openSettings = useCallback((options: DesktopSidebarAccountSettingsOptions | undefined) => {
+    setAutoOpenAddCloudDeviceDialog(Boolean(options?.autoOpenAddCloudDeviceDialog))
+    setSettingsOpen(true)
+    navigateTo(
+      options?.autoOpenAddCloudDeviceDialog
+        ? '/settings/connections'
+        : options?.settingsPage
+          ? `/settings/${options.settingsPage}`
+          : '/settings'
+    )
+  }, [])
 
   const openSidebarPreview = useCallback(() => {
     if (!effectiveSidebarCollapsed) return
@@ -1001,7 +1008,7 @@ export function DesktopWorkbenchLayout({
       onDismissGitCloneOperation={dismissGitCloneOperation}
       projectSpaceApis={availableProjectSpaceApis}
       models={projectChat.models}
-      onOpenSettings={options => openSettings(options, '/')}
+      onOpenSettings={options => openSettings(options)}
       onLogout={onLogout}
     />
   )
@@ -1056,7 +1063,7 @@ export function DesktopWorkbenchLayout({
               const returnPath = settingsReturnPathRef.current
               setSettingsOpen(false)
               setAutoOpenAddCloudDeviceDialog(false)
-              setCurrentPath(returnPath)
+              setCurrentPath(routePathname(returnPath))
               navigateTo(returnPath)
             }}
           />
@@ -1077,7 +1084,7 @@ export function DesktopWorkbenchLayout({
                 onCloneGitRepository={onCloneGitRepository}
                 onOpenRuntimeTask={openProjectSpaceRuntimeTask}
                 onArchiveRuntimeTask={onArchiveRuntimeTask}
-                onOpenSettings={options => openSettings(options, '/todo')}
+                onOpenSettings={options => openSettings(options)}
                 onLogout={onLogout}
                 activeProjectRef={
                   workspaceTabs?.activeTab.kind === 'board'

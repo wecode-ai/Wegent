@@ -48,6 +48,7 @@ import { configuredWorkspacePath, executionDeviceId } from '@/lib/project-worksp
 import { setActiveKeybindings } from '@/lib/keybindings'
 import { queueSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
 import { preloadDefaultDshUiTestModules } from '@/test/setup'
+import { navigateTo } from '@/lib/navigation'
 import type { ProjectWithTasks, RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { EnvironmentInfo } from '@/types/environment'
 import type { RuntimeSubagentStatus, WorkbenchMessage } from '@/types/workbench'
@@ -1617,6 +1618,62 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(await screen.findByTestId('settings-button'))
     await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('returns to the exact previous workspace route after opening settings', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo?projectId=project-1')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('settings-button'))
+    await userEvent.click(screen.getByTestId('settings-menu-button'))
+    expect(window.location.pathname).toBe('/settings')
+
+    await userEvent.click(screen.getByTestId('settings-back-button'))
+
+    expect(window.location.pathname).toBe('/todo')
+    expect(window.location.search).toContain('projectId=project-1')
+    expect(screen.getByTestId('cloud-todo-workspace')).toBeVisible()
+  })
+
+  test('returns to the previous page after opening settings through direct navigation', async () => {
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...baseProps.state,
+          user: {
+            id: 1,
+            user_name: 'local',
+            email: 'local@example.com',
+          },
+        }}
+      />
+    )
+
+    act(() => navigateTo('/settings'))
     expect(window.location.pathname).toBe('/settings')
 
     await userEvent.click(screen.getByTestId('settings-back-button'))
