@@ -1101,6 +1101,7 @@
     "chat": "Chat",
     "load_failed": "Failed to load",
     "retry": "Retry",
+    "retry_continue_message": "Continue",
     "open_menu": "Open menu",
     "close_menu": "Close menu",
     "add_context": "Add context",

@@ -427,6 +427,27 @@ describe('ProjectAutomationView', () => {
     expect(screen.getByTestId('automation-workflow-canvas')).toBeInTheDocument()
   })
 
+  test('creates a new board automation enabled by default', async () => {
+    const { projectAutomationApi } = renderView()
+    projectAutomationApi.create = vi.fn().mockImplementation((_projectId, input) =>
+      Promise.resolve({
+        ...rule,
+        id: 'rule-created',
+        name: input.name,
+        prompt: input.prompt,
+        enabled: input.enabled,
+        eventConfig: input.eventConfig,
+      })
+    )
+    await screen.findByTestId('automation-card-rule-1')
+
+    fireEvent.click(screen.getByTestId('automation-create-blank'))
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.create).toHaveBeenCalledOnce())
+    expect(vi.mocked(projectAutomationApi.create).mock.calls[0][1].enabled).toBe(true)
+  })
+
   test('opens a backend rule as a horizontal draggable React Flow workflow', async () => {
     const { view } = renderView()
     await openRuleEditor()
@@ -514,6 +535,60 @@ describe('ProjectAutomationView', () => {
 
     expect(environmentSelect).toHaveTextContent('Cloud Verify Device')
     expect(environmentSelect.querySelector('.lucide-cloud')).toBeInTheDocument()
+  })
+
+  test('preserves backend cloud model identity in automation execution config', async () => {
+    const { projectAutomationApi, deviceApi, modelApi } = renderView()
+    projectAutomationApi.update = vi.fn().mockResolvedValue(rule)
+    vi.mocked(deviceApi.listDevices).mockResolvedValue([
+      {
+        id: 2,
+        device_id: 'cloud-device',
+        name: 'Cloud Device',
+        status: 'online',
+        is_default: true,
+        device_type: 'cloud',
+      },
+    ] as never)
+    vi.mocked(modelApi.listModels).mockResolvedValue({
+      data: [
+        {
+          name: 'deepseek-v4-flash-vision-exp',
+          displayName: 'DeepSeek V4 Flash Vision',
+          type: 'public',
+          namespace: 'default',
+          resourceUserId: 0,
+          isActive: true,
+        },
+      ],
+    })
+
+    await openRuleEditor()
+    fireEvent.click(screen.getByTestId('execution-node-step-1'))
+
+    fireEvent.click(screen.getByTestId('execution-node-environment-step-1'))
+    fireEvent.click(
+      await screen.findByTestId('execution-node-environment-step-1-option-cloud-device')
+    )
+    await screen.findByRole('option', { name: 'DeepSeek V4 Flash Vision' })
+    fireEvent.change(screen.getByTestId('execution-node-model-step-1'), {
+      target: { value: 'deepseek-v4-flash-vision-exp' },
+    })
+    fireEvent.click(screen.getByTestId('automation-save'))
+
+    await waitFor(() => expect(projectAutomationApi.update).toHaveBeenCalledOnce())
+    const input = vi.mocked(projectAutomationApi.update).mock.calls[0][2]
+    expect(
+      input.eventConfig?.runtime_workflow_definition?.nodes[0]?.execution_config
+    ).toMatchObject({
+      execution_device_id: 'cloud-device',
+      model: 'deepseek-v4-flash-vision-exp',
+      model_type: 'public',
+      model_options: {
+        weworkCloudModelNamespace: 'default',
+        weworkCloudModelResourceUserId: '0',
+      },
+    })
   })
 
   test('clears execution environment and model and persists the unconfigured node', async () => {

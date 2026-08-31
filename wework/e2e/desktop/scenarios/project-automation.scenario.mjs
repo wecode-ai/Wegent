@@ -1597,6 +1597,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     await control.command('fill', '[data-testid^="execution-node-prompt-"]', {
       value: '根据 Issue 修改代码并运行相关测试。',
     })
+    const automationExecutionEnvironment = '[data-testid^="execution-node-environment-"]'
+    await control.command('scrollIntoView', automationExecutionEnvironment)
+    await control.command('waitFor', automationExecutionEnvironment, {
+      timeoutMs: uiTimeoutMs,
+      visible: true,
+    })
+    await control.command('click', automationExecutionEnvironment, { visible: true })
+    await control.command(
+      'click',
+      `[data-testid^="execution-node-environment-"][data-testid$="-option-${CLOUD_DEVICE_ID}"]`,
+      { visible: true }
+    )
+    await control.command('select', '[data-testid^="execution-node-model-"]', {
+      value: CLOUD_MODEL_NAME,
+    })
     await control.command('select', '[data-testid^="execution-node-workspace-"]', {
       value: 'composer',
     })
@@ -1684,11 +1699,14 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     assert.equal(unifiedRule.runtimeSource, 'runtime_user')
     assert.equal(unifiedRule.eventType, 'task.created')
     assert.equal(unifiedRule.eventConfig.wework_flow.description, '')
-    assert.deepEqual(
+    const unifiedExecutionConfig =
       unifiedRule.eventConfig.runtime_workflow_definition.nodes[0].execution_config
-        .workspace_binding,
-      { type: 'standalone' }
-    )
+    assert.equal(unifiedExecutionConfig.execution_device_id, CLOUD_DEVICE_ID)
+    assert.equal(unifiedExecutionConfig.model, CLOUD_MODEL_NAME)
+    assert.equal(unifiedExecutionConfig.model_type, 'public')
+    assert.equal(unifiedExecutionConfig.model_options.weworkCloudModelNamespace, 'default')
+    assert.equal(unifiedExecutionConfig.model_options.weworkCloudModelResourceUserId, '0')
+    assert.deepEqual(unifiedExecutionConfig.workspace_binding, { type: 'standalone' })
     const unifiedGraphNodes = unifiedRule.eventConfig.wework_flow.graph.nodes
     assert.equal(unifiedGraphNodes.length, 2)
     const unifiedDeliverable = unifiedGraphNodes[0].deliverables[0]
@@ -3847,6 +3865,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
         value: '完成代码实现和测试。',
       })
       const executionEnvironment = '[data-testid^="execution-node-environment-"]'
+      await control.command('scrollIntoView', executionEnvironment)
+      await control.command('waitFor', executionEnvironment, {
+        timeoutMs: uiTimeoutMs,
+        visible: true,
+      })
       await control.command('click', executionEnvironment, { visible: true })
       await control.command(
         'click',

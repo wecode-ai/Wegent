@@ -1100,6 +1100,7 @@
     "chat": "聊天",
     "load_failed": "加载失败",
     "retry": "重试",
+    "retry_continue_message": "继续",
     "open_menu": "打开菜单",
     "close_menu": "关闭菜单",
     "add_context": "添加上下文",
