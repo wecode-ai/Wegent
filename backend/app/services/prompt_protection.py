@@ -56,6 +56,7 @@ risks may apply."""
 
 class PromptProtectionEntrypoint(str, Enum):
     WEB_USER_MESSAGE = "web_user_message"
+    OPENAPI_RESPONSES = "openapi_responses"
 
 
 class PromptProtectionDecision(str, Enum):

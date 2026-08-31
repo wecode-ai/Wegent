@@ -732,7 +732,7 @@ async def trigger_ai_response_unified(
         previous_bot_id=previous_bot_id,
     )
 
-    await _enforce_prompt_protection(
+    await enforce_prompt_protection(
         request=request,
         task=task,
         assistant_subtask=assistant_subtask,
@@ -777,14 +777,20 @@ def _prompt_protection_context(
     from app.schemas.kind import Team as TeamCRD
 
     team_crd = TeamCRD.model_validate(team.json)
+    if (
+        not team_crd.spec.promptProtectionEnabled
+        or previous_bot_id is not None
+        or not isinstance(message, str)
+    ):
+        return None
+
     shell_type = _request_shell_type(request)
-    eligible = (
-        team_crd.spec.promptProtectionEnabled
-        and previous_bot_id is None
-        and shell_type in {"Chat", "ClaudeCode"}
-        and isinstance(message, str)
+    supported_shell_types = (
+        {"Chat", "ClaudeCode"}
+        if entrypoint is PromptProtectionEntrypoint.WEB_USER_MESSAGE
+        else None
     )
-    if not eligible:
+    if supported_shell_types is not None and shell_type not in supported_shell_types:
         return None
     context = PromptProtectionContext(
         team_id=team.id,
@@ -823,7 +829,7 @@ def _prompt_protection_system_prompt(
         db.close()
 
 
-async def _enforce_prompt_protection(
+async def enforce_prompt_protection(
     *,
     request: "ExecutionRequest",
     task: TaskResource,

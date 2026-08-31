@@ -345,6 +345,50 @@ def test_pipeline_prompt_protection_uses_previous_bot_id_as_handoff_boundary():
     assert unified._prompt_protection_context(**kwargs, previous_bot_id=101) is None
 
 
+@pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode", "Agno", "Dify"])
+def test_openapi_responses_prompt_protection_uses_explicit_entrypoint(shell_type):
+    from app.services.chat.trigger import unified
+
+    request = ExecutionRequest(
+        task_id=22,
+        subtask_id=33,
+        bot=[{"shell_type": shell_type}],
+        model_config={"model_id": "selected-model"},
+    )
+    team = SimpleNamespace(
+        id=11,
+        name="support",
+        namespace="default",
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {"name": "support", "namespace": "default"},
+            "spec": {
+                "members": [],
+                "collaborationModel": "solo",
+                "promptProtectionEnabled": True,
+            },
+        },
+    )
+
+    target = unified._prompt_protection_context(
+        request=request,
+        task=SimpleNamespace(id=22),
+        assistant_subtask=SimpleNamespace(id=33),
+        team=team,
+        user=SimpleNamespace(id=44),
+        message="current user text",
+        entrypoint=PromptProtectionEntrypoint.OPENAPI_RESPONSES,
+        previous_bot_id=None,
+    )
+
+    assert target is not None
+    _, actual_shell_type, context = target
+    assert actual_shell_type == shell_type
+    assert context.entrypoint == f"openapi_responses:{shell_type}"
+    assert context.model_id == "selected-model"
+
+
 @pytest.mark.asyncio
 async def test_pipeline_next_stage_marks_internal_handoff_with_previous_bot_id(
     monkeypatch,
