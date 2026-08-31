@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import type { Bot, Team } from '@/types/api'
 import { updateTeam } from '@/features/settings/services/teams'
@@ -28,6 +28,11 @@ jest.mock('@/hooks/useTranslation', () => ({
         'common:team.description_placeholder': 'Description',
         'common:team.bind_mode': 'Bind mode',
         'common:teams.edit_title': 'Edit agent',
+        'settings:team.simple.advanced_toggle': 'Advanced mode',
+        'settings:team.simple.advanced_toggle_description': 'Configure more options',
+        'settings:team.simple.prompt_protection.label': 'Prompt protection',
+        'settings:team.simple.prompt_protection.description':
+          'Best-effort extra model call; not a security boundary.',
         'team.bind_mode_chat': 'Chat',
         'team.bind_mode_code': 'Code',
         'team.bind_mode_task': 'Task',
@@ -76,6 +81,17 @@ jest.mock('@/apis/shells', () => {
     },
   }
 })
+
+jest.mock('@/apis/resourceLibrary', () => ({
+  resourceLibraryApi: {
+    getAgentBindings: jest.fn().mockResolvedValue({ group_names: [] }),
+    getPublication: jest.fn().mockResolvedValue({ tags: [], example_conversations: [] }),
+    syncAgentBindings: jest.fn().mockResolvedValue(undefined),
+    updatePublication: jest.fn().mockResolvedValue(undefined),
+    createListing: jest.fn().mockResolvedValue(undefined),
+    archiveListing: jest.fn().mockResolvedValue(undefined),
+  },
+}))
 
 jest.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -285,6 +301,81 @@ describe('TeamEditDialog display name', () => {
         expect.objectContaining({
           promptProtectionEnabled: true,
         })
+      )
+    })
+  })
+
+  it('loads, toggles, and saves Team-level prompt protection in the advanced editor', async () => {
+    const team = makeTeam()
+    team.prompt_protection_enabled = true
+    mockedUpdateTeam.mockResolvedValue({ ...team, prompt_protection_enabled: false })
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    const toggle = await screen.findByTestId('advanced-prompt-protection-enabled-switch')
+    expect(toggle).toBeChecked()
+    const label = screen.getByText('Prompt protection')
+
+    fireEvent.click(label)
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      expect(mockedUpdateTeam).toHaveBeenCalledWith(
+        team.id,
+        expect.objectContaining({
+          prompt_protection_enabled: false,
+        })
+      )
+    })
+  })
+
+  it('keeps prompt protection state when switching between simple and advanced editors', async () => {
+    const team = makeTeam()
+    team.workflow = { mode: 'solo' }
+    team.prompt_protection_enabled = false
+
+    render(
+      <TeamEditDialog
+        open
+        onClose={jest.fn()}
+        teams={[team]}
+        setTeams={jest.fn()}
+        editingTeamId={team.id}
+        bots={[makeBot()]}
+        setBots={jest.fn()}
+        toast={jest.fn()}
+      />
+    )
+
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({ promptProtectionEnabled: false })
+      )
+    })
+    const simpleProps = mockSimpleTeamEditForm.mock.lastCall?.[0] as {
+      setPromptProtectionEnabled: (enabled: boolean) => void
+    }
+    act(() => simpleProps.setPromptProtectionEnabled(true))
+
+    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
+    expect(await screen.findByTestId('advanced-prompt-protection-enabled-switch')).toBeChecked()
+
+    fireEvent.click(screen.getByTestId('advanced-mode-switch'))
+    await waitFor(() => {
+      expect(mockSimpleTeamEditForm).toHaveBeenLastCalledWith(
+        expect.objectContaining({ promptProtectionEnabled: true })
       )
     })
   })

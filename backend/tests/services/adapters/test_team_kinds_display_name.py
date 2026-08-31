@@ -17,18 +17,27 @@ from app.services.adapters import team_kinds as team_kinds_module
 from app.services.adapters.team_kinds import team_kinds_service
 
 
-def _create_team_kind(db, user_id: int, namespace: str = "default") -> Kind:
+def _create_team_kind(
+    db,
+    user_id: int,
+    namespace: str = "default",
+    team_name: str = "dev-team",
+    members: list[dict] | None = None,
+) -> Kind:
     team = Kind(
         user_id=user_id,
         kind="Team",
-        name="dev-team",
+        name=team_name,
         namespace=namespace,
         is_active=True,
         json={
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Team",
-            "metadata": {"name": "dev-team", "namespace": namespace},
-            "spec": {"members": [], "collaborationModel": "pipeline"},
+            "metadata": {"name": team_name, "namespace": namespace},
+            "spec": {
+                "members": members or [],
+                "collaborationModel": "pipeline",
+            },
             "status": {"state": "Available"},
         },
     )
@@ -147,6 +156,45 @@ def test_team_create_schema_defaults_prompt_protection_off():
 
     assert team.prompt_protection_enabled is False
     assert team.model_dump()["prompt_protection_enabled"] is False
+
+
+def test_prompt_protection_is_isolated_per_team_when_members_are_reused(
+    test_db, test_user
+):
+    shared_members = [
+        {
+            "botRef": {"name": "shared-bot", "namespace": "default"},
+            "role": "leader",
+        }
+    ]
+    protected_team = _create_team_kind(
+        test_db,
+        test_user.id,
+        team_name="protected-team",
+        members=shared_members,
+    )
+    unprotected_team = _create_team_kind(
+        test_db,
+        test_user.id,
+        team_name="unprotected-team",
+        members=shared_members,
+    )
+
+    team_kinds_service.update_with_user(
+        test_db,
+        team_id=protected_team.id,
+        obj_in=TeamUpdate(prompt_protection_enabled=True),
+        user_id=test_user.id,
+    )
+
+    protected = team_kinds_service.get_by_id_and_user(
+        test_db, team_id=protected_team.id, user_id=test_user.id
+    )
+    unprotected = team_kinds_service.get_by_id_and_user(
+        test_db, team_id=unprotected_team.id, user_id=test_user.id
+    )
+    assert protected["prompt_protection_enabled"] is True
+    assert unprotected["prompt_protection_enabled"] is False
 
 
 def test_team_bot_detail_includes_selected_shell_name(monkeypatch):

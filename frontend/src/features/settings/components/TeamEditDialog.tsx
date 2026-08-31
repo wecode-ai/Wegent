@@ -1204,6 +1204,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     name: name.trim(),
                     displayName: displayNamePayload,
                     description: description.trim() || undefined,
+                    prompt_protection_enabled: promptProtectionEnabled,
                     workflow,
                     bind_mode: bindMode,
                     bots: botsData,
@@ -1224,6 +1225,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   name: name.trim(),
                   displayName: displayNamePayload,
                   description: description.trim() || undefined,
+                  prompt_protection_enabled: promptProtectionEnabled,
                   workflow,
                   bind_mode: bindMode,
                   bots: botsData,
@@ -1316,6 +1318,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                 name: name.trim(),
                 displayName: displayNamePayload,
                 description: description.trim() || undefined,
+                prompt_protection_enabled: promptProtectionEnabled,
                 workflow,
                 bind_mode: bindMode,
                 bots: botsData,
@@ -1336,6 +1339,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               name: name.trim(),
               displayName: displayNamePayload,
               description: description.trim() || undefined,
+              prompt_protection_enabled: promptProtectionEnabled,
               workflow,
               bind_mode: bindMode,
               bots: botsData,
@@ -1567,6 +1571,28 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                   requiresWorkspace={requiresWorkspace}
                   setRequiresWorkspace={setRequiresWorkspace}
                 />
+                <div
+                  className="flex items-start justify-between gap-4 rounded-lg border border-border bg-surface p-4"
+                  data-testid="advanced-prompt-protection-setting"
+                >
+                  <label
+                    htmlFor="advanced-prompt-protection-enabled"
+                    className="min-h-11 flex-1 cursor-pointer space-y-1"
+                  >
+                    <span className="block text-sm font-medium text-text-primary">
+                      {t('settings:team.simple.prompt_protection.label')}
+                    </span>
+                    <span className="block text-xs leading-5 text-text-secondary">
+                      {t('settings:team.simple.prompt_protection.description')}
+                    </span>
+                  </label>
+                  <Switch
+                    id="advanced-prompt-protection-enabled"
+                    checked={promptProtectionEnabled}
+                    onCheckedChange={setPromptProtectionEnabled}
+                    data-testid="advanced-prompt-protection-enabled-switch"
+                  />
+                </div>
                 {isEditing && technicalNameUnlocked && (
                   <div
                     className="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-900"

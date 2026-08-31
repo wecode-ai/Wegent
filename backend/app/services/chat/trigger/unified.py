@@ -740,6 +740,7 @@ async def trigger_ai_response_unified(
         user=user,
         message=message,
         entrypoint=prompt_protection_entrypoint,
+        previous_bot_id=previous_bot_id,
     )
 
     # 2. Dispatch task
@@ -768,6 +769,7 @@ def _prompt_protection_context(
     user: User,
     message: Union[str, list],
     entrypoint: Optional[PromptProtectionEntrypoint],
+    previous_bot_id: Optional[int],
 ) -> tuple[Any, str, PromptProtectionContext] | None:
     if entrypoint is None:
         return None
@@ -778,7 +780,7 @@ def _prompt_protection_context(
     shell_type = _request_shell_type(request)
     eligible = (
         team_crd.spec.promptProtectionEnabled
-        and team_crd.spec.collaborationModel == "solo"
+        and previous_bot_id is None
         and shell_type in {"Chat", "ClaudeCode"}
         and isinstance(message, str)
     )
@@ -830,8 +832,9 @@ async def _enforce_prompt_protection(
     user: User,
     message: Union[str, list],
     entrypoint: Optional[PromptProtectionEntrypoint],
+    previous_bot_id: Optional[int],
 ) -> None:
-    """Apply the gate only to explicitly marked simple-Team Web messages."""
+    """Apply the Team-level gate to real user turns, not pipeline handoffs."""
     target = _prompt_protection_context(
         request=request,
         task=task,
@@ -840,6 +843,7 @@ async def _enforce_prompt_protection(
         user=user,
         message=message,
         entrypoint=entrypoint,
+        previous_bot_id=previous_bot_id,
     )
     if target is None:
         return
