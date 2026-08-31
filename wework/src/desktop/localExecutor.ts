@@ -69,6 +69,7 @@ export interface LocalExecutorBackendConnection {
   socketBaseUrl: string
   authToken: string
   runtimeAuthToken?: string | null
+  deviceType: 'app' | 'remote'
 }
 
 export interface BundledPluginMarketplace {
@@ -365,6 +366,7 @@ export function connectLocalExecutorToBackend(
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
+    device_type: connection.deviceType,
   }).then(() => ensureLocalExecutorAvailable())
 }
 

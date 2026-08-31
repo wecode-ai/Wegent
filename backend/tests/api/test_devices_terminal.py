@@ -42,6 +42,7 @@ async def test_start_device_terminal_uses_requested_path(monkeypatch):
     assert kwargs["device_id"] == "device-2"
     assert kwargs["path"] == "/workspace/worktrees/9/project38"
     assert kwargs["create_if_missing"] is False
+    assert kwargs["allow_app_device"] is False
 
 
 @pytest.mark.asyncio
@@ -78,6 +79,7 @@ async def test_start_device_code_server_uses_requested_path(monkeypatch):
     assert kwargs["device_id"] == "device-2"
     assert kwargs["path"] == "/workspace/worktrees/9/project38"
     assert kwargs["create_if_missing"] is False
+    assert kwargs["allow_app_device"] is False
 
 
 @pytest.mark.asyncio

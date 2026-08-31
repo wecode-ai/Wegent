@@ -735,6 +735,51 @@ async def test_device_command_relay_resolves_logical_device_route(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_device_command_relay_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.schemas.device import DeviceType
+    from app.services.device.runtime_route import RuntimeRoute
+
+    route = RuntimeRoute(
+        logical_device_id="app-device",
+        runtime_device_id="app-device",
+        runtime_instance_id="runtime-instance-1",
+        device_type=DeviceType.APP,
+        socket_id="socket-1",
+        online_info={"socket_id": "socket-1"},
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=route),
+    )
+    execute = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        wework_runtime_namespace.local_device_command_service,
+        "execute_command",
+        execute,
+    )
+    monkeypatch.setattr(
+        wework_runtime_namespace,
+        "resolve_local_device_command",
+        lambda *_args: SimpleNamespace(command="pwd"),
+    )
+
+    with pytest.raises(wework_runtime_namespace.RuntimeRpcError) as exc_info:
+        await wework_runtime_namespace.relay_ipc_request(
+            user_id=7,
+            device_id="app-device",
+            method="device.execute_command",
+            params={"command_key": "pwd"},
+            timeout_seconds=30,
+        )
+
+    assert exc_info.value.code == "remote_control_disabled"
+    execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_runtime_request_relays_device_command_nonzero_exit(monkeypatch):
     """A device command that runs but exits non-zero is a valid result.
 

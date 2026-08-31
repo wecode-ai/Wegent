@@ -271,6 +271,35 @@ async def test_runtime_rpc_service_preserves_local_device_proxy(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_rpc_service_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.APP)),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    with pytest.raises(module.RuntimeRpcError) as exc_info:
+        await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="device-1",
+            method="runtime.capacity.get",
+            payload={},
+        )
+
+    assert exc_info.value.code == "remote_control_disabled"
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "Remote control is disabled for this app device"
+    sio_call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_sends_v2_to_capable_executor(monkeypatch):
     from app.services.device import runtime_rpc_service as module
 

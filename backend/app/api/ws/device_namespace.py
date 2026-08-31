@@ -84,6 +84,9 @@ from app.services.chat.access import get_token_expiry, verify_jwt_token
 from app.services.chat.storage.db import get_db_session, run_sync_in_executor
 from app.services.chat.webpage_ws_chat_emitter import get_extended_emitter
 from app.services.device.capability_sync_service import device_capability_sync_service
+from app.services.device.remote_control_policy import (
+    remote_control_is_enabled,
+)
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
@@ -151,6 +154,19 @@ RUNTIME_TASK_NON_REPLY_TERMINAL_STATUSES = {
     "cancelled",
     "canceled",
 }
+
+
+@dataclass(frozen=True)
+class DeviceRegistrationFingerprint:
+    """Persisted registration fields used to debounce exact reconnects only."""
+
+    display_name: str
+    client_ip: str
+    device_type: str
+    bind_shell: str
+    runtime_transfer_host: str
+    runtime_instance_id: str
+    app_device_id: str
 
 
 @contextmanager
@@ -1275,7 +1291,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
         self._runtime_event_locks: Dict[str, asyncio.Lock] = {}
         self._runtime_auth_sync_inflight: set[tuple[int, str, str]] = set()
         self._connection_attempts: Dict[str, list[float]] = {}
-        self._recent_registrations: Dict[tuple[int, str], tuple[float, str]] = {}
+        self._recent_registrations: Dict[
+            tuple[int, str],
+            tuple[float, DeviceRegistrationFingerprint, str],
+        ] = {}
         self._background_tasks: set[asyncio.Task] = set()
 
     def _is_connection_rate_limited(
@@ -1298,26 +1317,36 @@ class DeviceNamespace(socketio.AsyncNamespace):
         return False
 
     def _get_recent_registration_display_name(
-        self, user_id: int, device_id: str
+        self,
+        user_id: int,
+        device_id: str,
+        fingerprint: DeviceRegistrationFingerprint,
     ) -> Optional[str]:
-        """Return cached display name when a device just registered successfully."""
+        """Return cached display name for an exact recent registration."""
         key = (user_id, device_id)
         cached = self._recent_registrations.get(key)
         if not cached:
             return None
 
-        registered_at, display_name = cached
+        registered_at, cached_fingerprint, display_name = cached
         if time.monotonic() - registered_at > DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS:
             self._recent_registrations.pop(key, None)
+            return None
+        if cached_fingerprint != fingerprint:
             return None
         return display_name
 
     def _remember_registration(
-        self, user_id: int, device_id: str, display_name: str
+        self,
+        user_id: int,
+        device_id: str,
+        fingerprint: DeviceRegistrationFingerprint,
+        display_name: str,
     ) -> None:
-        """Record a successful registration to absorb immediate reconnect storms."""
+        """Record a successful registration to absorb exact reconnect storms."""
         self._recent_registrations[(user_id, device_id)] = (
             time.monotonic(),
+            fingerprint,
             display_name,
         )
 
@@ -1741,6 +1770,15 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Use the WebSocket TCP peer observed by backend. The executor-reported
         # address is advisory and must not drive transfer routing.
         client_ip = session.get("client_ip")
+        registration_fingerprint = DeviceRegistrationFingerprint(
+            display_name=payload.name.strip(),
+            client_ip=str(client_ip or "").strip(),
+            device_type=payload.device_type.value,
+            bind_shell=payload.bind_shell.value,
+            runtime_transfer_host=str(runtime_transfer_host or "").strip(),
+            runtime_instance_id=str(payload.runtime_instance_id or "").strip(),
+            app_device_id=str(payload.app_device_id or "").strip(),
+        )
         is_cloud_device = False
         if payload.device_type == DeviceType.CLOUD:
             try:
@@ -1770,13 +1808,11 @@ class DeviceNamespace(socketio.AsyncNamespace):
         # Run in executor to avoid blocking event loop
         if not is_cloud_device:
             persisted_display_name = self._get_recent_registration_display_name(
-                user_id, payload.device_id
+                user_id,
+                payload.device_id,
+                registration_fingerprint,
             )
-            requires_persistent_identity_check = payload.device_type in {
-                DeviceType.CLOUD,
-                DeviceType.REMOTE,
-            }
-            if persisted_display_name is None or requires_persistent_identity_check:
+            if persisted_display_name is None:
                 success, persisted_display_name, error = await run_sync_in_executor(
                     _register_device,
                     user_id,
@@ -1792,7 +1828,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                 if not success:
                     return {"error": f"Registration failed: {error}"}
                 self._remember_registration(
-                    user_id, payload.device_id, persisted_display_name or payload.name
+                    user_id,
+                    payload.device_id,
+                    registration_fingerprint,
+                    persisted_display_name or payload.name,
                 )
         else:
             persisted_display_name = payload.name
@@ -1805,6 +1844,7 @@ class DeviceNamespace(socketio.AsyncNamespace):
         session["device_name"] = effective_device_name
         session["runtime_transfer_host"] = runtime_transfer_host
         session["runtime_instance_id"] = payload.runtime_instance_id
+        session["device_type"] = payload.device_type.value
         session["execution_target_id"] = payload.app_device_id or payload.device_id
         session["execution_environment"] = "local" if payload.app_device_id else "cloud"
         session["registered"] = True
@@ -1860,15 +1900,16 @@ class DeviceNamespace(socketio.AsyncNamespace):
             ),
             "sync global capabilities after device registration",
         )
-        from app.tasks.robot_queue_tasks import reconcile_device_executions
+        if remote_control_is_enabled(payload.device_type):
+            from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-        self._schedule_background_task(
-            reconcile_device_executions(
-                user_id=int(user_id),
-                device_id=payload.device_id,
-            ),
-            "reconcile active executions after device registration",
-        )
+            self._schedule_background_task(
+                reconcile_device_executions(
+                    user_id=int(user_id),
+                    device_id=payload.device_id,
+                ),
+                "reconcile active executions after device registration",
+            )
 
         logger.info(
             f"[Device WS] Device registered: user={user_id}, device={payload.device_id}"
@@ -2168,16 +2209,21 @@ class DeviceNamespace(socketio.AsyncNamespace):
             f"[Device WS] Heartbeat received: user={user_id}, device={payload.device_id}, "
             f"running_tasks={len(payload.running_task_ids)}"
         )
-        from app.tasks.robot_queue_tasks import reconcile_device_executions
+        try:
+            device_type = DeviceType(session.get("device_type"))
+        except (TypeError, ValueError):
+            device_type = None
+        if remote_control_is_enabled(device_type):
+            from app.tasks.robot_queue_tasks import reconcile_device_executions
 
-        self._schedule_background_task(
-            reconcile_device_executions(
-                user_id=int(user_id),
-                device_id=payload.device_id,
-                needs_confirmation_only=True,
-            ),
-            "reconcile unconfirmed executions after device heartbeat",
-        )
+            self._schedule_background_task(
+                reconcile_device_executions(
+                    user_id=int(user_id),
+                    device_id=payload.device_id,
+                    needs_confirmation_only=True,
+                ),
+                "reconcile unconfirmed executions after device heartbeat",
+            )
 
         return {"success": True}
 
@@ -2190,6 +2236,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
         execution_target_id = session.get("execution_target_id")
         environment = session.get("execution_environment")
         runtime_instance_id = session.get("runtime_instance_id")
+        try:
+            device_type = DeviceType(session.get("device_type"))
+        except (TypeError, ValueError):
+            device_type = None
         if (
             not user_id
             or not runtime_device_id
@@ -2198,6 +2248,8 @@ class DeviceNamespace(socketio.AsyncNamespace):
             or not runtime_instance_id
         ):
             return {"success": False, "error": "Device is not registered"}
+        if not remote_control_is_enabled(device_type):
+            return {"success": True, "task": None}
         runtime_capacity = (
             data.get("runtime_capacity")
             if isinstance(data, dict) and isinstance(data.get("runtime_capacity"), dict)

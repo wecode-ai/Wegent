@@ -712,10 +712,45 @@ class RealCloudEnvironment {
   }
 
   async device(deviceId) {
+    const devices = await this.devices()
+    return devices.find(device => device.device_id === deviceId) ?? null
+  }
+
+  async devices() {
     const devices = await fetchJson(`${this.backendUrl}/api/devices`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     })
-    return devices.items?.find(device => device.device_id === deviceId) ?? null
+    return devices.items ?? []
+  }
+
+  async waitForConnectedAppDevice() {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const devices = await this.devices()
+      const device = devices.find(
+        candidate => candidate.device_type === 'app' && candidate.status === 'online'
+      )
+      if (device) return device
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error('The desktop local executor did not register as an app device')
+  }
+
+  async waitForDeviceType(deviceId, expectedType) {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < WORKBENCH_READY_TIMEOUT_MS) {
+      const devices = await this.devices()
+      const matching = devices.filter(device => device.device_id === deviceId)
+      if (
+        matching.length === 1 &&
+        matching[0].device_type === expectedType &&
+        matching[0].status === 'online'
+      ) {
+        return matching[0]
+      }
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+    }
+    throw new Error(`Device ${deviceId} did not become an online ${expectedType} device`)
   }
 
   async worktreeCapabilities(deviceId = CLOUD_DEVICE_ID) {
