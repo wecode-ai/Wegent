@@ -718,12 +718,9 @@ async function markerState(bridge) {
         MARKER_ROOT_ID
       )})?.shadowRoot?.querySelector(${JSON.stringify(MARKER_SELECTOR)})
       if (!marker) return null
-      const rect = marker.getBoundingClientRect()
       return {
         number: marker.textContent,
         id: marker.getAttribute('data-annotation-id'),
-        x: rect.x + rect.width / 2,
-        y: rect.y + rect.height / 2,
       }
     })()`
   )
@@ -732,10 +729,25 @@ async function markerState(bridge) {
 async function clickMarker(bridge) {
   const marker = await markerState(bridge)
   assert.ok(marker, 'The browser annotation marker is unavailable')
+  const inspect = await bridge({
+    action: 'inspect',
+    options: { interactiveOnly: false, includeTextBlocks: false, maxNodes: 800 },
+    timeoutMs: 5_000,
+  })
+  const markerNode = inspect.nodes.find(
+    node => node.role === 'button' && node.name === `Browser annotation ${marker.number}`
+  )
+  assert.ok(
+    markerNode?.ref,
+    `Browser annotation ${marker.number} did not expose an inspect ref: ${JSON.stringify({
+      marker,
+      markerNode,
+      buttons: inspect.nodes.filter(node => node.role === 'button'),
+    })}`
+  )
   const result = await bridge({
     action: 'click',
-    x: marker.x,
-    y: marker.y,
+    ref: markerNode.ref,
     timeoutMs: 5_000,
   })
   assert.equal(
@@ -961,15 +973,11 @@ async function verifyAnchors(control, executorHome, uiTimeoutMs, modelResponseTi
     'Stopping annotation mode did not complete its page render'
   )
   await bridge({ action: 'click', selector: '#replace-trigger', timeoutMs: 5_000 })
-  runtimeRevision = await waitForBrowserAnnotationRender(
-    control,
-    runtimeRevision,
-    uiTimeoutMs,
-    'Replacing the anchor target did not complete its page render'
-  )
-  assert.equal(
-    await pageValue(bridge, `document.body.dataset.replaced`),
+  await waitForPageValue(
+    bridge,
+    'document.body.dataset.replaced',
     'true',
+    uiTimeoutMs,
     'The fixture did not replace the target node'
   )
   await control.command('click', BROWSER_ANNOTATE_SELECTOR)
