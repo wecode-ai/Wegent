@@ -384,6 +384,19 @@ async function pageValue(bridge, expression) {
   return result.value
 }
 
+async function pageValueWithRuntimeDiagnostics(control, bridge, expression, previousRevision) {
+  try {
+    return await pageValue(bridge, expression)
+  } catch (error) {
+    const actualRevision = await browserAnnotationRuntimeRevision(control).catch(() => null)
+    throw new Error(
+      `${
+        error instanceof Error ? error.message : String(error)
+      }; annotationRuntimeRevision=${previousRevision}->${String(actualRevision)}`
+    )
+  }
+}
+
 async function waitForPageValue(bridge, expression, expected, timeoutMs, message) {
   const startedAt = Date.now()
   let actual = null
@@ -749,6 +762,11 @@ async function verifyDesign(
     value: 'true',
     timeoutMs: uiTimeoutMs,
   })
+  await control.command('waitFor', BROWSER_PANEL_SELECTOR, {
+    attribute: 'data-browser-annotation-original-view',
+    value: 'true',
+    timeoutMs: uiTimeoutMs,
+  })
   runtimeRevision = await waitForBrowserAnnotationRender(
     control,
     runtimeRevision,
@@ -756,7 +774,12 @@ async function verifyDesign(
     'Holding Original View did not complete its page render'
   )
   assert.equal(
-    await pageValue(bridge, `getComputedStyle(document.querySelector('#design-target')).color`),
+    await pageValueWithRuntimeDiagnostics(
+      control,
+      bridge,
+      `getComputedStyle(document.querySelector('#design-target')).color`,
+      runtimeRevision
+    ),
     'rgb(17, 24, 39)',
     'Original View did not restore the target color'
   )
@@ -767,6 +790,11 @@ async function verifyDesign(
     value: 'false',
     timeoutMs: uiTimeoutMs,
   })
+  await control.command('waitFor', BROWSER_PANEL_SELECTOR, {
+    attribute: 'data-browser-annotation-original-view',
+    value: 'false',
+    timeoutMs: uiTimeoutMs,
+  })
   runtimeRevision = await waitForBrowserAnnotationRender(
     control,
     runtimeRevision,
@@ -774,7 +802,12 @@ async function verifyDesign(
     'Releasing Original View did not complete its page render'
   )
   assert.equal(
-    await pageValue(bridge, `getComputedStyle(document.querySelector('#design-target')).color`),
+    await pageValueWithRuntimeDiagnostics(
+      control,
+      bridge,
+      `getComputedStyle(document.querySelector('#design-target')).color`,
+      runtimeRevision
+    ),
     'rgb(239, 68, 68)',
     'Releasing Original View did not replay the design change'
   )

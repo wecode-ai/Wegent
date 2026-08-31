@@ -2544,8 +2544,30 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByText('原网页 · example.com')).toBeInTheDocument()
     expect(button).toHaveAttribute('aria-pressed', 'true')
 
+    expect(handleAnnotationState).toBeDefined()
+    act(() =>
+      handleAnnotationState?.({
+        ...state,
+        runtimeRevision: state.runtimeRevision - 1,
+        scope: state.scope ? { ...state.scope, pageSessionId: 'page-session-old' } : null,
+        originalView: false,
+      })
+    )
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+
     act(() => handleAnnotationState?.({ ...state, originalView: false }))
     expect(button).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveAttribute(
+      'data-browser-annotation-original-view',
+      'false'
+    )
+
+    act(() => handleAnnotationState?.({ ...state, originalView: true }))
+    expect(button).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('workspace-browser-panel')).toHaveAttribute(
+      'data-browser-annotation-original-view',
+      'true'
+    )
 
     fireEvent.pointerUp(button)
     await waitFor(() => {

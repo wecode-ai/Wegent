@@ -70,7 +70,7 @@ const pageSessionId = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math
 let state: RuntimeState = { mode: 'off', comments: [], originalView: false }
 let rootHost: HTMLElement | null = null
 let shadowRoot: ShadowRoot | null = null
-let renderQueued = false
+let renderTimer: ReturnType<typeof setTimeout> | null = null
 let draftAnchor: ElementAnchor | null = null
 const resolvedElements = new Map<string, Element>()
 const textChangeSnapshots = new Map<
@@ -436,7 +436,7 @@ function selectionOutline(element: Element) {
 }
 
 function render() {
-  renderQueued = false
+  renderTimer = null
   const root = ensureRoot()
   root.replaceChildren()
   if (draftAnchor) {
@@ -473,15 +473,26 @@ function render() {
 }
 
 function scheduleRender() {
-  if (renderQueued) return
-  renderQueued = true
-  requestAnimationFrame(render)
+  if (renderTimer !== null) return
+  renderTimer = setTimeout(render, 0)
+}
+
+function renderImmediately() {
+  if (renderTimer !== null) {
+    clearTimeout(renderTimer)
+    renderTimer = null
+  }
+  render()
 }
 
 function isInternalMutationNode(node: Node) {
+  const parentElement = node.parentElement
   return (
     node === rootHost ||
-    (node instanceof HTMLStyleElement && node.hasAttribute(DESIGN_STYLE_ATTRIBUTE))
+    (shadowRoot !== null && (node === shadowRoot || shadowRoot.contains(node))) ||
+    (node instanceof HTMLStyleElement && node.hasAttribute(DESIGN_STYLE_ATTRIBUTE)) ||
+    (parentElement instanceof HTMLStyleElement &&
+      parentElement.hasAttribute(DESIGN_STYLE_ATTRIBUTE))
   )
 }
 
@@ -493,9 +504,7 @@ function shouldRenderForMutation(mutation: MutationRecord) {
   ) {
     return false
   }
-  if (rootHost && (mutation.target === rootHost || rootHost.contains(mutation.target))) {
-    return false
-  }
+  if (isInternalMutationNode(mutation.target)) return false
   if (mutation.type !== 'childList') return true
   const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes]
   return changedNodes.some(node => !isInternalMutationNode(node))
@@ -557,7 +566,7 @@ ipcRenderer.on('wework:browser-annotation-command', (_event: unknown, command: R
         return
       }
     }
-    scheduleRender()
+    renderImmediately()
   }
 })
 

@@ -402,6 +402,7 @@ export function WorkspaceBrowserTabPanel({
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotations, setAnnotations] = useState<BrowserAnnotationComment[]>([])
   const [annotationRuntimeRevision, setAnnotationRuntimeRevision] = useState(0)
+  const [annotationOriginalView, setAnnotationOriginalView] = useState(false)
   const annotationStateVersionRef = useRef<{
     pageSessionId: string | null
     revision: number
@@ -922,6 +923,7 @@ export function WorkspaceBrowserTabPanel({
       setAnnotationMode(activeMode)
       setAnnotations(state.comments)
       setAnnotationRuntimeRevision(incomingRuntimeRevision)
+      setAnnotationOriginalView(state.originalView)
       if (!state.scope) return true
       const scope = { ...state.scope, browserTabId }
       const normalizedState = { ...state, scope }
@@ -2262,6 +2264,7 @@ export function WorkspaceBrowserTabPanel({
     <div
       data-testid="workspace-browser-panel"
       data-embedded-browser-label={label}
+      data-browser-annotation-original-view={annotationOriginalView}
       data-browser-annotation-runtime-revision={annotationRuntimeRevision}
       onKeyDown={handleBrowserKeyDown}
       className={cn(
