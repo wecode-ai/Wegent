@@ -1063,6 +1063,7 @@ export function DesktopWorkbenchLayout({
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
+                startupActive={routeActive && todoOpen}
                 onCreateLocalCodeProject={onCreateLocalRuntimeProject}
                 onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
                 onListDeviceDirectories={onListDeviceDirectories}

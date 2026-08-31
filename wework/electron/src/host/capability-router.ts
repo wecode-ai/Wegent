@@ -87,6 +87,7 @@ export const HOST_CAPABILITIES = [
   'plugins.start',
   'plugins.stop',
   'rendererHealth.getState',
+  'renderer.startupReady',
   'runtime.installCoreDshPlugin',
   'runtime.listCoreDshPlugins',
   'runtime.restartCoreDsh',
