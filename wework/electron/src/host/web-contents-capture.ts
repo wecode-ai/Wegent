@@ -11,19 +11,23 @@ export interface CaptureRect {
 }
 
 export interface WebContentsCaptureOptions {
-  debuggerOnly?: boolean
   rect?: CaptureRect
+  preferDebugger?: boolean
 }
 
 export async function captureWebContentsDataUrl(
   contents: WebContents,
   options: WebContentsCaptureOptions = {}
 ): Promise<string> {
-  const attempts = options.debuggerOnly
+  const attempts = options.preferDebugger
     ? [
         {
           label: 'CDP Page.captureScreenshot',
           capture: () => captureDebugger(contents, false, options.rect),
+        },
+        {
+          label: 'Electron capturePage',
+          capture: () => captureNative(contents, options.rect),
         },
       ]
     : [

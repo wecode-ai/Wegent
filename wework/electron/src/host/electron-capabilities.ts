@@ -380,7 +380,7 @@ export function createElectronCapabilityRouter(
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')
@@ -398,7 +398,7 @@ export function createElectronCapabilityRouter(
         `Workspace DSH view is unavailable: ${label}`
       )
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
   router.register('e2e.activateRuntimeTaskNotification', params => {

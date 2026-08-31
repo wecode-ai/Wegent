@@ -775,6 +775,24 @@ export function createHybridWorkbenchServices(
       return cloudServices.deviceApi.createDockerRemoteDeviceCommand(data)
     },
   }
+  const projectSpaceDeviceApi: WorkbenchServices['deviceApi'] = {
+    ...hybridDeviceApi,
+    async listDevices(requestOptions) {
+      const localDevices = await listLocalDevices(requestOptions?.signal)
+      let cloudDevices: DeviceInfo[] = []
+      try {
+        cloudDevices = await listCloudDevices(requestOptions?.signal)
+      } catch (error) {
+        console.warn(
+          '[Wework] Failed to load cloud devices for project execution configuration',
+          error
+        )
+      }
+      return mergeDeviceLists(localDevices, cloudDevices) as Awaited<
+        ReturnType<WorkbenchServices['deviceApi']['listDevices']>
+      >
+    },
+  }
 
   const hybridRuntimeWorkApi: NonNullable<WorkbenchServices['runtimeWorkApi']> = {
     prepareRuntimeModel(data) {
@@ -1307,6 +1325,7 @@ export function createHybridWorkbenchServices(
       cloud: cloudServices.projectSpaceDetailServices?.cloud
         ? {
             ...cloudServices.projectSpaceDetailServices.cloud,
+            deviceApi: projectSpaceDeviceApi,
             pluginApi: projectPluginApi,
           }
         : undefined,

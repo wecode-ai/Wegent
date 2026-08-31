@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -42,7 +43,7 @@ type RuntimeWorkApi = NonNullable<WorkbenchServices['runtimeWorkApi']>
 interface ArchivedConversationsSettingsPageProps {
   api?: RuntimeWorkApi
   onOpenRuntimeTask?: (address: ReturnType<typeof archivedConversationAddress>) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
   onLeaveSettings?: () => void
 }
 
@@ -445,9 +446,13 @@ export function ArchivedConversationsSettingsPage({
         await unarchiveLocalHarnessSession(harnessSessionId)
         notifyLocalHarnessSessionsChanged()
       } else {
-        await api.unarchiveConversation(archivedConversationAddress(item))
+        const address = archivedConversationAddress(item)
+        await api.unarchiveConversation(address)
+        await onRefreshWorkLists?.({ unarchivedTasks: [address] })
       }
-      await onRefreshWorkLists?.()
+      if (harnessSessionId) {
+        await onRefreshWorkLists?.()
+      }
       setLastUnarchived(item)
       await loadArchivedConversations()
       track('feature_action_completed', {
