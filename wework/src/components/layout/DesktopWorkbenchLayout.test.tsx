@@ -5928,6 +5928,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(rightPanelShell).toHaveClass('h-full', 'min-h-0', 'overflow-hidden')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({

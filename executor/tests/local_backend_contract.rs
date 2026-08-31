@@ -558,6 +558,31 @@ async fn local_backend_runtime_rpc_handler_uses_default_runtime_work_handler() {
 }
 
 #[tokio::test]
+async fn local_backend_runtime_rpc_logs_accept_request_id_field() {
+    let transport = RecordingTransport::default();
+    let (event_tx, event_rx) = broadcast::channel(8);
+    let runner = LocalBackendRunner::new_for_app_sidecar_with_shared_runtime_work_handler(
+        local_backend_config(),
+        transport.clone(),
+        Arc::new(StaticRuntimeWorkHandler(json!({"success": true}))),
+        event_rx,
+    );
+    drop(event_tx);
+    runner.register_handlers();
+
+    let handler = transport.handler("runtime:rpc").unwrap();
+    let ack = handler(json!({
+        "request_id": "cloud-runtime-request-1",
+        "method": "runtime.tasks.list",
+        "payload": {}
+    }))
+    .await
+    .unwrap();
+
+    assert_eq!(ack["success"], true, "{ack}");
+}
+
+#[tokio::test]
 async fn local_backend_runtime_rpc_handler_compresses_large_ack_payloads() {
     let transport = RecordingTransport::default();
     let (event_tx, event_rx) = broadcast::channel(8);
