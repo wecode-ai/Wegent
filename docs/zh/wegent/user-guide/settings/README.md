@@ -73,7 +73,7 @@ Skills 是 Claude Code 的能力扩展包：
 
 应用开发者可以在 **设置 → 开发者凭据 → OAuth 应用** 中自行创建和管理外部 OAuth Client，用于让外部系统通过 Wegent 证明当前用户身份。`client_id` 在页面创建成功后获得；Confidential Client 的 `client_secret` 只显示一次。
 
-每个 OAuth App 只需要配置 Client 类型和精确的 Redirect URI。Token 生命周期、TokenIssuer 和 SigningKey 都由 Provider 统一管理，不需要开发者或管理员逐个配置。
+每个 OAuth App 需要配置应用名称、Client 类型，以及一个或多个精确匹配的 Redirect URI。Token 生命周期、TokenIssuer 和 SigningKey 都由 Provider 统一管理，不需要开发者或管理员逐个配置。
 
 开发者只能查看和维护自己创建的 OAuth App。管理员在 **管理后台 → 密钥管理 → OAuth 应用** 中只负责全局查看、停用和删除。
 

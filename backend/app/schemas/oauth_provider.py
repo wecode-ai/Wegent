@@ -5,9 +5,9 @@
 """Schemas for the constrained external OAuth provider."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, HttpUrl
 
 from app.schemas.kind import ObjectMeta, Status
 
@@ -18,6 +18,15 @@ OAUTH_ACCESS_TOKEN_TTL_SECONDS = 3600
 OAUTH_REFRESH_TOKEN_TTL_SECONDS = 2592000
 
 OAuthClientType = Literal["public", "confidential"]
+
+
+def _validate_redirect_uri(value: HttpUrl) -> HttpUrl:
+    if value.fragment is not None:
+        raise ValueError("redirect_uri must not contain a fragment")
+    return value
+
+
+OAuthRedirectUri = Annotated[HttpUrl, AfterValidator(_validate_redirect_uri)]
 
 
 class OAuthTokenIssuerRef(BaseModel):
@@ -61,7 +70,7 @@ class OAuthClientCreateRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     client_type: OAuthClientType = "public"
-    redirect_uris: list[HttpUrl] = Field(..., min_length=1, max_length=20)
+    redirect_uris: list[OAuthRedirectUri] = Field(..., min_length=1, max_length=20)
     description: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -70,7 +79,7 @@ class OAuthClientUpdateRequest(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     client_type: Optional[OAuthClientType] = None
-    redirect_uris: Optional[list[HttpUrl]] = Field(
+    redirect_uris: Optional[list[OAuthRedirectUri]] = Field(
         default=None, min_length=1, max_length=20
     )
     description: Optional[str] = Field(default=None, max_length=500)

@@ -4,7 +4,7 @@
 
 import logging
 
-from app.main import _request_context_fields
+from app.main import _request_context_fields, _should_capture_http_body
 
 
 def test_request_context_fields_ignore_non_object_json() -> None:
@@ -15,6 +15,11 @@ def test_request_context_fields_extract_object_identifiers() -> None:
     assert _request_context_fields(
         '{"task_id": 1, "subtask_id": "two", "user_id": 3}'
     ) == (1, "two", 3)
+
+
+def test_oauth_token_endpoint_body_is_excluded_from_telemetry() -> None:
+    assert _should_capture_http_body("/api/external/oauth/token") is False
+    assert _should_capture_http_body("/api/external/oauth/revoke") is True
 
 
 def test_access_logs_include_forwarded_headers(test_client, caplog):

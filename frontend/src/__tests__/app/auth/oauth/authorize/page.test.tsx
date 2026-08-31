@@ -3,14 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 
 import Page from '@/app/auth/oauth/authorize/page'
-import { oauthAuthorizationApis } from '@/apis/oauthProvider'
+import { OAuthAuthorizationRequest, oauthAuthorizationApis } from '@/apis/oauthProvider'
 import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 
 const mockReplace = jest.fn()
 const mockTranslate = (key: string) => key
+let mockRequestId = 'request-123'
 let mockUserState: {
   user: { user_name: string } | null
   isLoading: boolean
@@ -21,7 +22,7 @@ let mockUserState: {
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ replace: mockReplace }),
-  useSearchParams: () => new URLSearchParams('request_id=request-123'),
+  useSearchParams: () => new URLSearchParams(`request_id=${mockRequestId}`),
 }))
 
 jest.mock('@/features/common/UserContext', () => ({
@@ -48,6 +49,7 @@ describe('OAuth authorization page', () => {
     jest.clearAllMocks()
     sessionStorage.clear()
     window.history.replaceState({}, '', '/auth/oauth/authorize?request_id=request-123')
+    mockRequestId = 'request-123'
     mockUserState = {
       user: { user_name: 'alice' },
       isLoading: false,
@@ -87,5 +89,45 @@ describe('OAuth authorization page', () => {
       '/auth/oauth/authorize?request_id=request-123'
     )
     expect(mockedAuthorizationApis.getRequest).not.toHaveBeenCalled()
+  })
+
+  it('ignores stale request responses after the request ID changes', async () => {
+    let resolveFirstRequest!: (value: OAuthAuthorizationRequest) => void
+    mockedAuthorizationApis.getRequest
+      .mockImplementationOnce(
+        () =>
+          new Promise(resolve => {
+            resolveFirstRequest = resolve
+          })
+      )
+      .mockResolvedValueOnce({
+        request_id: 'request-456',
+        client_name: 'Current App',
+        client_id: 'wgo_current',
+        scope: 'userinfo.read',
+        redirect_uri: 'https://current.example/callback',
+      })
+
+    const { rerender } = render(<Page />)
+    await waitFor(() => {
+      expect(mockedAuthorizationApis.getRequest).toHaveBeenCalledWith('request-123')
+    })
+
+    mockRequestId = 'request-456'
+    rerender(<Page />)
+
+    expect(await screen.findByText('Current App')).toBeInTheDocument()
+    await act(async () => {
+      resolveFirstRequest({
+        request_id: 'request-123',
+        client_name: 'Stale App',
+        client_id: 'wgo_stale',
+        scope: 'userinfo.read',
+        redirect_uri: 'https://stale.example/callback',
+      })
+    })
+
+    expect(screen.queryByText('Stale App')).not.toBeInTheDocument()
+    expect(screen.getByText('Current App')).toBeInTheDocument()
   })
 })

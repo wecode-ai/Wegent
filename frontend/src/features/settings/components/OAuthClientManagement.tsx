@@ -348,6 +348,7 @@ export default function OAuthClientManagement({ mode = 'owner' }: OAuthClientMan
                     size="sm"
                     className="min-h-11"
                     onClick={() => setDeleteTarget(client)}
+                    aria-label={t('common:actions.delete')}
                     data-testid={`oauth-client-delete-${client.id}`}
                   >
                     <Trash2 className="h-4 w-4" />
@@ -458,6 +459,7 @@ export default function OAuthClientManagement({ mode = 'owner' }: OAuthClientMan
                 label="client_id"
                 value={credentials.clientId}
                 testId="oauth-client-copy-client-id"
+                copyLabel={t('common:actions.copy')}
                 onCopy={copy}
               />
               {credentials.clientSecret && (
@@ -465,6 +467,7 @@ export default function OAuthClientManagement({ mode = 'owner' }: OAuthClientMan
                   label="client_secret"
                   value={credentials.clientSecret}
                   testId="oauth-client-copy-client-secret"
+                  copyLabel={t('common:actions.copy')}
                   onCopy={copy}
                 />
               )}
@@ -525,11 +528,13 @@ function SecretRow({
   label,
   value,
   testId,
+  copyLabel,
   onCopy,
 }: {
   label: string
   value: string
   testId: string
+  copyLabel: string
   onCopy: (value: string) => Promise<void>
 }) {
   return (
@@ -542,6 +547,7 @@ function SecretRow({
           size="sm"
           className="min-h-11 min-w-11"
           onClick={() => void onCopy(value)}
+          aria-label={copyLabel}
           data-testid={testId}
         >
           <Copy className="h-4 w-4" />

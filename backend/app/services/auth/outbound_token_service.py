@@ -234,11 +234,7 @@ class OutboundTokenService:
                 .first()
             )
             if signing_key:
-                if (
-                    resource.spec.defaultTtlSeconds != OAUTH_ACCESS_TOKEN_TTL_SECONDS
-                    or resource.spec.maxTtlSeconds != OAUTH_ACCESS_TOKEN_TTL_SECONDS
-                ):
-                    resource.spec.defaultTtlSeconds = OAUTH_ACCESS_TOKEN_TTL_SECONDS
+                if resource.spec.maxTtlSeconds < OAUTH_ACCESS_TOKEN_TTL_SECONDS:
                     resource.spec.maxTtlSeconds = OAUTH_ACCESS_TOKEN_TTL_SECONDS
                     issuer_row.json = resource.model_dump()
                     db.flush()

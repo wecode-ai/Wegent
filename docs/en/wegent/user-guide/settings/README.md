@@ -73,7 +73,7 @@ Skills are Claude Code capability extension packages:
 
 Application developers can create and manage external OAuth clients under **Settings → Developer Credentials → OAuth Apps** so external systems can verify the current Wegent user's identity. The page returns the `client_id` after creation; a confidential client's `client_secret` is shown only once.
 
-Each OAuth App requires only a client type and exact redirect URI. The provider centrally manages token lifetimes, TokenIssuer, and SigningKey; developers and administrators do not configure them per application.
+Each OAuth App requires an application name, a client type, and one or more exact redirect URIs. The provider centrally manages token lifetimes, TokenIssuer, and SigningKey; developers and administrators do not configure them per application.
 
 Developers can view and maintain only the OAuth Apps they created. Administrators use **Administration → API Keys → OAuth Apps** only for global review, disabling, and deletion.
 

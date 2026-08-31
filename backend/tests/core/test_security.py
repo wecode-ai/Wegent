@@ -192,7 +192,7 @@ class TestTokenOperations:
 
         assert exc_info.value.status_code == 401
 
-    def test_verify_token_rejects_scoped_token(self):
+    def test_verify_token_rejects_scoped_token(self) -> None:
         """Scoped JWTs are capability tokens, not Wegent session tokens."""
         token = create_access_token({"sub": "testuser", "scope": "userinfo.read"})
 
@@ -203,7 +203,7 @@ class TestTokenOperations:
 
     def test_optional_token_lookup_rejects_scoped_token(
         self, test_db: Session, test_user: User
-    ):
+    ) -> None:
         token = create_access_token(
             {"sub": test_user.user_name, "scope": "userinfo.read"}
         )

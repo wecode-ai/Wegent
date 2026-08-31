@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -24,14 +25,14 @@ class FakeOAuthCache:
     def __init__(self) -> None:
         self.values: dict[str, object] = {}
 
-    async def get(self, key: str):
+    async def get(self, key: str) -> object | None:
         return self.values.get(key)
 
-    async def set(self, key: str, value, expire: int | None = None) -> bool:
+    async def set(self, key: str, value: object, expire: int | None = None) -> bool:
         self.values[key] = value
         return True
 
-    async def pop(self, key: str):
+    async def pop(self, key: str) -> object | None:
         return self.values.pop(key, None)
 
 
@@ -76,26 +77,12 @@ def _oauth_issuer_id(test_client: TestClient, access_token: str) -> int:
     return int(items[0]["id"])
 
 
-def test_authorization_code_refresh_and_auth_boundaries(
+def _authorize_client(
     test_client: TestClient,
-    test_admin_token: str,
     test_token: str,
-    monkeypatch,
-    caplog,
-):
-    cache = FakeOAuthCache()
-    monkeypatch.setattr(oauth_provider_module, "cache_manager", cache)
-    client = _create_oauth_client(test_client, test_admin_token)
-    assert client["client_secret"]
-
-    listed = test_client.get(
-        "/api/admin/oauth-clients",
-        headers={"Authorization": f"Bearer {test_admin_token}"},
-    )
-    assert listed.status_code == 200
-    assert listed.json()["items"][0]["client_secret"] is None
-
-    verifier = "oauth-pkce-verifier-" + ("a" * 48)
+    client: dict,
+    verifier: str,
+) -> str:
     authorize_response = test_client.get(
         "/api/external/oauth/authorize",
         params={
@@ -119,7 +106,7 @@ def test_authorization_code_refresh_and_auth_boundaries(
         headers={"Authorization": f"Bearer {test_token}"},
     )
     assert details.status_code == 200
-    assert details.json()["client_name"] == "external-app-confidential"
+    assert details.json()["client_name"] == client["name"]
     assert details.json()["scope"] == "userinfo.read"
 
     approval = test_client.post(
@@ -130,21 +117,16 @@ def test_authorization_code_refresh_and_auth_boundaries(
     approval_query = parse_qs(urlparse(approval.json()["redirect_url"]).query)
     assert approval_query["state"] == ["state-123"]
     assert approval_query["iss"] == [oauth_provider_module.oauth_provider_issuer()]
-    code = approval_query["code"][0]
+    return approval_query["code"][0]
 
-    invalid_client_response = test_client.post(
-        "/api/external/oauth/token",
-        headers={"Authorization": _basic_auth(client["client_id"], "wrong-secret")},
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": "https://client.example/callback",
-            "code_verifier": verifier,
-        },
-    )
-    assert invalid_client_response.status_code == 401
-    assert invalid_client_response.headers["www-authenticate"].startswith("Basic ")
 
+def _exchange_authorization_code(
+    test_client: TestClient,
+    client: dict,
+    *,
+    code: str,
+    verifier: str,
+) -> dict:
     token_response = test_client.post(
         "/api/external/oauth/token",
         headers={
@@ -159,7 +141,16 @@ def test_authorization_code_refresh_and_auth_boundaries(
     )
     assert token_response.status_code == 200
     assert token_response.headers["cache-control"] == "no-store"
-    tokens = token_response.json()
+    return token_response.json()
+
+
+def _assert_external_access_token_boundaries(
+    test_client: TestClient,
+    *,
+    client: dict,
+    tokens: dict,
+    session_token: str,
+) -> None:
     access_token_header = jwt.get_unverified_header(tokens["access_token"])
     access_token_claims = jwt.decode(
         tokens["access_token"], options={"verify_signature": False}
@@ -193,9 +184,82 @@ def test_authorization_code_refresh_and_auth_boundaries(
 
     session_token_on_userinfo = test_client.get(
         "/api/external/oauth/userinfo",
-        headers={"Authorization": f"Bearer {test_token}"},
+        headers={"Authorization": f"Bearer {session_token}"},
     )
     assert session_token_on_userinfo.status_code == 401
+
+
+def test_confidential_client_secret_is_shown_only_at_creation(
+    test_client: TestClient,
+    test_admin_token: str,
+) -> None:
+    client = _create_oauth_client(test_client, test_admin_token)
+    assert client["client_secret"]
+
+    listed = test_client.get(
+        "/api/admin/oauth-clients",
+        headers={"Authorization": f"Bearer {test_admin_token}"},
+    )
+
+    assert listed.status_code == 200
+    assert listed.json()["items"][0]["client_secret"] is None
+
+
+def test_authorization_code_access_token_and_auth_boundaries(
+    test_client: TestClient,
+    test_admin_token: str,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(oauth_provider_module, "cache_manager", FakeOAuthCache())
+    client = _create_oauth_client(test_client, test_admin_token)
+    verifier = "oauth-pkce-verifier-" + ("a" * 48)
+    code = _authorize_client(test_client, test_token, client, verifier)
+
+    invalid_client_response = test_client.post(
+        "/api/external/oauth/token",
+        headers={"Authorization": _basic_auth(client["client_id"], "wrong-secret")},
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": "https://client.example/callback",
+            "code_verifier": verifier,
+        },
+    )
+    assert invalid_client_response.status_code == 401
+    assert invalid_client_response.headers["www-authenticate"].startswith("Basic ")
+
+    tokens = _exchange_authorization_code(
+        test_client,
+        client,
+        code=code,
+        verifier=verifier,
+    )
+    _assert_external_access_token_boundaries(
+        test_client,
+        client=client,
+        tokens=tokens,
+        session_token=test_token,
+    )
+
+
+def test_refresh_token_rotation_rejects_replay_and_revokes_family(
+    test_client: TestClient,
+    test_admin_token: str,
+    test_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setattr(oauth_provider_module, "cache_manager", FakeOAuthCache())
+    client = _create_oauth_client(test_client, test_admin_token)
+    verifier = "oauth-pkce-verifier-" + ("b" * 48)
+    code = _authorize_client(test_client, test_token, client, verifier)
+    tokens = _exchange_authorization_code(
+        test_client,
+        client,
+        code=code,
+        verifier=verifier,
+    )
 
     refresh_response = test_client.post(
         "/api/external/oauth/token",
@@ -284,7 +348,7 @@ def test_public_client_and_invalid_redirect(
     assert error_query["iss"] == [oauth_provider_module.oauth_provider_issuer()]
 
 
-def test_oauth_provider_metadata(test_client: TestClient):
+def test_oauth_provider_metadata(test_client: TestClient) -> None:
     response = test_client.get("/.well-known/oauth-authorization-server/api")
     assert response.status_code == 200
     payload = response.json()
@@ -345,10 +409,10 @@ def test_oauth_client_creation_bootstraps_signing_resources(
     assert len(jwks_response.json()["keys"]) == 1
 
 
-def test_oauth_client_reuses_existing_provider_issuer_and_normalizes_ttl(
+def test_oauth_client_reuses_existing_provider_issuer_and_preserves_ttl(
     test_client: TestClient,
     test_admin_token: str,
-):
+) -> None:
     admin_headers = {"Authorization": f"Bearer {test_admin_token}"}
     signing_key = test_client.post(
         "/api/admin/signing-keys",
@@ -363,8 +427,8 @@ def test_oauth_client_reuses_existing_provider_issuer_and_normalizes_ttl(
             "signing_key_id": signing_key["id"],
             "issuer": oauth_provider_module.oauth_provider_issuer(),
             "audience": "wegent-userinfo",
-            "default_ttl_seconds": 600,
-            "max_ttl_seconds": 600,
+            "default_ttl_seconds": 1800,
+            "max_ttl_seconds": 7200,
             "enabled": True,
         },
     ).json()
@@ -386,7 +450,52 @@ def test_oauth_client_reuses_existing_provider_issuer_and_normalizes_ttl(
     )
     assert issuers_response.json()["total"] == 1
     assert issuers_response.json()["items"][0]["id"] == issuer["id"]
-    assert issuers_response.json()["items"][0]["default_ttl_seconds"] == 3600
+    assert issuers_response.json()["items"][0]["default_ttl_seconds"] == 1800
+    assert issuers_response.json()["items"][0]["max_ttl_seconds"] == 7200
+
+
+def test_oauth_client_raises_only_insufficient_provider_issuer_max_ttl(
+    test_client: TestClient,
+    test_admin_token: str,
+) -> None:
+    admin_headers = {"Authorization": f"Bearer {test_admin_token}"}
+    signing_key = test_client.post(
+        "/api/admin/signing-keys",
+        headers=admin_headers,
+        json={"name": "short-oauth-provider-key"},
+    ).json()
+    issuer = test_client.post(
+        "/api/admin/token-issuers",
+        headers=admin_headers,
+        json={
+            "name": "short-oauth-provider-issuer",
+            "signing_key_id": signing_key["id"],
+            "issuer": oauth_provider_module.oauth_provider_issuer(),
+            "audience": "wegent-userinfo",
+            "default_ttl_seconds": 600,
+            "max_ttl_seconds": 600,
+            "enabled": True,
+        },
+    ).json()
+
+    response = test_client.post(
+        "/api/oauth-clients",
+        headers=admin_headers,
+        json={
+            "name": "client-raising-provider-limit",
+            "client_type": "public",
+            "redirect_uris": ["https://client.example/callback"],
+        },
+    )
+
+    assert response.status_code == 201
+    issuers_response = test_client.get(
+        "/api/admin/token-issuers",
+        headers=admin_headers,
+    )
+    assert issuers_response.json()["total"] == 1
+    assert issuers_response.json()["items"][0]["id"] == issuer["id"]
+    assert issuers_response.json()["items"][0]["default_ttl_seconds"] == 600
     assert issuers_response.json()["items"][0]["max_ttl_seconds"] == 3600
 
 
@@ -565,6 +674,35 @@ def test_oauth_client_rejects_provider_managed_fields(
     )
 
     assert response.status_code == 422
+
+
+def test_oauth_client_rejects_redirect_uri_fragments_on_create_and_update(
+    test_client: TestClient,
+    test_admin_token: str,
+) -> None:
+    headers = {"Authorization": f"Bearer {test_admin_token}"}
+    create_with_fragment = test_client.post(
+        "/api/oauth-clients",
+        headers=headers,
+        json={
+            "name": "fragment-client",
+            "redirect_uris": ["https://client.example/callback#done"],
+        },
+    )
+    client = _create_oauth_client(
+        test_client,
+        test_admin_token,
+        client_type="public",
+        name="valid-redirect-client",
+    )
+    update_with_fragment = test_client.put(
+        f"/api/oauth-clients/{client['id']}",
+        headers=headers,
+        json={"redirect_uris": ["https://client.example/callback#done"]},
+    )
+
+    assert create_with_fragment.status_code == 422
+    assert update_with_fragment.status_code == 422
 
 
 def test_oauth_client_defaults_to_public(

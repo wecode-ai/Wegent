@@ -71,6 +71,10 @@ describe('OAuthClientManagement', () => {
     expect(screen.getByText('oauth_clients.client_id')).toBeInTheDocument()
     expect(screen.getByTestId('oauth-client-id-8')).toHaveTextContent('wgo_client')
     expect(screen.getByTestId('oauth-client-create-button')).toBeEnabled()
+    expect(screen.getByTestId('oauth-client-delete-8')).toHaveAttribute(
+      'aria-label',
+      'common:actions.delete'
+    )
   })
 
   it('opens client creation without preconfigured signing resources', async () => {
@@ -115,6 +119,10 @@ describe('OAuthClientManagement', () => {
     })
 
     expect(await screen.findByTestId('oauth-client-copy-client-id')).toBeInTheDocument()
+    expect(screen.getByTestId('oauth-client-copy-client-id')).toHaveAttribute(
+      'aria-label',
+      'common:actions.copy'
+    )
     expect(screen.getAllByText('wgo_public_client')).toHaveLength(2)
     expect(screen.getByText('oauth_clients.public_credential_note')).toBeInTheDocument()
     expect(screen.queryByTestId('oauth-client-copy-client-secret')).not.toBeInTheDocument()

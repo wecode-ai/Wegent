@@ -69,6 +69,9 @@ HIGH_FREQUENCY_HTTP_PATHS = {
     "/api/internal/callback/batch",
 }
 SENSITIVE_QUERY_PARAM_NAMES = {"access_token", "api_key", "signature", "token"}
+SENSITIVE_HTTP_BODY_PATHS = {
+    f"{settings.API_PREFIX}/external/oauth/token",
+}
 
 # Initialize logging at module level for use in lifespan
 setup_logging()
@@ -128,6 +131,10 @@ def _request_context_fields(request_body: str) -> tuple[object, object, object]:
         body_json.get("subtask_id"),
         body_json.get("user_id"),
     )
+
+
+def _should_capture_http_body(path: str) -> bool:
+    return path not in SENSITIVE_HTTP_BODY_PATHS
 
 
 def _load_system_initialization_state(logger: logging.Logger) -> None:
@@ -679,6 +686,7 @@ def create_app():
             otel_config.enabled
             and otel_config.capture_request_body
             and request.method in ("POST", "PUT", "PATCH")
+            and _should_capture_http_body(request.url.path)
         ):
             try:
                 # Read the body
@@ -757,7 +765,9 @@ def create_app():
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body:
+                    if otel_config.capture_response_body and _should_capture_http_body(
+                        request.url.path
+                    ):
                         if not isinstance(response, StreamingResponse):
                             try:
                                 # For regular responses, we need to read and reconstruct the body

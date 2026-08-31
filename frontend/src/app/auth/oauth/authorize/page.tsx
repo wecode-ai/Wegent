@@ -17,6 +17,11 @@ import { POST_LOGIN_REDIRECT_KEY } from '@/features/login/constants'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type DecisionState = 'idle' | 'submitting' | 'approved' | 'denied' | 'error'
+type Decision = {
+  requestId: string
+  state: DecisionState
+  error: string
+}
 
 function currentTarget() {
   if (typeof window === 'undefined') return paths.auth.oauth_authorize.getHref()
@@ -29,9 +34,15 @@ function OAuthAuthorizeContent() {
   const searchParams = useSearchParams()
   const { user, isLoading } = useUser()
   const requestId = searchParams.get('request_id') ?? ''
-  const [request, setRequest] = useState<OAuthAuthorizationRequest | null>(null)
-  const [state, setState] = useState<DecisionState>('idle')
-  const [error, setError] = useState('')
+  const [loadedRequest, setLoadedRequest] = useState<OAuthAuthorizationRequest | null>(null)
+  const [decision, setDecision] = useState<Decision>({
+    requestId: '',
+    state: 'idle',
+    error: '',
+  })
+  const request = loadedRequest?.request_id === requestId ? loadedRequest : null
+  const state = decision.requestId === requestId ? decision.state : 'idle'
+  const error = decision.requestId === requestId ? decision.error : ''
 
   useEffect(() => {
     if (isLoading || user || !requestId) return
@@ -42,29 +53,43 @@ function OAuthAuthorizeContent() {
 
   useEffect(() => {
     if (!user || !requestId) return
+    let active = true
+    setLoadedRequest(null)
+    setDecision({ requestId, state: 'idle', error: '' })
     oauthAuthorizationApis
       .getRequest(requestId)
-      .then(setRequest)
-      .catch(loadError => {
-        setError(loadError instanceof Error ? loadError.message : t('auth.oauth_authorize.failed'))
-        setState('error')
+      .then(nextRequest => {
+        if (active) setLoadedRequest(nextRequest)
       })
+      .catch(loadError => {
+        if (!active) return
+        setDecision({
+          requestId,
+          state: 'error',
+          error: loadError instanceof Error ? loadError.message : t('auth.oauth_authorize.failed'),
+        })
+      })
+    return () => {
+      active = false
+    }
   }, [requestId, t, user])
 
   async function decide(approved: boolean) {
-    setState('submitting')
-    setError('')
+    if (!request || request.request_id !== requestId) return
+    setDecision({ requestId, state: 'submitting', error: '' })
     try {
       const result = approved
         ? await oauthAuthorizationApis.approve(requestId)
         : await oauthAuthorizationApis.deny(requestId)
-      setState(approved ? 'approved' : 'denied')
+      setDecision({ requestId, state: approved ? 'approved' : 'denied', error: '' })
       window.location.assign(result.redirect_url)
     } catch (decisionError) {
-      setError(
-        decisionError instanceof Error ? decisionError.message : t('auth.oauth_authorize.failed')
-      )
-      setState('error')
+      setDecision({
+        requestId,
+        state: 'error',
+        error:
+          decisionError instanceof Error ? decisionError.message : t('auth.oauth_authorize.failed'),
+      })
     }
   }
 

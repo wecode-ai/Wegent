@@ -14,6 +14,14 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+ATOMIC_POP_SCRIPT = """
+local value = redis.call('GET', KEYS[1])
+if value then
+    redis.call('DEL', KEYS[1])
+end
+return value
+"""
+
 
 class RedisCache:
     """Redis-based cache manager for GitHub repositories"""
@@ -206,7 +214,7 @@ class RedisCache:
         try:
             client = await self._get_client()
             try:
-                data = await client.getdel(key)
+                data = await client.eval(ATOMIC_POP_SCRIPT, 1, key)
                 if data is None:
                     return None
                 try:
