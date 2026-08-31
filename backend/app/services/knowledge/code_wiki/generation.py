@@ -28,7 +28,12 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
-from app.models.wiki import WikiGeneration, WikiGenerationStatus, WikiGenerationType
+from app.models.wiki import (
+    WikiContent,
+    WikiGeneration,
+    WikiGenerationStatus,
+    WikiGenerationType,
+)
 from app.services.knowledge.code_wiki.projection import ProjectionSideEffects
 from app.services.knowledge.code_wiki.publish_gate import PublishPolicy
 from app.services.knowledge.code_wiki.publisher import (
@@ -36,6 +41,10 @@ from app.services.knowledge.code_wiki.publisher import (
     publish_generation,
     published_generation_id,
     read_version_pages,
+)
+from app.services.knowledge.code_wiki.quality_gate import (
+    QUALITY_REVIEW_EXT_KEY,
+    review_state,
 )
 from app.services.knowledge.code_wiki.run_mode import (
     ChangedPath,
@@ -455,6 +464,17 @@ def version_page_count(db: Session, generation_id: int) -> int:
 
 
 @dataclass(frozen=True)
+class RunProgress:
+    """A reader-facing stage derived from durable generation evidence."""
+
+    stage: str
+    current_step: int
+    total_steps: int
+    pages_written: int
+    pages_total: int
+
+
+@dataclass(frozen=True)
 class RunState:
     """What is happening to a wiki right now, as a reader needs to see it."""
 
@@ -468,6 +488,7 @@ class RunState:
     # trigger reclaims it and starts afresh, so the caller may act on it — which is
     # the whole reason this is reported rather than folded into "running".
     is_stale: bool = False
+    progress: Optional[RunProgress] = None
 
 
 def reader_status(generation: WikiGeneration) -> str:
@@ -520,6 +541,7 @@ def current_run_state(
             generation_id=latest.id,
             started_at=latest.created_at,
             is_stale=stale,
+            progress=_run_progress(db, latest),
         )
 
     if reported == "completed":
@@ -534,6 +556,49 @@ def current_run_state(
         error_message=failure_reason(latest),
         failure_code=failure_code(latest),
     )
+
+
+def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
+    """Describe progress without persisting a second workflow state machine."""
+    quality_review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    if not quality_review.get("required"):
+        return RunProgress("generating", 0, 0, 0, 0)
+
+    pages_written = (
+        db.query(WikiContent).filter(WikiContent.generation_id == generation.id).count()
+    )
+
+    plan = review_state(generation, phase="plan")
+    plan_evidence = plan.get("handoff") or plan.get("review") or {}
+    pages_total = len(plan_evidence.get("paths") or [])
+    if plan["state"] != "passed":
+        if plan["state"] == "ready":
+            return RunProgress("plan_review", 1, 4, pages_written, pages_total)
+        if plan["state"] == "changes_requested":
+            stage = (
+                "revising_plan"
+                if plan["nextAction"] == "revise_plan_then_open_plan"
+                else "finishing"
+            )
+            return RunProgress(stage, 1, 4, pages_written, pages_total)
+        return RunProgress("planning", 1, 4, pages_written, pages_total)
+
+    qa = review_state(generation, phase="qa")
+    if qa["state"] == "not_started":
+        return RunProgress("writing", 2, 4, pages_written, pages_total)
+    if qa["state"] == "ready":
+        return RunProgress("qa_review", 3, 4, pages_written, pages_total)
+    if qa["state"] == "passed":
+        return RunProgress("publishing", 4, 4, pages_written, pages_total)
+
+    recheck = review_state(generation, phase="recheck")
+    if recheck["state"] == "not_started":
+        return RunProgress("repairing", 3, 4, pages_written, pages_total)
+    if recheck["state"] == "ready":
+        return RunProgress("recheck", 4, 4, pages_written, pages_total)
+    if recheck["state"] == "passed":
+        return RunProgress("publishing", 4, 4, pages_written, pages_total)
+    return RunProgress("finishing", 4, 4, pages_written, pages_total)
 
 
 @dataclass(frozen=True)

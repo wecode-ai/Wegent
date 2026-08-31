@@ -514,6 +514,92 @@ def test_a_running_wiki_is_reported_as_busy(
     assert not state.is_stale
 
 
+def test_coordinate_progress_is_derived_from_review_evidence(
+    test_db: Session, knowledge_base: Kind, test_user: User
+):
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    _write_page(test_db, generation, "index", "# Wiki")
+
+    def set_review(*, handoffs: list[dict], checkpoints: list[dict]) -> None:
+        generation.ext = {
+            "qualityReview": {
+                "required": True,
+                "handoffs": handoffs,
+                "checkpoints": checkpoints,
+            }
+        }
+        test_db.commit()
+
+    set_review(handoffs=[], checkpoints=[])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("planning", 1)
+    assert progress.pages_written == 1
+
+    planned_paths = ["index", "architecture"]
+    plan_handoff = {"phase": "plan", "attempt": 1, "paths": planned_paths}
+    set_review(handoffs=[plan_handoff], checkpoints=[])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "plan_review"
+    assert progress.pages_total == 2
+
+    plan_changes = {
+        "phase": "plan",
+        "attempt": 1,
+        "status": "changes_requested",
+        "paths": planned_paths,
+    }
+    set_review(handoffs=[plan_handoff], checkpoints=[plan_changes])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "revising_plan"
+
+    plan_passed = {
+        "phase": "plan",
+        "attempt": 1,
+        "status": "passed",
+        "paths": planned_paths,
+    }
+    set_review(handoffs=[plan_handoff], checkpoints=[plan_passed])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("writing", 2)
+
+    qa_handoff = {"phase": "qa", "attempt": 1}
+    set_review(handoffs=[plan_handoff, qa_handoff], checkpoints=[plan_passed])
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("qa_review", 3)
+
+    qa_changes = {"phase": "qa", "attempt": 1, "status": "changes_requested"}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff],
+        checkpoints=[plan_passed, qa_changes],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "repairing"
+
+    recheck_handoff = {"phase": "recheck", "attempt": 1}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff, recheck_handoff],
+        checkpoints=[plan_passed, qa_changes],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (progress.stage, progress.current_step) == ("recheck", 4)
+
+    recheck_passed = {"phase": "recheck", "attempt": 1, "status": "passed"}
+    set_review(
+        handoffs=[plan_handoff, qa_handoff, recheck_handoff],
+        checkpoints=[plan_passed, qa_changes, recheck_passed],
+    )
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and progress.stage == "publishing"
+
+
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
     test_db: Session, knowledge_base: Kind, test_user: User
 ):

@@ -33,6 +33,7 @@ import type { KnowledgeBase } from '@/types/knowledge'
 import { PageOutline } from './PageOutline'
 import { RunHistory } from './RunHistory'
 import { failureText } from './failureText'
+import { GenerationProgress } from './GenerationProgress'
 import { WikiNavigation } from './WikiNavigation'
 import { WikiPageContent } from './WikiPageContent'
 
@@ -198,6 +199,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
   const pagesRequest = useRef(0)
+  const observedRun = useRef<Pick<CodeWikiRunStatus, 'generation_id' | 'status'> | null>(null)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -206,10 +208,10 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const emptyState = emptyStateText(runStatus.status, t)
 
   const reloadPages = useCallback(
-    async (showError = true) => {
+    async (showError = true, showLoading = true) => {
       const request = pagesRequest.current + 1
       pagesRequest.current = request
-      setLoading(true)
+      if (showLoading) setLoading(true)
 
       try {
         const response = await codeWikiApi.pages(wiki.id)
@@ -217,14 +219,17 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
 
         setPages(response.pages)
         const first = firstReadable(response.pages)
-        if (first) setActivePath(first.path)
+        setActivePath(current => {
+          const stillExists = current ? findByPath(response.pages, current) : null
+          return stillExists?.has_content ? current : (first?.path ?? '')
+        })
       } catch (error) {
         if (showError && pagesRequest.current === request) {
           toast.error(error instanceof Error ? error.message : String(error))
         }
         throw error
       } finally {
-        if (pagesRequest.current === request) setLoading(false)
+        if (showLoading && pagesRequest.current === request) setLoading(false)
       }
     },
     [wiki.id]
@@ -236,6 +241,26 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
       pagesRequest.current += 1
     }
   }, [reloadPages])
+
+  const runState = runStatus.status?.status
+  const runGenerationId = runStatus.status?.generation_id
+
+  useEffect(() => {
+    if (!runState || runGenerationId === undefined) return
+
+    const previous = observedRun.current
+    observedRun.current = { status: runState, generation_id: runGenerationId }
+    if (
+      previous?.status === 'running' &&
+      previous.generation_id === runGenerationId &&
+      runState === 'completed'
+    ) {
+      // Status is intentionally the only thing polled during a long run. Once the
+      // publication transaction completes, refresh the heavier tree exactly once so
+      // navigation and the currently selected document move to the new version too.
+      void reloadPages(true, false).catch(() => undefined)
+    }
+  }, [reloadPages, runGenerationId, runState])
 
   const handleRepublished = useCallback(async () => {
     // A restore replaces the whole published version. Re-fetch its tree so both
@@ -435,6 +460,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
+          <GenerationProgress status={runStatus.status} />
           {pages.length === 0 ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 py-16">
               <p className="text-text-secondary" data-testid="code-wiki-empty-title">

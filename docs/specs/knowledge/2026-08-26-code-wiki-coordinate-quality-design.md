@@ -22,8 +22,8 @@ OpenWiki 的无上限多智能体循环。
 - Team 由 Writer leader 和一个 Reviewer 组成，collaboration model 为 `coordinate`。
 - Reviewer 合并 plan critic 与 content QA 职责。它是协作性质量角色，不是权限隔离或恶意输入
   安全审计边界；两个 Bot 仍在同一 Task 与工作环境中运行。
-- 不修改现有 Wiki Reader、任务 UI 或发布版本模型。质量失败后不发布，用户继续看到旧 Wiki，
-  后续仍可通过既有“重新生成”再次运行。
+- 不修改任务 UI 或发布版本模型。Wiki Reader 只展示由持久化 review 证据派生的只读进度；质量
+  失败后不发布，用户继续看到旧 Wiki，后续仍可通过既有“重新生成”再次运行。
 - 不构建通用 benchmark 平台。本期只在固定 `main` commit 上运行旧 Solo 与新 Coordinate 的
   人工 A/B 对照。
 
@@ -87,6 +87,16 @@ subagent 生命周期继续用于普通任务展示和诊断，但不参与 Wiki
 作为协作性质量角色，而不是针对恶意 Writer 的安全隔离角色，避免依赖 prompt 文本解析和两条异步
 事件链的时序关联。
 
+## Reader 进度投影
+
+运行状态 API 从 `qualityReview` handoff/checkpoint 和当前候选页面数量实时派生进度，不另存一套
+总体流程状态。Coordinate full rebuild 展示四个有证据的阶段：规划、撰写、QA、发布；计划复审、
+QA 修复和 Recheck 使用各自更具体的文案。没有质量 review 证据的旧版、Solo 或 incremental run
+只展示通用“正在生成”，不伪造阶段编号或完成百分比。首次生成和已有 Wiki 的重新生成均在 Reader
+主内容区看到默认展开、可折叠的四阶段卡片；计划通过后显示计划页总数，撰写阶段显示候选页完成数。
+状态进入 `running` 时启动轮询、离开时停止，因此从已完成页面手动重新生成也会持续刷新；状态转为
+`completed` 时重新加载页面树并尽量保留当前阅读路径。stale 或已结束任务不再显示运行进度。
+
 ## 验证与 A/B
 
 以已提交的 Wegent `main` SHA、相同模型、语言和 full rebuild 参数，创建两个隔离的临时 Code
@@ -110,9 +120,9 @@ writer flow with one Writer leader and one cooperative Reviewer in the existing 
 and retained Solo A/B baseline runs remain lean. This is not an access-control boundary: both bots
 still run in the same task environment.
 
-No candidate-version UI, confirmation step, Reader change, or benchmark platform is added. A failed
-quality gate publishes nothing, so the previously published Wiki remains visible and a normal
-regeneration can be run later.
+No candidate-version UI, confirmation step, task UI, or benchmark platform is added. The Reader adds
+only a derived progress display. A failed quality gate publishes nothing, so the previously published
+Wiki remains visible and a normal regeneration can be run later.
 
 ## Bounded Protocol
 
@@ -137,6 +147,19 @@ belong to the plan, QA coverage of every focus path, plus either passed QA or
 QA changes followed by passed recheck, and it requires the latest passing checkpoint fingerprint to
 match the pages being published. The collaboration improves quality but is deliberately not treated
 as an access-control boundary against a malicious Writer.
+
+## Reader Progress Projection
+
+The polled run-status API derives progress from durable handoffs, checkpoints, and the candidate page
+count instead of persisting another workflow state. Coordinate full rebuilds expose four evidenced
+steps: planning, writing, QA, and publishing, with specific labels for plan revision, QA repair, and
+Recheck. Legacy, Solo, and incremental runs expose only generic generation with no invented step or
+percentage. The Reader main area shows the same expanded-by-default, collapsible four-step card for
+initial generation and regeneration. Once the Plan passes it shows the planned page total, and while
+writing it shows candidate pages written versus planned. Polling starts whenever status enters
+`running` and stops when it leaves, including a manual regeneration begun from an idle page. On
+completion the Reader reloads the page tree while preserving the current path when possible. Terminal
+and stale runs do not show active progress.
 
 ## Evaluation
 
