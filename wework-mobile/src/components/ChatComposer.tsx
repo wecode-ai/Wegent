@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'

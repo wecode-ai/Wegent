@@ -1,4 +1,4 @@
-import { Ionicons } from '@expo/vector-icons'
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { GlassView } from 'expo-glass-effect'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native'

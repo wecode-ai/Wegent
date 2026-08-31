@@ -46,6 +46,7 @@ import {
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
 import type { BrowserAnnotationController } from './browser-annotation-controller.js'
+import { RotatingLog } from '../runtime/rotating-log.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -198,6 +199,11 @@ export function createElectronCapabilityRouter(
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
   const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const filePreviewLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
@@ -205,6 +211,10 @@ export function createElectronCapabilityRouter(
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
   router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('diagnostics.filePreview', params => {
+    const event = recordParam(params, 'event')
+    return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))

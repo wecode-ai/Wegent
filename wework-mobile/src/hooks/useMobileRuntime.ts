@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto'
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { AppState } from 'react-native'
 
 import { chatReducer } from '@/domain/chatReducer'
 import { composerApps } from '@/domain/composerApps'
@@ -14,10 +15,11 @@ import {
   isTerminalRuntimeEvent,
   RuntimeTaskLifecycleProjection,
   runtimeTaskKey,
+  shouldReloadRuntimeWork,
   type RuntimeSendTransition,
 } from '@/domain/runtimeTaskLifecycle'
 import { createConversationWorkspace } from '@/domain/runtimeConversationWorkspace'
-import { allWorkspaces, flattenConversations } from '@/domain/work'
+import { allWorkspaces, flattenConversations, runtimeWorkContainsTask } from '@/domain/work'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { RuntimeApi } from '@/services/runtimeApi'
 import {
@@ -27,6 +29,7 @@ import {
   type RuntimePermissionMode,
 } from '@/services/runtimePermissionPreference'
 import { RuntimeStream } from '@/services/runtimeStream'
+import { RuntimeWorkInvalidator } from '@/services/runtimeWorkInvalidator'
 import type {
   ChatMessage,
   ConversationItem,
@@ -92,6 +95,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
   const stream = useMemo(() => new RuntimeStream(config), [config])
   const lifecycle = useMemo(() => new RuntimeTaskLifecycleProjection(), [api])
   const [work, setWork] = useState(EMPTY_WORK)
+  const workRef = useRef<RuntimeWorkListResponse>(EMPTY_WORK)
   const [taskRunningByKey, setTaskRunningByKey] = useState<ReadonlyMap<string, boolean>>(
     () => new Map()
   )
@@ -157,10 +161,23 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     const requestId = ++workRequestIdRef.current
     const nextWork = await api.listWork()
     if (requestId !== workRequestIdRef.current) return nextWork
+    workRef.current = nextWork
     setWork(nextWork)
     if (lifecycle.syncWork(nextWork)) publishTaskLifecycle()
     return nextWork
   }, [api, lifecycle, publishTaskLifecycle])
+
+  const workInvalidator = useMemo(
+    () =>
+      new RuntimeWorkInvalidator(async () => {
+        await reloadWork()
+      }),
+    [reloadWork]
+  )
+
+  const invalidateWork = useCallback(() => {
+    void workInvalidator.invalidate().catch(cause => setError(messageFrom(cause)))
+  }, [workInvalidator])
 
   const reloadTranscript = useCallback(
     async (address: RuntimeTaskAddress) => {
@@ -238,22 +255,31 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
 
   useEffect(
     () =>
-      stream.subscribeLifecycle(
-        (address, event) => {
-          if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
-            publishTaskLifecycle()
-          }
-          if (event.name === 'runtime.task.title.updated') {
-            void reloadWork().catch(cause => setError(messageFrom(cause)))
-          }
-          if (isTerminalRuntimeEvent(event.name)) {
+      stream.subscribeLifecycle((address, event) => {
+        const taskKnown = runtimeWorkContainsTask(workRef.current, address)
+        if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
+          publishTaskLifecycle()
+        }
+        if (shouldReloadRuntimeWork(event.name, taskKnown)) invalidateWork()
+        if (isTerminalRuntimeEvent(event.name)) {
+          const current = currentAddressRef.current
+          if (current && runtimeTaskKey(current) === runtimeTaskKey(address)) {
             void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
           }
-        },
-        () => void reloadWork().catch(cause => setError(messageFrom(cause)))
-      ),
-    [lifecycle, publishTaskLifecycle, reloadTranscript, reloadWork, stream]
+        }
+      }, invalidateWork),
+    [invalidateWork, lifecycle, publishTaskLifecycle, reloadTranscript, stream]
   )
+
+  useEffect(() => {
+    let previousState = AppState.currentState
+    const subscription = AppState.addEventListener('change', nextState => {
+      const becameActive = nextState === 'active' && previousState !== 'active'
+      previousState = nextState
+      if (becameActive) invalidateWork()
+    })
+    return () => subscription.remove()
+  }, [invalidateWork])
 
   useEffect(() => {
     if (!selectedWorkspace) {

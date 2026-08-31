@@ -1,6 +1,6 @@
 import * as WebBrowser from 'expo-web-browser'
 import { AppState } from 'react-native'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
   createAuthorizationSession,
@@ -16,6 +16,7 @@ import {
   type BackendConfig,
   type RuntimeSessionConfig,
 } from '@/services/backendConfig'
+import { loadBackendAddress, saveBackendAddress } from '@/services/backendAddressStore'
 
 export type AuthStatus =
   'initializing' | 'unauthenticated' | 'authorizing' | 'authenticated' | 'error'
@@ -24,8 +25,10 @@ export interface WegentAuthState {
   status: AuthStatus
   config: RuntimeSessionConfig | null
   backend: BackendConfig | null
+  backendUrl: string
   user: WegentUser | null
   error: string | null
+  setBackendUrl: (value: string) => void
   login: () => Promise<void>
   logout: () => Promise<void>
   refresh: () => Promise<boolean>
@@ -36,7 +39,7 @@ const MIN_REFRESH_DELAY_MS = 1000
 const credentials = new DeviceCredentialService()
 
 export function useWegentAuth(): WegentAuthState {
-  const backendInput = useMemo(configuredBackendUrl, [])
+  const [backendInput, setBackendInput] = useState('')
   const [status, setStatus] = useState<AuthStatus>('initializing')
   const [backend, setBackend] = useState<BackendConfig | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(null)
@@ -86,7 +89,14 @@ export function useWegentAuth(): WegentAuthState {
     const generation = activeGeneration.current
     void (async () => {
       try {
-        const config = await resolveBackendConfig(backendInput)
+        const backendUrl = (await loadBackendAddress()) ?? configuredBackendUrl()
+        if (activeGeneration.current !== generation) return
+        setBackendInput(backendUrl ?? '')
+        if (!backendUrl) {
+          setStatus('unauthenticated')
+          return
+        }
+        const config = await resolveBackendConfig(backendUrl)
         await checkBackendHealth(config)
         if (activeGeneration.current !== generation) return
         setBackend(config)
@@ -107,7 +117,15 @@ export function useWegentAuth(): WegentAuthState {
         setError(messageFrom(cause))
       }
     })()
-  }, [applyToken, backendInput])
+  }, [applyToken])
+
+  const setBackendUrl = useCallback((value: string): void => {
+    activeGeneration.current += 1
+    setBackendInput(value)
+    setBackend(null)
+    setError(null)
+    setStatus('unauthenticated')
+  }, [])
 
   const login = useCallback((): Promise<void> => {
     if (loginPromise.current) return loginPromise.current
@@ -116,9 +134,13 @@ export function useWegentAuth(): WegentAuthState {
     const operation = (async () => {
       setStatus('authorizing')
       setError(null)
-      const config = await resolveBackendConfig(backendInput)
+      const requestedBackend = backendInput.trim()
+      if (!requestedBackend) throw new Error('请输入 Backend 地址')
+      const config = await resolveBackendConfig(requestedBackend)
       await checkBackendHealth(config)
       if (activeGeneration.current !== generation) return
+      await saveBackendAddress(config.backendUrl)
+      setBackendInput(config.backendUrl)
       setBackend(config)
       const publicKey = await credentials.publicKey()
       const session = await createAuthorizationSession(config, publicKey)
@@ -197,9 +219,11 @@ export function useWegentAuth(): WegentAuthState {
   return {
     status,
     backend,
+    backendUrl: backendInput,
     config: backend && accessToken ? { ...backend, accessToken } : null,
     user,
     error,
+    setBackendUrl,
     login,
     logout,
     refresh,

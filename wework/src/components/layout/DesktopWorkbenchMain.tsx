@@ -62,6 +62,13 @@ import type {
 import { cn } from '@/lib/utils'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
 import {
+  createFilePreviewTraceId,
+  filePreviewElapsedMs,
+  filePreviewPathMetadata,
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
+import {
   defaultAppearance,
   getWorkbenchBackground,
   useOptionalAppearance,
@@ -3715,6 +3722,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     async (path: string, options?: WorkspaceFileOpenOptions) => {
       const trimmedPath = decodeMarkdownFilePath(path.trim())
       if (!trimmedPath) return
+      const traceId = createFilePreviewTraceId()
+      const pathMetadata = filePreviewPathMetadata(trimmedPath)
+      logFilePreviewDiagnostic(traceId, 'message_link_click', pathMetadata)
+      scheduleFilePreviewMainThreadProbe(traceId, 'message_link_click')
       const attachmentTarget = createLocalAttachmentWorkspaceTarget(trimmedPath, devices)
       const absoluteLocalTarget = createLocalFileWorkspaceTarget(trimmedPath, devices)
       let localTarget =
@@ -3727,7 +3738,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           : null)
       let isDirectory = options?.isDirectory
       if (localTarget && isDirectory === undefined) {
+        const statStartedAt = performance.now()
+        logFilePreviewDiagnostic(traceId, 'filesystem_stat_start', pathMetadata)
         isDirectory = (await getLocalPathKind(trimmedPath)) === 'directory'
+        logFilePreviewDiagnostic(traceId, 'filesystem_stat_end', {
+          ...pathMetadata,
+          durationMs: filePreviewElapsedMs(statStartedAt),
+          isDirectory,
+        })
+        scheduleFilePreviewMainThreadProbe(traceId, 'filesystem_stat_end')
       }
       if (localTarget && isDirectory) {
         localTarget = {
@@ -3741,9 +3760,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         lineStart: options?.lineStart,
         lineEnd: options?.lineEnd,
         isDirectory,
+        traceId,
         target: localTarget ?? undefined,
       }))
+      logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
+        ...pathMetadata,
+        hasLocalTarget: Boolean(localTarget),
+        isDirectory: isDirectory ?? null,
+      })
       openRightPanelTab('files')
+      logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
+      scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
     },
     [devices, effectiveWorkspaceTarget, openRightPanelTab, setOpenFileRequest]
   )

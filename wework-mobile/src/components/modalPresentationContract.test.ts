@@ -34,4 +34,19 @@ describe('modal presentation contract', () => {
     expect(modelPickerOptions).toContain("animation: 'fade'")
     expect(modelPickerOptions).not.toContain("animation: 'slide_from_right'")
   })
+
+  it('collapses the composer without unmounting its draft state', () => {
+    const conversationSource = sourceModules['./ConversationScreen.tsx']
+    const dockSource = conversationSource.slice(
+      conversationSource.indexOf('style={styles.bottomControlDock}'),
+      conversationSource.indexOf('<ChoiceSheet')
+    )
+    const composerIndex = dockSource.indexOf('<ChatComposer')
+    const quickSelectorConditionIndex = dockSource.indexOf('{quickModelVisible ? (')
+
+    expect(composerIndex).toBeGreaterThan(-1)
+    expect(quickSelectorConditionIndex).toBeGreaterThan(composerIndex)
+    expect(dockSource).toContain('quickModelVisible && styles.collapsedComposer')
+    expect(dockSource).toContain("pointerEvents={quickModelVisible ? 'none' : 'auto'}")
+  })
 })

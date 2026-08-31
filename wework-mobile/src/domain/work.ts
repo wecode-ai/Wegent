@@ -30,6 +30,17 @@ export function allWorkspaces(work: RuntimeWorkListResponse): RuntimeDeviceWorks
   return [...projectWorkspaces, ...work.chats]
 }
 
+export function runtimeWorkContainsTask(
+  work: RuntimeWorkListResponse,
+  address: Pick<RuntimeTaskAddress, 'deviceId' | 'taskId'>
+): boolean {
+  return allWorkspaces(work).some(
+    workspace =>
+      workspace.deviceId === address.deviceId &&
+      workspace.tasks.some(task => task.taskId === address.taskId)
+  )
+}
+
 export function taskAddress(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary
