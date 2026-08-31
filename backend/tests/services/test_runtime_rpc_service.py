@@ -97,13 +97,19 @@ def _socketio_with_call(call: AsyncMock, *, connected: bool = True):
 
 
 @pytest.mark.asyncio
-async def test_runtime_rpc_service_propagates_request_id(monkeypatch):
+async def test_runtime_rpc_service_propagates_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.services.device import runtime_rpc_service as module
+
+    async def resolve_route(**_kwargs):
+        set_request_context("changed-during-route-resolution")
+        return _runtime_route()
 
     monkeypatch.setattr(
         module.runtime_route_resolver,
         "resolve",
-        AsyncMock(return_value=_runtime_route()),
+        AsyncMock(side_effect=resolve_route),
     )
     sio_call = AsyncMock(return_value={"accepted": True})
     monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))

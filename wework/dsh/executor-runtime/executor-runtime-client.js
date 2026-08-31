@@ -84,6 +84,14 @@ export class ExecutorRuntimeClient {
       )
     }
     const id = requestId?.trim() || randomUUID()
+    if (this.pending.has(id)) {
+      return Promise.reject(
+        new ExecutorRuntimeError(
+          'duplicate_request_id',
+          `Executor request ID ${id} is already in flight`
+        )
+      )
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)

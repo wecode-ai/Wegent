@@ -114,11 +114,32 @@ export async function requestDshExecutor<T>(
     elapsed_ms: Date.now() - startedAt,
     status: response.status,
   })
-  const body = (await response.json()) as
-    | { ok: true; result: T }
-    | ({ ok?: false } & DshExecutorErrorBody)
+  let body: { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  try {
+    body = (await response.json()) as
+      | { ok: true; result: T }
+      | ({ ok?: false } & DshExecutorErrorBody)
+  } catch (error) {
+    console.warn('[Wework] Executor RPC response parsing failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      status: response.status,
+      error_type: error instanceof Error ? error.name : typeof error,
+    })
+    throw error
+  }
   if (!response.ok || body.ok !== true) {
-    throw transportError(response.status, body as DshExecutorErrorBody)
+    const error = transportError(response.status, body as DshExecutorErrorBody)
+    console.warn('[Wework] Executor RPC request failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      status: response.status,
+      code: error.code,
+      retryable: error.retryable,
+    })
+    throw error
   }
   return body.result
 }

@@ -34,7 +34,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -61,7 +61,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
       body: JSON.stringify({ version: 1, status: 'in_progress' }),
     })
@@ -92,7 +92,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/api/v1/cloud-projects', {
@@ -100,7 +100,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -127,7 +127,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -172,7 +172,7 @@ describe('createHttpClient', () => {
       expect(warn).toHaveBeenCalledWith(
         '[Wework] HTTP GET /devices is still pending after 5000ms.',
         expect.objectContaining({
-          request_id: expect.stringMatching(/^wework-/),
+          request_id: expect.stringMatching(/^wework-http-/),
           phase: 'waiting_for_response',
           endpoint: '/devices',
           transport: 'fetch',
@@ -355,7 +355,7 @@ describe('createHttpClient', () => {
       body: formData,
       headers: {
         Authorization: 'Bearer token-1',
-        'X-Request-ID': expect.stringMatching(/^wework-/),
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })

@@ -352,7 +352,10 @@ function requestIdFromBody(body) {
 }
 
 function normalizedRequestId(value) {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : null
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  if (!normalized || normalized.length > 128 || /[^\x20-\x7e]/.test(normalized)) return null
+  return normalized
 }
 
 function isRecord(value) {

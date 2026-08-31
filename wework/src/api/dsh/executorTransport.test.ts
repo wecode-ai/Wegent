@@ -74,6 +74,7 @@ describe('DSH executor transport', () => {
   })
 
   test('preserves structured executor errors', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -98,6 +99,37 @@ describe('DSH executor transport', () => {
       code: 'runtime_unavailable',
       retryable: true,
     })
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Executor RPC request failed',
+      expect.objectContaining({
+        request_id: expect.stringMatching(/^wework-local-/),
+        method: 'runtime.tasks.list',
+        status: 503,
+        code: 'runtime_unavailable',
+        retryable: true,
+      })
+    )
+    warning.mockRestore()
+  })
+
+  test('logs correlated metadata when an executor response is not valid json', async () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('not-json', { status: 502 }))
+    )
+
+    await expect(requestDshExecutor('runtime.tasks.list')).rejects.toBeInstanceOf(SyntaxError)
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Executor RPC response parsing failed',
+      expect.objectContaining({
+        request_id: expect.stringMatching(/^wework-local-/),
+        method: 'runtime.tasks.list',
+        status: 502,
+        error_type: 'SyntaxError',
+      })
+    )
+    warning.mockRestore()
   })
 
   test('delivers text deltas without waiting for animation frames', () => {

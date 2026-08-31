@@ -27,6 +27,28 @@ test('preserves one request id across browser, DSH, and executor RPC', async () 
   assert.deepEqual(JSON.parse(response.body), { ok: true, result: { items: [] } })
 })
 
+test('does not forward an unsafe browser request id to the executor', async () => {
+  const request = executorRpcRequest({
+    id: 'unsafe\nrequest-id',
+    method: 'runtime.tasks.list',
+    params: {},
+  })
+  const response = responseFixture()
+  let receivedRequestId = null
+  const client = {
+    request: async (_method, _params, _timeoutMs, requestId) => {
+      receivedRequestId = requestId
+      return { items: [] }
+    },
+  }
+
+  await handleExecutorRpc(request, response, client)
+
+  assert.match(receivedRequestId, /^[0-9a-f-]{36}$/)
+  assert.notEqual(receivedRequestId, 'unsafe\nrequest-id')
+  assert.equal(response.headers['x-request-id'], receivedRequestId)
+})
+
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')
   const response = responseFixture()

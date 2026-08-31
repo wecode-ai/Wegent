@@ -161,7 +161,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     const isFormData = init.body instanceof FormData
     const method = init.method ?? 'GET'
     const startedAt = nowMs()
-    const requestId = createRequestId('wework')
+    const requestId = createRequestId('wework-http')
     const logContext = {
       requestId,
       method,

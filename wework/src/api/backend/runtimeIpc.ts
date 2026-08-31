@@ -89,26 +89,39 @@ async function emitRuntimeRequest<T>(
   deviceId?: string,
   timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
-  await client.ensureConnected()
   const requestId = createRequestId('cloud-runtime')
+  const startedAt = Date.now()
   const targetDeviceId = deviceId ?? deviceIdFromParams(params)
   if (!targetDeviceId) {
     throw new Error(`Cloud runtime request ${method} missing deviceId`)
+  }
+  console.debug('[Wework] Cloud runtime RPC request started', {
+    request_id: requestId,
+    method,
+    device_id: targetDeviceId,
+  })
+  try {
+    await client.ensureConnected()
+  } catch (error) {
+    console.warn('[Wework] Cloud runtime RPC connection failed', {
+      request_id: requestId,
+      method,
+      device_id: targetDeviceId,
+      elapsed_ms: Date.now() - startedAt,
+    })
+    throw error
   }
   const relayTimeoutSeconds = resolveRelayTimeoutSeconds(method, params, timeoutMs)
   const acknowledgementTimeoutMs =
     method === 'device.execute_command'
       ? relayTimeoutSeconds * 1000 + COMMAND_ACK_GRACE_MS
       : timeoutMs
-  const startedAt = Date.now()
-  console.debug('[Wework] Cloud runtime RPC request started', {
-    request_id: requestId,
-    method,
-    device_id: targetDeviceId,
-  })
 
   return new Promise<T>((resolve, reject) => {
+    let settled = false
     const timeout = window.setTimeout(() => {
+      if (settled) return
+      settled = true
       console.warn('[Wework] Cloud runtime RPC request timed out', {
         request_id: requestId,
         method,
@@ -129,6 +142,16 @@ async function emitRuntimeRequest<T>(
         timeout_seconds: relayTimeoutSeconds,
       },
       (ack: RuntimeIpcAck<T> | undefined) => {
+        if (settled) {
+          console.warn('[Wework] Cloud runtime RPC acknowledgement arrived after settlement', {
+            request_id: requestId,
+            method,
+            device_id: targetDeviceId,
+            elapsed_ms: Date.now() - startedAt,
+          })
+          return
+        }
+        settled = true
         window.clearTimeout(timeout)
         if (!ack) {
           console.warn('[Wework] Cloud runtime RPC returned an empty acknowledgement', {

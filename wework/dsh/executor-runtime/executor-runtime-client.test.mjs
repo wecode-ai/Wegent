@@ -112,6 +112,30 @@ test('uses a caller-provided request id for downstream log correlation', async (
   }
 })
 
+test('rejects a duplicate caller-provided request id while the first request is in flight', async () => {
+  const fixture = await executorFixture({ healthResponseDelayMs: 25 })
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({
+      endpoint: fixture.endpoint,
+      token: fixture.token,
+      reconnectDelayMs: 10,
+    }),
+  })
+  try {
+    await client.start()
+    const firstRequest = client.request('executor.health', {}, undefined, 'wework-local-request-1')
+
+    await assert.rejects(
+      client.request('executor.health', {}, undefined, 'wework-local-request-1'),
+      error => error instanceof ExecutorRuntimeError && error.code === 'duplicate_request_id'
+    )
+    await assert.doesNotReject(firstRequest)
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
 async function executorFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-executor-runtime-'))
   const endpoint =
@@ -191,14 +215,16 @@ async function executorFixture(options = {}) {
                 ).toString('base64'),
               }
             : { healthy: true }
-          socket.write(
-            `${JSON.stringify({
-              type: 'response',
-              id: message.id,
-              ok: true,
-              result,
-            })}\n`
-          )
+          setTimeout(() => {
+            socket.write(
+              `${JSON.stringify({
+                type: 'response',
+                id: message.id,
+                ok: true,
+                result,
+              })}\n`
+            )
+          }, options.healthResponseDelayMs ?? 0)
         }
       }
     })

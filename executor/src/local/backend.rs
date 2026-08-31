@@ -744,16 +744,16 @@ where
                         ("method", method.clone()),
                     ],
                 ));
-                let Some(handler) = runtime_work_handler else {
-                    return Some(runtime_error_response(AppIpcError::new(
+                let response = if let Some(handler) = runtime_work_handler {
+                    match handler.handle_runtime_rpc(payload).await {
+                        Ok(result) => result,
+                        Err(error) => runtime_error_response(error),
+                    }
+                } else {
+                    runtime_error_response(AppIpcError::new(
                         "runtime_unavailable",
                         "Runtime work handler is not available",
-                    )));
-                };
-
-                let response = match handler.handle_runtime_rpc(payload).await {
-                    Ok(result) => result,
-                    Err(error) => runtime_error_response(error),
+                    ))
                 };
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
