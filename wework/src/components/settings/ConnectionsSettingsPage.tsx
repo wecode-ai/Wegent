@@ -65,6 +65,7 @@ import {
   resolveDshSettingsPath,
   type WeworkDshSettingsPage,
 } from '@/features/dsh-runtime/dshSettings'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
 import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
 import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
@@ -82,7 +83,7 @@ interface ConnectionsSettingsPageProps {
   services?: WorkbenchServices
   devices?: RuntimeDeviceInfo[]
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
 }
 
 function getSettingsNavFromPath(

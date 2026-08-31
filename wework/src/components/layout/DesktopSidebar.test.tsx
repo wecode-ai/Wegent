@@ -3796,6 +3796,10 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
       )
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveClass(
+        'electron-titlebar-interactive-region',
+        'pointer-events-auto'
+      )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 

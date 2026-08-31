@@ -280,6 +280,9 @@ function createRect({
 
 function mockDesktopWorkbenchMainWidth(width: number) {
   return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
+      return createRect({ left: 0, top: 0, width, height: 720 })
+    }
     if (
       this.tagName === 'MAIN' &&
       this.querySelector('[data-testid="desktop-workbench-content"]')
@@ -2896,7 +2899,7 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 0,
+      value: -200,
       writable: true,
       configurable: true,
     })
@@ -9125,6 +9128,39 @@ describe('DesktopWorkbenchLayout', () => {
       'true'
     )
     expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+  })
+
+  test('uses the shared workbench width in the first task-switch layout', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
+        return createRect({ left: 0, top: 0, width: 1024, height: 720 })
+      }
+      return createRect({ left: 0, top: 0, width: 0, height: 0 })
+    })
+    const secondTask = {
+      ...activeProjectRuntimeTask,
+      taskId: 'runtime-project-shared-width',
+    }
+    const renderTask = (task: typeof activeProjectRuntimeTask) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: task,
+        }}
+      />
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const view = render(renderTask(activeProjectRuntimeTask))
+
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    view.rerender(renderTask(secondTask))
+
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(activePane().getByTestId('environment-info-panel-container')).toContainElement(
+      activePane().getByTestId('environment-info-popover')
+    )
   })
 
   test('keeps the overlay summary state separate from the pinned summary state', async () => {

@@ -22,6 +22,9 @@ const CHECKPOINT_SCENARIO_MODULES = {
   'harness-apps': './scenarios/harness-apps.scenario.mjs',
   'browser-multi-tabs': './scenarios/embedded-browser-multi-tabs.scenario.mjs',
   'browser-toolbar-actions': './scenarios/embedded-browser-toolbar-actions.scenario.mjs',
+  'browser-annotation-core': './scenarios/embedded-browser-annotation.scenario.mjs',
+  'browser-annotation-anchors': './scenarios/embedded-browser-annotation.scenario.mjs',
+  'browser-annotation-design': './scenarios/embedded-browser-annotation.scenario.mjs',
   'rendering-extensions': './scenarios/streaming-text.scenario.mjs',
   'runtime-task-queue': './scenarios/runtime-task-queue.scenario.mjs',
   'runtime-terminal-convergence': './scenarios/runtime-terminal-convergence.scenario.mjs',
@@ -72,6 +75,9 @@ const SCENARIO_ONLY_CHECKPOINTS = new Set([
   'renderer-storage',
   'tray-lifecycle',
   'temporary-chat',
+  'browser-annotation-core',
+  'browser-annotation-anchors',
+  'browser-annotation-design',
   'external-content-import',
 ])
 const CLOUD_ONLY_CHECKPOINTS = new Set([
@@ -84,6 +90,10 @@ const CLOUD_ONLY_CHECKPOINTS = new Set([
   'cloud-worktree-device-restart',
 ])
 const COMPOSITE_CHECKPOINTS = new Map([
+  [
+    'browser-annotation',
+    ['browser-annotation-core', 'browser-annotation-anchors', 'browser-annotation-design'],
+  ],
   [
     'cloud-git-worktree',
     [
@@ -318,7 +328,7 @@ async function sharedBuildEnvironment(environment = process.env) {
 function requestedCheckpointRange(args) {
   if (args.length !== 2) return null
   const [flag, checkpoint] = args
-  if (flag === '--segment') return [checkpoint]
+  if (flag === '--segment') return expandCompositeCheckpoints([checkpoint])
   if (flag === '--from-segment') {
     const startCheckpoint = COMPOSITE_CHECKPOINTS.get(checkpoint)?.[0] ?? checkpoint
     const startIndex = DEFAULT_DESKTOP_CHECKPOINTS.indexOf(startCheckpoint)
