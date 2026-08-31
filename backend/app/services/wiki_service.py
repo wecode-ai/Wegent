@@ -40,6 +40,7 @@ from app.services.knowledge.code_wiki.quality_gate import (
     open_quality_review,
     record_quality_review,
     review_state,
+    writing_progress,
 )
 from app.services.knowledge.code_wiki.runner import finish_run, is_code_wiki_generation
 from app.services.knowledge.code_wiki.version_store import (
@@ -97,7 +98,11 @@ class WikiService:
         )
         if generation is None:
             raise HTTPException(status_code=404, detail="Generation not found")
-        return review_state(generation, phase=phase)
+        state = review_state(generation, phase=phase)
+        progress = writing_progress(wiki_db, generation)
+        if progress is not None:
+            state["writing"] = progress
+        return state
 
     def save_generation_contents(
         self,

@@ -24,7 +24,7 @@ function status(over: Partial<CodeWikiRunStatus> = {}): CodeWikiRunStatus {
     progress: {
       stage: 'writing',
       current_step: 2,
-      total_steps: 4,
+      total_steps: 3,
       pages_written: 7,
       pages_total: 13,
     },
@@ -33,7 +33,7 @@ function status(over: Partial<CodeWikiRunStatus> = {}): CodeWikiRunStatus {
 }
 
 describe('code wiki generation progress', () => {
-  it('shows all four stages with completed, active, and pending states', () => {
+  it('shows the three plan-only stages with completed, active, and pending states', () => {
     render(<GenerationProgress status={status()} />)
 
     expect(screen.getByTestId('code-wiki-progress-stage')).toHaveTextContent(
@@ -45,14 +45,32 @@ describe('code wiki generation progress', () => {
     expect(screen.getByTestId('code-wiki-progress-writing')).toHaveTextContent(
       'codeWiki.progress.stepLabel.writingActive'
     )
-    expect(screen.getByTestId('code-wiki-progress-qa')).toHaveTextContent(
-      'codeWiki.progress.stepLabel.qa'
-    )
+    expect(screen.queryByTestId('code-wiki-progress-qa')).not.toBeInTheDocument()
     expect(screen.getByTestId('code-wiki-progress-publish')).toHaveTextContent(
       'codeWiki.progress.stepLabel.publish'
     )
     expect(screen.getByTestId('code-wiki-progress-step')).toHaveTextContent(
       'codeWiki.progress.step'
+    )
+  })
+
+  it('keeps the reserved QA stage for a four-stage run', () => {
+    render(
+      <GenerationProgress
+        status={status({
+          progress: {
+            stage: 'qa_review',
+            current_step: 3,
+            total_steps: 4,
+            pages_written: 13,
+            pages_total: 13,
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('code-wiki-progress-qa')).toHaveTextContent(
+      'codeWiki.progress.stage.qa_review'
     )
   })
 

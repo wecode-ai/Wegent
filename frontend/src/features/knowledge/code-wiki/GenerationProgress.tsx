@@ -14,7 +14,9 @@ interface GenerationProgressProps {
   status: CodeWikiRunStatus | null
 }
 
-const STEPS = ['plan', 'writing', 'qa', 'publish'] as const
+const PLAN_ONLY_STEPS = ['plan', 'writing', 'publish'] as const
+const PLAN_AND_QA_STEPS = ['plan', 'writing', 'qa', 'publish'] as const
+type ProgressStep = (typeof PLAN_AND_QA_STEPS)[number]
 
 export function GenerationProgress({ status }: GenerationProgressProps) {
   const { t } = useTranslation('knowledge')
@@ -25,8 +27,9 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
 
   if (!progress) return null
   const hasSteps = progress.total_steps > 0
+  const steps = progress.total_steps === 3 ? PLAN_ONLY_STEPS : PLAN_AND_QA_STEPS
 
-  const stepLabel = (step: (typeof STEPS)[number], number: number) => {
+  const stepLabel = (step: ProgressStep, number: number) => {
     if (number < progress.current_step) {
       if (step === 'plan') {
         return t('codeWiki.progress.stepLabel.planPassed', { count: progress.pages_total })
@@ -95,7 +98,7 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
             className="border-t border-border px-4 py-4 sm:px-5"
             data-testid="code-wiki-progress-steps"
           >
-            {STEPS.map((step, index) => {
+            {steps.map((step, index) => {
               const number = index + 1
               const completed = number < progress.current_step
               const active = number === progress.current_step
@@ -113,7 +116,7 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
                     ) : (
                       <Circle className="h-5 w-5 text-text-tertiary" />
                     )}
-                    {index < STEPS.length - 1 && (
+                    {index < steps.length - 1 && (
                       <span
                         className={`h-6 w-px ${completed ? 'bg-success' : 'bg-border'}`}
                         aria-hidden="true"

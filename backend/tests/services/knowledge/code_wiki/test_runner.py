@@ -284,7 +284,15 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
         json={"spec": {}},
         is_active=True,
     )
-    test_db.add(reviewer)
+    section_writer = Kind(
+        kind="Bot",
+        name="code-wiki-section-writer",
+        namespace="default",
+        user_id=test_user.id,
+        json={"spec": {}},
+        is_active=True,
+    )
+    test_db.add_all([reviewer, section_writer])
     test_db.flush()
     tasks.team.json = {
         "spec": {
@@ -296,7 +304,14 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
                         "name": "code-wiki-reviewer",
                         "namespace": "default",
                     },
-                }
+                },
+                {
+                    "role": "writer",
+                    "botRef": {
+                        "name": "code-wiki-section-writer",
+                        "namespace": "default",
+                    },
+                },
             ],
         }
     }
@@ -306,9 +321,13 @@ def test_a_full_rebuild_is_marked_as_requiring_quality_evidence(
 
     assert started.generation.ext["qualityReview"] == {
         "required": True,
+        "policy": "plan_only",
         "handoffs": [],
         "checkpoints": [],
     }
+    assert "`plan_only` review policy" in tasks.prompt
+    assert f"`code-wiki-reviewer-{reviewer.id}`" in tasks.prompt
+    assert f"`code-wiki-section-writer-{section_writer.id}`" in tasks.prompt
 
 
 def test_the_prompt_carries_the_generation_the_agent_must_write_into(

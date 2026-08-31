@@ -43,7 +43,9 @@ from app.services.knowledge.code_wiki.publisher import (
     read_version_pages,
 )
 from app.services.knowledge.code_wiki.quality_gate import (
+    PLAN_ONLY_REVIEW_POLICY,
     QUALITY_REVIEW_EXT_KEY,
+    review_policy,
     review_state,
 )
 from app.services.knowledge.code_wiki.run_mode import (
@@ -571,17 +573,26 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
     plan = review_state(generation, phase="plan")
     plan_evidence = plan.get("handoff") or plan.get("review") or {}
     pages_total = len(plan_evidence.get("paths") or [])
+    plan_only = review_policy(generation) == PLAN_ONLY_REVIEW_POLICY
+    total_steps = 3 if plan_only else 4
     if plan["state"] != "passed":
         if plan["state"] == "ready":
-            return RunProgress("plan_review", 1, 4, pages_written, pages_total)
+            return RunProgress(
+                "plan_review", 1, total_steps, pages_written, pages_total
+            )
         if plan["state"] == "changes_requested":
             stage = (
                 "revising_plan"
                 if plan["nextAction"] == "revise_plan_then_open_plan"
                 else "finishing"
             )
-            return RunProgress(stage, 1, 4, pages_written, pages_total)
-        return RunProgress("planning", 1, 4, pages_written, pages_total)
+            return RunProgress(stage, 1, total_steps, pages_written, pages_total)
+        return RunProgress("planning", 1, total_steps, pages_written, pages_total)
+
+    if plan_only:
+        if pages_total > 0 and pages_written >= pages_total:
+            return RunProgress("publishing", 3, 3, pages_written, pages_total)
+        return RunProgress("writing", 2, 3, pages_written, pages_total)
 
     qa = review_state(generation, phase="qa")
     if qa["state"] == "not_started":

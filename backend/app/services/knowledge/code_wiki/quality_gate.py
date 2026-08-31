@@ -17,6 +17,7 @@ from app.models.wiki import WikiContent, WikiGeneration
 from app.schemas.wiki import (
     WikiGenerationReviewOpenRequest,
     WikiGenerationReviewRequest,
+    WikiWritingPlan,
 )
 from app.services.knowledge.code_wiki.page_path import (
     InvalidPagePath,
@@ -27,13 +28,22 @@ from app.services.knowledge.code_wiki.projection_plan import PageSource
 from app.services.knowledge.code_wiki.version_store import page_path_of
 
 QUALITY_REVIEW_EXT_KEY = "qualityReview"
+PLAN_ONLY_REVIEW_POLICY = "plan_only"
+PLAN_AND_QA_REVIEW_POLICY = "plan_and_qa"
 
 
-def require_quality_review(generation: WikiGeneration) -> None:
+def require_quality_review(
+    generation: WikiGeneration,
+    *,
+    policy: str = PLAN_ONLY_REVIEW_POLICY,
+) -> None:
     """Mark a newly started full rebuild as requiring review checkpoints."""
+    if policy not in {PLAN_ONLY_REVIEW_POLICY, PLAN_AND_QA_REVIEW_POLICY}:
+        raise ValueError(f"Unknown Code Wiki review policy: {policy}")
     ext = dict(generation.ext or {})
     ext[QUALITY_REVIEW_EXT_KEY] = {
         "required": True,
+        "policy": policy,
         "handoffs": [],
         "checkpoints": [],
     }
@@ -54,6 +64,7 @@ def open_quality_review(
 
     paths = _normalized_paths(payload.paths)
     _assert_handoff_scope(db, generation, payload.phase, paths)
+    writing_plan = _normalized_writing_plan(payload, paths)
     attempt = 1 + sum(item.get("phase") == payload.phase for item in checkpoints)
     handoff = {
         "phase": payload.phase,
@@ -63,6 +74,8 @@ def open_quality_review(
         "handoff": payload.handoff.strip(),
         "fingerprint": generation_fingerprint(db, generation.id),
     }
+    if writing_plan is not None:
+        handoff["writingPlan"] = writing_plan
     ready = _ready_handoff(handoffs, checkpoints, payload.phase)
     if ready is not None:
         if _handoff_matches(ready, handoff):
@@ -161,6 +174,7 @@ def review_state(generation: WikiGeneration, *, phase: str) -> dict:
             generation,
             phase,
             str(checkpoint["status"]),
+            handoff=_latest(handoffs, phase),
             review=checkpoint,
         )
     return _state(generation, phase, "not_started")
@@ -180,12 +194,14 @@ def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource])
     planned_paths = set(plan.get("paths") or [])
     focus_paths = set(plan.get("focusPaths") or [])
     actual_paths = {collation_key(page.path) for page in pages}
-    if not planned_paths or not planned_paths.issubset(actual_paths):
+    if not planned_paths or planned_paths != actual_paths:
         return (
             "the passed plan review does not match the pages written for this version"
         )
     if not focus_paths or not focus_paths.issubset(planned_paths):
         return "the passed plan review does not identify valid core focus pages"
+    if review_policy(generation) == PLAN_ONLY_REVIEW_POLICY:
+        return ""
 
     qa = _latest(checkpoints, "qa")
     if qa is None:
@@ -199,6 +215,12 @@ def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource])
     if final.get("fingerprint") != pages_fingerprint(pages):
         return "pages changed after the latest passed quality review; run QA again"
     return ""
+
+
+def review_policy(generation: WikiGeneration) -> str:
+    """Return the persisted policy, preserving QA for generations created earlier."""
+    review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    return str(review.get("policy") or PLAN_AND_QA_REVIEW_POLICY)
 
 
 def generation_fingerprint(db: Session, generation_id: int) -> str:
@@ -224,6 +246,23 @@ def _generation_paths(db: Session, generation_id: int) -> set[str]:
         if path:
             paths.add(collation_key(path))
     return paths
+
+
+def writing_progress(db: Session, generation: WikiGeneration) -> dict | None:
+    """Return page-level progress derived from the passed Plan and stored pages."""
+    review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    plan = _latest(list(review.get("checkpoints") or []), "plan")
+    if plan is None or plan.get("status") != "passed":
+        return None
+
+    planned = set(plan.get("paths") or [])
+    written = _generation_paths(db, generation.id)
+    return {
+        "plannedPaths": sorted(planned, key=collation_key),
+        "writtenPaths": sorted(written, key=collation_key),
+        "missingPaths": sorted(planned - written, key=collation_key),
+        "unexpectedPaths": sorted(written - planned, key=collation_key),
+    }
 
 
 def pages_fingerprint(pages: Sequence[PageSource]) -> str:
@@ -340,6 +379,20 @@ def _assert_handoff_scope(
             status_code=400,
             detail="QA handoff paths must match every page currently written",
         )
+    if phase == "qa":
+        review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+        plan = _latest(list(review.get("checkpoints") or []), "plan")
+        planned_paths = set((plan or {}).get("paths") or [])
+        if actual_paths != planned_paths:
+            missing = sorted(planned_paths - actual_paths, key=collation_key)
+            unexpected = sorted(actual_paths - planned_paths, key=collation_key)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "QA requires the written page set to exactly match the passed "
+                    f"Plan; missing={missing}, unexpected={unexpected}"
+                ),
+            )
     if phase == "recheck" and not supplied_paths.issubset(actual_paths):
         raise HTTPException(
             status_code=400,
@@ -354,6 +407,11 @@ def _assert_review_scope(phase: str, paths: list[str], handoff: dict) -> None:
         raise HTTPException(
             status_code=400,
             detail="Plan verdict paths must match the persisted Plan handoff",
+        )
+    if phase == "qa" and reviewed != handed_off:
+        raise HTTPException(
+            status_code=400,
+            detail="QA verdict must cover every page in the persisted QA handoff",
         )
     if not reviewed.issubset(handed_off):
         raise HTTPException(
@@ -375,13 +433,19 @@ def _state(
     handoff: dict | None = None,
     review: dict | None = None,
 ) -> dict:
-    subject = handoff or review or {}
+    subject = review or handoff or {}
     result = {
         "generationId": generation.id,
         "phase": phase,
         "state": state,
         "attempt": subject.get("attempt"),
-        "nextAction": _next_action(phase, state, subject.get("attempt")),
+        "reviewPolicy": review_policy(generation),
+        "nextAction": _next_action(
+            phase,
+            state,
+            subject.get("attempt"),
+            review_policy(generation),
+        ),
     }
     if handoff is not None:
         result["handoff"] = handoff
@@ -390,12 +454,103 @@ def _state(
     return result
 
 
-def _next_action(phase: str, state: str, attempt: object) -> str:
+def _normalized_writing_plan(
+    payload: WikiGenerationReviewOpenRequest,
+    planned_paths: list[str],
+) -> dict | None:
+    """Validate and normalize page ownership carried by a Plan handoff."""
+    if payload.phase != "plan":
+        if payload.writing_plan is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="writing_plan is valid only for a Plan handoff",
+            )
+        return None
+
+    plan = payload.writing_plan or WikiWritingPlan(
+        mode="coordinator",
+        coordinator_paths=planned_paths,
+    )
+    coordinator_paths = _normalized_optional_paths(plan.coordinator_paths)
+    packages = []
+    assigned: list[str] = list(coordinator_paths)
+    package_ids: set[str] = set()
+    for package in plan.work_packages:
+        if package.id in package_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Duplicate Work Package id: {package.id}",
+            )
+        package_ids.add(package.id)
+        package_paths = _normalized_optional_paths(package.paths)
+        packages.append({"id": package.id, "paths": package_paths})
+        assigned.extend(package_paths)
+
+    duplicates = sorted(
+        {path for path in assigned if assigned.count(path) > 1},
+        key=collation_key,
+    )
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Writing Plan assigns pages more than once: {duplicates}",
+        )
+
+    planned = set(planned_paths)
+    assigned_set = set(assigned)
+    if assigned_set != planned:
+        missing = sorted(planned - assigned_set, key=collation_key)
+        unknown = sorted(assigned_set - planned, key=collation_key)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Writing Plan ownership must exactly match planned paths; "
+                f"missing={missing}, unknown={unknown}"
+            ),
+        )
+    if plan.mode == "coordinator" and packages:
+        raise HTTPException(
+            status_code=400,
+            detail="Coordinator writing mode cannot define Work Packages",
+        )
+    if plan.mode == "scoped" and not packages:
+        raise HTTPException(
+            status_code=400,
+            detail="Scoped writing mode requires at least one Work Package",
+        )
+    language = plan.language.strip() if plan.language else None
+    if plan.mode == "scoped" and not language:
+        raise HTTPException(
+            status_code=400,
+            detail="Scoped writing mode requires an output language",
+        )
+    result = {
+        "mode": plan.mode,
+        "coordinatorPaths": coordinator_paths,
+        "workPackages": packages,
+    }
+    if language:
+        result["language"] = language
+    return result
+
+
+def _normalized_optional_paths(paths: list[str]) -> list[str]:
+    """Normalize an ownership path list while allowing an empty collection."""
+    if not paths:
+        return []
+    return _normalized_paths(paths)
+
+
+def _next_action(phase: str, state: str, attempt: object, policy: str) -> str:
+    if policy == PLAN_ONLY_REVIEW_POLICY and phase != "plan" and state == "not_started":
+        return "not_required"
     if state == "not_started":
         return f"open_{phase}_review"
     if state == "ready":
         return "review_handoff_and_submit_verdict"
     if phase == "plan" and state == "passed":
+        if policy == PLAN_ONLY_REVIEW_POLICY:
+            return "write_pages_then_complete"
         return "write_pages_then_open_qa"
     if phase == "plan" and state == "changes_requested":
         return "revise_plan_then_open_plan" if attempt == 1 else "fail_generation"

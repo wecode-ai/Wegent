@@ -1242,7 +1242,7 @@
         "writingCompleted_other": "Page writing complete ({{count}} pages)",
         "qa": "Final quality review",
         "qaCompleted": "Final quality review passed",
-        "publish": "Publish",
+        "publish": "Integrate and publish",
         "publishCompleted": "Published"
       },
       "stage": {

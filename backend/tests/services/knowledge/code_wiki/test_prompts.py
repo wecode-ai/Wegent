@@ -126,11 +126,17 @@ def test_a_full_rebuild_names_the_bounded_quality_loop():
 
     assert "Writer/Reviewer" in prompt
     assert "REVIEW_CONTRACT.md" in prompt
-    assert "Plan, QA" in prompt
+    assert "`plan_only` review policy" in prompt
+    assert "do not open QA or Recheck" in prompt
 
 
 def test_full_prompt_names_executor_generated_reviewer_agent_type():
-    prompt = build_full_prompt(_context(reviewer_agent_type="reviewer-bot-106"))
+    prompt = build_full_prompt(
+        _context(
+            reviewer_agent_type="reviewer-bot-106",
+            section_writer_agent_type="section-writer-107",
+        )
+    )
 
     assert "`reviewer-bot-106`" in prompt
     assert "complete Plan handoff" in prompt
@@ -145,6 +151,10 @@ def test_full_prompt_names_executor_generated_reviewer_agent_type():
     assert "sleep, poll" in prompt
     assert "CODE_WIKI_REVIEW_PHASE" not in prompt
     assert "wait-seconds" not in prompt
+    assert "`section-writer-107`" in prompt
+    assert "Work Package ID" in prompt
+    assert "missing planned pages" in prompt
+    assert "write_pages_then_complete" not in prompt
 
 
 def test_the_mode_selects_the_prompt():

@@ -1,6 +1,6 @@
 ---
 description: "Submit wiki documentation pages to Wegent backend API. Simplifies the HTTP POST process for wiki content submission."
-version: "2.0.1"
+version: "2.0.3"
 author: "Wegent Team"
 tags: ["wiki", "documentation", "api", "submission"]
 bindShells: ["ClaudeCode"]
@@ -80,9 +80,10 @@ Remove an accidental page before completing the run.
    `rpc_service` inside `rpc_group`), and correct every named diagram error before
    running `complete` again. The publish gate is authoritative: do not mark the run
    failed merely because it asks for a diagram correction.
-5. In a coordinated full rebuild, follow each returned `nextAction`. The only successful
-   publication paths are passed Plan plus passed QA, or passed Plan plus QA changes and
-   passed Recheck. A page change after the latest passed verdict invalidates it.
+5. In a coordinated full rebuild, follow each returned `nextAction` and
+   `reviewPolicy`. The default `plan_only` path publishes after a passed Plan and an
+   exact completed page set. The reserved `plan_and_qa` path additionally requires
+   passed QA, or QA changes followed by passed Recheck.
 Do not report the generation as complete until the response says it was published, or
 use `fail` with an accurate error when the run cannot continue.
 
@@ -180,7 +181,8 @@ The Writer opens each attempt with `review-open` and a contract-formatted Markdo
 handoff. The Reviewer reads it with `review-status`, then runs `review`. A
 `changes_requested` verdict requires a contract-formatted `--findings-file`. Command
 output is the complete persisted state, including `generationId`, `phase`, `state`,
-`attempt`, `nextAction`, and the current handoff or verdict.
+`attempt`, `nextAction`, the durable handoff and verdict, plus page-level Writing Plan
+progress after Plan passes.
 
 See `REVIEW_CONTRACT.md` for the phase-specific commands and templates.
 
@@ -204,7 +206,8 @@ node wiki_submit.js review-open \
   --path index \
   --path architecture \
   --summary "Proposed wiki plan" \
-  --handoff-file /tmp/code-wiki-plan-handoff.md
+  --handoff-file /tmp/code-wiki-plan-handoff.md \
+  --writing-plan-file /tmp/code-wiki-writing-plan.json
 ```
 
 ### Read a review state

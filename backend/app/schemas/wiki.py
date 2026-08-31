@@ -77,6 +77,22 @@ class WikiGenerationReviewRequest(BaseModel):
     findings: Optional[str] = Field(default=None, max_length=12000)
 
 
+class WikiWritingPackage(BaseModel):
+    """One non-overlapping group of pages assigned to a Section Writer."""
+
+    id: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+    paths: List[str] = Field(min_length=1)
+
+
+class WikiWritingPlan(BaseModel):
+    """Structured page ownership attached to a full-rebuild Plan handoff."""
+
+    mode: Literal["coordinator", "scoped"]
+    language: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    coordinator_paths: List[str] = Field(default_factory=list)
+    work_packages: List[WikiWritingPackage] = Field(default_factory=list)
+
+
 class WikiGenerationReviewOpenRequest(BaseModel):
     """A durable handoff opened by the Writer before Reviewer delegation."""
 
@@ -85,3 +101,4 @@ class WikiGenerationReviewOpenRequest(BaseModel):
     paths: List[str] = Field(min_length=1)
     summary: str = Field(min_length=1, max_length=2000)
     handoff: str = Field(min_length=1, max_length=30000)
+    writing_plan: Optional[WikiWritingPlan] = None

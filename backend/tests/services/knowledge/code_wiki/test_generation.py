@@ -600,6 +600,62 @@ def test_coordinate_progress_is_derived_from_review_evidence(
     assert progress and progress.stage == "publishing"
 
 
+def test_plan_only_progress_skips_qa_and_publishes_after_all_pages_are_written(
+    test_db: Session, knowledge_base: Kind, test_user: User
+):
+    started = start_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        changed_paths=None,
+        now=NOW,
+    )
+    generation = started.generation
+    planned_paths = ["index", "architecture"]
+    generation.ext = {
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "handoffs": [{"phase": "plan", "attempt": 1, "paths": planned_paths}],
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "attempt": 1,
+                    "status": "passed",
+                    "paths": planned_paths,
+                }
+            ],
+        }
+    }
+    _write_page(test_db, generation, "index", "# Wiki")
+    test_db.commit()
+
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "writing",
+        2,
+        3,
+    )
+
+    _write_page(test_db, generation, "architecture", "# Architecture")
+    test_db.commit()
+    progress = current_run_state(test_db, knowledge_base, now=NOW).progress
+    assert progress and (
+        progress.stage,
+        progress.current_step,
+        progress.total_steps,
+    ) == (
+        "publishing",
+        3,
+        3,
+    )
+
+
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(
     test_db: Session, knowledge_base: Kind, test_user: User
 ):

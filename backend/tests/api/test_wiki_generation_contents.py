@@ -112,6 +112,11 @@ def _review_open_payload(generation_id: int) -> dict:
         "paths": ["index"],
         "summary": "Proposed wiki plan",
         "handoff": "# Plan\n\n- index: repository entry point",
+        "writing_plan": {
+            "mode": "coordinator",
+            "coordinator_paths": ["index"],
+            "work_packages": [],
+        },
     }
 
 
@@ -167,6 +172,7 @@ def test_writer_records_quality_review_for_a_required_full_rebuild(
         ext={
             "qualityReview": {
                 "required": True,
+                "policy": "plan_only",
                 "handoffs": [],
                 "checkpoints": [],
             }
@@ -190,7 +196,9 @@ def test_writer_records_quality_review_for_a_required_full_rebuild(
 
     assert response.status_code == 200, response.text
     assert response.json()["state"] == "passed"
-    assert response.json()["nextAction"] == "write_pages_then_open_qa"
+    assert response.json()["reviewPolicy"] == "plan_only"
+    assert response.json()["nextAction"] == "write_pages_then_complete"
+    assert response.json()["handoff"]["writingPlan"]["mode"] == "coordinator"
     test_db.refresh(generation)
     checkpoint = generation.ext["qualityReview"]["checkpoints"][0]
     assert checkpoint["status"] == "passed"
@@ -208,6 +216,7 @@ def test_writer_reads_persisted_review_state(
         ext={
             "qualityReview": {
                 "required": True,
+                "policy": "plan_only",
                 "handoffs": [],
                 "checkpoints": [
                     {
@@ -233,8 +242,15 @@ def test_writer_reads_persisted_review_state(
     assert response.status_code == 200, response.text
     assert response.json()["generationId"] == generation.id
     assert response.json()["state"] == "passed"
-    assert response.json()["nextAction"] == "write_pages_then_open_qa"
+    assert response.json()["reviewPolicy"] == "plan_only"
+    assert response.json()["nextAction"] == "write_pages_then_complete"
     assert response.json()["review"]["summary"] == "plan is covered"
+    assert response.json()["writing"] == {
+        "plannedPaths": ["index"],
+        "writtenPaths": [],
+        "missingPaths": ["index"],
+        "unexpectedPaths": [],
+    }
 
 
 def test_writer_reports_a_terminal_generation_to_the_reviewer(

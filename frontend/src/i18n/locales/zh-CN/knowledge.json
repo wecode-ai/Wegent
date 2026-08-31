@@ -1242,7 +1242,7 @@
         "writingCompleted_other": "页面写入完成（{{count}} 个页面）",
         "qa": "最终质量评审",
         "qaCompleted": "最终质量评审通过",
-        "publish": "发布",
+        "publish": "整合与发布",
         "publishCompleted": "已发布"
       },
       "stage": {

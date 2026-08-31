@@ -54,7 +54,10 @@ from app.services.knowledge.code_wiki.publisher import (
     published_generation_id,
     read_version_pages,
 )
-from app.services.knowledge.code_wiki.quality_gate import require_quality_review
+from app.services.knowledge.code_wiki.quality_gate import (
+    PLAN_ONLY_REVIEW_POLICY,
+    require_quality_review,
+)
 from app.services.knowledge.code_wiki.repo_state import read_repository_state
 from app.services.knowledge.code_wiki.run_mode import ChangedPath, RunMode
 from app.services.knowledge.code_wiki.side_effects import build_projection_side_effects
@@ -221,9 +224,11 @@ def start_run(
     generation = started.generation
     full = RunMode(started.decision.mode) is RunMode.FULL
     reviewer_agent_type = ""
+    section_writer_agent_type = ""
     if full and _uses_coordinate_quality_loop(team):
         reviewer_agent_type = _reviewer_agent_type(db, team)
-        require_quality_review(generation)
+        section_writer_agent_type = _optional_member_agent_type(db, team, "writer")
+        require_quality_review(generation, policy=PLAN_ONLY_REVIEW_POLICY)
     prompt = build_prompt(
         WikiRunContext(
             project_name=source.project_name,
@@ -239,6 +244,7 @@ def start_run(
                 page.path for page in read_version_pages(db, generation.id)
             ],
             reviewer_agent_type=reviewer_agent_type,
+            section_writer_agent_type=section_writer_agent_type,
         ),
         full=full,
     )
@@ -423,6 +429,25 @@ def _reviewer_agent_type(db: Session, team: Kind) -> str:
     )
     if bot is None:
         raise CodeWikiRunError("Coordinate Code Wiki Reviewer Bot was not found")
+    return _claude_subagent_type(bot.name, bot.id)
+
+
+def _optional_member_agent_type(db: Session, team: Kind, role: str) -> str:
+    """Resolve an optional Claude Code member used by an adaptive workflow."""
+    members = ((team.json or {}).get("spec") or {}).get("members") or []
+    member = next((item for item in members if item.get("role") == role), None)
+    if member is None:
+        return ""
+    bot_ref = member.get("botRef") or {}
+    bot = kindReader.get_by_name_and_namespace(
+        db,
+        team.user_id,
+        KindType.BOT,
+        bot_ref.get("namespace", "default"),
+        bot_ref.get("name", ""),
+    )
+    if bot is None:
+        raise CodeWikiRunError(f"Coordinate Code Wiki {role.title()} Bot was not found")
     return _claude_subagent_type(bot.name, bot.id)
 
 

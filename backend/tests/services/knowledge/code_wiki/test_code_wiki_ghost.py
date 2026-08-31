@@ -205,7 +205,8 @@ def test_the_agent_must_finish_and_handle_feedback(system_prompt: str):
 def test_full_rebuilds_use_the_bounded_reviewer_loop(system_prompt: str):
     assert "exact Reviewer agent" in system_prompt
     assert "delegate synchronously" in system_prompt
-    assert "Plan, QA and Recheck" in system_prompt
+    assert "reviewPolicy=plan_only" in system_prompt
+    assert "without opening QA or Recheck" in system_prompt
 
 
 def test_reviewer_reads_the_persisted_contract_and_handoff() -> None:
@@ -242,11 +243,40 @@ def test_default_code_wiki_team_uses_coordinate_writer_and_reviewer() -> None:
         and document.get("kind") == "Bot"
         and document.get("metadata", {}).get("name") == "code-wiki-reviewer"
     )
+    section_writer = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Bot"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer"
+    )
 
     assert reviewer["spec"]["ghostRef"]["name"] == "code-wiki-reviewer-ghost"
+    assert section_writer["spec"]["ghostRef"]["name"] == (
+        "code-wiki-section-writer-ghost"
+    )
     assert team["spec"]["collaborationModel"] == "coordinate"
     assert team["spec"]["workflow"]["mode"] == "coordinate"
     assert [member["role"] for member in team["spec"]["members"]] == [
         "leader",
         "reviewer",
+        "writer",
     ]
+
+
+def test_section_writer_has_a_bounded_persisted_assignment() -> None:
+    resources = list(yaml.safe_load_all(RESOURCES.read_text()))
+    ghost = next(
+        document
+        for document in resources
+        if document
+        and document.get("kind") == "Ghost"
+        and document.get("metadata", {}).get("name") == "code-wiki-section-writer-ghost"
+    )
+    prompt = " ".join(ghost["spec"]["systemPrompt"].split())
+
+    assert ghost["spec"]["skills"] == ["wiki_submit"]
+    assert "generation ID and Work Package ID" in prompt
+    assert "state=passed" in prompt
+    assert "only at the package's assigned paths" in prompt
+    assert "do not complete or fail" in prompt

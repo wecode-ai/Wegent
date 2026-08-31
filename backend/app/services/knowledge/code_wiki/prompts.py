@@ -38,6 +38,7 @@ class WikiRunContext:
     changed_paths: Sequence[str] = ()
     existing_pages: Sequence[str] = ()
     reviewer_agent_type: str = ""
+    section_writer_agent_type: str = ""
 
 
 def build_full_prompt(context: WikiRunContext) -> str:
@@ -73,8 +74,17 @@ source after context compaction.
 If `review` or `review-status` exits 3, the generation has already ended: do not retry
 wiki_submit, delegate another Reviewer, write pages, or call `complete`; stop this run
 and return that terminal diagnostic immediately.
-The Writer opens handoffs but never submits Reviewer verdicts. Complete every Plan, QA,
-and optional Recheck transition required by the contract before publication.
+This run uses the backend-enforced `plan_only` review policy. The Writer opens the Plan
+handoff but never submits the Reviewer verdict. After Plan passes, write every planned
+page and call `complete`; do not open QA or Recheck. Confirm that `review-status`
+returns `reviewPolicy=plan_only` and follow its `nextAction` as authoritative.
+When the passed Writing Plan uses scoped mode, delegate each Work Package to
+`{context.section_writer_agent_type or "the configured Section Writer agent"}` with
+only this generation ID and Work Package ID. The Section Writer recovers its complete
+scope from the persisted passed Plan. Trust submitted-page status rather than a
+subagent's prose response, and handle only missing planned pages after each delegation.
+Do not delegate in coordinator mode. Write coordinator-owned synthesis pages only
+after the relevant Work Packages have submitted their domain pages.
 Incremental-only shortcuts do not apply to this run.\
 """
 

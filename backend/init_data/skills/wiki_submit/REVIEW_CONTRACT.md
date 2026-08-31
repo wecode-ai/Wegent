@@ -3,6 +3,18 @@
 Read this file completely before opening, performing, or consuming a full-rebuild
 review. It is the single source of truth for Writer/Reviewer handoffs.
 
+## Review policy
+
+Every review response includes the backend-persisted `reviewPolicy`:
+
+- `plan_only` is the current default. Delegate the Reviewer only for Plan. After Plan
+  passes, write every planned page and call `complete`; never open QA or Recheck.
+- `plan_and_qa` reserves the prior final-review workflow. Use its QA and Recheck
+  sections only when the backend explicitly returns this policy.
+
+Do not infer the policy from the team members or prompt wording. Follow the persisted
+value and `nextAction`.
+
 ## State machine
 
 The Writer opens every attempt before delegating its Reviewer:
@@ -24,11 +36,13 @@ node wiki_submit.js review-open \
   --phase <plan|qa|recheck> \
   --path <handoff-path> \
   --summary "<handoff conclusion>" \
-  --handoff-file <contract-markdown>
+  --handoff-file <contract-markdown> \
+  [--writing-plan-file <plan-json>]
 ```
 
-Repeat `--path` for the complete phase scope. Then invoke the configured Reviewer with
-the generation ID and phase. The Reviewer runs:
+Repeat `--path` for the complete phase scope. Plan requires
+`--writing-plan-file`; QA and Recheck reject it. Then invoke the configured Reviewer
+with the generation ID and phase. The Reviewer runs:
 
 ```bash
 node wiki_submit.js review-status --generation-id <id> --phase <phase>
@@ -51,9 +65,11 @@ Every successful command returns one JSON object:
 | `phase` | `plan`, `qa`, or `recheck` |
 | `state` | `not_started`, `ready`, `passed`, or `changes_requested` |
 | `attempt` | Server-assigned phase attempt, or null before opening |
+| `reviewPolicy` | `plan_only` or the reserved `plan_and_qa` policy |
 | `nextAction` | The Writer's only valid next transition |
-| `handoff` | Persisted Writer input when state is `ready` |
+| `handoff` | Persisted Writer input for the latest attempt, including after verdict |
 | `review` | Persisted Reviewer verdict after submission |
+| `writing` | Planned, written, missing, and unexpected page paths after Plan passes |
 
 Run the Reviewer synchronously. After it returns, the Writer runs `review-status`
 exactly once and follows `nextAction`. A remaining `ready` state means the Reviewer
@@ -66,19 +82,43 @@ verdict if the candidate fingerprint changed during the review.
 
 ## Plan
 
-The Writer finishes a concrete page plan, writes `/tmp/code-wiki-plan-handoff.md`, and
-opens the review with every planned page as a repeated `--path`:
+The Writer finishes a concrete page plan, writes `/tmp/code-wiki-plan-handoff.md` plus
+`/tmp/code-wiki-writing-plan.json`, and opens the review with every planned page as a
+repeated `--path`.
+
+Use `coordinator` mode only for a compact repository whose substantive pages fit one
+coherent writing context. Use `scoped` mode when independent runtime domains or
+cross-system workflows need isolated research. Every planned path has exactly one
+owner. Work Packages must be source- and concept-cohesive; do not create one Worker per
+page by default.
+
+```json
+{
+  "mode": "scoped",
+  "language": "Chinese (Simplified)",
+  "coordinator_paths": ["index", "quickstart", "architecture"],
+  "work_packages": [
+    {
+      "id": "WP-01",
+      "paths": ["architecture/runtime", "workflows/task-execution"]
+    }
+  ]
+}
+```
 
 ```markdown
 # Plan handoff
 
 - Commit: `<commit>`
+- Output language: `<language matching the Writing Plan>`
 - Repository scope: `<top-level components examined>`
 
 ## Pages
 
 - `<path>` — `<reader purpose>`
   - Source evidence: `<files, symbols, or commands>`
+  - Must explain:
+    - `<M-01: source-derived mechanism, state, boundary, or failure question>`
   - Relationships: `<parents, children, and cross-links>`
   - Diagram: `<relationship or lifecycle to show, or none>`
 
@@ -89,18 +129,50 @@ opens the review with every planned page as a repeated `--path`:
 ## Focus candidates
 
 - `<path>` — `<why mechanism-level depth matters here>`
+
+## Work Packages
+
+### `<WP-01: cohesive scope>`
+
+- Assigned pages: `<paths matching the JSON Writing Plan>`
+- Shared source scope: `<entrypoints, state owners, integrations, and tests>`
+- Cross-page contract: `<what belongs in each canonical page>`
+- Out of scope: `<neighboring package or none>`
 ```
 
-The Reviewer runs `review-status --phase plan`, reviews the persisted handoff, and
-selects focus paths only when passing the plan. A passed Plan must submit every planned
-path and at least one `--focus-path`. A changes verdict may omit focus paths but requires
+Pass the JSON file with `--writing-plan-file`. The backend rejects duplicate,
+unassigned, or unknown page ownership. Scoped mode also requires an explicit output
+language so a fresh Worker never depends on Coordinator conversation history. In
+coordinator mode all paths are coordinator owned and `work_packages` is empty.
+
+The Reviewer runs `review-status --phase plan`, reviews the persisted handoff and
+structured Writing Plan, and selects focus paths only when passing the plan. Verify the
+writing mode fits repository complexity, every important page has source-derived
+`Must explain` coverage, and Work Packages are neither fragmented nor broad enough to
+recreate one full-wiki context. A passed Plan must submit every planned path and at
+least one `--focus-path`. A changes verdict may omit focus paths but requires
 `--findings-file`.
 
 If attempt 1 requests changes, the Writer revises the complete plan and opens Plan
 attempt 2 with a new handoff that includes a section mapping every prior finding to its
 resolution. Attempt 2 `changes_requested` has `nextAction=fail_generation`.
 
-## QA
+## Writing and completion
+
+After Plan passes, `review-status --phase plan` returns the original handoff, verdict,
+Writing Plan, and current `writing` progress. In scoped mode, invoke the configured
+Section Writer synchronously once per Work Package with only the generation ID and
+package ID. It reads this state, writes only its assigned pages, and never opens or
+submits a review. Use the returned `missingPaths` rather than subagent narration to
+decide what remains. Coordinator-owned synthesis pages are written after their source
+packages. In coordinator mode, do not delegate Section Writers.
+
+Use `writing.missingPaths` and `writing.unexpectedPaths` to reconcile the durable page
+set. Under `plan_only`, run applicable deterministic validation and call `complete`
+only when no planned path is missing and no unexpected path remains. The publication
+gate independently enforces the exact page set.
+
+## Optional QA (`plan_and_qa` only)
 
 After every planned page is submitted and Mermaid validation is current, the Writer
 writes `/tmp/code-wiki-qa-handoff.md` and opens QA with every written page as `--path`:
@@ -115,11 +187,13 @@ writes `/tmp/code-wiki-qa-handoff.md` and opens QA with every written page as `-
 - Known limitations: `<none, or explicit limitations>`
 ```
 
-The Reviewer reads both `review-status --phase plan` and `review-status --phase qa`.
-It inspects every Plan focus path, asks at least one falsifiable source-derived
-mechanism question per focus page, and includes every focus path among its reviewed
-`--path` values. `paths` means reviewed scope, not defective pages. Defective pages are
-named in the findings file.
+The backend rejects QA until written paths exactly equal planned paths. The Reviewer
+reads both `review-status --phase plan` and `review-status --phase qa`. It reads every
+page and checks it against its purpose and `Must explain` contract. For every Plan focus
+path it additionally asks at least one falsifiable source-derived mechanism question
+and verifies the answer against source. The QA verdict must submit every candidate page
+as `--path`; the backend rejects a partial reviewed scope. `paths` means reviewed
+scope, not defective pages. Defective pages are named in the findings file.
 
 ## Recheck
 

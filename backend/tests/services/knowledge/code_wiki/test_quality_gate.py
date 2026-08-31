@@ -16,6 +16,7 @@ from app.schemas.wiki import (
 )
 from app.services.knowledge.code_wiki.projection_plan import PageSource
 from app.services.knowledge.code_wiki.quality_gate import (
+    PLAN_ONLY_REVIEW_POLICY,
     open_quality_review,
     quality_gate_reason,
     record_quality_review,
@@ -67,6 +68,7 @@ def _open(
     *,
     paths: list[str] | None = None,
     handoff: str | None = None,
+    writing_plan: dict | None = None,
 ):
     return open_quality_review(
         test_db,
@@ -78,6 +80,7 @@ def _open(
             summary=f"{phase} handoff",
             handoff=handoff
             or f"# {phase.title()} handoff\n\nReview the supplied scope.",
+            writing_plan=writing_plan,
         ),
     )
 
@@ -157,11 +160,35 @@ def test_reviewer_verdict_is_immediately_durable(test_db, test_user):
     assert state["nextAction"] == "write_pages_then_open_qa"
     assert state["review"]["attempt"] == 1
     assert state["review"]["focusPaths"] == ["index"]
+    assert state["handoff"]["handoff"].startswith("# Plan")
+    assert state["handoff"]["writingPlan"] == {
+        "mode": "coordinator",
+        "coordinatorPaths": ["index"],
+        "workPackages": [],
+    }
     assert set(generation.ext["qualityReview"]) == {
         "required",
         "handoffs",
         "checkpoints",
     }
+
+
+def test_plan_only_completes_after_the_exact_planned_page_set(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    generation.ext = {
+        "qualityReview": {
+            **generation.ext["qualityReview"],
+            "policy": PLAN_ONLY_REVIEW_POLICY,
+        }
+    }
+    _page(test_db, generation, "index")
+
+    state = _review(test_db, generation, "plan", "passed")
+
+    assert state["reviewPolicy"] == "plan_only"
+    assert state["nextAction"] == "write_pages_then_complete"
+    assert review_state(generation, phase="qa")["nextAction"] == "not_required"
+    assert quality_gate_reason(generation, _pages()) == ""
 
 
 def test_repeating_the_same_verdict_is_idempotent(test_db, test_user):
@@ -294,6 +321,93 @@ def test_qa_handoff_must_name_every_written_page(test_db, test_user):
         _open(test_db, generation, "qa", paths=["index"])
 
 
+def test_scoped_writing_plan_assigns_every_page_once(test_db, test_user):
+    generation = _generation(test_db, test_user)
+
+    state = _open(
+        test_db,
+        generation,
+        "plan",
+        paths=["index", "architecture", "architecture/runtime"],
+        writing_plan={
+            "mode": "scoped",
+            "language": "Chinese (Simplified)",
+            "coordinator_paths": ["index", "architecture"],
+            "work_packages": [{"id": "WP-01", "paths": ["architecture/runtime"]}],
+        },
+    )
+
+    assert state["handoff"]["writingPlan"] == {
+        "mode": "scoped",
+        "language": "Chinese (Simplified)",
+        "coordinatorPaths": ["architecture", "index"],
+        "workPackages": [{"id": "WP-01", "paths": ["architecture/runtime"]}],
+    }
+
+
+@pytest.mark.parametrize(
+    "writing_plan, message",
+    [
+        (
+            {
+                "mode": "scoped",
+                "language": "Chinese (Simplified)",
+                "coordinator_paths": ["index"],
+                "work_packages": [{"id": "WP-01", "paths": ["index"]}],
+            },
+            "assigns pages more than once",
+        ),
+        (
+            {
+                "mode": "scoped",
+                "language": "Chinese (Simplified)",
+                "coordinator_paths": ["index"],
+                "work_packages": [],
+            },
+            "ownership must exactly match",
+        ),
+        (
+            {
+                "mode": "scoped",
+                "language": " ",
+                "coordinator_paths": ["index"],
+                "work_packages": [{"id": "WP-01", "paths": ["architecture"]}],
+            },
+            "requires an output language",
+        ),
+    ],
+)
+def test_writing_plan_rejects_ambiguous_ownership(
+    test_db, test_user, writing_plan, message
+):
+    generation = _generation(test_db, test_user)
+
+    with pytest.raises(HTTPException, match=message):
+        _open(
+            test_db,
+            generation,
+            "plan",
+            paths=["index", "architecture"],
+            writing_plan=writing_plan,
+        )
+
+
+def test_qa_requires_written_pages_to_exactly_match_the_passed_plan(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "index")
+    _review(
+        test_db,
+        generation,
+        "plan",
+        "passed",
+        paths=["index", "architecture"],
+        focus_paths=["architecture"],
+    )
+
+    with pytest.raises(HTTPException, match="missing=.*architecture"):
+        _open(test_db, generation, "qa", paths=["index"])
+
+
 def test_a_page_change_invalidates_the_latest_passing_review(test_db, test_user):
     generation = _generation(test_db, test_user)
     _page(test_db, generation, "index")
@@ -359,7 +473,7 @@ def test_plan_review_requires_core_focus_paths_when_it_passes(test_db, test_user
         )
 
 
-def test_final_qa_must_cover_every_core_focus_page(test_db, test_user):
+def test_qa_verdict_must_cover_every_candidate_page(test_db, test_user):
     generation = _generation(test_db, test_user)
     _page(test_db, generation, "index")
     _page(test_db, generation, "architecture")
@@ -372,15 +486,8 @@ def test_final_qa_must_cover_every_core_focus_page(test_db, test_user):
         focus_paths=["index", "architecture"],
     )
     _open(test_db, generation, "qa", paths=["index", "architecture"])
-    _review(test_db, generation, "qa", "passed")
-
-    assert "every core focus page" in quality_gate_reason(
-        generation,
-        [
-            PageSource(path="index", title="index", content="body"),
-            PageSource(path="architecture", title="architecture", content="body"),
-        ],
-    )
+    with pytest.raises(HTTPException, match="every page"):
+        _review(test_db, generation, "qa", "passed")
 
 
 def test_state_is_not_started_until_the_writer_opens_a_handoff(test_db, test_user):
@@ -391,5 +498,6 @@ def test_state_is_not_started_until_the_writer_opens_a_handoff(test_db, test_use
         "phase": "plan",
         "state": "not_started",
         "attempt": None,
+        "reviewPolicy": "plan_and_qa",
         "nextAction": "open_plan_review",
     }

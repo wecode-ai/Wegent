@@ -497,12 +497,44 @@ async function cmdReviewOpen(args) {
     console.error('Error: --phase must be plan, qa, or recheck')
     return 1
   }
+  if (args.reviewPhase === 'plan' && !args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is required for a plan review handoff')
+    return 1
+  }
+  if (args.reviewPhase !== 'plan' && args.writingPlanFile) {
+    console.error('Error: --writing-plan-file is valid only for a plan review handoff')
+    return 1
+  }
   const handoffPath = path.resolve(args.handoffFile)
   if (!fs.existsSync(handoffPath)) {
     console.error(`Error: Handoff file not found: ${args.handoffFile}`)
     return 1
   }
+  let writingPlan = null
+  if (args.writingPlanFile) {
+    const writingPlanPath = path.resolve(args.writingPlanFile)
+    if (!fs.existsSync(writingPlanPath)) {
+      console.error(`Error: Writing Plan file not found: ${args.writingPlanFile}`)
+      return 1
+    }
+    try {
+      writingPlan = JSON.parse(fs.readFileSync(writingPlanPath, 'utf-8'))
+    } catch {
+      console.error('Error: --writing-plan-file must contain valid JSON')
+      return 1
+    }
+  }
 
+  const payload = {
+    generation_id: parseInt(args.generationId, 10),
+    phase: args.reviewPhase,
+    paths: args.paths,
+    summary: args.summary,
+    handoff: fs.readFileSync(handoffPath, 'utf-8'),
+  }
+  if (writingPlan) {
+    payload.writing_plan = writingPlan
+  }
   const result = await makeRequest(
     reviewOpenEndpoint(endpoint),
     {
@@ -512,13 +544,7 @@ async function cmdReviewOpen(args) {
         'Content-Type': 'application/json',
       },
     },
-    JSON.stringify({
-      generation_id: parseInt(args.generationId, 10),
-      phase: args.reviewPhase,
-      paths: args.paths,
-      summary: args.summary,
-      handoff: fs.readFileSync(handoffPath, 'utf-8'),
-    })
+    JSON.stringify(payload)
   )
   if (result.status === 'error') {
     if (isTerminalGenerationError(result)) {
@@ -780,6 +806,7 @@ function parseArgs(argv) {
     reviewPhase: null,
     reviewStatus: null,
     handoffFile: null,
+    writingPlanFile: null,
     findingsFile: null,
     summary: null,
   }
@@ -832,6 +859,9 @@ function parseArgs(argv) {
         break
       case '--handoff-file':
         args.handoffFile = argv[++i]
+        break
+      case '--writing-plan-file':
+        args.writingPlanFile = argv[++i]
         break
       case '--findings-file':
         args.findingsFile = argv[++i]
@@ -937,6 +967,7 @@ Review Options:
   --focus-path         Core deep-dive page selected by plan review. Repeat as needed.
   --summary            Short evidence-based review conclusion
   --handoff-file       Markdown handoff file required by review-open
+  --writing-plan-file  JSON page-ownership plan required by Plan review-open
   --findings-file      Actionable Markdown findings for changes_requested
 
 Complete Options:
@@ -953,7 +984,7 @@ Examples:
   node wiki_submit.js validate-mermaid --file ./page.md
   node wiki_submit.js read --generation-id 123 --path architecture/backend > current.md
   node wiki_submit.js remove --generation-id 123 --path modules/legacy-sync
-  node wiki_submit.js review-open --generation-id 123 --phase plan --path index --path architecture --summary "Proposed wiki plan" --handoff-file /tmp/wiki-plan.md
+  node wiki_submit.js review-open --generation-id 123 --phase plan --path index --path architecture --summary "Proposed wiki plan" --handoff-file /tmp/wiki-plan.md --writing-plan-file /tmp/wiki-writing-plan.json
   node wiki_submit.js review --generation-id 123 --phase plan --review-status passed --path index --path architecture --focus-path architecture --summary "Plan covers entry points and identifies its core deep dive"
   node wiki_submit.js review-status --generation-id 123 --phase plan
   node wiki_submit.js complete --generation-id 123 --head-commit $(git rev-parse HEAD)

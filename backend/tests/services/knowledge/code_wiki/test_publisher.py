@@ -225,6 +225,37 @@ def test_a_required_quality_review_allows_matching_plan_and_qa(
     assert result.published
 
 
+def test_plan_only_review_publishes_after_a_matching_passed_plan(
+    test_db: Session, knowledge_base: Kind, effects: FakeEffects
+):
+    generation = _generation(test_db, knowledge_base.id)
+    generation.ext = {
+        "qualityReview": {
+            "required": True,
+            "policy": "plan_only",
+            "checkpoints": [
+                {
+                    "phase": "plan",
+                    "status": "passed",
+                    "paths": ["index"],
+                    "focusPaths": ["index"],
+                }
+            ],
+        }
+    }
+    _page(test_db, generation, "index", "overview")
+
+    result = publish_generation(
+        test_db,
+        knowledge_base=knowledge_base,
+        generation=generation,
+        user_id=USER_ID,
+        effects=effects.build(),
+    )
+
+    assert result.published
+
+
 def test_a_rejected_version_leaves_the_pointer_and_pages_alone(
     test_db: Session, knowledge_base: Kind, effects: FakeEffects
 ):

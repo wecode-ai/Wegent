@@ -25,7 +25,7 @@ def test_wiki_submit_owns_the_page_write_contract() -> None:
     metadata, body = _skill("wiki_submit")
 
     assert metadata["bindShells"] == ["ClaudeCode"]
-    assert metadata["version"] == "2.0.1"
+    assert metadata["version"] == "2.0.3"
     for subject in (
         "at most 4 folders",
         "complete content",
@@ -52,6 +52,7 @@ def test_wiki_submit_owns_the_page_write_contract() -> None:
         "review-status",
         "`nextAction`",
         "handoff-file",
+        "writing-plan-file",
         "findings-file",
     ):
         assert subject in body
@@ -72,6 +73,12 @@ def test_review_contract_defines_every_handoff_and_result() -> None:
         "review-status --phase plan",
         "Candidate complete: yes",
         "QA finding:",
+        "Work Packages",
+        "Must explain",
+        "missingPaths",
+        "reviewPolicy",
+        "plan_only",
+        "plan_and_qa",
     ):
         assert subject in contract
 
@@ -81,3 +88,4 @@ def test_review_command_prints_complete_persisted_state() -> None:
 
     assert "console.log(JSON.stringify(result))" in script
     assert "console.log(JSON.stringify(result.review || result))" not in script
+    assert "--writing-plan-file is required for a plan review handoff" in script
