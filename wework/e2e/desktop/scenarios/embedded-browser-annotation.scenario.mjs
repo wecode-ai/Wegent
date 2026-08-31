@@ -1093,9 +1093,9 @@ async function verifyDesign(
     'Changing a design value without a comment did not enable the submit button'
   )
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-05-design-editor.png')
-  let runtimeRevision = await browserAnnotationRuntimeRevision(control)
+  const revision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_SUBMIT_SELECTOR)
-  runtimeRevision = await waitForAnnotationSave(control, bridge, runtimeRevision, uiTimeoutMs)
+  await waitForAnnotationSave(control, bridge, revision, uiTimeoutMs)
 
   await waitForPageValue(
     bridge,
@@ -1105,7 +1105,7 @@ async function verifyDesign(
     'The design change did not update the target computed style'
   )
   await captureScreenshot(control, 'browser-annotation-05b-design-applied.png')
-  runtimeRevision = await browserAnnotationRuntimeRevision(control)
+  let runtimeRevision = await browserAnnotationRuntimeRevision(control)
   await control.command('pointerDownOnly', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR)
   await control.command('waitFor', BROWSER_ANNOTATION_ORIGINAL_VIEW_SELECTOR, {
     attribute: 'aria-pressed',
