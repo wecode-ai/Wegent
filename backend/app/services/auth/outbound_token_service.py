@@ -8,7 +8,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -400,9 +400,19 @@ class OutboundTokenService:
                 f"OAuth client TokenIssuer audience must remain '{OAUTH_AUDIENCE}'",
                 error_code="TOKEN_ISSUER_AUDIENCE_REQUIRED_BY_OAUTH_CLIENT",
             )
-        largest_client_ttl = max(
-            int(client.json["spec"]["accessTtlSeconds"]) for client in clients
-        )
+        client_ttls: list[int] = []
+        for client in clients:
+            spec = client.json.get("spec") if isinstance(client.json, dict) else None
+            access_ttl = (
+                spec.get("accessTtlSeconds") if isinstance(spec, dict) else None
+            )
+            if isinstance(access_ttl, bool) or not isinstance(access_ttl, int):
+                raise OutboundTokenValidationError(
+                    f"OAuth client '{client.name}' has an invalid access TTL",
+                    error_code="OAUTH_CLIENT_INVALID_ACCESS_TTL",
+                )
+            client_ttls.append(access_ttl)
+        largest_client_ttl = max(client_ttls)
         if max_ttl_seconds < largest_client_ttl:
             raise OutboundTokenValidationError(
                 "TokenIssuer maximum TTL cannot be lower than a referenced OAuth client TTL",
@@ -506,7 +516,7 @@ class OutboundTokenService:
         issuer_id: int,
         subject: str,
         expires_in: int,
-        claims: dict,
+        claims: dict[str, Any],
         headers: dict[str, str] | None = None,
     ) -> TokenIssueResponse:
         """Sign constrained deployment claims with an existing TokenIssuer."""
@@ -540,7 +550,7 @@ class OutboundTokenService:
             reserved,
             signing_key.private_key_pem,
             algorithm="RS256",
-            headers={"kid": signing_key.resource.spec.kid, **(headers or {})},
+            headers={**(headers or {}), "kid": signing_key.resource.spec.kid},
         )
         return TokenIssueResponse(
             access_token=token,

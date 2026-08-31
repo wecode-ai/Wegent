@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CheckCircle2, ShieldCheck, XCircle } from 'lucide-react'
 import { oauthAuthorizationApis, OAuthAuthorizationRequest } from '@/apis/oauthProvider'
@@ -214,9 +214,13 @@ function OAuthStatus({
 }
 
 export default function OAuthAuthorizePage() {
+  const { t } = useTranslation('common')
+
   return (
     <UserProvider>
-      <OAuthAuthorizeContent />
+      <Suspense fallback={<OAuthStatus loading title={t('auth.oauth_authorize.loading')} />}>
+        <OAuthAuthorizeContent />
+      </Suspense>
     </UserProvider>
   )
 }
