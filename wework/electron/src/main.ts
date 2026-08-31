@@ -664,6 +664,12 @@ async function showBrowserAnnotationOverlay(
     throw new Error('Browser annotation overlay is unavailable')
   }
   let overlay = browserAnnotationOverlayWindow
+  if (overlay && !overlay.isDestroyed() && !overlay.isVisible()) {
+    overlay.destroy()
+    overlay = null
+    browserAnnotationOverlayWindow = null
+    browserAnnotationOverlayReadyPromise = null
+  }
   if (!overlay || overlay.isDestroyed()) {
     const target = resolveDshAppRoute(desktopRuntime.coreDshUrl(), 'browser-annotation-overlay')
     overlay = new BrowserWindow({

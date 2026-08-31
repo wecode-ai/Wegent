@@ -21,6 +21,8 @@ const COMPOSER_SELECTOR = '[data-testid="chat-message-input"][contenteditable="t
 const OVERLAY_WINDOW_LABEL = 'browser-annotation-overlay'
 const OVERLAY_INPUT_SELECTOR = '[data-testid="browser-annotation-comment-input"]'
 const OVERLAY_SUBMIT_SELECTOR = '[data-testid="browser-annotation-submit-button"]'
+const OVERLAY_REMOVE_SELECTION_SELECTOR =
+  '[data-testid="browser-annotation-remove-selection-button"]'
 const OVERLAY_DELETE_SELECTOR = '[data-testid="browser-annotation-delete-button"]'
 const OVERLAY_DESIGN_SELECTOR = '[data-testid="browser-annotation-design-button"]'
 const OVERLAY_COLOR_SELECTOR = '[data-testid="browser-annotation-design-color"]'
@@ -61,6 +63,9 @@ function basicFixtureHtml() {
     <h1>Browser Annotation Core Fixture</h1>
     <button id="annotation-primary" type="button" aria-label="Primary annotation target">
       Primary annotation target
+    </button>
+    <button id="annotation-secondary" type="button" aria-label="Secondary annotation target">
+      Secondary annotation target
     </button>
     <output id="page-click-state">not-clicked</output>
     <script>
@@ -367,6 +372,19 @@ async function enterElementAnnotationMode(control, bridge, uiTimeoutMs) {
     'none',
     'Starting annotation mode did not hide the native cursor for the custom annotation cursor'
   )
+  assert.equal(
+    await pageValue(
+      bridge,
+      `(() => {
+        const layer = document
+          .getElementById(${JSON.stringify(MARKER_ROOT_ID)})
+          ?.shadowRoot?.querySelector(${JSON.stringify(INTERACTION_LAYER_SELECTOR)})
+        return layer ? getComputedStyle(layer).backgroundColor : null
+      })()`
+    ),
+    'rgba(0, 105, 251, 0.08)',
+    'Starting annotation mode did not cover the unselected page with the blue annotation layer'
+  )
 }
 
 async function hoverElementAnnotationTarget(bridge, targetSelector, uiTimeoutMs) {
@@ -650,9 +668,11 @@ async function verifyCore(
   })
 
   await enterElementAnnotationMode(control, bridge, uiTimeoutMs)
-  await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
   control.activateWindow('main')
   await captureScreenshot(control, 'browser-annotation-01-mode-active.png')
+  await hoverElementAnnotationTarget(bridge, '#annotation-primary', uiTimeoutMs)
+  control.activateWindow('main')
+  await captureScreenshot(control, 'browser-annotation-01b-target-hover.png')
   await selectElementAnnotationTarget(control, bridge, '#annotation-primary', uiTimeoutMs)
   await captureWindowScreenshot(
     control,
@@ -679,6 +699,31 @@ async function verifyCore(
   assert.equal(savedMarker?.number, '1', 'The first saved comment did not render marker 1')
   assert.ok(savedMarker?.id, 'The saved marker did not expose its comment identity')
   await captureScreenshot(control, 'browser-annotation-03-published-marker.png')
+
+  await hoverElementAnnotationTarget(bridge, '#annotation-secondary', uiTimeoutMs)
+  await selectElementAnnotationTarget(control, bridge, '#annotation-secondary', uiTimeoutMs)
+  assert.equal(
+    await control.commandForWindow(
+      OVERLAY_WINDOW_LABEL,
+      'getAttribute',
+      '[data-testid="browser-annotation-editor-surface"]',
+      { value: 'data-testid' }
+    ),
+    'browser-annotation-editor-surface',
+    'The second annotation did not render the comment editor surface'
+  )
+  await captureWindowScreenshot(
+    control,
+    resultDir,
+    OVERLAY_WINDOW_LABEL,
+    'browser-annotation-03b-second-comment-card.png'
+  )
+  await control.commandForWindow(OVERLAY_WINDOW_LABEL, 'click', OVERLAY_REMOVE_SELECTION_SELECTOR)
+  control.activateWindow('main')
+  await control.command('waitFor', BROWSER_ANNOTATION_COUNT_SELECTOR, {
+    text: '1',
+    timeoutMs: uiTimeoutMs,
+  })
 
   await clickMarker(bridge)
   await waitForWindowCommand(control, OVERLAY_WINDOW_LABEL, 'waitFor', OVERLAY_INPUT_SELECTOR, {

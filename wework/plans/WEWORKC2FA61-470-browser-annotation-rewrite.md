@@ -1,6 +1,6 @@
 # 浏览器标注重写计划
 
-更新日期：2026-08-30
+更新日期：2026-08-31
 
 关联需求：`WEWORKC2FA61-470`
 
@@ -31,11 +31,11 @@ BrowserAnnotationController（主进程状态唯一来源）
 
 新增 `browser-annotation` 组合入口以及三个可独立执行、由 CI 调用的 checkpoint：
 
-| Checkpoint                   | 当前验证范围                                                                        |
-| ---------------------------- | ----------------------------------------------------------------------------------- |
-| `browser-annotation-core`    | Element 选择、独立 Overlay、创建、编辑、删除、Marker、Composer 上下文、页面点击阻断 |
-| `browser-annotation-anchors` | DOM 节点替换后的语义重绑、同 URL 刷新恢复、open ShadowRoot 选择                     |
-| `browser-annotation-design`  | computed style 基线、颜色调整、Original View、截图、节点替换后的设计重放            |
+| Checkpoint                   | 当前验证范围                                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `browser-annotation-core`    | 全页蓝色批注层、Element 选择、连续两次打开独立 Overlay、创建、编辑、删除、Marker、Composer 上下文、页面点击阻断 |
+| `browser-annotation-anchors` | DOM 节点替换后的语义重绑、同 URL 刷新恢复、open ShadowRoot 选择                                                 |
+| `browser-annotation-design`  | computed style 基线、颜色调整、Original View、截图、节点替换后的设计重放                                        |
 
 统一场景文件：
 

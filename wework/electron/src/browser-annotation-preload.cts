@@ -55,6 +55,7 @@ const INTERACTION_LAYER_ATTRIBUTE = 'data-wework-browser-annotation-interaction-
 const HOVER_ATTRIBUTE = 'data-wework-browser-annotation-hover'
 const CURSOR_ATTRIBUTE = 'data-wework-browser-annotation-cursor'
 const ANNOTATION_BLUE = '#0069fb'
+const ANNOTATION_OVERLAY_BACKGROUND = 'rgba(0, 105, 251, .08)'
 const ANNOTATION_CURSOR = {
   fill: '#0285FF',
   height: 25,
@@ -511,7 +512,7 @@ function interactionLayer() {
   const layer = document.createElement('div')
   layer.setAttribute(INTERACTION_LAYER_ATTRIBUTE, '')
   Object.assign(layer.style, {
-    background: 'transparent',
+    background: ANNOTATION_OVERLAY_BACKGROUND,
     cursor: 'none',
     inset: '0',
     pointerEvents: 'auto',
