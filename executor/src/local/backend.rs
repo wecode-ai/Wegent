@@ -731,9 +731,18 @@ where
                     .and_then(Value::as_str)
                     .unwrap_or("<missing>")
                     .to_owned();
+                let request_id = payload
+                    .get("request_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("-")
+                    .to_owned();
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc received",
-                    &[("method", method.clone())],
+                    &[
+                        ("request_id", request_id.clone()),
+                        ("method", method.clone()),
+                    ],
                 ));
                 let Some(handler) = runtime_work_handler else {
                     return Some(runtime_error_response(AppIpcError::new(
@@ -749,6 +758,8 @@ where
                 write_executor_log_line(&format_executor_log(
                     "runtime:rpc responded",
                     &[
+                        ("request_id", request_id),
+                        ("method", method.clone()),
                         (
                             "ok",
                             response

@@ -209,6 +209,7 @@ class WeworkRuntimeNamespace(socketio.AsyncNamespace):
             return ipc_error(data, "unauthorized", "Not authenticated")
 
         request_id = request_id_from(data)
+        set_request_context(request_id)
         method = string_field(data, "method")
         device_id = string_field(data, "device_id") or string_field(data, "deviceId")
         params = data.get("params")

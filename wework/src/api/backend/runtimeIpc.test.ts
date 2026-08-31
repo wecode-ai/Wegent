@@ -63,7 +63,8 @@ describe('createCloudRuntimeIpcClient', () => {
   })
 
   it('preserves ordinary runtime results', async () => {
-    socket.emit.mockImplementation((_event, _request, acknowledge) => {
+    socket.emit.mockImplementation((_event, request, acknowledge) => {
+      expect(request.id).toMatch(/^cloud-runtime-/)
       acknowledge({ ok: true, result: { success: true } })
     })
     const client = createCloudRuntimeIpcClient({

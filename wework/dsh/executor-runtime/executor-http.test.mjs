@@ -2,7 +2,30 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { Readable } from 'node:stream'
 import test from 'node:test'
-import { handleExecutorEvents } from './index.js'
+import { handleExecutorEvents, handleExecutorRpc } from './index.js'
+
+test('preserves one request id across browser, DSH, and executor RPC', async () => {
+  const request = executorRpcRequest(
+    { id: 'wework-local-request-1', method: 'runtime.tasks.list', params: {} },
+    { 'x-request-id': 'wework-local-request-1' }
+  )
+  const response = responseFixture()
+  const client = {
+    request: async (method, params, timeoutMs, requestId) => {
+      assert.equal(method, 'runtime.tasks.list')
+      assert.deepEqual(params, {})
+      assert.equal(timeoutMs, undefined)
+      assert.equal(requestId, 'wework-local-request-1')
+      return { items: [] }
+    },
+  }
+
+  await handleExecutorRpc(request, response, client)
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers['x-request-id'], 'wework-local-request-1')
+  assert.deepEqual(JSON.parse(response.body), { ok: true, result: { items: [] } })
+})
 
 test('passes the browser cursor to the executor-owned event stream', async () => {
   const request = executorEventRequest('?after=7')
@@ -173,6 +196,15 @@ function executorEventRequest(query = '') {
   request.method = 'GET'
   request.url = `/wework/executor/v1/events${query}`
   request.headers = {}
+  request.socket = { remoteAddress: '127.0.0.1' }
+  return request
+}
+
+function executorRpcRequest(body, headers = {}) {
+  const request = Readable.from([Buffer.from(JSON.stringify(body))])
+  request.method = 'POST'
+  request.url = '/wework/executor/v1/rpc'
+  request.headers = headers
   request.socket = { remoteAddress: '127.0.0.1' }
   return request
 }

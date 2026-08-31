@@ -1,5 +1,6 @@
 import { createSocketClient, type AuthenticatedSocketClient } from '@wegent/chat-core'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
+import { createRequestId } from '@/lib/request-id'
 
 const WEWORK_RUNTIME_NAMESPACE = '/wework-runtime'
 const REQUEST_EVENT = 'runtime:request'
@@ -41,8 +42,6 @@ export interface CloudRuntimeIpcClient {
   reconnect: () => Promise<void>
   dispose: () => void
 }
-
-let nextRequestId = 1
 
 export function createCloudRuntimeIpcClient(
   options: RuntimeIpcClientOptions
@@ -91,7 +90,7 @@ async function emitRuntimeRequest<T>(
   timeoutMs = ACK_TIMEOUT_MS
 ): Promise<T> {
   await client.ensureConnected()
-  const requestId = `cloud-runtime-${nextRequestId++}`
+  const requestId = createRequestId('cloud-runtime')
   const targetDeviceId = deviceId ?? deviceIdFromParams(params)
   if (!targetDeviceId) {
     throw new Error(`Cloud runtime request ${method} missing deviceId`)
@@ -101,9 +100,21 @@ async function emitRuntimeRequest<T>(
     method === 'device.execute_command'
       ? relayTimeoutSeconds * 1000 + COMMAND_ACK_GRACE_MS
       : timeoutMs
+  const startedAt = Date.now()
+  console.debug('[Wework] Cloud runtime RPC request started', {
+    request_id: requestId,
+    method,
+    device_id: targetDeviceId,
+  })
 
   return new Promise<T>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
+      console.warn('[Wework] Cloud runtime RPC request timed out', {
+        request_id: requestId,
+        method,
+        device_id: targetDeviceId,
+        elapsed_ms: Date.now() - startedAt,
+      })
       reject(new Error(`${method} timed out`))
     }, acknowledgementTimeoutMs)
 
@@ -120,14 +131,46 @@ async function emitRuntimeRequest<T>(
       (ack: RuntimeIpcAck<T> | undefined) => {
         window.clearTimeout(timeout)
         if (!ack) {
+          console.warn('[Wework] Cloud runtime RPC returned an empty acknowledgement', {
+            request_id: requestId,
+            method,
+            device_id: targetDeviceId,
+            elapsed_ms: Date.now() - startedAt,
+          })
           reject(new Error(`${method} returned an empty acknowledgement`))
           return
         }
         if (ack.ok === false || ack.error) {
+          console.warn('[Wework] Cloud runtime RPC request failed', {
+            request_id: requestId,
+            method,
+            device_id: targetDeviceId,
+            elapsed_ms: Date.now() - startedAt,
+            code: ack.error?.code,
+          })
           reject(new Error(formatRuntimeIpcError(ack)))
           return
         }
-        void decodeRuntimeIpcResult<T>(ack.result ?? null).then(resolve, reject)
+        void decodeRuntimeIpcResult<T>(ack.result ?? null).then(
+          result => {
+            console.debug('[Wework] Cloud runtime RPC request finished', {
+              request_id: requestId,
+              method,
+              device_id: targetDeviceId,
+              elapsed_ms: Date.now() - startedAt,
+            })
+            resolve(result)
+          },
+          error => {
+            console.warn('[Wework] Cloud runtime RPC response decoding failed', {
+              request_id: requestId,
+              method,
+              device_id: targetDeviceId,
+              elapsed_ms: Date.now() - startedAt,
+            })
+            reject(error)
+          }
+        )
       }
     )
   })

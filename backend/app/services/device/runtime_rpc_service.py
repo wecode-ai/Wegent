@@ -28,6 +28,7 @@ from app.services.device.runtime_task_create_protocol import (
     negotiate_runtime_task_create_payload,
 )
 from app.services.user_runtime_config import user_runtime_config_service
+from shared.telemetry.context import get_request_id
 from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,13 @@ class RuntimeRpcService:
             ) from exc
 
         sio = get_sio()
-        request = {"method": method, "payload": payload}
+        request = {
+            "method": method,
+            "payload": payload,
+        }
+        request_id = get_request_id()
+        if request_id:
+            request["request_id"] = request_id
         started_at = time.perf_counter()
         logger.info(
             "[RuntimeRpcService] Sending runtime RPC: user_id=%s "

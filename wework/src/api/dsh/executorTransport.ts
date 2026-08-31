@@ -1,3 +1,5 @@
+import { createRequestId } from '@/lib/request-id'
+
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
 const INITIAL_RECONNECT_DELAY_MS = 500
@@ -80,13 +82,37 @@ export async function requestDshExecutor<T>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  const response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ method, params }),
+  const requestId = createRequestId('wework-local')
+  const startedAt = Date.now()
+  console.debug('[Wework] Executor RPC request started', {
+    request_id: requestId,
+    method,
+  })
+  let response: Response
+  try {
+    response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'x-request-id': requestId,
+      },
+      body: JSON.stringify({ id: requestId, method, params }),
+    })
+  } catch (error) {
+    console.warn('[Wework] Executor RPC transport failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      error,
+    })
+    throw error
+  }
+  console.debug('[Wework] Executor RPC response received', {
+    request_id: requestId,
+    method,
+    elapsed_ms: Date.now() - startedAt,
+    status: response.status,
   })
   const body = (await response.json()) as
     | { ok: true; result: T }

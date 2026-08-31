@@ -93,6 +93,25 @@ test('decodes compressed local endpoint responses without disconnecting', async 
   }
 })
 
+test('uses a caller-provided request id for downstream log correlation', async () => {
+  const fixture = await executorFixture()
+  const client = new ExecutorRuntimeClient({
+    transport: new LocalEndpointTransport({
+      endpoint: fixture.endpoint,
+      token: fixture.token,
+      reconnectDelayMs: 10,
+    }),
+  })
+  try {
+    await client.start()
+    await client.request('executor.health', {}, undefined, 'wework-local-request-1')
+    assert.equal(fixture.lastRequestId(), 'wework-local-request-1')
+  } finally {
+    await client.stop()
+    await fixture.stop()
+  }
+})
+
 async function executorFixture(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-executor-runtime-'))
   const endpoint =
@@ -102,6 +121,7 @@ async function executorFixture(options = {}) {
   const token = '0123456789abcdef0123456789abcdef'
   const clients = new Set()
   let connectionCount = 0
+  let lastRequestId = null
   const server = createServer(socket => {
     connectionCount += 1
     clients.add(socket)
@@ -159,6 +179,7 @@ async function executorFixture(options = {}) {
             )
           }, options.descriptionDelayMs ?? 0)
         } else {
+          lastRequestId = message.id
           const result = options.compressedHealthResponse
             ? {
                 __runtimeRpcEncoding: 'gzip+base64+json',
@@ -197,6 +218,9 @@ async function executorFixture(options = {}) {
     },
     connectionCount() {
       return connectionCount
+    },
+    lastRequestId() {
+      return lastRequestId
     },
     disconnect() {
       for (const client of clients) client.destroy()

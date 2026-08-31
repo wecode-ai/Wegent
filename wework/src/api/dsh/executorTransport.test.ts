@@ -56,11 +56,20 @@ describe('DSH executor transport', () => {
       '/wework/executor/v1/rpc',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({
-          method: 'runtime.tasks.list',
-          params: { archived: false },
+        headers: expect.objectContaining({
+          'x-request-id': expect.stringMatching(/^wework-local-/),
         }),
+        body: expect.stringContaining('"method":"runtime.tasks.list"'),
       })
+    )
+    const request = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    expect(request).toMatchObject({
+      id: expect.stringMatching(/^wework-local-/),
+      method: 'runtime.tasks.list',
+      params: { archived: false },
+    })
+    expect(request.id).toBe(
+      (fetchMock.mock.calls[0][1]?.headers as Record<string, string>)['x-request-id']
     )
   })
 

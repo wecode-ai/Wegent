@@ -34,6 +34,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
     })
   })
@@ -60,6 +61,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
       body: JSON.stringify({ version: 1, status: 'in_progress' }),
     })
@@ -90,6 +92,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
     })
     expect(fetchMock).toHaveBeenNthCalledWith(2, 'http://localhost:8000/api/v1/cloud-projects', {
@@ -97,6 +100,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer cloud-token',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
     })
   })
@@ -123,6 +127,7 @@ describe('createHttpClient', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer token-1',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
     })
   })
@@ -167,7 +172,7 @@ describe('createHttpClient', () => {
       expect(warn).toHaveBeenCalledWith(
         '[Wework] HTTP GET /devices is still pending after 5000ms.',
         expect.objectContaining({
-          requestId: expect.stringMatching(/^wework-/),
+          request_id: expect.stringMatching(/^wework-/),
           phase: 'waiting_for_response',
           endpoint: '/devices',
           transport: 'fetch',
@@ -185,7 +190,7 @@ describe('createHttpClient', () => {
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('completed slowly'),
         expect.objectContaining({
-          backendRequestId: 'backend-request-1',
+          backend_request_id: 'backend-request-1',
           phase: 'response_received',
           status: 200,
         })
@@ -240,7 +245,7 @@ describe('createHttpClient', () => {
         '[Wework] HTTP GET /attachments/1 returned 502.',
         expect.objectContaining({
           phase: 'http_error',
-          backendRequestId: 'backend-blob-request',
+          backend_request_id: 'backend-blob-request',
         })
       )
       expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-cloud-token')
@@ -350,6 +355,7 @@ describe('createHttpClient', () => {
       body: formData,
       headers: {
         Authorization: 'Bearer token-1',
+        'X-Request-ID': expect.stringMatching(/^wework-/),
       },
     })
   })
