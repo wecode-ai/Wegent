@@ -27,6 +27,7 @@ from app.services.task_status import mark_task_failed
 from app.services.workspace_archive import archive_service
 from app.stores.tasks import subtask_store
 from shared.models import ExecutionRequest
+from shared.telemetry.decorators import trace_async
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ class ExecutorRecoveryService:
                 return True
         return False
 
+    @trace_async("execution.cleanup_prepared_executor", "execution.recovery")
     async def _delete_prepared_executor(self, *, task_id: int) -> None:
         """Best-effort cleanup of a freshly prepared executor after failure."""
         from app.services.execution import get_executor_runtime_client

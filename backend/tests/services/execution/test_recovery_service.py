@@ -281,7 +281,7 @@ async def test_recover_claude_continuation_rejects_missing_session_context():
 
 
 @pytest.mark.asyncio
-async def test_recover_claude_continuation_rejects_when_session_was_persisted():
+async def test_recover_claude_continuation_rejects_when_session_was_persisted() -> None:
     """A persisted executor session proves the task had a Claude session."""
     service = ExecutorRecoveryService()
     db = MagicMock()
@@ -371,7 +371,7 @@ async def test_recover_claude_continuation_rejects_when_session_was_persisted():
 
 
 @pytest.mark.asyncio
-async def test_recover_legacy_claude_task_without_session_evidence_continues():
+async def test_recover_legacy_claude_task_without_session_evidence_continues() -> None:
     """Legacy tasks predate session persistence and must keep recovering."""
     service = ExecutorRecoveryService()
     db = MagicMock()
@@ -455,7 +455,7 @@ async def test_recover_legacy_claude_task_without_session_evidence_continues():
 
 
 @pytest.mark.asyncio
-async def test_recover_with_archive_cleans_up_prepared_executor_on_error():
+async def test_recover_with_archive_cleans_up_prepared_executor_on_error() -> None:
     """A pod created for recovery must be deleted when restore raises."""
     service = ExecutorRecoveryService()
     db = MagicMock()
