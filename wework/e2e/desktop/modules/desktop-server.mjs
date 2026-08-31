@@ -193,6 +193,7 @@ import {
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   RETRY_COMPLETION_TEXT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_PROMPT,
   RUNNING_FORK_COMPLETION_TEXT,
@@ -3702,18 +3703,28 @@ class DesktopE2EServer {
 
     if (this.scenario === 'retry') {
       this.recordScenarioRequest('retry', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(RETRY_PROMPT),
-        'The real Codex request did not contain the retry prompt'
-      )
       const retryRequests = this.scenarioRequests.get('retry') ?? []
       if (retryRequests.length === 1) {
+        assert.ok(
+          latestModelInputText(body).includes(RETRY_PROMPT),
+          'The initial Codex request did not contain the retry scenario prompt'
+        )
         this.writeSse(response, [
           responseCreated(responseId),
           responseFailed(responseId, RETRY_FAILURE_TEXT),
         ])
         return
       }
+      const continuationInput = latestModelInputText(body)
+      assert.ok(
+        continuationInput.includes(RETRY_CONTINUATION_PROMPT),
+        'The retry action did not continue the existing Codex conversation'
+      )
+      assert.equal(
+        continuationInput.includes(RETRY_PROMPT),
+        false,
+        'The retry action replayed the original user prompt'
+      )
       await this.retryCompletionRelease
       this.writeSse(response, [
         responseCreated(responseId),

@@ -1111,13 +1111,28 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   )
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'The failed attempt card remained after retry succeeded'
+    true,
+    'Retry removed the failed attempt instead of preserving the conversation history'
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Retry success left an empty assistant turn in the live conversation'
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+      )
+    ),
+    2,
+    'Retry did not append the successful assistant response as a new turn'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+      )
+    ),
+    2,
+    'Retry did not append a continuation user message'
   )
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1146,23 +1161,38 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   successfulRetrySnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'A cached failure card returned after reopening the successfully retried conversation'
+    true,
+    'Reopening the conversation lost the preserved failed attempt'
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Reopening a successful retry restored an empty failed assistant turn'
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+      )
+    ),
+    2,
+    'Reopening the conversation lost the successful continuation turn'
+  )
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+      )
+    ),
+    2,
+    'Reopening the conversation lost the continuation user message'
   )
   await captureVerificationScreenshot(
     control,
-    'retry-02-success-restored-without-failed-turn.png',
+    'retry-02-success-restored-with-failed-turn.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(
     control.scenarioRequests.get('retry')?.length,
     2,
-    'Retry did not issue exactly one additional request for the failed user message'
+    'Retry did not issue exactly one continuation request'
   )
 }
 
