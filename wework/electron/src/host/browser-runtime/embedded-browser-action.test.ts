@@ -11,6 +11,7 @@ describe('embedded browser action runtime', () => {
     expect(source).toContain('const hit = deepestElementFromPoint(x, y)')
     expect(source).toContain('return deepestElementFromPoint(x, y)')
     expect(source).toContain('element.shadowRoot.elementFromPoint(x, y)')
+    expect(source).toContain('root instanceof ShadowRoot ? root.host : null')
   })
 
   test('keeps preflight warnings iterable for failed visibility checks', async () => {

@@ -195,4 +195,43 @@ describe('BrowserAnnotationController', () => {
       })
     )
   })
+
+  test('accepts a design-only annotation with an empty comment', async () => {
+    const { controller, overlay } = harness()
+    controller.start(LABEL, 'batch')
+    controller.handleRuntimeEvent(7, {
+      type: 'create-draft',
+      anchor: anchor(),
+      designValues: { color: 'rgb(17, 24, 39)' },
+    })
+    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
+
+    await controller.saveDraft({
+      comment: '',
+      designChanges: [{ property: 'color', value: '#ef4444', previousValue: 'rgb(17, 24, 39)' }],
+    })
+
+    expect(controller.state(LABEL).comments[0]).toMatchObject({
+      comment: '',
+      designChanges: [{ property: 'color', value: '#ef4444' }],
+    })
+  })
+
+  test('clears an existing comment draft when the overlay cannot reopen', async () => {
+    const { controller, overlay } = harness()
+    controller.start(LABEL, 'batch')
+    controller.handleRuntimeEvent(7, { type: 'create-draft', anchor: anchor() })
+    await vi.waitFor(() => expect(overlay.open).toHaveBeenCalledOnce())
+    await controller.saveDraft({ comment: 'Saved comment', designChanges: [] })
+    const commentId = controller.state(LABEL).comments[0]?.id
+    overlay.open.mockRejectedValueOnce(new Error('overlay unavailable'))
+
+    controller.handleRuntimeEvent(7, {
+      type: 'open-comment',
+      commentId,
+      anchor: anchor(),
+    })
+
+    await vi.waitFor(() => expect(controller.overlayState()).toEqual({ open: false, draft: null }))
+  })
 })

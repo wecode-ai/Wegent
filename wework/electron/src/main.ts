@@ -712,7 +712,20 @@ async function showBrowserAnnotationOverlay(
         )
       )
   }
-  await browserAnnotationOverlayReadyPromise
+  const readyPromise = browserAnnotationOverlayReadyPromise
+  if (!readyPromise) throw new Error('Browser annotation overlay failed to initialize')
+  try {
+    await readyPromise
+  } catch (error) {
+    if (browserAnnotationOverlayReadyPromise === readyPromise) {
+      browserAnnotationOverlayReadyPromise = null
+    }
+    if (browserAnnotationOverlayWindow === overlay) {
+      browserAnnotationOverlayWindow = null
+    }
+    if (!overlay.isDestroyed()) overlay.destroy()
+    throw error
+  }
   positionBrowserAnnotationOverlay(overlay, label, anchor.rect)
   if (keepE2EWindowInBackground) overlay.showInactive()
   else {

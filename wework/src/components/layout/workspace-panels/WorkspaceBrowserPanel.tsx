@@ -402,6 +402,11 @@ export function WorkspaceBrowserTabPanel({
   const [annotationMode, setAnnotationMode] = useState(false)
   const [annotations, setAnnotations] = useState<BrowserAnnotationComment[]>([])
   const [annotationRuntimeRevision, setAnnotationRuntimeRevision] = useState(0)
+  const annotationStateVersionRef = useRef<{
+    pageSessionId: string | null
+    revision: number
+    runtimeRevision: number
+  }>({ pageSessionId: null, revision: -1, runtimeRevision: -1 })
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
   const [discardingAnnotations, setDiscardingAnnotations] = useState(false)
   const [originalViewHeld, setOriginalViewHeld] = useState(false)
@@ -884,16 +889,41 @@ export function WorkspaceBrowserTabPanel({
     })
   }, [currentUrl, label, pendingCommentContextCount])
 
+  useEffect(() => {
+    annotationStateVersionRef.current = {
+      pageSessionId: null,
+      revision: -1,
+      runtimeRevision: -1,
+    }
+  }, [label])
+
   const applyAnnotationState = useCallback(
     (state: BrowserAnnotationState) => {
-      if (state.label !== label) return
+      if (state.label !== label) return false
+      const incomingRuntimeRevision = state.runtimeRevision ?? 0
+      const incomingPageSessionId = state.scope?.pageSessionId ?? null
+      const currentVersion = annotationStateVersionRef.current
+      const staleRuntime = incomingRuntimeRevision < currentVersion.runtimeRevision
+      const staleRevision =
+        incomingRuntimeRevision === currentVersion.runtimeRevision &&
+        state.revision < currentVersion.revision
+      const stalePageSession =
+        incomingRuntimeRevision === currentVersion.runtimeRevision &&
+        currentVersion.pageSessionId !== null &&
+        incomingPageSessionId !== currentVersion.pageSessionId
+      if (staleRuntime || staleRevision || stalePageSession) return false
+      annotationStateVersionRef.current = {
+        pageSessionId: incomingPageSessionId,
+        revision: state.revision,
+        runtimeRevision: incomingRuntimeRevision,
+      }
       const activeMode = state.mode !== 'off'
       annotationModeRef.current = activeMode
       setAnnotationMode(activeMode)
       setAnnotations(state.comments)
-      setAnnotationRuntimeRevision(state.runtimeRevision ?? 0)
+      setAnnotationRuntimeRevision(incomingRuntimeRevision)
       setOriginalViewHeld(state.originalView)
-      if (!state.scope) return
+      if (!state.scope) return true
       const scope = { ...state.scope, browserTabId }
       const normalizedState = { ...state, scope }
       const contexts = browserAnnotationStateToContexts(
@@ -905,6 +935,7 @@ export function WorkspaceBrowserTabPanel({
       } else {
         contexts.forEach(context => onAddCodeComment?.(context))
       }
+      return true
     },
     [activePageUrl, browserTabId, label, onAddCodeComment, onReplaceBrowserCodeComments]
   )
@@ -939,7 +970,7 @@ export function WorkspaceBrowserTabPanel({
         await startEmbeddedBrowserAnnotation(mode, label, request.point)
         const state = await readEmbeddedBrowserAnnotationState(label)
         if (!mountedRef.current || currentLabelRef.current !== label) return
-        applyAnnotationState(state)
+        if (!applyAnnotationState(state)) return
         annotationModeRef.current = true
         setAnnotationMode(true)
         logBrowserAnnotation('enter annotation mode succeeded', { label, currentUrl })
@@ -1025,7 +1056,7 @@ export function WorkspaceBrowserTabPanel({
     void clearEmbeddedBrowserAnnotations(label)
       .then(() => readEmbeddedBrowserAnnotationState(label))
       .then(state => {
-        applyAnnotationState(state)
+        if (!applyAnnotationState(state)) return
         if (state.scope) {
           onRemoveBrowserCodeComments?.({ ...state.scope, browserTabId })
         }
@@ -2495,7 +2526,7 @@ export function WorkspaceBrowserTabPanel({
           void clearEmbeddedBrowserAnnotations(label)
             .then(() => readEmbeddedBrowserAnnotationState(label))
             .then(state => {
-              applyAnnotationState(state)
+              if (!applyAnnotationState(state)) return
               setOriginalViewHeld(false)
               if (state.scope) {
                 onRemoveBrowserCodeComments?.({ ...state.scope, browserTabId })

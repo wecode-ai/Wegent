@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { resetEmbeddedBrowserDownloadStoreForTests } from '@/lib/embedded-browser-download-store'
+import type { BrowserAnnotationState } from '@/types/browser-annotation'
 import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanel'
 
 const cloudDesktopExtensionMock = vi.hoisted(() => ({
@@ -101,18 +102,21 @@ function annotationState(
   options: {
     mode?: 'off' | 'quick' | 'batch'
     revision?: number
+    runtimeRevision?: number
+    pageSessionId?: string
     originalView?: boolean
   } = {}
-) {
+): BrowserAnnotationState {
   return {
     label: 'workspace-browser',
     mode: options.mode ?? 'batch',
     scope: {
       browserTabId: 'workspace-browser',
-      pageSessionId: 'page-session-1',
+      pageSessionId: options.pageSessionId ?? 'page-session-1',
       url: 'https://example.com/',
     },
     revision: options.revision ?? 1,
+    runtimeRevision: options.runtimeRevision ?? 1,
     comments: comments.map(comment => ({
       ...comment,
       anchor: {
@@ -210,6 +214,7 @@ describe('WorkspaceBrowserPanel', () => {
       mode: 'off',
       scope: null,
       revision: 0,
+      runtimeRevision: 0,
       comments: [],
       originalView: false,
       unresolvedIds: [],
@@ -2277,6 +2282,46 @@ describe('WorkspaceBrowserPanel', () => {
     expect(selectedText.anchor.kind).toBe('element')
     expect(selectedText.target.tagName).toBe('button')
     expect(selectedText.screenshotDataUrl).toBe('data:image/png;base64,aW1hZ2U=')
+    expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
+  })
+
+  test('ignores an annotation state response from an older page runtime', async () => {
+    mockBrowserHostRect()
+    const onAddCodeComment = vi.fn()
+    let handleAnnotationState: ((state: BrowserAnnotationState) => void) | undefined
+    embeddedBrowserMocks.listenEmbeddedBrowserAnnotationState.mockImplementation(handler => {
+      handleAnnotationState = handler
+      return null
+    })
+    embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue(
+      annotationState([{ id: 'new-comment', number: 1, comment: 'Current page comment' }], {
+        pageSessionId: 'page-session-2',
+        revision: 3,
+        runtimeRevision: 2,
+      })
+    )
+    render(<WorkspaceBrowserPanel active onAddCodeComment={onAddCodeComment} />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() =>
+      expect(screen.getByTestId('workspace-browser-annotate-button')).toBeEnabled()
+    )
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+
+    await waitFor(() => expect(onAddCodeComment).toHaveBeenCalledOnce())
+    act(() => {
+      handleAnnotationState?.(
+        annotationState([{ id: 'old-comment', number: 1, comment: 'Stale page comment' }], {
+          pageSessionId: 'page-session-1',
+          revision: 99,
+          runtimeRevision: 1,
+        })
+      )
+    })
+
+    expect(onAddCodeComment).toHaveBeenCalledOnce()
     expect(screen.getByTestId('workspace-browser-annotation-count')).toHaveTextContent('1')
   })
 

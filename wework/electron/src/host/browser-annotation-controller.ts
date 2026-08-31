@@ -305,6 +305,7 @@ export class BrowserAnnotationController {
       url,
       title: stringValue(event.title),
     }
+    session.runtimeRevision += 1
     session.unresolvedIds = []
     this.sync(label)
     this.publish(label)
@@ -371,7 +372,16 @@ export class BrowserAnnotationController {
       screenshotState: comment.screenshotDataUrl ? 'ready' : 'failed',
     }
     this.options.publishOverlay(this.overlayState())
-    await this.options.overlay.open(label, this.draft.anchor)
+    const draft = this.draft
+    try {
+      await this.options.overlay.open(label, draft.anchor)
+    } catch (error) {
+      console.error('[browser-annotation] failed to reopen overlay', error)
+      if (this.draft === draft) {
+        this.draft = null
+        this.options.publishOverlay(this.overlayState())
+      }
+    }
   }
 
   private updateAnchors(label: string, event: Record<string, unknown>): void {

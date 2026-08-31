@@ -64,7 +64,11 @@ describe('BufferedChatInput', () => {
       const [expanded, setExpanded] = useState(false)
       return (
         <>
-          <button type="button" onClick={() => setExpanded(current => !current)}>
+          <button
+            type="button"
+            data-testid="buffered-chat-input-toggle-mode"
+            onClick={() => setExpanded(current => !current)}
+          >
             Toggle composer mode
           </button>
           <BufferedChatInput
@@ -88,8 +92,8 @@ describe('BufferedChatInput', () => {
     expect(input).toHaveValue('draft')
   })
 
-  test('does not replace newer input with a delayed parent acknowledgement', async () => {
-    let acknowledgeDraft: (() => void) | null = null
+  test('does not replace newer input when two parent acknowledgements are delayed', async () => {
+    const acknowledgeDrafts: Array<() => void> = []
 
     function Harness() {
       const [value, setValue] = useState('')
@@ -97,7 +101,7 @@ describe('BufferedChatInput', () => {
         <BufferedChatInput
           value={value}
           onChange={nextValue => {
-            acknowledgeDraft = () => setValue(nextValue)
+            acknowledgeDrafts.push(() => setValue(nextValue))
           }}
           onSubmit={vi.fn()}
           disabled={false}
@@ -108,11 +112,14 @@ describe('BufferedChatInput', () => {
     render(<Harness />)
     const input = screen.getByTestId('chat-message-input')
     await userEvent.type(input, 'a')
-    await waitFor(() => expect(acknowledgeDraft).not.toBeNull(), { timeout: 500 })
+    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(1), { timeout: 500 })
     await userEvent.type(input, 'b')
+    await waitFor(() => expect(acknowledgeDrafts).toHaveLength(2), { timeout: 500 })
 
-    act(() => acknowledgeDraft?.())
+    act(() => acknowledgeDrafts[0]?.())
+    expect(input).toHaveValue('ab')
 
+    act(() => acknowledgeDrafts[1]?.())
     expect(input).toHaveValue('ab')
   })
 

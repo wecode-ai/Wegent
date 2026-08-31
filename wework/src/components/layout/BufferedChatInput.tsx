@@ -49,7 +49,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
   const composerRef = useRef<ChatInputHandle>(null)
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
-  const publishedDraftRef = useRef<{ scopeKey: string | undefined; value: string } | null>(null)
+  const publishedDraftRevisionRef = useRef(0)
+  const publishedDraftsRef = useRef(
+    new Map<string | undefined, Array<{ revision: number; value: string }>>()
+  )
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -104,7 +107,10 @@ export const BufferedChatInput = memo(function BufferedChatInput({
 
   const publishDraft = useCallback(
     (nextDraft: string) => {
-      publishedDraftRef.current = { scopeKey, value: nextDraft }
+      publishedDraftRevisionRef.current += 1
+      const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+      publications.push({ revision: publishedDraftRevisionRef.current, value: nextDraft })
+      publishedDraftsRef.current.set(scopeKey, publications)
       onChange(nextDraft)
     },
     [onChange, scopeKey]
@@ -141,22 +147,28 @@ export const BufferedChatInput = memo(function BufferedChatInput({
 
   // Sync external value changes into composer and local state.
   useEffect(() => {
-    const publishedDraft = publishedDraftRef.current
-    const acknowledgesPublishedDraft = publishedDraft
-      ? publishedDraft.scopeKey === scopeKey && publishedDraft.value === value
-      : false
+    const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+    const acknowledgedPublicationIndex = publications.findLastIndex(
+      publication => publication.value === value
+    )
+    const acknowledgesPublishedDraft = acknowledgedPublicationIndex >= 0
     const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
       acknowledgesPublishedDraft,
+      acknowledgedPublicationRevision: acknowledgesPublishedDraft
+        ? publications[acknowledgedPublicationIndex]?.revision
+        : null,
       shouldSetComposer,
     })
     committedValueRef.current = value
     if (acknowledgesPublishedDraft) {
-      publishedDraftRef.current = null
+      publications.splice(0, acknowledgedPublicationIndex + 1)
+      if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
       setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
     } else {
+      publishedDraftsRef.current.delete(scopeKey)
       draftRef.current = value
       setDraftState({ scopeKey, sourceValue: value, draft: value })
     }

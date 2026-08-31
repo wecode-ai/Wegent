@@ -73,6 +73,13 @@ let shadowRoot: ShadowRoot | null = null
 let renderQueued = false
 let draftAnchor: ElementAnchor | null = null
 const resolvedElements = new Map<string, Element>()
+const textChangeSnapshots = new Map<
+  string,
+  {
+    addedNode: Text | null
+    nodes: Array<{ node: Text; value: string }>
+  }
+>()
 
 function emit(type: string, payload: Record<string, unknown> = {}) {
   ipcRenderer.send('wework:browser-annotation-event', {
@@ -314,10 +321,38 @@ function ensureRoot() {
 }
 
 function cleanupDesignChanges() {
+  for (const snapshot of textChangeSnapshots.values()) {
+    snapshot.addedNode?.remove()
+    for (const entry of snapshot.nodes) entry.node.data = entry.value
+  }
+  textChangeSnapshots.clear()
   document.querySelectorAll(`[${DESIGN_ATTRIBUTE}]`).forEach(element => {
     element.removeAttribute(DESIGN_ATTRIBUTE)
   })
   document.querySelectorAll(`style[${DESIGN_STYLE_ATTRIBUTE}]`).forEach(element => element.remove())
+}
+
+function applyTextChange(comment: RuntimeComment, element: Element) {
+  const textChange = comment.textChange
+  if (!textChange || state.originalView) return
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  const nodes: Text[] = []
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    nodes.push(node as Text)
+  }
+  if (nodes.map(node => node.data).join('') !== textChange.before) return
+  const snapshot = {
+    addedNode: null as Text | null,
+    nodes: nodes.map(node => ({ node, value: node.data })),
+  }
+  if (nodes.length === 0) {
+    snapshot.addedNode = document.createTextNode(textChange.after)
+    element.append(snapshot.addedNode)
+  } else {
+    nodes[0].data = textChange.after
+    for (const node of nodes.slice(1)) node.data = ''
+  }
+  textChangeSnapshots.set(comment.id, snapshot)
 }
 
 function applyDesignChanges() {
@@ -325,11 +360,7 @@ function applyDesignChanges() {
   for (const comment of state.comments) {
     const element = resolvedElements.get(comment.id)
     if (!element) continue
-    if (comment.textChange) {
-      const expected = state.originalView ? comment.textChange.after : comment.textChange.before
-      const replacement = state.originalView ? comment.textChange.before : comment.textChange.after
-      if (element.textContent === expected) element.textContent = replacement
-    }
+    applyTextChange(comment, element)
     if (state.originalView || comment.designChanges.length === 0) continue
     const token = `annotation-${comment.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
     element.setAttribute(DESIGN_ATTRIBUTE, token)

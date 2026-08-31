@@ -198,52 +198,7 @@ export function createElectronCapabilityRouter(
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
   )
-  router.register('browser.annotation.start', params => {
-    const annotations = requiredBrowserAnnotations(desktopServices)
-    const mode = stringParam(params, 'mode')
-    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
-    const x = nullableNumberParam(params, 'x')
-    const y = nullableNumberParam(params, 'y')
-    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
-    annotations.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
-  })
-  router.register('browser.annotation.stop', params =>
-    requiredBrowserAnnotations(desktopServices).stop(stringParam(params, 'label'))
-  )
-  router.register('browser.annotation.clear', params =>
-    requiredBrowserAnnotations(desktopServices).clear(stringParam(params, 'label'))
-  )
-  router.register('browser.annotation.state', params =>
-    requiredBrowserAnnotations(desktopServices).state(stringParam(params, 'label'))
-  )
-  router.register('browser.annotation.setOriginalView', params =>
-    requiredBrowserAnnotations(desktopServices).setOriginalView(
-      stringParam(params, 'label'),
-      booleanParam(params, 'enabled') ?? false
-    )
-  )
-  router.register('browser.annotation.overlayState', () =>
-    requiredBrowserAnnotations(desktopServices).overlayState()
-  )
-  router.register('browser.annotation.resizeOverlay', params =>
-    requiredBrowserAnnotations(desktopServices).resizeOverlay({
-      width: requiredIntegerParam(params, 'width'),
-      height: requiredIntegerParam(params, 'height'),
-    })
-  )
-  router.register('browser.annotation.closeDraft', () =>
-    requiredBrowserAnnotations(desktopServices).closeDraft()
-  )
-  router.register('browser.annotation.delete', () =>
-    requiredBrowserAnnotations(desktopServices).deleteDraftComment()
-  )
-  router.register('browser.annotation.save', params =>
-    requiredBrowserAnnotations(desktopServices).saveDraft({
-      comment: stringParam(params, 'comment'),
-      designChanges: browserDesignChanges(params.designChanges),
-      textChange: browserTextChange(params.textChange),
-    })
-  )
+  registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>
     browser.setBounds(
       stringParam(params, 'label'),
@@ -785,6 +740,58 @@ export function registerDesktopServiceCapabilities(
   )
 }
 
+export function registerBrowserAnnotationCapabilities(
+  router: HostCapabilityRouter,
+  annotations: BrowserAnnotationController | undefined
+): void {
+  router.register('browser.annotation.start', params => {
+    const controller = requiredBrowserAnnotations(annotations)
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
+    const x = nullableNumberParam(params, 'x')
+    const y = nullableNumberParam(params, 'y')
+    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
+    controller.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
+  })
+  router.register('browser.annotation.stop', params =>
+    requiredBrowserAnnotations(annotations).stop(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.clear', params =>
+    requiredBrowserAnnotations(annotations).clear(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.state', params =>
+    requiredBrowserAnnotations(annotations).state(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.setOriginalView', params =>
+    requiredBrowserAnnotations(annotations).setOriginalView(
+      stringParam(params, 'label'),
+      booleanParam(params, 'enabled') ?? false
+    )
+  )
+  router.register('browser.annotation.overlayState', () =>
+    requiredBrowserAnnotations(annotations).overlayState()
+  )
+  router.register('browser.annotation.resizeOverlay', params =>
+    requiredBrowserAnnotations(annotations).resizeOverlay({
+      width: requiredIntegerParam(params, 'width'),
+      height: requiredIntegerParam(params, 'height'),
+    })
+  )
+  router.register('browser.annotation.closeDraft', () =>
+    requiredBrowserAnnotations(annotations).closeDraft()
+  )
+  router.register('browser.annotation.delete', () =>
+    requiredBrowserAnnotations(annotations).deleteDraftComment()
+  )
+  router.register('browser.annotation.save', params =>
+    requiredBrowserAnnotations(annotations).saveDraft({
+      comment: rawStringParam(params, 'comment'),
+      designChanges: browserDesignChanges(params.designChanges),
+      textChange: browserTextChange(params.textChange),
+    })
+  )
+}
+
 interface CpuTimeSample {
   idle: number
   total: number
@@ -977,6 +984,14 @@ function stringParam(params: Record<string, unknown>, key: string): string {
     throw new HostCapabilityError('invalid_params', `${key} is required`)
   }
   return value.trim()
+}
+
+function rawStringParam(params: Record<string, unknown>, key: string): string {
+  const value = params[key]
+  if (typeof value !== 'string') {
+    throw new HostCapabilityError('invalid_params', `${key} is required`)
+  }
+  return value
 }
 
 function messageBoxOptions(params: Record<string, unknown>): MessageBoxOptions {
@@ -1284,12 +1299,12 @@ function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateServi
 }
 
 function requiredBrowserAnnotations(
-  services: ElectronDesktopServices
+  annotations: BrowserAnnotationController | undefined
 ): BrowserAnnotationController {
-  if (!services.browserAnnotations) {
+  if (!annotations) {
     throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
   }
-  return services.browserAnnotations
+  return annotations
 }
 
 function browserDesignChanges(value: unknown): BrowserDesignChange[] {

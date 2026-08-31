@@ -52,8 +52,6 @@ function basicFixtureHtml() {
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; }
       button { display: block; margin-block: 16px; padding: 12px 18px; }
-      #scroll-box { height: 140px; overflow: auto; border: 1px solid #aaa; padding: 12px; }
-      #scroll-spacer { height: 360px; }
     </style>
   </head>
   <body>
@@ -61,11 +59,6 @@ function basicFixtureHtml() {
     <button id="annotation-primary" type="button" aria-label="Primary annotation target">
       Primary annotation target
     </button>
-    <button id="annotation-secondary" type="button">Secondary annotation target</button>
-    <div id="scroll-box">
-      <div id="scroll-spacer"></div>
-      <button id="annotation-scrolled" type="button">Scrolled annotation target</button>
-    </div>
     <output id="page-click-state">not-clicked</output>
     <script>
       document.getElementById('annotation-primary').addEventListener('click', () => {
@@ -85,8 +78,6 @@ function anchorFixtureHtml() {
     <style>
       body { font-family: system-ui, sans-serif; margin: 0; padding: 48px; }
       button { margin: 8px; padding: 10px 14px; }
-      #nested-scroll { height: 140px; overflow: auto; border: 1px solid #aaa; }
-      #nested-scroll-spacer { height: 320px; }
     </style>
   </head>
   <body>
@@ -97,15 +88,7 @@ function anchorFixtureHtml() {
       </button>
     </section>
     <button id="replace-trigger" type="button">Replace target node</button>
-    <button class="duplicate-target" type="button" hidden>Duplicate target</button>
-    <button class="duplicate-target" type="button">Duplicate target</button>
-    <p id="text-target">Select this exact browser annotation sentence.</p>
     <div id="shadow-host"></div>
-    <div id="nested-scroll">
-      <div id="nested-scroll-spacer"></div>
-      <button id="nested-scroll-target" type="button">Nested scroll target</button>
-    </div>
-    <iframe id="same-origin-frame" title="Annotation frame"></iframe>
     <script>
       document.getElementById('replace-trigger').addEventListener('click', () => {
         const replacement = document.createElement('button');
@@ -119,8 +102,6 @@ function anchorFixtureHtml() {
       const shadow = document.getElementById('shadow-host').attachShadow({ mode: 'open' });
       shadow.innerHTML =
         '<button id="shadow-target" type="button" aria-label="Shadow target">Shadow target</button>';
-      document.getElementById('same-origin-frame').srcdoc =
-        '<!doctype html><button id="frame-target" type="button" aria-label="Frame target">Frame target</button>';
     </script>
   </body>
 </html>`
@@ -383,7 +364,7 @@ async function startElementAnnotation(control, bridge, targetSelector, uiTimeout
     control,
     OVERLAY_WINDOW_LABEL,
     'waitFor',
-    '[data-testid="browser-annotation-screenshot-ready"]',
+    OVERLAY_SCREENSHOT_SELECTOR,
     { timeoutMs: uiTimeoutMs }
   )
 }

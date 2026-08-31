@@ -55,15 +55,22 @@ export function BrowserAnnotationOverlayPage() {
   const [state, setState] = useState(EMPTY_STATE)
 
   useEffect(() => {
-    void readEmbeddedBrowserAnnotationOverlayState().then(setState)
-    const listener = listenEmbeddedBrowserAnnotationOverlayState(setState)
-    if (!listener) return undefined
     let disposed = false
-    let unlisten: (() => void) | null = null
-    void listener.then(next => {
-      if (disposed) next()
-      else unlisten = next
+    let receivedListenerState = false
+    void readEmbeddedBrowserAnnotationOverlayState().then(nextState => {
+      if (!disposed && !receivedListenerState) setState(nextState)
     })
+    const listener = listenEmbeddedBrowserAnnotationOverlayState(nextState => {
+      receivedListenerState = true
+      if (!disposed) setState(nextState)
+    })
+    let unlisten: (() => void) | null = null
+    if (listener) {
+      void listener.then(next => {
+        if (disposed) next()
+        else unlisten = next
+      })
+    }
     return () => {
       disposed = true
       unlisten?.()
@@ -222,6 +229,7 @@ function BrowserAnnotationEditor({
                 aria-label={t('workbench.browser_annotation_remove_selection', {
                   label: targetLabel,
                 })}
+                data-testid="browser-annotation-remove-selection-button"
                 className="flex size-5 shrink-0 items-center justify-center rounded-md text-text-tertiary outline-none hover:bg-surface-secondary hover:text-text-primary focus-visible:ring-1 focus-visible:ring-focus"
                 onClick={() => void closeEmbeddedBrowserAnnotationDraft()}
               >
@@ -313,6 +321,7 @@ function BrowserAnnotationEditor({
             {draft.commentId || designOpen ? (
               <button
                 type="button"
+                data-testid="browser-annotation-cancel-button"
                 className="h-7 rounded-lg border border-border px-3 text-sm text-text-primary outline-none hover:bg-surface-secondary focus-visible:ring-1 focus-visible:ring-focus"
                 onClick={() => void closeEmbeddedBrowserAnnotationDraft()}
               >

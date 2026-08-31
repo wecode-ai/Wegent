@@ -1021,7 +1021,12 @@
     let current = element
     while (current && current !== document.documentElement) {
       if (isClickActionable(current) || isEditable(current)) return current
-      current = current.parentElement
+      if (current.parentElement) {
+        current = current.parentElement
+        continue
+      }
+      const root = current.getRootNode()
+      current = root instanceof ShadowRoot ? root.host : null
     }
     return null
   }

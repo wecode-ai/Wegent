@@ -10,6 +10,7 @@ import {
   captureWebContentsDataUrl,
   cpuLoadRatioBetween,
   registerAppUpdateCapabilities,
+  registerBrowserAnnotationCapabilities,
   registerBrowserHistoryCapabilities,
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
@@ -20,6 +21,7 @@ import type { AppUpdateService } from './app-update-service.js'
 import type { FeedbackBundleManager } from './feedback-bundle-manager.js'
 import type { WorkbenchPluginManager } from './workbench-plugin-manager.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
+import type { BrowserAnnotationController } from './browser-annotation-controller.js'
 
 describe('cpuLoadRatioBetween', () => {
   test('calculates system utilization from cumulative CPU times', () => {
@@ -176,6 +178,48 @@ describe('registerBrowserHistoryCapabilities', () => {
       maxResults: 25,
     })
     expect(browser.removeHistory).toHaveBeenCalledWith(['one', 'two'])
+  })
+})
+
+describe('registerBrowserAnnotationCapabilities', () => {
+  test('forwards an empty comment for a design-only annotation', async () => {
+    const handlers = new Map<HostCapability, HostCapabilityHandler>()
+    const router = {
+      register: vi.fn((capability: HostCapability, handler: HostCapabilityHandler) => {
+        handlers.set(capability, handler)
+      }),
+    } as unknown as HostCapabilityRouter
+    const annotations = {
+      saveDraft: vi.fn(async () => undefined),
+    } as unknown as BrowserAnnotationController
+
+    registerBrowserAnnotationCapabilities(router, annotations)
+    await handlers.get('browser.annotation.save')?.(
+      {
+        comment: '',
+        designChanges: [
+          {
+            property: 'color',
+            value: '#ef4444',
+            previousValue: 'rgb(17, 24, 39)',
+          },
+        ],
+        textChange: null,
+      },
+      { principal: 'test' }
+    )
+
+    expect(annotations.saveDraft).toHaveBeenCalledWith({
+      comment: '',
+      designChanges: [
+        {
+          property: 'color',
+          value: '#ef4444',
+          previousValue: 'rgb(17, 24, 39)',
+        },
+      ],
+      textChange: null,
+    })
   })
 })
 
