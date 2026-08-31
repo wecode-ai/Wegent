@@ -598,6 +598,23 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const [environmentInfoVisibilityByPane, setEnvironmentInfoVisibilityByPane] = useState<
     Record<string, EnvironmentInfoVisibilityState>
   >({})
+  const [sharedWorkbenchContentWidth, setSharedWorkbenchContentWidth] = useState(0)
+  const sharedWorkbenchContentResizeObserverRef = useRef<ResizeObserver | null>(null)
+  const setSharedWorkbenchContentRef = useCallback((element: HTMLDivElement | null) => {
+    sharedWorkbenchContentResizeObserverRef.current?.disconnect()
+    sharedWorkbenchContentResizeObserverRef.current = null
+    if (!element) return
+
+    const updateWidth = () => {
+      setSharedWorkbenchContentWidth(element.getBoundingClientRect().width)
+    }
+    updateWidth()
+    if (typeof ResizeObserver === 'undefined') return
+
+    const observer = new ResizeObserver(updateWidth)
+    observer.observe(element)
+    sharedWorkbenchContentResizeObserverRef.current = observer
+  }, [])
   const [internalHarnessSessions, setInternalHarnessSessions] = useState<
     LocalHarnessWorkbenchSession[]
   >([])
@@ -752,6 +769,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         showComposerProjectMenuAction={props.showComposerProjectMenuAction ?? false}
         workspaceSessionApi={services?.workspaceSessionApi}
         environmentInfoVisibilityByPane={environmentInfoVisibilityByPane}
+        sharedWorkbenchContentWidth={splitMode ? 0 : sharedWorkbenchContentWidth}
         onSidebarCollapsedChange={props.onSidebarCollapsedChange}
         onEnvironmentInfoVisibilityChange={updateEnvironmentInfoVisibility}
         onPaneResourceRetained={setPaneResourceRetained}
@@ -781,6 +799,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       rememberPaneWorkspaceState,
       removeLocalHarnessSession,
       setPaneResourceRetained,
+      sharedWorkbenchContentWidth,
+      splitMode,
       services?.workspaceSessionApi,
       updateEnvironmentInfoVisibility,
     ]
@@ -821,7 +841,13 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
 
   const mainContent = (
-    <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">{paneStack}</div>
+    <div
+      ref={setSharedWorkbenchContentRef}
+      data-testid="desktop-workbench-pane-stack-container"
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+    >
+      {paneStack}
+    </div>
   )
 
   if (!isDesktop) return mainContent
@@ -851,6 +877,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   showComposerProjectMenuAction,
   workspaceSessionApi,
   environmentInfoVisibilityByPane,
+  sharedWorkbenchContentWidth,
   onSidebarCollapsedChange,
   onEnvironmentInfoVisibilityChange,
   onPaneResourceRetained,
@@ -869,6 +896,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   showComposerProjectMenuAction: boolean
   workspaceSessionApi?: WorkspaceSessionApi
   environmentInfoVisibilityByPane: Record<string, EnvironmentInfoVisibilityState>
+  sharedWorkbenchContentWidth: number
   onSidebarCollapsedChange: (collapsed: boolean) => void
   onEnvironmentInfoVisibilityChange: (
     paneId: string,
@@ -1529,7 +1557,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const isDesktop = isDesktopRuntime()
   const workbenchMainRef = useRef<HTMLElement | null>(null)
   const workbenchScrollRef = useRef<HTMLDivElement | null>(null)
-  const [workbenchContentWidth, setWorkbenchContentWidth] = useState(0)
+  const [measuredWorkbenchContentWidth, setMeasuredWorkbenchContentWidth] = useState(0)
   const workbenchResizeObserverRef = useRef<ResizeObserver | null>(null)
   const setWorkbenchMainRef = useCallback((element: HTMLElement | null) => {
     workbenchResizeObserverRef.current?.disconnect()
@@ -1538,7 +1566,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     if (!element) return
 
     const updateWorkbenchContentWidth = () => {
-      setWorkbenchContentWidth(element.getBoundingClientRect().width)
+      setMeasuredWorkbenchContentWidth(element.getBoundingClientRect().width)
     }
 
     updateWorkbenchContentWidth()
@@ -1548,6 +1576,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     observer.observe(element)
     workbenchResizeObserverRef.current = observer
   }, [])
+  const workbenchContentWidth =
+    !splitMode && sharedWorkbenchContentWidth > 0
+      ? sharedWorkbenchContentWidth
+      : measuredWorkbenchContentWidth
   const environmentInfoPanelRef = useRef<HTMLElement | null>(null)
   const [environmentInfoPanelElement, setEnvironmentInfoPanelElement] =
     useState<HTMLElement | null>(null)
@@ -1576,7 +1608,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const workbenchMain = workbenchMainRef.current
       if (!workbenchMain) return
       const width = workbenchMain.getBoundingClientRect().width
-      setWorkbenchContentWidth(width)
+      setMeasuredWorkbenchContentWidth(width)
       if (width <= 0) {
         retryTimeout = window.setTimeout(updateWorkbenchContentWidth, 50)
       }
@@ -4367,551 +4399,568 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         <div
           ref={workbenchScrollRef}
           data-testid="desktop-workbench-content"
+          data-scroll-origin={hasConversation ? 'bottom' : 'top'}
           data-embedded-browser-label={defaultEmbeddedBrowserLabel}
           className={cn(
-            'relative grid h-full min-w-0 flex-none grid-cols-[minmax(0,1fr)_auto]',
+            'relative flex h-full min-w-0 flex-none',
             hasConversation
-              ? 'overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
+              ? 'flex-col-reverse overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
               : 'overflow-hidden',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS,
             showPageTopBar && 'pt-11'
           )}
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         >
-          {isBootstrapping ? (
-            <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
-          ) : activeLocalHarnessSession ? (
-            <div className="relative flex min-h-0 min-w-0">
-              {activeLocalHarnessSession.active ? (
-                <CentralHarnessTerminal
-                  sessionId={activeLocalHarnessSession.sessionId}
-                  title={activeLocalHarnessSession.title}
-                  cwd={activeLocalHarnessSession.cwd}
-                  active={paneActive && workbenchVisible}
-                  showHeader={false}
-                  onClose={
-                    activeLocalHarnessSession.isPrimary
-                      ? undefined
-                      : () => {
-                          void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+          <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
+            {isBootstrapping ? (
+              <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
+            ) : activeLocalHarnessSession ? (
+              <div className="relative flex min-h-0 min-w-0">
+                {activeLocalHarnessSession.active ? (
+                  <CentralHarnessTerminal
+                    sessionId={activeLocalHarnessSession.sessionId}
+                    title={activeLocalHarnessSession.title}
+                    cwd={activeLocalHarnessSession.cwd}
+                    active={paneActive && workbenchVisible}
+                    showHeader={false}
+                    onClose={
+                      activeLocalHarnessSession.isPrimary
+                        ? undefined
+                        : () => {
+                            void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
+                          }
+                    }
+                    onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
+                  />
+                ) : (
+                  <div
+                    data-testid="local-harness-session-resuming"
+                    className={cn(
+                      'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
+                      activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
+                    )}
+                  >
+                    {activeHarnessDisplayError ? (
+                      activeHarnessDisplayError
+                    ) : (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                        {t('workbench.harness_resuming', {
+                          name: localHarnessLabel(activeLocalHarnessSession.harnessId),
+                          defaultValue: `正在恢复 ${localHarnessLabel(activeLocalHarnessSession.harnessId)} 会话…`,
+                        })}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : hasConversation ? (
+              <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
+                <ScrollableMessageArea
+                  messages={paneMessages}
+                  loading={paneSession.transcriptLoading}
+                  isWaitingForAssistant={
+                    !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
+                  }
+                  hasMoreBefore={paneSession.transcriptHasMoreBefore}
+                  loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
+                  turnNavigation={paneSession.turnNavigation}
+                  loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
+                  autoScrollSuspended={!paneVisible || !workbenchVisible}
+                  onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
+                  onLoadFullTranscript={paneSession.loadFullTranscript}
+                  loadingFullTranscript={paneSession.transcriptLoadingFullContent}
+                  onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
+                  onLoadTranscriptGap={paneSession.loadTranscriptGap}
+                  conversationKey={
+                    currentRuntimeTask
+                      ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
+                      : null
+                  }
+                  className="min-h-full"
+                  scrollTestId="desktop-chat-scroll"
+                  externalScrollRef={workbenchScrollRef}
+                  turnNavigationPortalTarget={turnNavigationPortalTarget}
+                  scrollerClassName="min-h-full overflow-visible"
+                  contentClassName={rightPanelExpanded ? 'invisible' : undefined}
+                  messageListClassName={cn(
+                    DESKTOP_MESSAGE_LIST_CLASS,
+                    chatContentResizing && 'transition-none'
+                  )}
+                  contentFooter={
+                    isCreatingWorktree ? (
+                      <WorktreeCreationStatus className="py-8" />
+                    ) : (
+                      <PluginWorkspaceConversationResult
+                        taskId={currentRuntimeTask?.taskId}
+                        workspacePath={
+                          currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
                         }
-                  }
-                  onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
-                />
-              ) : (
-                <div
-                  data-testid="local-harness-session-resuming"
-                  className={cn(
-                    'flex min-h-0 min-w-0 flex-1 items-center justify-center text-sm',
-                    activeHarnessDisplayError ? 'text-destructive' : 'text-text-secondary'
-                  )}
-                >
-                  {activeHarnessDisplayError ? (
-                    activeHarnessDisplayError
-                  ) : (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                      {t('workbench.harness_resuming', {
-                        name: localHarnessLabel(activeLocalHarnessSession.harnessId),
-                        defaultValue: `正在恢复 ${localHarnessLabel(activeLocalHarnessSession.harnessId)} 会话…`,
-                      })}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : hasConversation ? (
-            <div className="relative flex min-h-full min-w-0 shrink-0 flex-col">
-              <ScrollableMessageArea
-                messages={paneMessages}
-                loading={paneSession.transcriptLoading}
-                isWaitingForAssistant={
-                  !isCreatingWorktree && paneSession.status.isWaitingForAssistantIndicator
-                }
-                hasMoreBefore={paneSession.transcriptHasMoreBefore}
-                loadingMoreBefore={paneSession.transcriptLoadingMoreBefore}
-                turnNavigation={paneSession.turnNavigation}
-                loadedTranscriptRanges={paneSession.loadedTranscriptRanges}
-                autoScrollSuspended={!paneVisible || !workbenchVisible}
-                onLoadMoreBefore={paneSession.loadMoreTranscriptBefore}
-                onLoadFullTranscript={paneSession.loadFullTranscript}
-                loadingFullTranscript={paneSession.transcriptLoadingFullContent}
-                onLoadTurnNavigationItem={paneSession.loadTranscriptTurnNavigationItem}
-                onLoadTranscriptGap={paneSession.loadTranscriptGap}
-                conversationKey={
-                  currentRuntimeTask
-                    ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
-                    : null
-                }
-                className="min-h-full"
-                scrollTestId="desktop-chat-scroll"
-                externalScrollRef={workbenchScrollRef}
-                turnNavigationPortalTarget={turnNavigationPortalTarget}
-                scrollerClassName="min-h-full overflow-visible"
-                contentClassName={rightPanelExpanded ? 'invisible' : undefined}
-                messageListClassName={cn(
-                  DESKTOP_MESSAGE_LIST_CLASS,
-                  chatContentResizing && 'transition-none'
-                )}
-                contentFooter={
-                  isCreatingWorktree ? (
-                    <WorktreeCreationStatus className="py-8" />
-                  ) : (
-                    <PluginWorkspaceConversationResult
-                      taskId={currentRuntimeTask?.taskId}
-                      workspacePath={currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath}
-                      messages={paneMessages}
-                      waiting={paneSession.status.isWaitingForAssistantIndicator}
-                      onOpenFile={path => void openWorkspaceFileFromMessage(path)}
-                      onSendAction={(message, additionalContext) =>
-                        paneSession.send(message, { additionalContext })
-                      }
-                    />
-                  )
-                }
-                contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
-                stickyFooterClassName={cn(
-                  DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
-                  hasMainBackground
-                    ? 'from-transparent via-transparent'
-                    : 'from-background via-background',
-                  chatContentResizing && 'transition-none',
-                  rightPanelExpanded && 'z-critical'
-                )}
-                stickyFooter={
-                  temporaryChatExpanded || isCreatingWorktree ? null : (
-                    <>
-                      <div
-                        className={cn(
-                          DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
-                          hasMainBackground
-                            ? 'from-transparent via-transparent'
-                            : 'from-background via-background'
-                        )}
-                        data-testid="desktop-floating-composer-backdrop"
+                        messages={paneMessages}
+                        waiting={paneSession.status.isWaitingForAssistantIndicator}
+                        onOpenFile={path => void openWorkspaceFileFromMessage(path)}
+                        onSendAction={(message, additionalContext) =>
+                          paneSession.send(message, { additionalContext })
+                        }
                       />
-                      <div
-                        className={cn(
-                          DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
-                          chatContentResizing && 'transition-none',
-                          rightPanelExpanded && 'z-critical'
-                        )}
-                        data-testid="desktop-floating-composer-layer"
-                      >
-                        <div
-                          className="pointer-events-auto"
-                          data-testid="desktop-floating-composer-card"
-                        >
-                          {rightPanelExpanded && (
-                            <button
-                              type="button"
-                              data-testid="restore-conversation-from-expanded-workspace-button"
-                              className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
-                              onClick={() => setRightPanelExpanded(false)}
-                            >
-                              <span>{t('workbench.latest_conversation_turn')}</span>
-                              <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                            </button>
-                          )}
-                          {connectorAuthGate.pending ? (
-                            <ConnectorAuthCard
-                              target={connectorAuthGate.pending.target}
-                              title={connectorAuthGate.pending.title}
-                              onSuccess={() => {
-                                void connectorAuthGate.completePending()
-                              }}
-                              onCancel={connectorAuthGate.clearPending}
-                            />
-                          ) : !rightPanelExpanded ? (
-                            <>
-                              {showConversationDeviceBanner ? (
-                                <ConversationDeviceOfflineBanner
-                                  device={activeDevice}
-                                  deviceId={activeDeviceId}
-                                  className="mb-2"
-                                />
-                              ) : (
-                                <DeviceStatusPrompt
-                                  devices={devices}
-                                  upgradingDevices={upgradingDevices}
-                                  onUpgradeDevice={upgradeDevice}
-                                  onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                                  activeDeviceId={activeDeviceId}
-                                  requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                                  hideAvailableUpdates
-                                  className="mb-2"
-                                />
-                              )}
-                              {pendingRequestUserInput ? (
-                                <RequestUserInputCard
-                                  key={
-                                    requestUserInputPayloadKey(pendingRequestUserInput) ??
-                                    'implementation-plan'
-                                  }
-                                  payload={pendingRequestUserInput}
-                                  onSubmit={response => {
-                                    const isImplementationPlanRequest =
-                                      isImplementationPlanRequestUserInput(pendingRequestUserInput)
-                                    const shouldImplementPlan =
-                                      isImplementationPlanRequest &&
-                                      isImplementationPlanConfirmationResponse(response)
-                                    return paneSession.sendRequestUserInputResponse(response, {
-                                      appendUserMessage: isImplementationPlanRequest,
-                                      forceDefaultCollaborationMode: shouldImplementPlan,
-                                    })
-                                  }}
-                                  onIgnore={() =>
-                                    paneSession.ignoreRequestUserInput(pendingRequestUserInput)
-                                  }
-                                />
-                              ) : (
-                                <>
-                                  {supervisor && (
-                                    <SupervisorSuggestionCards
-                                      suggestions={supervisor.suggestions}
-                                      onAccept={suggestion =>
-                                        resolveTaskSupervisorSuggestion(suggestion, 'accepted')
-                                      }
-                                      onDismiss={suggestion =>
-                                        resolveTaskSupervisorSuggestion(suggestion, 'dismissed')
-                                      }
-                                    />
-                                  )}
-                                  <BufferedChatInput
-                                    insertion={conversationSelectionInsertion}
-                                    value={paneSession.input}
-                                    onChange={paneSession.setInput}
-                                    onDraftEdit={paneSession.clearError}
-                                    onSubmit={submitPaneInput}
-                                    disabled={composerDisabled || !paneVisible || !workbenchVisible}
-                                    pluginPickerIconOnly={hasConversation}
-                                    submitDisabled={paneSession.status.isSubmitting}
-                                    error={paneSession.error}
-                                    disabledReason={inlineComposerDisabledReason}
-                                    placeholder={t(
-                                      'workbench.follow_up_placeholder',
-                                      '要求后续变更'
-                                    )}
-                                    variant="desktop"
-                                    projectChat={projectChatWithModelSelectorSignal}
-                                    projectWork={branchNameProjectWork}
-                                    showProjectWorkBar={false}
-                                    queuedMessages={paneQueuedMessages}
-                                    guidanceMessages={paneGuidanceMessages}
-                                    codeComments={paneSession.codeCommentContexts}
-                                    cloudMentionCandidates={visibleCloudMentionCandidates}
-                                    cloudProjectCandidates={cloudProjectMentionCandidates}
-                                    cloudSpaceEnabled={
-                                      experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
-                                    }
-                                    onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={projectSpaceContext}
-                                    isStreaming={paneIsBusy}
-                                    onPause={pauseCurrentResponse}
-                                    onCompactContext={
-                                      currentRuntimeUsesCodex ||
-                                      currentRuntimeTask?.runtime === 'claude_code'
-                                        ? compactCurrentContext
-                                        : undefined
-                                    }
-                                    goal={paneSession.goal}
-                                    goalContinuing={paneSession.goalContinuing}
-                                    taskPlan={paneSession.taskPlan}
-                                    goalDraftActive={paneSession.goalDraftActive}
-                                    onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                                    onConfigureSupervisor={
-                                      supervisorFeatureAvailable ? openSupervisorDialog : undefined
-                                    }
-                                    supervisorEnabled={Boolean(
-                                      supervisor || pendingSupervisorConfig
-                                    )}
-                                    supervisorPending={Boolean(
-                                      !currentRuntimeTask && pendingSupervisorConfig
-                                    )}
-                                    onCancelGoalDraft={paneSession.cancelGoalDraft}
-                                    onEditGoal={paneSession.editCurrentGoal}
-                                    onPauseGoal={pauseCurrentGoal}
-                                    onResumeGoal={resumeCurrentGoal}
-                                    onClearGoal={clearCurrentGoal}
-                                    onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                                    onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                                    queuePaused={paneSession.queuedMessagesPaused}
-                                    onResumeQueue={paneSession.resumeQueuedMessages}
-                                    onResumeQueueWithInput={
-                                      paneSession.resumeQueuedMessagesWithInput
-                                    }
-                                    onClearQueue={paneSession.clearQueuedMessages}
-                                    onSendQueuedAsGuidance={
-                                      currentRuntimeUsesCodex
-                                        ? paneSession.sendQueuedAsGuidance
-                                        : undefined
-                                    }
-                                    onInterruptAndSendQueuedMessage={
-                                      paneSession.interruptAndSendQueued
-                                    }
-                                    onEditQueuedMessage={paneSession.editQueuedMessage}
-                                    onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                                    onClearCodeComments={paneSession.clearCodeComments}
-                                    onOpenSkillFile={openLocalSkillFile}
-                                    workspaceTarget={composerWorkspaceTarget}
-                                    workspaceFileApi={workspaceFileApi}
-                                  />
-                                </>
-                              )}
-                            </>
-                          ) : null}
-                        </div>
-                      </div>
-                    </>
-                  )
-                }
-                scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
-                devices={devices}
-                onRetryFailedMessage={message => {
-                  void paneSession.retryFailedMessage(message)
-                }}
-                onSwitchModelForFailedMessage={message => {
-                  pendingModelRetryRef.current = message
-                  setModelSelectorOpenSignal(signal => signal + 1)
-                }}
-                onLoadFileChangesDiff={(subtaskId, fileChanges) =>
-                  loadTurnFileChangesDiff(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onRevertFileChanges={(subtaskId, fileChanges) =>
-                  revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
-                }
-                onOpenFileChangesReview={({
-                  subtaskId,
-                  loadDiff,
-                  reviewTitle,
-                  defaultFileTreeVisible,
-                  focusFilePath,
-                }) => {
-                  previousTurnReviewRef.current = {
-                    loadDiff,
-                    defaultFileTreeVisible,
-                    sourceSubtaskId: subtaskId,
+                    )
                   }
-                  setHasPreviousTurnReview(true)
-                  void openReviewFromDiffLoader(loadDiff, {
+                  contentFooterClassName={DESKTOP_MESSAGE_LIST_WIDTH_CLASS}
+                  stickyFooterClassName={cn(
+                    DESKTOP_STICKY_COMPOSER_FOOTER_CLASS,
+                    hasMainBackground
+                      ? 'from-transparent via-transparent'
+                      : 'from-background via-background',
+                    chatContentResizing && 'transition-none',
+                    rightPanelExpanded && 'z-critical'
+                  )}
+                  stickyFooter={
+                    temporaryChatExpanded || isCreatingWorktree ? null : (
+                      <>
+                        <div
+                          className={cn(
+                            DESKTOP_STICKY_COMPOSER_BACKDROP_CLASS,
+                            hasMainBackground
+                              ? 'from-transparent via-transparent'
+                              : 'from-background via-background'
+                          )}
+                          data-testid="desktop-floating-composer-backdrop"
+                        />
+                        <div
+                          className={cn(
+                            DESKTOP_STICKY_COMPOSER_LAYER_CLASS,
+                            chatContentResizing && 'transition-none',
+                            rightPanelExpanded && 'z-critical'
+                          )}
+                          data-testid="desktop-floating-composer-layer"
+                        >
+                          <div
+                            className="pointer-events-auto"
+                            data-testid="desktop-floating-composer-card"
+                          >
+                            {rightPanelExpanded && (
+                              <button
+                                type="button"
+                                data-testid="restore-conversation-from-expanded-workspace-button"
+                                className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
+                                onClick={() => setRightPanelExpanded(false)}
+                              >
+                                <span>{t('workbench.latest_conversation_turn')}</span>
+                                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                              </button>
+                            )}
+                            {connectorAuthGate.pending ? (
+                              <ConnectorAuthCard
+                                target={connectorAuthGate.pending.target}
+                                title={connectorAuthGate.pending.title}
+                                onSuccess={() => {
+                                  void connectorAuthGate.completePending()
+                                }}
+                                onCancel={connectorAuthGate.clearPending}
+                              />
+                            ) : !rightPanelExpanded ? (
+                              <>
+                                {showConversationDeviceBanner ? (
+                                  <ConversationDeviceOfflineBanner
+                                    device={activeDevice}
+                                    deviceId={activeDeviceId}
+                                    className="mb-2"
+                                  />
+                                ) : (
+                                  <DeviceStatusPrompt
+                                    devices={devices}
+                                    upgradingDevices={upgradingDevices}
+                                    onUpgradeDevice={upgradeDevice}
+                                    onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                                    activeDeviceId={activeDeviceId}
+                                    requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                                    hideAvailableUpdates
+                                    className="mb-2"
+                                  />
+                                )}
+                                {pendingRequestUserInput ? (
+                                  <RequestUserInputCard
+                                    key={
+                                      requestUserInputPayloadKey(pendingRequestUserInput) ??
+                                      'implementation-plan'
+                                    }
+                                    payload={pendingRequestUserInput}
+                                    onSubmit={response => {
+                                      const isImplementationPlanRequest =
+                                        isImplementationPlanRequestUserInput(
+                                          pendingRequestUserInput
+                                        )
+                                      const shouldImplementPlan =
+                                        isImplementationPlanRequest &&
+                                        isImplementationPlanConfirmationResponse(response)
+                                      return paneSession.sendRequestUserInputResponse(response, {
+                                        appendUserMessage: isImplementationPlanRequest,
+                                        forceDefaultCollaborationMode: shouldImplementPlan,
+                                      })
+                                    }}
+                                    onIgnore={() =>
+                                      paneSession.ignoreRequestUserInput(pendingRequestUserInput)
+                                    }
+                                  />
+                                ) : (
+                                  <>
+                                    {supervisor && (
+                                      <SupervisorSuggestionCards
+                                        suggestions={supervisor.suggestions}
+                                        onAccept={suggestion =>
+                                          resolveTaskSupervisorSuggestion(suggestion, 'accepted')
+                                        }
+                                        onDismiss={suggestion =>
+                                          resolveTaskSupervisorSuggestion(suggestion, 'dismissed')
+                                        }
+                                      />
+                                    )}
+                                    <BufferedChatInput
+                                      insertion={conversationSelectionInsertion}
+                                      value={paneSession.input}
+                                      onChange={paneSession.setInput}
+                                      onDraftEdit={paneSession.clearError}
+                                      onSubmit={submitPaneInput}
+                                      disabled={
+                                        composerDisabled || !paneVisible || !workbenchVisible
+                                      }
+                                      pluginPickerIconOnly={hasConversation}
+                                      submitDisabled={paneSession.status.isSubmitting}
+                                      error={paneSession.error}
+                                      disabledReason={inlineComposerDisabledReason}
+                                      placeholder={t(
+                                        'workbench.follow_up_placeholder',
+                                        '要求后续变更'
+                                      )}
+                                      variant="desktop"
+                                      projectChat={projectChatWithModelSelectorSignal}
+                                      projectWork={branchNameProjectWork}
+                                      showProjectWorkBar={false}
+                                      queuedMessages={paneQueuedMessages}
+                                      guidanceMessages={paneGuidanceMessages}
+                                      codeComments={paneSession.codeCommentContexts}
+                                      cloudMentionCandidates={visibleCloudMentionCandidates}
+                                      cloudProjectCandidates={cloudProjectMentionCandidates}
+                                      cloudSpaceEnabled={
+                                        experimentalFeaturesEnabled &&
+                                        Boolean(services?.deliveryApi)
+                                      }
+                                      onSelectCloudProject={handleSelectCloudProject}
+                                      contextHeader={projectSpaceContext}
+                                      isStreaming={paneIsBusy}
+                                      onPause={pauseCurrentResponse}
+                                      onCompactContext={
+                                        currentRuntimeUsesCodex ||
+                                        currentRuntimeTask?.runtime === 'claude_code'
+                                          ? compactCurrentContext
+                                          : undefined
+                                      }
+                                      goal={paneSession.goal}
+                                      goalContinuing={paneSession.goalContinuing}
+                                      taskPlan={paneSession.taskPlan}
+                                      goalDraftActive={paneSession.goalDraftActive}
+                                      onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                                      onConfigureSupervisor={
+                                        supervisorFeatureAvailable
+                                          ? openSupervisorDialog
+                                          : undefined
+                                      }
+                                      supervisorEnabled={Boolean(
+                                        supervisor || pendingSupervisorConfig
+                                      )}
+                                      supervisorPending={Boolean(
+                                        !currentRuntimeTask && pendingSupervisorConfig
+                                      )}
+                                      onCancelGoalDraft={paneSession.cancelGoalDraft}
+                                      onEditGoal={paneSession.editCurrentGoal}
+                                      onPauseGoal={pauseCurrentGoal}
+                                      onResumeGoal={resumeCurrentGoal}
+                                      onClearGoal={clearCurrentGoal}
+                                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                                      onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                                      queuePaused={paneSession.queuedMessagesPaused}
+                                      onResumeQueue={paneSession.resumeQueuedMessages}
+                                      onResumeQueueWithInput={
+                                        paneSession.resumeQueuedMessagesWithInput
+                                      }
+                                      onClearQueue={paneSession.clearQueuedMessages}
+                                      onSendQueuedAsGuidance={
+                                        currentRuntimeUsesCodex
+                                          ? paneSession.sendQueuedAsGuidance
+                                          : undefined
+                                      }
+                                      onInterruptAndSendQueuedMessage={
+                                        paneSession.interruptAndSendQueued
+                                      }
+                                      onEditQueuedMessage={paneSession.editQueuedMessage}
+                                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                                      onClearCodeComments={paneSession.clearCodeComments}
+                                      onOpenSkillFile={openLocalSkillFile}
+                                      workspaceTarget={composerWorkspaceTarget}
+                                      workspaceFileApi={workspaceFileApi}
+                                    />
+                                  </>
+                                )}
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      </>
+                    )
+                  }
+                  scrollButtonClassName={DESKTOP_SCROLL_TO_BOTTOM_BUTTON_CLASS}
+                  devices={devices}
+                  onRetryFailedMessage={message => {
+                    void paneSession.retryFailedMessage(message)
+                  }}
+                  onSwitchModelForFailedMessage={message => {
+                    pendingModelRetryRef.current = message
+                    setModelSelectorOpenSignal(signal => signal + 1)
+                  }}
+                  onLoadFileChangesDiff={(subtaskId, fileChanges) =>
+                    loadTurnFileChangesDiff(
+                      subtaskId,
+                      paneMessages,
+                      fileChanges,
+                      currentRuntimeTask
+                    )
+                  }
+                  onRevertFileChanges={(subtaskId, fileChanges) =>
+                    revertTurnFileChanges(subtaskId, paneMessages, fileChanges, currentRuntimeTask)
+                  }
+                  onOpenFileChangesReview={({
+                    subtaskId,
+                    loadDiff,
                     reviewTitle,
-                    reviewMode: 'previous-turn',
                     defaultFileTreeVisible,
                     focusFilePath,
-                    sourceSubtaskId: subtaskId,
-                  })
-                }}
-                fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
-                onOpenWorkspaceFile={openWorkspaceFileFromMessage}
-                onOpenLocalSkillFile={openLocalSkillFile}
-                onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
-                onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
-                onOpenAssistantPlan={openAssistantPlan}
-                onEditLastUserMessage={paneSession.editLastUserMessage}
-                canEditLastUserMessage={canEditLastUserMessage}
-                onForkMessage={
-                  currentRuntimeUsesCodex
-                    ? message => {
-                        const workspacePath =
-                          currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
-                        if (!currentRuntimeTask || !message.turnId || !workspacePath) return
-                        return forkCurrentRuntimeTask(
-                          {
-                            deviceId: currentRuntimeTask.deviceId,
-                            workspacePath,
-                          },
-                          { lastTurnId: message.turnId }
-                        )
-                      }
-                    : undefined
-                }
-                hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
-                hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
-                onAddSelectionToConversation={addSelectionToConversation}
-                onAskSelectionInSidebar={askSelectionInSidebar}
-              />
-            </div>
-          ) : rightPanelExpanded ? null : (
-            <DesktopEmptyTaskLauncher
-              projectName={currentProject?.name}
-              onOpenProjectSelector={anchorElement => {
-                setProjectMenuAnchorElement(anchorElement)
-                setProjectMenuOpenSignal(signal => signal + 1)
-              }}
-              onSelectSuggestion={selectTaskSuggestion}
-              composer={
-                rightPanelExpanded ? null : (
-                  <>
-                    <DeviceStatusPrompt
-                      devices={devices}
-                      upgradingDevices={upgradingDevices}
-                      onUpgradeDevice={upgradeDevice}
-                      onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
-                      activeDeviceId={activeDeviceId}
-                      requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
-                      hideAvailableUpdates
-                      className="mb-3"
-                    />
-                    <BufferedChatInput
-                      value={paneSession.input}
-                      onChange={paneSession.setInput}
-                      onDraftEdit={() => {
-                        paneSession.clearError?.()
-                        setCentralHarnessError(null)
-                      }}
-                      onSubmit={submitWorkbenchInput}
-                      disabled={
-                        centralHarnessStarting ||
-                        ((activeNewChatRuntime === 'codex' ||
-                          activeNewChatRuntime === 'claude_code') &&
-                          composerDisabled) ||
-                        !paneVisible ||
-                        !workbenchVisible
-                      }
-                      submitDisabled={
-                        centralHarnessStarting ||
-                        ((activeNewChatRuntime === 'codex' ||
-                          activeNewChatRuntime === 'claude_code') &&
-                          paneSession.status.isSubmitting)
-                      }
-                      error={centralHarnessError ?? paneSession.error}
-                      disabledReason={
-                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
-                          ? inlineComposerDisabledReason
-                          : undefined
-                      }
-                      placeholder={
-                        showComposerProjectMenuAction
-                          ? 'values' in popoutComposerPlaceholder
-                            ? t(popoutComposerPlaceholder.key, popoutComposerPlaceholder.values)
-                            : t(popoutComposerPlaceholder.key)
-                          : t('workbench.input_placeholder', '随心输入')
-                      }
-                      variant="desktop"
-                      projectChat={projectChatWithModelSelectorSignal}
-                      projectWork={emptyProjectWork}
-                      projectWorkBarMiddleContext={projectSpaceContext}
-                      projectWorkBarTrailingContext={
-                        experimentalFeaturesEnabled ? (
-                          <WorkbenchHarnessSelector
-                            runtime={activeNewChatRuntime}
-                            harnesses={localHarnesses}
-                            enabledHarnesses={enabledLocalHarnesses.map(
-                              preference => preference.id
-                            )}
-                            loading={localHarnessesLoading}
-                            detectionFailed={localHarnessDetectionFailed}
-                            onRuntimeChange={runtime => {
-                              setCentralHarnessError(null)
-                              setNewChatRuntime(runtime)
-                            }}
-                          />
-                        ) : undefined
-                      }
-                      modelSelectorOverride={
-                        selectedHarnessPreference ? (
-                          <WorkbenchHarnessModelSelector
-                            harnessId={selectedHarnessPreference.id}
-                            models={harnessModelOptions}
-                            selectedModel={selectedHarnessModel}
-                            onModelChange={model => {
-                              setLocalHarnessModelKeys(current => ({
-                                ...current,
-                                [selectedHarnessPreference.id]: model?.key ?? null,
-                              }))
-                              const localHarnesses = localHarnessPreferences.map(preference =>
-                                preference.id === selectedHarnessPreference.id
-                                  ? { ...preference, modelKey: model?.key ?? null }
-                                  : preference
-                              )
-                              void updateAppPreferences({ localHarnesses }).catch(error => {
-                                console.error('Failed to save harness model selection:', error)
-                                setCentralHarnessError(
-                                  t(
-                                    'workbench.harness_model_save_failed',
-                                    '编码工具模型选择保存失败'
-                                  )
-                                )
-                              })
-                            }}
-                          />
-                        ) : undefined
-                      }
-                      showWorkspaceMenu={showComposerProjectMenuAction}
-                      queuedMessages={paneQueuedMessages}
-                      guidanceMessages={paneGuidanceMessages}
-                      codeComments={paneSession.codeCommentContexts}
-                      cloudMentionCandidates={visibleCloudMentionCandidates}
-                      cloudProjectCandidates={cloudProjectMentionCandidates}
-                      cloudSpaceEnabled={
-                        experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
-                      }
-                      onSelectCloudProject={handleSelectCloudProject}
-                      isStreaming={paneIsBusy}
-                      onPause={pauseCurrentResponse}
-                      onCompactContext={
-                        activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
-                          ? compactCurrentContext
-                          : undefined
-                      }
-                      goal={paneSession.goal}
-                      goalContinuing={paneSession.goalContinuing}
-                      taskPlan={paneSession.taskPlan}
-                      goalDraftActive={paneSession.goalDraftActive}
-                      onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
-                      onConfigureSupervisor={
-                        supervisorFeatureAvailable ? openSupervisorDialog : undefined
-                      }
-                      supervisorEnabled={Boolean(supervisor || pendingSupervisorConfig)}
-                      supervisorPending={Boolean(!currentRuntimeTask && pendingSupervisorConfig)}
-                      onCancelGoalDraft={paneSession.cancelGoalDraft}
-                      onEditGoal={paneSession.editCurrentGoal}
-                      onPauseGoal={pauseCurrentGoal}
-                      onResumeGoal={resumeCurrentGoal}
-                      onClearGoal={clearCurrentGoal}
-                      onCancelQueuedMessage={paneSession.cancelQueuedMessage}
-                      onReorderQueuedMessages={paneSession.reorderQueuedMessages}
-                      queuePaused={paneSession.queuedMessagesPaused}
-                      onResumeQueue={paneSession.resumeQueuedMessages}
-                      onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
-                      onClearQueue={paneSession.clearQueuedMessages}
-                      onSendQueuedAsGuidance={
-                        activeNewChatRuntime === 'codex'
-                          ? paneSession.sendQueuedAsGuidance
-                          : undefined
-                      }
-                      onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
-                      onEditQueuedMessage={paneSession.editQueuedMessage}
-                      onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
-                      onClearCodeComments={paneSession.clearCodeComments}
-                      onOpenSkillFile={openLocalSkillFile}
-                      workspaceTarget={composerWorkspaceTarget}
-                      workspaceFileApi={workspaceFileApi}
-                    />
-                  </>
-                )
-              }
-            />
-          )}
-          <aside
-            data-testid="environment-info-panel-container"
-            className={cn(
-              'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
-              environmentInfoTransitionEnabled
-                ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
-                : 'transition-none'
-            )}
-          >
-            <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
-            {environmentInfoDocked && hasSubagentStatuses && (
-              <div
-                data-testid="workbench-subagent-status-row"
-                className="ml-2 mt-3 flex w-[300px] flex-wrap gap-2"
-              >
-                <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
+                  }) => {
+                    previousTurnReviewRef.current = {
+                      loadDiff,
+                      defaultFileTreeVisible,
+                      sourceSubtaskId: subtaskId,
+                    }
+                    setHasPreviousTurnReview(true)
+                    void openReviewFromDiffLoader(loadDiff, {
+                      reviewTitle,
+                      reviewMode: 'previous-turn',
+                      defaultFileTreeVisible,
+                      focusFilePath,
+                      sourceSubtaskId: subtaskId,
+                    })
+                  }}
+                  fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+                  onOpenWorkspaceFile={openWorkspaceFileFromMessage}
+                  onOpenLocalSkillFile={openLocalSkillFile}
+                  onRequestUserInputSubmit={paneSession.sendRequestUserInputResponse}
+                  onRequestUserInputIgnore={paneSession.ignoreRequestUserInput}
+                  onOpenAssistantPlan={openAssistantPlan}
+                  onEditLastUserMessage={paneSession.editLastUserMessage}
+                  canEditLastUserMessage={canEditLastUserMessage}
+                  onForkMessage={
+                    currentRuntimeUsesCodex
+                      ? message => {
+                          const workspacePath =
+                            currentRuntimeTask?.workspacePath || runtimeTaskWorkspacePath
+                          if (!currentRuntimeTask || !message.turnId || !workspacePath) return
+                          return forkCurrentRuntimeTask(
+                            {
+                              deviceId: currentRuntimeTask.deviceId,
+                              workspacePath,
+                            },
+                            { lastTurnId: message.turnId }
+                          )
+                        }
+                      : undefined
+                  }
+                  hideRequestUserInputBlocks={Boolean(pendingRequestUserInput)}
+                  hiddenRequestUserInputIds={paneSession.answeredRequestUserInputIds}
+                  onAddSelectionToConversation={addSelectionToConversation}
+                  onAskSelectionInSidebar={askSelectionInSidebar}
+                />
               </div>
+            ) : rightPanelExpanded ? null : (
+              <DesktopEmptyTaskLauncher
+                projectName={currentProject?.name}
+                onOpenProjectSelector={anchorElement => {
+                  setProjectMenuAnchorElement(anchorElement)
+                  setProjectMenuOpenSignal(signal => signal + 1)
+                }}
+                onSelectSuggestion={selectTaskSuggestion}
+                composer={
+                  rightPanelExpanded ? null : (
+                    <>
+                      <DeviceStatusPrompt
+                        devices={devices}
+                        upgradingDevices={upgradingDevices}
+                        onUpgradeDevice={upgradeDevice}
+                        onOpenCloudDeviceSettings={requestOpenCloudDeviceSettings}
+                        activeDeviceId={activeDeviceId}
+                        requiresOnlineCompatibleDevice={noStandaloneCompatibleDevice}
+                        hideAvailableUpdates
+                        className="mb-3"
+                      />
+                      <BufferedChatInput
+                        value={paneSession.input}
+                        onChange={paneSession.setInput}
+                        onDraftEdit={() => {
+                          paneSession.clearError?.()
+                          setCentralHarnessError(null)
+                        }}
+                        onSubmit={submitWorkbenchInput}
+                        disabled={
+                          centralHarnessStarting ||
+                          ((activeNewChatRuntime === 'codex' ||
+                            activeNewChatRuntime === 'claude_code') &&
+                            composerDisabled) ||
+                          !paneVisible ||
+                          !workbenchVisible
+                        }
+                        submitDisabled={
+                          centralHarnessStarting ||
+                          ((activeNewChatRuntime === 'codex' ||
+                            activeNewChatRuntime === 'claude_code') &&
+                            paneSession.status.isSubmitting)
+                        }
+                        error={centralHarnessError ?? paneSession.error}
+                        disabledReason={
+                          activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                            ? inlineComposerDisabledReason
+                            : undefined
+                        }
+                        placeholder={
+                          showComposerProjectMenuAction
+                            ? 'values' in popoutComposerPlaceholder
+                              ? t(popoutComposerPlaceholder.key, popoutComposerPlaceholder.values)
+                              : t(popoutComposerPlaceholder.key)
+                            : t('workbench.input_placeholder', '随心输入')
+                        }
+                        variant="desktop"
+                        projectChat={projectChatWithModelSelectorSignal}
+                        projectWork={emptyProjectWork}
+                        projectWorkBarMiddleContext={projectSpaceContext}
+                        projectWorkBarTrailingContext={
+                          experimentalFeaturesEnabled ? (
+                            <WorkbenchHarnessSelector
+                              runtime={activeNewChatRuntime}
+                              harnesses={localHarnesses}
+                              enabledHarnesses={enabledLocalHarnesses.map(
+                                preference => preference.id
+                              )}
+                              loading={localHarnessesLoading}
+                              detectionFailed={localHarnessDetectionFailed}
+                              onRuntimeChange={runtime => {
+                                setCentralHarnessError(null)
+                                setNewChatRuntime(runtime)
+                              }}
+                            />
+                          ) : undefined
+                        }
+                        modelSelectorOverride={
+                          selectedHarnessPreference ? (
+                            <WorkbenchHarnessModelSelector
+                              harnessId={selectedHarnessPreference.id}
+                              models={harnessModelOptions}
+                              selectedModel={selectedHarnessModel}
+                              onModelChange={model => {
+                                setLocalHarnessModelKeys(current => ({
+                                  ...current,
+                                  [selectedHarnessPreference.id]: model?.key ?? null,
+                                }))
+                                const localHarnesses = localHarnessPreferences.map(preference =>
+                                  preference.id === selectedHarnessPreference.id
+                                    ? { ...preference, modelKey: model?.key ?? null }
+                                    : preference
+                                )
+                                void updateAppPreferences({ localHarnesses }).catch(error => {
+                                  console.error('Failed to save harness model selection:', error)
+                                  setCentralHarnessError(
+                                    t(
+                                      'workbench.harness_model_save_failed',
+                                      '编码工具模型选择保存失败'
+                                    )
+                                  )
+                                })
+                              }}
+                            />
+                          ) : undefined
+                        }
+                        showWorkspaceMenu={showComposerProjectMenuAction}
+                        queuedMessages={paneQueuedMessages}
+                        guidanceMessages={paneGuidanceMessages}
+                        codeComments={paneSession.codeCommentContexts}
+                        cloudMentionCandidates={visibleCloudMentionCandidates}
+                        cloudProjectCandidates={cloudProjectMentionCandidates}
+                        cloudSpaceEnabled={
+                          experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
+                        }
+                        onSelectCloudProject={handleSelectCloudProject}
+                        isStreaming={paneIsBusy}
+                        onPause={pauseCurrentResponse}
+                        onCompactContext={
+                          activeNewChatRuntime === 'codex' || activeNewChatRuntime === 'claude_code'
+                            ? compactCurrentContext
+                            : undefined
+                        }
+                        goal={paneSession.goal}
+                        goalContinuing={paneSession.goalContinuing}
+                        taskPlan={paneSession.taskPlan}
+                        goalDraftActive={paneSession.goalDraftActive}
+                        onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
+                        onConfigureSupervisor={
+                          supervisorFeatureAvailable ? openSupervisorDialog : undefined
+                        }
+                        supervisorEnabled={Boolean(supervisor || pendingSupervisorConfig)}
+                        supervisorPending={Boolean(!currentRuntimeTask && pendingSupervisorConfig)}
+                        onCancelGoalDraft={paneSession.cancelGoalDraft}
+                        onEditGoal={paneSession.editCurrentGoal}
+                        onPauseGoal={pauseCurrentGoal}
+                        onResumeGoal={resumeCurrentGoal}
+                        onClearGoal={clearCurrentGoal}
+                        onCancelQueuedMessage={paneSession.cancelQueuedMessage}
+                        onReorderQueuedMessages={paneSession.reorderQueuedMessages}
+                        queuePaused={paneSession.queuedMessagesPaused}
+                        onResumeQueue={paneSession.resumeQueuedMessages}
+                        onResumeQueueWithInput={paneSession.resumeQueuedMessagesWithInput}
+                        onClearQueue={paneSession.clearQueuedMessages}
+                        onSendQueuedAsGuidance={
+                          activeNewChatRuntime === 'codex'
+                            ? paneSession.sendQueuedAsGuidance
+                            : undefined
+                        }
+                        onInterruptAndSendQueuedMessage={paneSession.interruptAndSendQueued}
+                        onEditQueuedMessage={paneSession.editQueuedMessage}
+                        onCancelGuidanceMessage={paneSession.cancelGuidanceMessage}
+                        onClearCodeComments={paneSession.clearCodeComments}
+                        onOpenSkillFile={openLocalSkillFile}
+                        workspaceTarget={composerWorkspaceTarget}
+                        workspaceFileApi={workspaceFileApi}
+                      />
+                    </>
+                  )
+                }
+              />
             )}
-          </aside>
+            <aside
+              data-testid="environment-info-panel-container"
+              className={cn(
+                'sticky top-0 z-popover flex h-full w-0 shrink-0 self-start flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+                environmentInfoTransitionEnabled
+                  ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                  : 'transition-none'
+              )}
+            >
+              <div ref={setEnvironmentInfoPanelRef} className="shrink-0" />
+              {environmentInfoDocked && hasSubagentStatuses && (
+                <div
+                  data-testid="workbench-subagent-status-row"
+                  className="ml-2 mt-3 flex w-[300px] flex-wrap gap-2"
+                >
+                  <SubagentStatusIndicator statuses={paneSession.subagentStatuses} />
+                </div>
+              )}
+            </aside>
+          </div>
         </div>
         {rightPanelOpen && !rightPanelExpanded && (
           <div

@@ -467,6 +467,9 @@ async function getSingleElementMetrics(control, selector, description) {
 }
 
 function distanceFromBottom(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, -metrics.scrollTop)
+  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
 }
 

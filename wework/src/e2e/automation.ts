@@ -507,6 +507,7 @@ function desktopControlElementMetrics(selector: string): string {
         right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
+        scrollOrigin: element.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
@@ -514,6 +515,16 @@ function desktopControlElementMetrics(selector: string): string {
       }
     })
   )
+}
+
+function desktopControlContentScrollTop(element: HTMLElement): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
+  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
+}
+
+function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
+  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -1909,7 +1920,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop = element.scrollHeight
+      element.scrollTop =
+        element.dataset.scrollOrigin === 'bottom'
+          ? 0
+          : Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -1929,7 +1943,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -Math.max(120, distance),
         })
       )
-      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop =
+        scroller.dataset.scrollOrigin === 'bottom'
+          ? -Math.min(distance, maxScrollTop)
+          : Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1942,16 +1960,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      const nextScrollTop = maxScrollTop * ratio
+      const nextContentScrollTop = maxScrollTop * ratio
+      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
           cancelable: true,
           composed: true,
-          deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = nextScrollTop
+      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1977,16 +1996,17 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
       const viewport = scroller.getBoundingClientRect()
       const samples = ratios.map(ratio => {
-        const nextScrollTop = maxScrollTop * ratio
+        const nextContentScrollTop = maxScrollTop * ratio
+        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
         scroller.dispatchEvent(
           new WheelEvent('wheel', {
             bubbles: true,
             cancelable: true,
             composed: true,
-            deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+            deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
           })
         )
-        scroller.scrollTop = nextScrollTop
+        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
         scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
 
         const hasVisibleContent = Array.from(

@@ -23,6 +23,7 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('@tanstack/react-virtual', () => ({
+  observeElementOffset: vi.fn(),
   defaultRangeExtractor: (range: { startIndex: number; endIndex: number }) =>
     Array.from(
       { length: range.endIndex - range.startIndex + 1 },
@@ -105,6 +106,44 @@ describe('MessageList desktop virtualization', () => {
       (virtualizer?.shouldAdjustScrollPositionOnItemSizeChange as (() => boolean) | undefined)?.()
     ).toBe(false)
     expect(intersectionObserver).not.toHaveBeenCalled()
+  })
+
+  test('adapts the virtualizer to the desktop bottom-origin scroller', () => {
+    const scrollElement = createScrollElement(200)
+    scrollElement.scrollTop = -178
+
+    render(
+      <MessageList
+        messages={buildMessages(20, 'bottom-origin')}
+        scrollElementRef={{ current: scrollElement }}
+        bottomOrigin
+      />
+    )
+
+    expect(useVirtualizerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        observeElementOffset: expect.any(Function),
+        scrollToFn: expect.any(Function),
+      })
+    )
+    expect(scrollElement.scrollTop).toBe(0)
+  })
+
+  test('normalizes a restored bottom-origin distance in the task-switch layout commit', () => {
+    const scrollElement = createScrollElement(200)
+    scrollElement.scrollTop = -178
+
+    render(
+      <MessageList
+        conversationKey="restored-bottom-origin"
+        messages={buildMessages(20, 'restored-bottom-origin')}
+        scrollElementRef={{ current: scrollElement }}
+        initialDistanceFromBottomPx={72}
+        bottomOrigin
+      />
+    )
+
+    expect(scrollElement.scrollTop).toBe(-72)
   })
 
   test('keeps only the end-anchored overscan range mounted for long conversations', () => {

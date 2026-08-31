@@ -4,6 +4,13 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 import { visibleRuntimeUserMessage } from '@/lib/runtime-user-message'
 import { cn } from '@/lib/utils'
+import {
+  getContentPositionForViewportY,
+  getDistanceFromBottom,
+  hasBottomScrollOrigin,
+  getScrollViewportBounds,
+  scrollToContentPosition,
+} from './bottomOriginScroll'
 import type { RuntimeTurnNavigationItem } from '@/types/api'
 import type { WorkbenchMessage } from '@/types/workbench'
 
@@ -164,15 +171,14 @@ export function MessageTurnNavigation({
         return
       }
 
-      const viewportTop = scroller.scrollTop
-      const viewportBottom = viewportTop + scroller.clientHeight
+      const viewport = getScrollViewportBounds(scroller)
       const nextActiveMarkerIds = nextMarkers
         .filter(
           marker =>
             marker.visibleTop !== null &&
             marker.visibleBottom !== null &&
-            marker.visibleBottom > viewportTop &&
-            marker.visibleTop < viewportBottom
+            marker.visibleBottom > viewport.startPx &&
+            marker.visibleTop < viewport.endPx
         )
         .map(marker => marker.id)
       setActiveMarkerIds(current =>
@@ -194,14 +200,12 @@ export function MessageTurnNavigation({
         return
       }
 
-      const scrollerRect = scroller.getBoundingClientRect()
       const anchorByMessageId = getMessageAnchorById(content)
       const visibilityByTurnId = getTurnVisibilityBounds(
         userTurns,
         messagesRef.current,
         anchorByMessageId,
-        scroller,
-        scrollerRect
+        scroller
       )
       const nextMarkers = userTurns.map(turn => {
         const anchor = anchorByMessageId.get(turn.id)
@@ -217,14 +221,14 @@ export function MessageTurnNavigation({
         }
 
         const anchorRect = anchor.getBoundingClientRect()
-        const targetTop = Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+        const targetTop = getContentPositionForViewportY(scroller, anchorRect.top)
         return {
           ...turn,
           loaded: true,
           targetTop,
           visibleTop: visibleBounds?.top ?? targetTop,
           visibleBottom:
-            visibleBounds?.bottom ?? scroller.scrollTop + anchorRect.bottom - scrollerRect.top,
+            visibleBounds?.bottom ?? getContentPositionForViewportY(scroller, anchorRect.bottom),
         }
       })
 
@@ -247,9 +251,14 @@ export function MessageTurnNavigation({
     [calculateMarkers]
   )
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current
+    if (scroller && contentRef.current && hasBottomScrollOrigin(scroller)) {
+      calculateMarkers('messages-layout-effect')
+      return
+    }
     scheduleCalculateMarkers('messages-effect')
-  }, [scheduleCalculateMarkers, userTurnsSignature])
+  }, [calculateMarkers, contentRef, scheduleCalculateMarkers, scrollRef, userTurnsSignature])
 
   useLayoutEffect(() => {
     if (!pendingScrollTarget) return
@@ -701,15 +710,7 @@ function scrollToMarkerTarget(
   behavior: ScrollBehavior
 ) {
   const top = Math.max(0, targetTop - SCROLL_OFFSET_PX)
-  if (behavior === 'auto') {
-    scroller.scrollTop = top
-    return
-  }
-
-  scroller.scrollTo({
-    top,
-    behavior,
-  })
+  scrollToContentPosition(scroller, top, behavior)
 }
 
 function scrollToMessageAnchor(
@@ -719,16 +720,6 @@ function scrollToMessageAnchor(
 ) {
   if (behavior === 'smooth') {
     scrollToMarkerTarget(scroller, getMessageAnchorTargetTop(scroller, anchor), behavior)
-    return
-  }
-
-  if (typeof anchor.scrollIntoView === 'function') {
-    anchor.scrollIntoView({
-      block: 'start',
-      inline: 'nearest',
-      behavior,
-    })
-    scroller.scrollTop = Math.max(0, scroller.scrollTop - SCROLL_OFFSET_PX)
     return
   }
 
@@ -756,9 +747,8 @@ function findLoadedNavigationMessageId(
 }
 
 function getMessageAnchorTargetTop(scroller: HTMLDivElement, anchor: HTMLElement) {
-  const scrollerRect = scroller.getBoundingClientRect()
   const anchorRect = anchor.getBoundingClientRect()
-  return Math.max(0, scroller.scrollTop + anchorRect.top - scrollerRect.top)
+  return getContentPositionForViewportY(scroller, anchorRect.top)
 }
 
 function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
@@ -768,7 +758,7 @@ function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | null) {
     scrollTop: scroller.scrollTop,
     scrollHeight: scroller.scrollHeight,
     clientHeight: scroller.clientHeight,
-    distanceFromBottom: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+    distanceFromBottom: getDistanceFromBottom(scroller, hasBottomScrollOrigin(scroller)),
     scrollerTop: scrollerRect.top,
     anchorTop: anchorRect?.top ?? null,
     anchorHeight: anchorRect?.height ?? null,
@@ -795,8 +785,7 @@ function getTurnVisibilityBounds(
   turns: UserTurn[],
   messages: WorkbenchMessage[],
   anchorByMessageId: ReadonlyMap<string, HTMLElement>,
-  scroller: HTMLDivElement,
-  scrollerRect: DOMRect
+  scroller: HTMLDivElement
 ): Map<string, TurnVisibilityBounds> {
   const boundsByTurnId = new Map<string, TurnVisibilityBounds>()
   const messagePositionById = buildMessageTimelinePositions(messages)
@@ -808,8 +797,8 @@ function getTurnVisibilityBounds(
     if (!turn) return
 
     const anchorRect = anchor.getBoundingClientRect()
-    const top = scroller.scrollTop + anchorRect.top - scrollerRect.top
-    const bottom = scroller.scrollTop + anchorRect.bottom - scrollerRect.top
+    const top = getContentPositionForViewportY(scroller, anchorRect.top)
+    const bottom = getContentPositionForViewportY(scroller, anchorRect.bottom)
     const current = boundsByTurnId.get(turn.id)
     boundsByTurnId.set(turn.id, {
       top: current ? Math.min(current.top, top) : top,
