@@ -187,14 +187,15 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
   )
 
   useLayoutEffect(() => {
-    if (!file.traceId) return
-    logFilePreviewDiagnostic(file.traceId, 'binary_preview_committed', {
+    const traceId = file.traceId
+    if (!traceId) return
+    logFilePreviewDiagnostic(traceId, 'binary_preview_committed', {
       fileSize: file.size,
       viewerType: viewerType ?? null,
     })
-    scheduleFilePreviewMainThreadProbe(file.traceId, 'binary_preview_committed')
+    scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_committed')
     return () => {
-      logFilePreviewDiagnostic(file.traceId, 'binary_preview_unmounted')
+      logFilePreviewDiagnostic(traceId, 'binary_preview_unmounted')
     }
   }, [file.size, file.traceId, viewerType])
 
