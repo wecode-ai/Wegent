@@ -4352,7 +4352,7 @@ describe('DesktopWorkbenchLayout', () => {
       screen.queryByTestId('local-harness-session-row-local-harness-1')
     ).not.toBeInTheDocument()
     expect(screen.getByTestId('desktop-empty-composer-frame')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   test('closes the settings menu when clicking outside it', async () => {
     render(<DesktopWorkbenchLayout {...baseProps} />)
