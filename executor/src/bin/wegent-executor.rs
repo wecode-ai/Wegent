@@ -104,6 +104,13 @@ fn main() {
         }
         return;
     }
+    if wegent_executor::computer_use_mcp::is_computer_use_mcp_command() {
+        if let Err(error) = runtime().block_on(wegent_executor::computer_use_mcp::run()) {
+            eprintln!("computer use MCP server failed: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if wegent_executor::task_runtime::mcp::is_space_mcp_command() {
         if let Err(error) = runtime().block_on(wegent_executor::task_runtime::mcp::run()) {
             eprintln!("task MCP server failed: {error}");

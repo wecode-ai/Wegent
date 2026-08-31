@@ -1678,10 +1678,9 @@ function ChatAreaContent({
 
   const handleUserFileSelect = useCallback(
     async (files: File | File[]) => {
-      await clearQuickPresetAttachments()
       await handleFileSelect(files)
     },
-    [clearQuickPresetAttachments, handleFileSelect]
+    [handleFileSelect]
   )
 
   const handleInputAttachmentRemove = useCallback(
@@ -1720,14 +1719,6 @@ function ChatAreaContent({
 
       const sourceAttachmentIds = preset.source_attachment_ids ?? []
       if (sourceAttachmentIds.length === 0) {
-        await clearQuickPresetAttachments()
-        return
-      }
-
-      const hasUserAttachment = chatState.attachmentState.attachments.some(
-        attachment => !quickPresetAttachmentIdsRef.current.has(attachment.id)
-      )
-      if (hasUserAttachment) {
         await clearQuickPresetAttachments()
         return
       }

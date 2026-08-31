@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { WORKSPACE_PATH_DRAG_TYPE, writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import { SystemDragPanel } from './SystemDragPanel'
 
 const mocks = vi.hoisted(() => ({
@@ -63,11 +64,13 @@ describe('SystemDragPanel', () => {
   test('visually highlights a drop zone while dragging over it', () => {
     render(<SystemDragPanel />)
     const stashZone = screen.getByTestId('system-drag-stash-zone')
+    const dataTransfer = { dropEffect: 'none' }
 
-    fireEvent.dragOver(stashZone)
+    fireEvent.dragOver(stashZone, { dataTransfer })
 
     expect(stashZone).toHaveClass('border-text-primary/15', 'bg-muted', 'shadow-sm')
     expect(stashZone).toHaveTextContent('松开即可添加')
+    expect(dataTransfer.dropEffect).toBe('copy')
   })
 
   test('accepts dragged text through the browser drop event', async () => {
@@ -83,5 +86,32 @@ describe('SystemDragPanel', () => {
         payload: { action: 'new-chat', text: '拖入的文字', paths: [] },
       })
     })
+  })
+
+  test('accepts dragged workspace paths through the browser drop event', async () => {
+    render(<SystemDragPanel />)
+    const values = new Map<string, string>()
+    const dataTransfer = {
+      types: [] as string[],
+      getData: (type: string) => values.get(type) ?? '',
+      setData: (type: string, value: string) => {
+        values.set(type, value)
+        dataTransfer.types.push(type)
+      },
+    } as unknown as DataTransfer
+    writeWorkspacePathDragData(dataTransfer, [{ path: '/workspace/README.md', isDirectory: false }])
+
+    fireEvent.drop(screen.getByTestId('system-drag-new-chat-zone'), { dataTransfer })
+
+    expect(dataTransfer.types).toContain(WORKSPACE_PATH_DRAG_TYPE)
+    await waitFor(() =>
+      expect(mocks.invoke).toHaveBeenCalledWith('systemDrag.complete', {
+        payload: {
+          action: 'new-chat',
+          paths: ['/workspace/README.md'],
+          text: null,
+        },
+      })
+    )
   })
 })

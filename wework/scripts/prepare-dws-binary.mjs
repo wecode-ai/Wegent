@@ -1,7 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { arch, platform } from 'node:process'
 import { tmpdir } from 'node:os'
@@ -12,8 +22,9 @@ import JSZip from 'jszip'
 
 const require = createRequire(import.meta.url)
 const weworkRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const packageJson = require.resolve('dingtalk-workspace-cli/package.json')
-const packageRoot = dirname(packageJson)
+const packageJsonPath = require.resolve('dingtalk-workspace-cli/package.json')
+const packageRoot = dirname(packageJsonPath)
+const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8'))
 const rustHostTarget = () => {
   const result = spawnSync('rustc', ['-vV'], { encoding: 'utf8' })
   if (result.status !== 0) return null
@@ -46,7 +57,13 @@ const archiveName = archives[target]
 if (!archiveName) throw new Error(`Unsupported DWS target: ${target}`)
 const isWindowsTarget = target.includes('windows')
 const executable = isWindowsTarget ? 'dws.exe' : 'dws'
-const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-dws-'))
+const destination = join(
+  weworkRoot,
+  'resources',
+  'binaries',
+  `dws-${target}${isWindowsTarget ? '.exe' : ''}`
+)
+const metadataPath = `${destination}.json`
 
 async function findBinary(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -76,29 +93,61 @@ async function extractZip(archive, destination) {
   )
 }
 
-try {
-  const archive = join(packageRoot, 'assets', archiveName)
-  if (archiveName.endsWith('.zip')) {
-    await extractZip(archive, temporaryDirectory)
-  } else {
-    const result = spawnSync('tar', ['-xzf', archive, '-C', temporaryDirectory], {
-      stdio: 'inherit',
-    })
-    if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+async function preparedBinaryIsCurrent() {
+  try {
+    const binary = await stat(destination)
+    if (!binary.isFile() || binary.size === 0 || (!isWindowsTarget && !(binary.mode & 0o111))) {
+      return false
+    }
+    const metadata = JSON.parse(await readFile(metadataPath, 'utf8'))
+    return (
+      metadata.packageVersion === packageJson.version &&
+      metadata.target === target &&
+      metadata.archiveName === archiveName
+    )
+  } catch {
+    return false
   }
-  const source = await findBinary(temporaryDirectory)
-  if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
-  const destination = join(
-    weworkRoot,
-    'resources',
-    'binaries',
-    `dws-${target}${isWindowsTarget ? '.exe' : ''}`
-  )
-  await mkdir(dirname(destination), { recursive: true })
-  await copyFile(source, destination)
-  await rm(destination.replace(/(?:\.exe)?$/, '.debug-stub'), { force: true })
-  if (!isWindowsTarget) await chmod(destination, 0o755)
-  console.log(`Prepared DWS sidecar: ${destination}`)
-} finally {
-  await rm(temporaryDirectory, { recursive: true, force: true })
+}
+
+async function prepareBinary() {
+  const temporaryDirectory = await mkdtemp(join(tmpdir(), 'wework-dws-'))
+  try {
+    const archive = join(packageRoot, 'assets', archiveName)
+    if (archiveName.endsWith('.zip')) {
+      await extractZip(archive, temporaryDirectory)
+    } else {
+      const result = spawnSync('tar', ['-xzf', archive, '-C', temporaryDirectory], {
+        stdio: 'inherit',
+      })
+      if (result.status !== 0) throw new Error(`Failed to extract ${archiveName}`)
+    }
+    const source = await findBinary(temporaryDirectory)
+    if (!source) throw new Error(`DWS binary is missing from ${archiveName}`)
+    await mkdir(dirname(destination), { recursive: true })
+    await copyFile(source, destination)
+    await rm(destination.replace(/(?:\.exe)?$/, '.debug-stub'), { force: true })
+    if (!isWindowsTarget) await chmod(destination, 0o755)
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify(
+        {
+          packageVersion: packageJson.version,
+          target,
+          archiveName,
+        },
+        null,
+        2
+      )}\n`
+    )
+    console.log(`Prepared DWS sidecar: ${destination}`)
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true })
+  }
+}
+
+if (await preparedBinaryIsCurrent()) {
+  console.log(`Reusing prepared DWS sidecar: ${destination}`)
+} else {
+  await prepareBinary()
 }

@@ -16,6 +16,18 @@ connection and resumes the event stream from the last consumed `sequence`.
 Each `(deviceId, taskId)` pair maps to a stable, independent Session, so
 parallel tasks never merge into one event stream.
 
+The Wework renderer uses the browser SSE stream exposed by the same DSH
+runtime. An initial browser subscription explicitly disables history replay.
+The Executor atomically captures the latest journal `sequence`, sends an
+internal `executor.stream.cursor` baseline, and then forwards only new events.
+The browser consumes that baseline without passing it to business listeners.
+Reconnects after the connection is established explicitly enable replay and
+resume from the last consumed `sequence`. A zero `after` cursor alone must not
+identify a fresh connection because a reconnect that has not received an
+ordinary business event can also carry zero. Conflating those cases either
+floods the renderer with the full journal or drops events emitted while the
+stream was disconnected.
+
 The main mappings are:
 
 | Executor event                             | DSH Session event                           |
@@ -43,6 +55,14 @@ A plugin that needs live token throughput should subtract adjacent
 `outputTokens` values for the same Session and turn, then divide by the sample
 interval. It must not add multiple cumulative samples together, and it should
 reset its own delta baseline when a new turn starts.
+
+Accurate Codex usage is normally reported when a model call settles, not for
+every generated token. Plugins that need lower-latency feedback can also
+observe standard `text-delta` and `reasoning-delta` chunks, estimate live
+generation throughput over a sliding window, and calibrate that estimate with
+later usage samples. Executor streaming text and thinking blocks are projected
+into those standard chunks; tool, plan, and other non-model blocks are excluded
+from the model output stream.
 
 ```js
 export const inject = ["sessions"];

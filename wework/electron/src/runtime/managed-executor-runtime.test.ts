@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'vitest'
 import {
   ManagedExecutorRuntime,
+  managedExecutorLogPath,
   prepareManagedExecutorEnvironment,
   requestExecutor,
   waitForEndpointAuthentication,
@@ -23,6 +24,33 @@ describe('managed executor runtime', () => {
     expect(environment.WEGENT_EXECUTOR_HOME).toBe(join(homedir(), '.wework'))
     expect(environment.WEGENT_CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
     expect(environment.CODEX_HOME).toBe(join(homedir(), '.wework', 'codex'))
+  })
+
+  test('preserves the executor log path contract for supervisor-owned logs', () => {
+    expect(
+      managedExecutorLogPath({
+        environment: {},
+        logDirectory: '/application/logs',
+      })
+    ).toBe(join('/application/logs', 'executor.log'))
+    expect(
+      managedExecutorLogPath({
+        environment: {
+          WEGENT_EXECUTOR_LOG_DIR: '/configured/logs',
+          WEGENT_EXECUTOR_LOG_FILE: 'custom.log',
+        },
+        logDirectory: '/application/logs',
+      })
+    ).toBe(join('/configured/logs', 'custom.log'))
+    expect(
+      managedExecutorLogPath({
+        environment: {
+          WEGENT_EXECUTOR_LOG_DIR: '/configured/logs',
+          WEGENT_EXECUTOR_LOG_FILE: '/absolute/executor.log',
+        },
+        logDirectory: '/application/logs',
+      })
+    ).toBe('/absolute/executor.log')
   })
 
   test('isolates Codex home and imports auth from the configured user home', async () => {
@@ -158,6 +186,7 @@ describe('managed executor runtime', () => {
         identityPath,
       ],
       environment: {
+        ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
         VITE_WEWORK_E2E: 'true',
         WEGENT_EXECUTOR_HOME: join(directory.path, 'executor-home'),
       },

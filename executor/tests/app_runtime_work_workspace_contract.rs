@@ -961,7 +961,9 @@ async fn runtime_task_list_preserves_codex_global_project_order() {
     assert_eq!(listed["success"], true);
     assert_eq!(listed["workspaces"].as_array().unwrap().len(), 2);
     assert_eq!(listed["workspaces"][0]["workspacePath"], "/repo/Older");
+    assert_eq!(listed["workspaces"][0]["projectSidebarOrder"], 0);
     assert_eq!(listed["workspaces"][1]["workspacePath"], "/repo/Newer");
+    assert_eq!(listed["workspaces"][1]["projectSidebarOrder"], 1);
 }
 
 #[tokio::test]

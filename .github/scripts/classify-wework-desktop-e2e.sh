@@ -11,10 +11,13 @@ core_segments=(
   project-automation
   project-assignment-notification
   offline-local-project-space
+  cloud-context-resilience
   core-dsh-plugin-management
   project-ai-settings
   model-routing
   permission-modes
+  computer-use
+  task-status-sync
   core-task-flow
   task-attachments
   window-lifecycle
@@ -51,6 +54,9 @@ plugin_segments=(
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
+)
+formal_release_segments=(
+  app-update-differential
 )
 cloud_worktree_segments=(
   cloud-worktree-capability
@@ -112,9 +118,9 @@ core_shards=(
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
   goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  core-task-flow,change-request-status,context-compaction
+  task-status-sync,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
   project-automation
   resilience
@@ -124,7 +130,7 @@ core_shards=(
   runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
-  model-routing
+  model-routing,computer-use
 )
 
 validate_core_shards() {
@@ -208,7 +214,10 @@ validate_cloud_shards
 validate_registered_checkpoint_coverage() {
   declare -A covered=()
   local segment
-  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+  for segment in \
+    "${core_segments[@]}" \
+    "${cloud_segments[@]}" \
+    "${formal_release_segments[@]}"; do
     covered["$segment"]=true
   done
 
@@ -288,6 +297,7 @@ classify_wework_path() {
     # DSH UI composition verifies that Wework starts empty and gains each
     # application, route, settings page, and navigation item from plugins.
     wework/dsh/app-wework/* | \
+      wework/dsh/examples/ui-extension-demo/* | \
       wework/dsh/ui-*/* | \
       wework/src/features/dsh-runtime/*)
       select_target "plugins:core-dsh-ui-plugin-composition"
@@ -385,6 +395,17 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       return
       ;;
+    wework/src/api/deliveries* | \
+      wework/src/components/layout/useWorkbenchCloudProjectContext* | \
+      wework/src/features/todo/CloudTodoWorkspace* | \
+      wework/src/features/workbench/projectTaskTracking* | \
+      wework/src/features/workbench/workbenchContextTypes*)
+      select_target "core:task-status-sync"
+      if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
+        select_target "core:cloud-context-resilience"
+      fi
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -420,6 +441,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
+        select_target "core:task-status-sync"
       fi
       return
       ;;
@@ -467,6 +489,16 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
+      if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:cloud-context-resilience"
+      fi
+      return
+      ;;
+
+    # Cloud project-space lookup must not block the local composer.
+    wework/src/features/todo/projectSpaceSelection* | \
+      wework/e2e/desktop/scenarios/cloud-context-resilience.scenario.mjs)
+      select_target "core:cloud-context-resilience"
       return
       ;;
 
@@ -496,6 +528,17 @@ classify_wework_path() {
       select_target "core:embedded-browser"
       select_target "core:browser-toolbar-actions"
       macos_inspector_e2e=true
+      return
+      ;;
+
+    # Computer use spans the settings UI, Electron-native CUA bridge, and Codex MCP routing.
+    wework/electron/src/host/computer-use-service* | \
+      wework/src/components/settings/ComputerUseSettingsPage* | \
+      wework/src/desktop/computerUse* | \
+      wework/src/features/computer-use/* | \
+      wework/e2e/desktop/scenarios/computer-use.scenario.mjs | \
+      executor/src/computer_use_mcp.rs)
+      select_target "core:computer-use"
       return
       ;;
 

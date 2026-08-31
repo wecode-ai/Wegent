@@ -589,7 +589,7 @@ export function useWorkbenchPaneEnvironment({
 
     const intervalId = window.setInterval(() => {
       void loadCurrentEnvironmentInfo({ force: true, showLoading: false })
-    }, 5000)
+    }, 30_000)
     return () => window.clearInterval(intervalId)
   }, [environmentRefreshActive, loadCurrentEnvironmentInfo])
 

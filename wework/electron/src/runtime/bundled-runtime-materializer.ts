@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { extract } from 'tar'
 
 interface RuntimeDescriptor {
   dshVersion: string
@@ -88,25 +88,13 @@ async function materializeRuntime(
   }
 }
 
-function extractArchive(archive: string, destination: string): Promise<void> {
-  return new Promise((resolveExtraction, rejectExtraction) => {
-    const child = spawn('tar', ['-xzf', archive, '-C', destination], {
-      stdio: ['ignore', 'ignore', 'pipe'],
-    })
-    const stderr: Buffer[] = []
-    child.stderr.on('data', chunk => stderr.push(Buffer.from(chunk)))
-    child.once('error', rejectExtraction)
-    child.once('close', code => {
-      if (code === 0) {
-        resolveExtraction()
-        return
-      }
-      const detail = Buffer.concat(stderr).toString('utf8').trim()
-      rejectExtraction(
-        new Error(`Bundled DSH runtime extraction failed (${code ?? 'signal'}): ${detail}`)
-      )
-    })
-  })
+async function extractArchive(archive: string, destination: string): Promise<void> {
+  try {
+    await extract({ cwd: destination, file: archive, strict: true })
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Bundled DSH runtime extraction failed: ${detail}`, { cause: error })
+  }
 }
 
 async function runtimeMatches(root: string, runtime: RuntimeDescriptor): Promise<boolean> {

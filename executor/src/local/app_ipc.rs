@@ -2,17 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc};
-#[cfg(windows)]
-use std::{
-    env,
-    path::{Path, PathBuf},
-};
 #[cfg(unix)]
-use std::{
-    os::unix::fs::{FileTypeExt, PermissionsExt},
-    path::Path,
-};
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+use std::{collections::HashMap, future::Future, path::Path, pin::Pin, sync::Arc};
+#[cfg(windows)]
+use std::{env, path::PathBuf};
 
 use serde_json::{json, Value};
 #[cfg(windows)]
@@ -21,7 +15,7 @@ use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::net::UnixListener;
 use tokio::{
     io::{split, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    sync::{broadcast, mpsc, Mutex},
+    sync::{broadcast, mpsc, watch, Mutex},
     time::{Duration, Instant},
 };
 
@@ -62,9 +56,6 @@ use crate::{
     },
     version::get_version,
 };
-
-#[cfg(windows)]
-use crate::local::command::build_env;
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
 pub const APP_IPC_PROTOCOL_VERSION: u64 = 1;
@@ -361,6 +352,10 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub trait RuntimeWorkHandler: Send + Sync {
     fn handle_runtime_rpc<'a>(&'a self, data: Value) -> BoxFuture<'a, Result<Value, AppIpcError>>;
 
+    fn reconcile_bound_task_statuses<'a>(&'a self) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
+
     fn handle_codex_app_server_rpc<'a>(
         &'a self,
         _data: Value,
@@ -408,6 +403,90 @@ enum PostProcessor {
     Json,
 }
 
+type BlockingInitializationResult<T> = Result<T, String>;
+
+struct BlockingSingleFlightState<T> {
+    next_generation: u64,
+    current: Option<(
+        u64,
+        watch::Receiver<Option<BlockingInitializationResult<T>>>,
+    )>,
+}
+
+impl<T> Default for BlockingSingleFlightState<T> {
+    fn default() -> Self {
+        Self {
+            next_generation: 0,
+            current: None,
+        }
+    }
+}
+
+struct BlockingSingleFlight<T> {
+    state: Mutex<BlockingSingleFlightState<T>>,
+}
+
+impl<T> Default for BlockingSingleFlight<T> {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(BlockingSingleFlightState::default()),
+        }
+    }
+}
+
+impl<T> BlockingSingleFlight<T>
+where
+    T: Clone + Send + Sync + 'static,
+{
+    async fn run<F>(&self, initialize: F) -> BlockingInitializationResult<T>
+    where
+        F: FnOnce() -> BlockingInitializationResult<T> + Send + 'static,
+    {
+        let (generation, mut result_rx) = {
+            let mut state = self.state.lock().await;
+            if let Some((generation, result_rx)) = state.current.as_ref() {
+                (*generation, result_rx.clone())
+            } else {
+                state.next_generation += 1;
+                let generation = state.next_generation;
+                let (result_tx, result_rx) = watch::channel(None);
+                state.current = Some((generation, result_rx.clone()));
+                tokio::spawn(async move {
+                    let result = tokio::task::spawn_blocking(initialize)
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result);
+                    let _ = result_tx.send(Some(result));
+                });
+                (generation, result_rx)
+            }
+        };
+
+        loop {
+            let completed_result = {
+                let result = result_rx.borrow();
+                result.clone()
+            };
+            if let Some(result) = completed_result {
+                if result.is_err() {
+                    let mut state = self.state.lock().await;
+                    if state
+                        .current
+                        .as_ref()
+                        .is_some_and(|(current_generation, _)| *current_generation == generation)
+                    {
+                        state.current = None;
+                    }
+                }
+                return result;
+            }
+            result_rx.changed().await.map_err(|_| {
+                "Blocking initialization stopped before producing a result".to_owned()
+            })?;
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppIpcServer {
     device_id: String,
@@ -417,7 +496,7 @@ pub struct AppIpcServer {
     command_handler: Arc<dyn DeviceCommandHandler>,
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
-    bundled_plugin_marketplace: Arc<Mutex<Option<BundledPluginMarketplace>>>,
+    bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
 }
 
 impl Default for AppIpcServer {
@@ -432,7 +511,7 @@ impl Default for AppIpcServer {
             command_handler: Arc::new(CommandHandler),
             event_tx,
             event_hub,
-            bundled_plugin_marketplace: Arc::new(Mutex::new(None)),
+            bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
         }
     }
 }
@@ -467,14 +546,15 @@ impl AppIpcServer {
         self
     }
 
-    pub fn with_shared_runtime_work_handler(
+    pub(crate) fn with_shared_runtime_work_handler(
         mut self,
         handler: Arc<dyn RuntimeWorkHandler>,
         event_tx: broadcast::Sender<Value>,
+        event_hub: ExecutorEventHub,
     ) -> Self {
         self.runtime_work_handler = Some(handler);
-        self.event_tx = event_tx.clone();
-        self.event_hub = ExecutorEventHub::new(event_tx);
+        self.event_tx = event_tx;
+        self.event_hub = event_hub;
         self
     }
 
@@ -583,14 +663,11 @@ impl AppIpcServer {
         }
 
         if method == "executor.plugins.initialize_bundled_marketplace" {
-            let mut initialized = self.bundled_plugin_marketplace.lock().await;
-            if let Some(marketplace) = initialized.as_ref() {
-                return serde_json::to_value(marketplace)
-                    .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
-            }
-            let marketplace = initialize_bundled_plugin_marketplace()
+            let marketplace = self
+                .bundled_plugin_marketplace
+                .run(initialize_bundled_plugin_marketplace)
+                .await
                 .map_err(|error| AppIpcError::new("bundled_plugins_initialize_failed", error))?;
-            *initialized = Some(marketplace.clone());
             return serde_json::to_value(marketplace)
                 .map_err(|error| AppIpcError::new("serialization_failed", error.to_string()));
         }
@@ -791,7 +868,20 @@ impl AppIpcServer {
             || method.starts_with("chat_agents.")
             || method.starts_with("executions.")
         {
-            return handle_task_runtime_request(method, params).await;
+            let should_reconcile_before = method == "todos.list";
+            let should_reconcile_after = matches!(method, "todos.bind" | "projects.bind_task");
+            if should_reconcile_before {
+                if let Some(handler) = &self.runtime_work_handler {
+                    handler.reconcile_bound_task_statuses().await;
+                }
+            }
+            let result = handle_task_runtime_request(method, params).await?;
+            if should_reconcile_after {
+                if let Some(handler) = &self.runtime_work_handler {
+                    handler.reconcile_bound_task_statuses().await;
+                }
+            }
+            return Ok(result);
         }
 
         if method.starts_with("runtime.") {
@@ -1012,8 +1102,12 @@ impl AppIpcServer {
         let role = authentication.role;
         let (reader, writer) = split(stream);
         let result = if authentication.event_stream {
-            self.serve_event_stream(writer, authentication.after_sequence)
-                .await
+            self.serve_event_stream(
+                writer,
+                authentication.after_sequence,
+                authentication.replay_existing,
+            )
+            .await
         } else {
             self.serve_io_inner(
                 reader,
@@ -1274,13 +1368,38 @@ impl AppIpcServer {
         }
     }
 
-    async fn serve_event_stream<W>(&self, mut writer: W, after: u64) -> Result<(), String>
+    async fn serve_event_stream<W>(
+        &self,
+        mut writer: W,
+        after: u64,
+        replay_existing: bool,
+    ) -> Result<(), String>
     where
         W: AsyncWrite + Unpin + Send + 'static,
     {
         self.event_hub.ensure_started();
-        let mut subscription = self.event_hub.subscribe_after(after);
-        let mut delivered_sequence = after;
+        let mut subscription = if replay_existing {
+            self.event_hub.subscribe_after(after)
+        } else {
+            self.event_hub.subscribe_from_now()
+        };
+        let mut delivered_sequence = after.max(subscription.resume_after);
+        if !replay_existing {
+            write_message(
+                &mut writer,
+                &json!({
+                    "type": "event",
+                    "protocolVersion": 1,
+                    "sequence": delivered_sequence,
+                    "emittedAt": chrono::Utc::now()
+                        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+                    "event": "executor.stream.cursor",
+                    "payload": {},
+                }),
+            )
+            .await
+            .map_err(|error| format!("failed to write executor event stream cursor: {error}"))?;
+        }
         loop {
             for event in subscription.replay.drain(..) {
                 write_message(&mut writer, &event)
@@ -1350,6 +1469,19 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
+        if is_git_workspace_inspection_command(command_key)
+            && path
+                .as_deref()
+                .is_some_and(|workspace| !git_is_worktree(workspace))
+        {
+            return serde_json::to_value(CommandResult::error(
+                "Workspace is not a Git repository".to_owned(),
+                0.0,
+                false,
+            ))
+            .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
+        }
+
         if let Some((result, post_processor)) =
             handle_builtin_device_command(command_key, &params).await
         {
@@ -1405,6 +1537,7 @@ struct LocalEndpointAuthentication {
     role: LocalEndpointRole,
     event_stream: bool,
     after_sequence: u64,
+    replay_existing: bool,
     receive_events: bool,
 }
 
@@ -1455,6 +1588,9 @@ where
         role,
         event_stream: request.as_ref().is_some_and(|request| request.event_stream),
         after_sequence: request.as_ref().map_or(0, |request| request.after_sequence),
+        replay_existing: request
+            .as_ref()
+            .map_or(true, |request| request.replay_existing),
         receive_events: request
             .as_ref()
             .map_or(true, |request| request.receive_events),
@@ -1487,6 +1623,7 @@ struct LocalEndpointAuthRequest {
     token: String,
     event_stream: bool,
     after_sequence: u64,
+    replay_existing: bool,
     receive_events: bool,
 }
 
@@ -1511,6 +1648,10 @@ fn parse_auth_request(frame: &[u8]) -> Option<LocalEndpointAuthRequest> {
             .get("after_sequence")
             .and_then(Value::as_u64)
             .unwrap_or(0),
+        replay_existing: value
+            .get("replay_existing")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
         receive_events: value
             .get("receive_events")
             .and_then(Value::as_bool)
@@ -2596,10 +2737,7 @@ async fn handle_builtin_device_command(
         "git_is_worktree" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
-            Some((
-                CommandResult::ok(if git_is_worktree(path) { "true" } else { "" }),
-                None,
-            ))
+            Some((git_worktree_probe_result(path), None))
         }
         _ => None,
     }
@@ -2607,36 +2745,82 @@ async fn handle_builtin_device_command(
 
 #[cfg(not(windows))]
 async fn handle_builtin_device_command(
-    _command_key: &str,
-    _params: &Value,
+    command_key: &str,
+    params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
-    None
-}
-
-#[cfg(windows)]
-fn git_is_worktree(path: &str) -> bool {
-    git_stdout(path, &["rev-parse", "--is-inside-work-tree"])
-        .map(|output| output.trim() == "true")
-        .unwrap_or(false)
-        || git_stdout(path, &["rev-parse", "--git-dir"]).is_some()
-}
-
-#[cfg(windows)]
-fn git_stdout(path: &str, args: &[&str]) -> Option<String> {
-    let mut command = std::process::Command::new("git");
-    command
-        .arg("-C")
-        .arg(path)
-        .args(args)
-        .env_clear()
-        .envs(build_env(&HashMap::new()));
-    crate::process::hide_windows_console(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
+    match command_key {
+        "git_is_worktree" => {
+            let args = string_list(params.get("args")).ok()?;
+            let path = args.first()?;
+            Some((git_worktree_probe_result(path), None))
+        }
+        _ => None,
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
+}
+
+fn git_worktree_probe_result(path: &str) -> CommandResult {
+    if git_is_worktree(path) {
+        CommandResult::ok("true\n")
+    } else {
+        CommandResult::error("Workspace is not a Git repository".to_owned(), 0.0, false)
+    }
+}
+
+fn git_is_worktree(path: &str) -> bool {
+    let path = Path::new(path);
+    if !path.is_dir() {
+        return false;
+    }
+    if looks_like_git_dir(path) {
+        return true;
+    }
+
+    path.ancestors().any(|directory| {
+        let marker = directory.join(".git");
+        if marker.is_dir() {
+            return looks_like_git_dir(&marker);
+        }
+        if !marker.is_file() {
+            return false;
+        }
+        resolve_gitdir_file(&marker, directory)
+            .as_deref()
+            .is_some_and(looks_like_git_dir)
+    })
+}
+
+fn looks_like_git_dir(path: &Path) -> bool {
+    path.join("HEAD").is_file()
+        && (path.join("objects").is_dir()
+            || path.join("refs").is_dir()
+            || path.join("commondir").is_file())
+}
+
+fn resolve_gitdir_file(marker: &Path, worktree_root: &Path) -> Option<std::path::PathBuf> {
+    let content = std::fs::read_to_string(marker).ok()?;
+    let git_dir = Path::new(content.trim().strip_prefix("gitdir:")?.trim());
+    Some(if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        worktree_root.join(git_dir)
+    })
+}
+
+fn is_git_workspace_inspection_command(command_key: &str) -> bool {
+    matches!(
+        command_key,
+        "git_branch"
+            | "git_branch_list"
+            | "git_diff_shortstat"
+            | "git_diff"
+            | "git_branch_diff"
+            | "git_branch_diff_shortstat"
+            | "git_diff_unstaged"
+            | "git_diff_staged"
+            | "git_diff_last_commit"
+            | "git_status_porcelain"
+            | "git_remote_url"
+    )
 }
 
 #[cfg(windows)]
@@ -2767,6 +2951,7 @@ pub async fn serve_app_ipc_sidecar(
     device_id: String,
     runtime_instance_id: String,
 ) -> Result<(), String> {
+    crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
     crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
     let server = AppIpcServer::new()
         .with_device_id(normalize_device_id(device_id))
@@ -3268,13 +3453,78 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc as std_mpsc, Arc,
+    };
+
     use serde_json::{json, Value};
     use tokio::io::{duplex, split, AsyncBufReadExt, AsyncWriteExt, BufReader};
     #[cfg(unix)]
     use tokio::net::UnixStream;
     use tokio::time::Duration;
 
-    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer};
+    use super::{is_bulk_app_ipc_event, local_app_command, AppIpcServer, BlockingSingleFlight};
+
+    #[tokio::test]
+    async fn blocking_single_flight_survives_a_timed_out_waiter() {
+        let single_flight = Arc::new(BlockingSingleFlight::<String>::default());
+        let starts = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std_mpsc::channel();
+        let first_single_flight = single_flight.clone();
+        let first_starts = starts.clone();
+        let first_waiter = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_millis(250),
+                first_single_flight.run(move || {
+                    first_starts.fetch_add(1, Ordering::SeqCst);
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv()
+                        .map_err(|error| format!("release signal failed: {error}"))?;
+                    Ok("initialized".to_owned())
+                }),
+            )
+            .await
+        });
+
+        started_rx
+            .await
+            .expect("blocking initialization should start");
+        assert!(
+            first_waiter
+                .await
+                .expect("timed-out waiter should join")
+                .is_err(),
+            "the first waiter should time out"
+        );
+
+        let retry_single_flight = single_flight.clone();
+        let retry_starts = starts.clone();
+        let retry = tokio::spawn(async move {
+            retry_single_flight
+                .run(move || {
+                    retry_starts.fetch_add(1, Ordering::SeqCst);
+                    Ok("duplicate".to_owned())
+                })
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+
+        release_tx
+            .send(())
+            .expect("blocking initialization should still be running");
+        assert_eq!(
+            retry
+                .await
+                .expect("retry waiter should join")
+                .expect("retry should receive the original result"),
+            "initialized"
+        );
+        assert_eq!(starts.load(Ordering::SeqCst), 1);
+    }
 
     #[test]
     fn prioritizes_chat_events_over_diagnostic_blocks() {
@@ -3718,7 +3968,9 @@ mod tests {
         let (_, first_writer) = split(first_executor);
         let first_server = server.clone();
         let first_stream =
-            tokio::spawn(async move { first_server.serve_event_stream(first_writer, 0).await });
+            tokio::spawn(
+                async move { first_server.serve_event_stream(first_writer, 0, true).await },
+            );
         for _ in 0..100 {
             if event_tx.receiver_count() > 0 {
                 break;
@@ -3764,7 +4016,7 @@ mod tests {
         let second_server = server.clone();
         let second_stream = tokio::spawn(async move {
             second_server
-                .serve_event_stream(second_writer, first_sequence)
+                .serve_event_stream(second_writer, first_sequence, true)
                 .await
         });
         let mut second_reader = BufReader::new(second_reader);
@@ -3782,5 +4034,74 @@ mod tests {
         assert_eq!(second_event["payload"]["data"]["delta"], "second");
         assert!(second_event["sequence"].as_u64().unwrap() > first_sequence);
         second_stream.abort();
+    }
+
+    #[tokio::test]
+    async fn fresh_executor_event_stream_skips_journal_backlog() {
+        let server = AppIpcServer::new();
+        let event_tx = server.event_tx.clone();
+        server.event_hub.ensure_started();
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "stale"}},
+            }))
+            .expect("executor event journal should accept backlog");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if server
+                    .event_hub
+                    .subscribe_after(0)
+                    .replay
+                    .iter()
+                    .any(|event| event["payload"]["data"]["delta"] == "stale")
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stale executor event should reach the journal");
+
+        let (client, executor) = duplex(16 * 1024);
+        let (reader, _) = split(client);
+        let (_, writer) = split(executor);
+        let fresh_server = server.clone();
+        let fresh_stream =
+            tokio::spawn(async move { fresh_server.serve_event_stream(writer, 0, false).await });
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("fresh event stream cursor should arrive")
+            .expect("fresh event stream cursor should be readable");
+        let cursor: Value =
+            serde_json::from_str(&line).expect("fresh event stream cursor should be JSON");
+        assert_eq!(cursor["event"], "executor.stream.cursor");
+        assert!(cursor["sequence"].as_u64().unwrap() > 0);
+        line.clear();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), reader.read_line(&mut line))
+                .await
+                .is_err(),
+            "fresh event streams must not replay journal backlog"
+        );
+
+        event_tx
+            .send(json!({
+                "type": "event",
+                "event": "response.output_text.delta",
+                "payload": {"data": {"delta": "live"}},
+            }))
+            .expect("fresh event stream should receive live events");
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("live executor event should arrive")
+            .expect("live executor event should be readable");
+        let event: Value = serde_json::from_str(&line).expect("live executor event should be JSON");
+        assert_eq!(event["payload"]["data"]["delta"], "live");
+        fresh_stream.abort();
     }
 }

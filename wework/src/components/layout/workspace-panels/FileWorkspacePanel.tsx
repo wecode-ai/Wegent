@@ -17,8 +17,11 @@ import { flushSync } from 'react-dom'
 import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
+import {
+  isAbsoluteWorkspacePath,
+  normalizeAbsoluteWorkspacePath,
+} from '@/lib/workspace-file-contract'
 import { cn } from '@/lib/utils'
-import { isAbsoluteWorkspacePath } from '@/lib/workspace-paths'
 import { track } from '@/telemetry/client'
 import {
   isLocalTerminalAvailable,
@@ -45,7 +48,8 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
 
-const ELECTRON_E2E_FILE_TRANSITION_MS = 300
+// Keep the retained preview observable across slower Windows IPC control round trips.
+const ELECTRON_E2E_FILE_TRANSITION_MS = 1_000
 
 async function preserveElectronE2EFileTransition(): Promise<void> {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
@@ -128,7 +132,13 @@ function mimeTypeForFileName(name: string): string {
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
   const normalizedPath = decodeMarkdownFilePath(path.trim()).replace(/\\/g, '/')
   if (!normalizedPath) return null
-  if (isAbsoluteWorkspacePath(normalizedPath)) return normalizedPath
+  if (isAbsoluteWorkspacePath(normalizedPath)) {
+    try {
+      return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
+    } catch {
+      return null
+    }
+  }
 
   const segments: string[] = []
   for (const segment of normalizedPath.split('/')) {
@@ -138,7 +148,7 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
   }
   if (segments.length === 0) return null
 
-  const root = target.path.replace(/\/+$/, '') || '/'
+  const root = target.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
   const child = segments.join('/')
   return root === '/' ? `/${child}` : `${root}/${child}`
 }

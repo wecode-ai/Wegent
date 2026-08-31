@@ -31,6 +31,8 @@ import {
   PROVIDER_SWITCH_OFFICIAL_LABEL,
   PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
   PROVIDER_SWITCH_PROMPT,
+  PROVIDER_SWITCH_RESUME_COMPLETION,
+  PROVIDER_SWITCH_RESUME_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
   TURN_NAVIGATION_REGRESSION_TURN_COUNT,
@@ -57,6 +59,8 @@ import {
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
+const MODEL_RESPONSE_TIMEOUT_MS = Math.max(DEFAULT_STEP_TIMEOUT_MS, 30_000)
+
 async function waitForProcessExit(processId, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
@@ -68,6 +72,63 @@ async function waitForProcessExit(processId, message) {
 
 function desktopWindowLogPath() {
   return join(resultDir, 'app.log')
+}
+
+async function waitForInlineStyleValue(control, selector, property, expected, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const value = await control.command('getInlineStyle', selector, { value: property })
+    if (value === expected) return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error(message)
+}
+
+async function openBrowserForModelSwitchWarning(control) {
+  const browserInputSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
+  let snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  if (!snapshot.testIds.includes('workspace-browser-url-input')) {
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="toggle-right-workspace-panel-button"]')
+      snapshot = await waitForSnapshot(
+        control,
+        value =>
+          value.testIds.includes('right-workspace-browser-option') ||
+          value.testIds.includes('right-workspace-new-tab-button'),
+        'The right workspace did not expose a browser launcher',
+        DEFAULT_STEP_TIMEOUT_MS,
+        ACTIVE_WORKBENCH_SELECTOR
+      )
+    }
+    if (!snapshot.testIds.includes('right-workspace-browser-option')) {
+      await control.command('click', '[data-testid="right-workspace-new-tab-button"]')
+      await control.command('waitFor', '[data-testid="right-workspace-browser-option"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+    }
+    await control.command('click', '[data-testid="right-workspace-browser-option"]')
+  }
+  await control.command('waitFor', browserInputSelector, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', browserInputSelector, {
+    value: new URL(control.url).origin,
+  })
+  await control.command('submit', browserInputSelector)
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', '[data-testid="workspace-browser-electron-webview"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="right-workspace-resize-handle"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('drag', '[data-testid="right-workspace-resize-handle"]', {
+    target: ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
+  })
 }
 
 async function verifyCrossProviderSwitchRetry(control, composerSelector) {
@@ -88,6 +149,7 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The failed Luna turn was unexpectedly sent more than once'
   )
 
+  await openBrowserForModelSwitchWarning(control)
   await control.command('scrollIntoView', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR)
   await control.command('clickWhenEnabled', ACTIVE_SWITCH_MODEL_RETRY_SELECTOR, {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -97,6 +159,58 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await ensureModelOptionVisible(control, `model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}`)
+  const modelSubmenuMetrics = await getSingleElementMetrics(
+    control,
+    '[data-testid="model-selector-submenu"]',
+    'The narrow-pane model submenu'
+  )
+  const viewportMetrics = await getSingleElementMetrics(
+    control,
+    ACTIVE_WORKBENCH_SELECTOR,
+    'The desktop viewport'
+  )
+  const rightPanelMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="right-workspace-panel-shell"]`,
+    'The right workspace panel'
+  )
+  const browserHostMetrics = await getSingleElementMetrics(
+    control,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-native-view"]`,
+    'The embedded browser host'
+  )
+  assert.ok(
+    modelSubmenuMetrics.top >= 64 && modelSubmenuMetrics.bottom <= viewportMetrics.bottom - 16,
+    `The narrow-pane model submenu exceeded the desktop viewport: ${JSON.stringify({
+      modelSubmenuMetrics,
+      viewportMetrics,
+    })}`
+  )
+  assert.ok(
+    modelSubmenuMetrics.width >= 280 &&
+      modelSubmenuMetrics.left >= 16 &&
+      modelSubmenuMetrics.right <= viewportMetrics.right - 16 &&
+      modelSubmenuMetrics.right > rightPanelMetrics.left &&
+      modelSubmenuMetrics.right > browserHostMetrics.left &&
+      modelSubmenuMetrics.left < browserHostMetrics.right &&
+      modelSubmenuMetrics.bottom > browserHostMetrics.top &&
+      modelSubmenuMetrics.top < browserHostMetrics.bottom,
+    `The narrow-pane model submenu was compressed instead of using the browser overlay: ${JSON.stringify(
+      {
+        browserHostMetrics,
+        modelSubmenuMetrics,
+        rightPanelMetrics,
+      }
+    )}`
+  )
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'none',
+    'The model flyout did not block interaction with the embedded browser'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-picker-open.png')
   const officialModelSelector = `[data-testid="model-option-${PROVIDER_SWITCH_OFFICIAL_OPTION_ID}"]`
   await control.command('waitFor', officialModelSelector, {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
@@ -106,9 +220,33 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   await control.command('waitFor', '[data-testid="model-switch-warning-dialog"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'none',
+    'The model switch dialog did not block interaction with the embedded browser'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-open.png')
   await control.command('clickWhenEnabled', '[data-testid="model-switch-warning-confirm-button"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('model-switch-warning-dialog') &&
+      snapshot.testIds.includes('workspace-browser-native-view'),
+    'The model switch dialog did not restore the embedded browser',
+    DEFAULT_STEP_TIMEOUT_MS
+  )
+  await waitForInlineStyleValue(
+    control,
+    '[data-testid="workspace-browser-electron-webview"]',
+    'pointer-events',
+    'auto',
+    'The embedded browser remained blocked after the model switch dialog closed'
+  )
+  await captureVerificationScreenshot(control, 'model-switch-browser-dialog-closed.png')
   await control.command('waitFor', '[data-testid="message-assistant"]', {
     text: PROVIDER_SWITCH_COMPLETION,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -122,6 +260,56 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     text: PROVIDER_SWITCH_OFFICIAL_LABEL,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+
+  await selectE2EModel(control, PROVIDER_SWITCH_LUNA_OPTION_IDS, PROVIDER_SWITCH_LUNA_LABELS)
+  await sendPrompt(control, composerSelector, PROVIDER_SWITCH_RESUME_PROMPT)
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: PROVIDER_SWITCH_RESUME_COMPLETION,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  assert.equal(
+    control.scenarioRequests.get('provider_switch_retry')?.length,
+    3,
+    'Resuming the loaded official thread with Luna did not make exactly one additional request'
+  )
+}
+
+async function verifyRuntimeTaskNotificationNavigation({
+  composerSelector,
+  control,
+  taskRowTestId,
+}) {
+  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .workbench?.currentRuntimeTask
+  assert.equal(
+    activeTask?.taskId,
+    taskRowTestId.replace('runtime-local-task-row-', ''),
+    'The notification navigation fixture did not expose the expected active task'
+  )
+  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('activateRuntimeTaskCompletionNotification', 'body', {
+    value: JSON.stringify({
+      deviceId: activeTask.deviceId,
+      taskId: activeTask.taskId,
+    }),
+  })
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (
+      currentTask?.deviceId === activeTask.deviceId &&
+      currentTask?.taskId === activeTask.taskId
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail('Activating the task completion notification did not open its runtime task')
 }
 
 async function verifyBackgroundTaskWindowLifecycle({
@@ -346,6 +534,20 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
+  setPhase('task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('04a-task-notification-opened-target.png')
+  )
   if (process.platform === 'darwin') {
     const assertionIds = await waitForMacosSleepAssertion(app.pid, false)
     sleepInhibitorEvidence.push({ stage: 'task-completed', assertionIds })
@@ -502,7 +704,7 @@ async function verifyBackgroundTaskWindowLifecycle({
     await control.command(
       'waitFor',
       `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-      { text: completionText, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+      { text: completionText, timeoutMs: MODEL_RESPONSE_TIMEOUT_MS }
     )
     await control.command('waitFor', composerSelector, {
       stableMs: COMPOSER_READY_STABILITY_MS,
@@ -725,12 +927,44 @@ async function attachAndSendOnlyFile(control, composerSelector) {
   await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
 }
 
+async function waitForDurableAttachmentPreviews(executorHome, expectedCount) {
+  const indexPath = join(executorHome, 'runtime-work', 'index.json')
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const index = JSON.parse(await readFile(indexPath, 'utf8').catch(() => '{}'))
+    const attachments = Object.values(index.tasks ?? {}).flatMap(task =>
+      (task.runtime_handle?.userMessagePresentations ?? []).flatMap(presentation =>
+        (presentation.attachments ?? []).filter(
+          attachment => attachment.filename === ATTACHMENT_ONLY_FILENAME
+        )
+      )
+    )
+    if (attachments.length >= expectedCount) {
+      for (const attachment of attachments) {
+        assert.equal(
+          attachment.local_preview_url,
+          attachment.local_path,
+          'A persisted local attachment retained a transient preview URL'
+        )
+        assert.ok(
+          !attachment.local_preview_url.startsWith('blob:'),
+          'A persisted local attachment retained a renderer-scoped Blob URL'
+        )
+      }
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  throw new Error('The attachment-only tasks did not persist durable attachment previews')
+}
+
 async function verifyAttachmentOnlySidebarLifecycle({
   app,
   appBundlePath,
   appIdentifier,
   composerSelector,
   control,
+  executorHome,
 }) {
   control.setScenario('attachment_only')
   const rowsBeforeAttachmentOnly = new Set(
@@ -770,6 +1004,9 @@ async function verifyAttachmentOnlySidebarLifecycle({
     text: `${ATTACHMENT_ONLY_COMPLETION_TEXT}_2`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
+  if (executorHome) {
+    await waitForDurableAttachmentPreviews(executorHome, 2)
+  }
 
   const twoTaskSnapshot = await waitForSnapshot(
     control,
@@ -794,7 +1031,6 @@ async function verifyAttachmentOnlySidebarLifecycle({
   await captureVerificationScreenshot(control, '04-attachment-only-two-tasks-after-refresh.png')
 
   if (process.platform === 'darwin') {
-    const readyCountBeforeClose = control.readyCount
     const desktopLogPath = desktopWindowLogPath(app.pid)
     const desktopLogLengthBeforeClose = (await readFile(desktopLogPath, 'utf8').catch(() => ''))
       .length
@@ -803,11 +1039,14 @@ async function verifyAttachmentOnlySidebarLifecycle({
       fromOffset: desktopLogLengthBeforeClose,
     })
     await reactivateMacApplication(appIdentifier, appBundlePath)
+    const readyCountBeforeReload = control.readyCount
+    await control.command('reloadMainWindow', 'body')
     await withTimeout(
-      control.awaitReadyAfter(readyCountBeforeClose),
+      control.awaitReadyAfter(readyCountBeforeReload),
       WORKBENCH_READY_TIMEOUT_MS,
-      'The reopened Wework WebView did not reconnect during attachment-only verification'
+      'The reloaded Wework WebView did not reconnect during attachment-only verification'
     )
+    await control.command('restoreMainWindow', 'body')
   } else {
     await control.command('navigate', '/')
   }

@@ -10,6 +10,7 @@ const INHERITED_RUNTIME_ENV_KEYS = [
   'WEGENT_EXECUTOR_APP_IPC_SOCKET',
   'WEGENT_EXECUTOR_BINARY',
   'WEGENT_EXECUTOR_SOURCE_DIR',
+  'WEWORK_COMPONENT_RESOURCES_ROOT',
   'WEWORK_EXECUTOR_PATH',
   'WEWORK_EXECUTOR_SIDECAR',
   'WEWORK_HARNESS_RUNTIME_ROOT',
@@ -18,6 +19,12 @@ const INHERITED_RUNTIME_ENV_KEYS = [
   'WEWORK_RUNTIME_BIN',
   'WEWORK_SHARED_EXECUTOR_HOME',
 ]
+
+export function isolateAiVerifyRuntimeEnvironment(processEnvironment) {
+  const isolatedEnvironment = { ...processEnvironment }
+  for (const key of INHERITED_RUNTIME_ENV_KEYS) delete isolatedEnvironment[key]
+  return isolatedEnvironment
+}
 
 export function buildAiVerifyEnvironment(
   processEnvironment,
@@ -33,8 +40,7 @@ export function buildAiVerifyEnvironment(
     sessionDirectory,
   }
 ) {
-  const isolatedEnvironment = { ...processEnvironment }
-  for (const key of INHERITED_RUNTIME_ENV_KEYS) delete isolatedEnvironment[key]
+  const isolatedEnvironment = isolateAiVerifyRuntimeEnvironment(processEnvironment)
 
   return {
     ...isolatedEnvironment,

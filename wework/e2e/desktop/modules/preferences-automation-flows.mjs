@@ -84,6 +84,58 @@ async function verifyTelemetryPreference(control) {
   )
 }
 
+async function verifyCodexCatalogOverride(control, modelId) {
+  const rowSelector = `[data-testid$="-${modelId}"][data-testid^="codex-official-model-row-"]`
+  const editSelector = `[data-testid$="-${modelId}"][data-testid^="codex-catalog-edit-"]`
+  const restoreSelector = `[data-testid$="-${modelId}"][data-testid^="codex-catalog-restore-"]`
+
+  await control.command('navigate', 'body', { value: '/settings/personal/models' })
+  await control.command('waitFor', '[data-testid="model-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
+  await control.command('clickWhenEnabled', editSelector)
+  await control.command('waitFor', '[data-testid="codex-catalog-editor-dialog"]', {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('fill', '[data-testid="local-model-context-window-input"]', {
+    value: '300001',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="codex-catalog-editor-save"]')
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.includes('codex-catalog-editor-dialog') &&
+      snapshot.text.includes('已自定义'),
+    'Saving the Codex catalog override did not close the editor and mark the model as customized',
+    WORKBENCH_READY_TIMEOUT_MS,
+    rowSelector
+  )
+  await captureVerificationScreenshot(control, 'settings-codex-catalog-customized.png', rowSelector)
+
+  await control.command('navigate', 'body', { value: '/' })
+  await control.command('navigate', 'body', { value: '/settings/personal/models' })
+  await control.command('waitFor', '[data-testid="model-settings-page"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', '[data-testid^="codex-model-provider-toggle-"]')
+  await control.command('waitFor', rowSelector, {
+    text: '已自定义',
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', restoreSelector)
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      !snapshot.testIds.some(testId => testId.startsWith('codex-catalog-restore-')) &&
+      !snapshot.text.includes('已自定义'),
+    'Restoring the Codex catalog did not remove the persisted customization',
+    WORKBENCH_READY_TIMEOUT_MS,
+    rowSelector
+  )
+  await control.command('navigate', 'body', { value: '/' })
+}
+
 function verifyTelemetryRemainsDisabled(control) {
   assert.notEqual(
     control.telemetryRequestCountAfterRevocation,
@@ -694,10 +746,7 @@ async function verifySitesPluginAutoInstall(control) {
     'Connecting the cloud account unexpectedly initialized the Sites plugin'
   )
 
-  await control.command('navigate', 'body', { value: '/sites' })
-  await control.command('waitFor', '[data-testid="sites-create-button"]', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await navigateToApplications(control)
   await control.command('waitFor', '[data-testid="site-row-prj_e2e_product"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
@@ -905,12 +954,17 @@ async function assertNoSitesCreateError(control) {
 
 async function navigateToApplications(control, tab = 'web') {
   await control.command('navigate', 'body', { value: '/sites' })
+  const tabSelector =
+    tab === 'miniapp'
+      ? '[data-testid="applications-tab-miniapp"]'
+      : '[data-testid="applications-tab-web"]'
+  await control.command('waitFor', tabSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await control.command('click', tabSelector)
   await control.command('waitFor', '[data-testid="sites-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  if (tab === 'miniapp') {
-    await control.command('click', '[data-testid="applications-tab-miniapp"]')
-  }
 }
 
 function sitesMarketplacePlugin(installed) {
@@ -1084,6 +1138,7 @@ function installedMiniProgramPlugin(deviceId = 'local-device') {
 export {
   waitForTelemetrySilence,
   verifyTelemetryPreference,
+  verifyCodexCatalogOverride,
   verifyTelemetryRemainsDisabled,
   verifyInitialTelemetryConsent,
   declineInitialTelemetryConsent,

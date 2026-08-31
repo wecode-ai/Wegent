@@ -3,7 +3,7 @@ import {
   checkForWeworkUpdate,
   downloadPendingWeworkUpdate,
   getWeworkUpdateTarget,
-  installPendingWeworkUpdate,
+  installDownloadedWeworkUpdate,
 } from './app-updater'
 
 const desktopHostMocks = vi.hoisted(() => ({
@@ -67,7 +67,7 @@ describe('getWeworkUpdateTarget', () => {
     })
   })
 
-  test('downloads and installs a checked update through Electron capabilities', async () => {
+  test('downloads and then installs a checked update through Electron capabilities', async () => {
     const update = {
       currentVersion: '0.2.6',
       version: '0.2.7',
@@ -83,8 +83,8 @@ describe('getWeworkUpdateTarget', () => {
     const onProgress = vi.fn()
 
     await checkForWeworkUpdate('stable')
-    await downloadPendingWeworkUpdate()
-    await installPendingWeworkUpdate(onProgress)
+    await downloadPendingWeworkUpdate(onProgress)
+    await installDownloadedWeworkUpdate()
 
     expect(desktopHostMocks.invoke.mock.calls).toEqual(
       expect.arrayContaining([
@@ -97,5 +97,10 @@ describe('getWeworkUpdateTarget', () => {
       downloadedBytes: 100,
       totalBytes: 100,
     })
+    expect(
+      desktopHostMocks.invoke.mock.calls.filter(
+        ([capability]) => capability === 'appUpdate.download'
+      )
+    ).toHaveLength(1)
   })
 })

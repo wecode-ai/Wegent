@@ -283,6 +283,7 @@ interface WorkbenchPaneWorkspaceState {
   rightPanelExpanded: boolean
   rightPanelView: RightWorkspacePanelView
   rightPanelTabs: RightWorkspacePanelTab[]
+  selectedAssistantPlan: SelectedAssistantPlan | null
   rightPanelExtensionTabs?: Partial<
     Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>
   >
@@ -518,7 +519,6 @@ interface DesktopWorkbenchMainProps {
     session: LocalHarnessWorkbenchSession,
     options?: LocalHarnessSessionRegistrationOptions
   ) => void
-  onLocalHarnessSessionTitleChange?: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose?: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit?: (sessionId: string) => void
 }
@@ -572,12 +572,8 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const { state } = useWorkbenchPaneContext()
   const { services, openRuntimeTask } = useWorkbench()
   const { t } = useTranslation('common')
-  const {
-    onLocalHarnessSessionStarted,
-    onLocalHarnessSessionTitleChange,
-    onLocalHarnessSessionClose,
-    onLocalHarnessSessionExit,
-  } = props
+  const { onLocalHarnessSessionStarted, onLocalHarnessSessionClose, onLocalHarnessSessionExit } =
+    props
   const appearanceContext = useOptionalAppearance()
   const appearance = appearanceContext?.appearance ?? defaultAppearance
   const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
@@ -627,22 +623,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       setInternalActiveHarnessSessionId(current => (current === sessionId ? null : current))
     },
     [onLocalHarnessSessionExit]
-  )
-  const updateHarnessSessionTitle = useCallback(
-    (sessionId: string, title: string) => {
-      if (onLocalHarnessSessionTitleChange) {
-        onLocalHarnessSessionTitleChange(sessionId, title)
-        return
-      }
-      const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-      if (!normalized) return
-      setInternalHarnessSessions(current =>
-        current.map(session =>
-          session.sessionId === sessionId ? { ...session, title: normalized } : session
-        )
-      )
-    },
-    [onLocalHarnessSessionTitleChange]
   )
   const closeHarnessSession = useCallback(
     async (sessionId: string) => {
@@ -766,7 +746,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
         activeLocalHarnessSession={
           getWorkbenchPaneKey(pane) === activePaneKey ? activeLocalHarnessSession : null
         }
-        onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
         onLocalHarnessSessionClose={closeHarnessSession}
         onLocalHarnessSessionExit={removeLocalHarnessSession}
       />
@@ -788,7 +767,6 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
       setPaneResourceRetained,
       services?.workspaceSessionApi,
       updateEnvironmentInfoVisibility,
-      updateHarnessSessionTitle,
     ]
   )
   const {
@@ -865,7 +843,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   onLocalHarnessSessionStarted,
   localHarnessSessions,
   activeLocalHarnessSession,
-  onLocalHarnessSessionTitleChange,
   onLocalHarnessSessionClose,
   onLocalHarnessSessionExit,
 }: {
@@ -890,7 +867,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   ) => void
   localHarnessSessions: LocalHarnessWorkbenchSession[]
   activeLocalHarnessSession: LocalHarnessWorkbenchSession | null
-  onLocalHarnessSessionTitleChange: (sessionId: string, title: string) => void
   onLocalHarnessSessionClose: (sessionId: string) => void | Promise<void>
   onLocalHarnessSessionExit: (sessionId: string) => void
 }) {
@@ -1123,7 +1099,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       const supervisorConfig =
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
-      const cloudSubmission = await prepareSubmission(description)
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         additionalContext: cloudSubmission.additionalContext,
@@ -1326,6 +1302,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       []) as Array<RightWorkspacePanelTab | 'browser' | 'terminal'>
     return restoredTabs.map(normalizeRightWorkspacePanelTab)
   })
+  const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
+    () => initialWorkspaceState?.selectedAssistantPlan ?? null
+  )
   const [rightPanelExtensionTabs, setRightPanelExtensionTabs] = useState<
     Partial<Record<RightWorkspaceExtensionTab, RightWorkspaceExtensionTabState>>
   >(() => initialWorkspaceState?.rightPanelExtensionTabs ?? {})
@@ -1438,18 +1417,35 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [defaultEmbeddedBrowserLabel]
   )
   useEffect(() => {
-    if (!isRightWorkspaceBrowserTab(rightPanelView)) return
+    if (
+      !paneActive ||
+      !paneVisible ||
+      !workbenchVisible ||
+      !rightPanelOpen ||
+      !isRightWorkspaceBrowserTab(rightPanelView)
+    ) {
+      return
+    }
     const activeBrowserLabel = browserStates[rightPanelView]?.label
     if (!activeBrowserLabel) return
 
     syncActiveEmbeddedBrowserLabel(activeBrowserLabel)
-  }, [browserStates, rightPanelView, syncActiveEmbeddedBrowserLabel])
+  }, [
+    browserStates,
+    paneActive,
+    paneVisible,
+    rightPanelOpen,
+    rightPanelView,
+    syncActiveEmbeddedBrowserLabel,
+    workbenchVisible,
+  ])
   useEffect(() => {
     onWorkspaceStateChange(paneKey, {
       rightPanelOpen,
       rightPanelExpanded,
       rightPanelTabs,
       rightPanelView,
+      selectedAssistantPlan,
       rightPanelExtensionTabs,
       temporaryChatAddresses,
       browserStates,
@@ -1464,6 +1460,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     rightPanelOpen,
     rightPanelTabs,
     rightPanelView,
+    selectedAssistantPlan,
     rightPanelExtensionTabs,
     temporaryChatAddresses,
     browserStates,
@@ -1476,9 +1473,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     text: string
   } | null>(null)
   const temporaryChatInitialInputsRef = useRef(new Map<RightWorkspaceChatTab, string>())
-  const [selectedAssistantPlan, setSelectedAssistantPlan] = useState<SelectedAssistantPlan | null>(
-    null
-  )
   const [bottomPanelOpenByKey, setBottomPanelOpenByKey] = useState<Record<string, boolean>>({})
   const [bottomPanelContexts, setBottomPanelContexts] = useState<BottomPanelRenderContext[]>([])
   const [openFileRequest, setOpenFileRequest] = useState<WorkspaceFileOpenRequest | null>(null)
@@ -2648,8 +2642,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             retryFailedMessageAfterModelSelect()
           }
         : undefined,
-      onModelSelectorOpenChange: open => {
-        if (!open) pendingModelRetryRef.current = null
+      onModelSelectorOpenChange: (open, closeReason) => {
+        if (!open && closeReason !== 'selection') pendingModelRetryRef.current = null
       },
       onRefineTrialPrompt: refinePluginTrialPrompt,
     }),
@@ -2825,14 +2819,13 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onSelectProject={handleSelectCloudProject}
         onRemoveProject={removeCloudProjectContext}
         goalPresent={Boolean(paneSession.goal && !paneSession.goalDraftActive)}
-        refreshKey={`${runtimeTaskSummary?.running ?? false}:${runtimeTaskSummary?.turnStatus ?? ''}`}
+        refreshKey={`${paneSession.status.taskExecution.running}:${paneSession.status.taskExecution.status ?? ''}`}
         onOpen={() => openRightPanelTab('work-item')}
         onOpenBoard={openBoundProjectSpaceTask}
       />
     ) : currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
       <WorkItemComposerGuide
         integrated
-        bindingPending
         project={currentWorkItemGuideProject}
         projects={availableWorkItemProjects}
         onSelectProject={handleSelectCloudProject}
@@ -4325,7 +4318,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               {activeLocalHarnessSession.active ? (
                 <CentralHarnessTerminal
                   sessionId={activeLocalHarnessSession.sessionId}
-                  harnessId={activeLocalHarnessSession.harnessId}
                   title={activeLocalHarnessSession.title}
                   cwd={activeLocalHarnessSession.cwd}
                   active={paneActive && workbenchVisible}
@@ -4336,9 +4328,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                       : () => {
                           void onLocalHarnessSessionClose(activeLocalHarnessSession.sessionId)
                         }
-                  }
-                  onTitleChange={title =>
-                    onLocalHarnessSessionTitleChange(activeLocalHarnessSession.sessionId, title)
                   }
                   onExit={() => onLocalHarnessSessionExit(activeLocalHarnessSession.sessionId)}
                 />
@@ -4966,7 +4955,6 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onSelectPlan={selectPlanView}
               onSelectTab={selectRightPanelTab}
               onCloseTab={closeRightPanelTab}
-              onHarnessSessionTitleChange={onLocalHarnessSessionTitleChange}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
               onRestoreConversation={() => setRightPanelExpanded(false)}

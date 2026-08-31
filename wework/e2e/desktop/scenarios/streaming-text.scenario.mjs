@@ -399,6 +399,29 @@ async function waitForRuntimePaneReadyToSend(control, timeoutMs) {
   throw new Error(`The runtime turn did not settle before follow-up: ${JSON.stringify(lastStatus)}`)
 }
 
+async function waitForRuntimeAssistantText(control, address, expectedText, timeoutMs) {
+  const startedAt = Date.now()
+  let latestText = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    const runtimeMessages = JSON.parse(
+      await control.command('getRuntimeConversationMessages', 'body', {
+        value: JSON.stringify(address),
+      })
+    )
+    latestText =
+      runtimeMessages
+        .filter(message => message.role === 'assistant')
+        .flatMap(message => message.blocks ?? [])
+        .filter(block => block.type === 'text')
+        .at(-1)?.content ?? ''
+    if (latestText === expectedText) return latestText
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(
+    `The runtime conversation cache did not converge to the streamed text; received ${latestText.length} of ${expectedText.length} characters`
+  )
+}
+
 function selectShellTool(body, workspacePath, command = 'pwd', timeoutMs = 1_000) {
   const tools = Array.isArray(body.tools) ? body.tools : []
   const names = new Set(tools.map(tool => tool?.name).filter(Boolean))
@@ -710,6 +733,7 @@ export function createDesktopScenario({
   let releaseToolCompletion
   let releaseToolFinalCompletion
   let resolveAppendWritten
+  let resolvePartialWritten
   let resolveRequest
   let resolveToolFinalTextStarted
   let resolveToolFollowUp
@@ -728,6 +752,9 @@ export function createDesktopScenario({
   })
   const appendWritten = new Promise(resolve => {
     resolveAppendWritten = resolve
+  })
+  const partialWritten = new Promise(resolve => {
+    resolvePartialWritten = resolve
   })
   const requestReceived = new Promise(resolve => {
     resolveRequest = resolve
@@ -956,7 +983,14 @@ export function createDesktopScenario({
         })
         response.flushHeaders()
         response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, PARTIAL_TEXT))
+        let partialOffset = 0
+        for (const chunk of PARTIAL_TEXT.match(/[\s\S]{1,24}/g) ?? []) {
+          response.write(sse(textDeltaEvents(stream.itemId, chunk, partialOffset)))
+          response.flush?.()
+          partialOffset += chunk.length
+          await new Promise(resolve => setTimeout(resolve, 5))
+        }
+        resolvePartialWritten()
         await appendRelease
         await new Promise(resolve => setTimeout(resolve, 100))
         let appendOffset = PARTIAL_TEXT.length
@@ -1505,6 +1539,29 @@ export function createDesktopScenario({
         'The latest user message after sending'
       )
       releaseStart()
+      await partialWritten
+      const runtimeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        .workbench.currentRuntimeTask
+      const runtimePartial = await waitForRuntimeAssistantText(
+        control,
+        {
+          deviceId: runtimeTask.deviceId,
+          taskId: runtimeTask.taskId,
+        },
+        PARTIAL_TEXT,
+        uiTimeoutMs
+      )
+      assert.equal(
+        runtimePartial,
+        PARTIAL_TEXT,
+        'The runtime conversation cache lost or reordered streamed text before rendering'
+      )
+      const immediatelyRenderedPartial = await control.command('getText', PROCESS_TEXT_SELECTOR)
+      assert.equal(
+        immediatelyRenderedPartial.replace(/\s+/g, ''),
+        PARTIAL_TEXT.replace(/\s+/g, ''),
+        `The active conversation displayed only ${immediatelyRenderedPartial.length} of ${PARTIAL_TEXT.length} streamed characters`
+      )
       await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
         text: MARKER,
         stableMs: 750,
