@@ -2401,6 +2401,52 @@ async def test_execute_configured_device_command_routes_remote_home_directory_co
 
 
 @pytest.mark.asyncio
+async def test_external_device_command_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.services.device import command_service
+
+    execute_mock = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr(
+        command_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            name="app-device",
+            json={"spec": {"deviceType": "app"}},
+        ),
+    )
+    monkeypatch.setattr(
+        command_service.local_device_command_service,
+        "execute_command",
+        execute_mock,
+    )
+
+    with pytest.raises(command_service.DeviceCommandError) as exc_info:
+        await command_service.execute_configured_device_command(
+            db=object(),
+            user_id=7,
+            device_id="app-device",
+            command_key="repo_status",
+            command_config={"repo_status": {"command": "git status --short"}},
+            allow_app_device=False,
+        )
+
+    assert str(exc_info.value) == "Remote control is disabled for this app device"
+    execute_mock.assert_not_awaited()
+
+    result = await command_service.execute_configured_device_command(
+        db=object(),
+        user_id=7,
+        device_id="app-device",
+        command_key="repo_status",
+        command_config={"repo_status": {"command": "git status --short"}},
+    )
+
+    assert result == {"success": True}
+    execute_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("device_type", "submitted_device_id", "dispatch_device_id"),
     [
@@ -2842,6 +2888,7 @@ async def test_execute_device_command_endpoint_maps_request_to_service(monkeypat
         env={"A": "B"},
         timeout_seconds=5,
         max_output_bytes=1024,
+        allow_app_device=False,
     )
 
 

@@ -53,7 +53,6 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
         "set_device_online",
         AsyncMock(return_value=True),
     )
-
     register_task = asyncio.create_task(
         namespace.on_device_register(
             "sid-1",
@@ -75,7 +74,7 @@ async def test_device_register_does_not_wait_for_capability_sync(monkeypatch):
 @pytest.mark.asyncio
 async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
     namespace = DeviceNamespace()
-    upsert_calls = 0
+    upsert_calls = []
 
     async def fake_get_session(sid):
         return {
@@ -84,8 +83,7 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
         }
 
     async def fake_run_sync_in_executor(func, *args):
-        nonlocal upsert_calls
-        upsert_calls += 1
+        upsert_calls.append((func, args))
         return True, "MacBook", None
 
     save_session = AsyncMock()
@@ -119,10 +117,22 @@ async def test_device_register_debounces_repeated_db_upserts(monkeypatch):
 
     first = await namespace.on_device_register("sid-1", payload)
     second = await namespace.on_device_register("sid-2", payload)
+    remote_payload = {
+        **payload,
+        "device_type": DeviceType.REMOTE.value,
+        "runtime_instance_id": "runtime-stable",
+        "app_device_id": "device-1",
+    }
+    third = await namespace.on_device_register("sid-3", remote_payload)
+    fourth = await namespace.on_device_register("sid-4", remote_payload)
 
     assert first == {"success": True, "device_id": "device-1"}
     assert second == {"success": True, "device_id": "device-1"}
-    assert upsert_calls == 1
+    assert third == {"success": True, "device_id": "device-1"}
+    assert fourth == {"success": True, "device_id": "device-1"}
+    assert len(upsert_calls) == 2
+    assert upsert_calls[0][1][4] == DeviceType.LOCAL.value
+    assert upsert_calls[1][1][4] == DeviceType.REMOTE.value
 
 
 @pytest.mark.asyncio
@@ -328,6 +338,11 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
         "set_device_online",
         AsyncMock(return_value=True),
     )
+    reconcile = AsyncMock(return_value=0)
+    monkeypatch.setattr(
+        "app.tasks.robot_queue_tasks.reconcile_device_executions",
+        reconcile,
+    )
 
     result = await namespace.on_device_register(
         "sid-app",
@@ -347,12 +362,14 @@ async def test_device_register_passes_app_device_type_and_app_device_id(monkeypa
     assert upsert_calls[0][1][7] == "runtime-stable"
     assert upsert_calls[0][1][8] == "local-app-device"
     saved_session = save_session.await_args.args[1]
+    assert saved_session["device_type"] == DeviceType.APP.value
     assert saved_session["execution_target_id"] == "local-app-device"
     assert saved_session["execution_environment"] == "local"
     assert enter_room.await_args_list[-1].args == (
         "sid-app",
         "execution-target:7:local-app-device",
     )
+    reconcile.assert_not_awaited()
 
 
 @pytest.mark.asyncio

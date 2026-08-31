@@ -50,6 +50,7 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
+  verifyLocalRemoteControlFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -1340,6 +1341,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
+      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
       await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`

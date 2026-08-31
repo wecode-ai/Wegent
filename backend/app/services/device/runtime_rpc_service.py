@@ -19,6 +19,10 @@ from socketio.exceptions import TimeoutError as SocketTimeoutError
 from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    remote_control_is_enabled,
+)
 from app.services.device.runtime_route import (
     RuntimeRouteError,
     runtime_route_resolver,
@@ -214,6 +218,14 @@ class RuntimeRpcService:
                 details=exc.details,
             ) from exc
 
+        if not remote_control_is_enabled(route.device_type):
+            raise RuntimeRpcError(
+                REMOTE_CONTROL_DISABLED_MESSAGE,
+                code="remote_control_disabled",
+                retryable=False,
+                details={"deviceId": route.logical_device_id},
+            )
+
         if method == "runtime.tasks.create":
             try:
                 payload = negotiate_runtime_task_create_payload(
@@ -352,6 +364,7 @@ class RuntimeRpcService:
             method=method,
             logical_device_id=route.logical_device_id,
             runtime_device_id=route.runtime_device_id,
+            app_device_id=route.app_device_id,
         )
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         logger.info(
@@ -376,12 +389,16 @@ class RuntimeRpcService:
         method: str,
         logical_device_id: str,
         runtime_device_id: str,
+        app_device_id: str | None,
     ) -> dict[str, Any]:
         """Keep external Runtime responses on the stable logical device identity."""
 
+        device_aliases = frozenset(
+            device_id for device_id in (runtime_device_id, app_device_id) if device_id
+        )
         projected = dict(result)
         for key in DEVICE_ID_RESPONSE_KEYS:
-            if projected.get(key) == runtime_device_id:
+            if projected.get(key) in device_aliases:
                 projected[key] = logical_device_id
 
         if not method.startswith("runtime.worktrees."):
@@ -390,7 +407,7 @@ class RuntimeRpcService:
         return cls._project_nested_device_ids(
             projected,
             logical_device_id=logical_device_id,
-            runtime_device_id=runtime_device_id,
+            device_aliases=device_aliases,
         )
 
     @classmethod
@@ -399,14 +416,14 @@ class RuntimeRpcService:
         value: Any,
         *,
         logical_device_id: str,
-        runtime_device_id: str,
+        device_aliases: frozenset[str],
     ) -> Any:
         if isinstance(value, list):
             return [
                 cls._project_nested_device_ids(
                     item,
                     logical_device_id=logical_device_id,
-                    runtime_device_id=runtime_device_id,
+                    device_aliases=device_aliases,
                 )
                 for item in value
             ]
@@ -415,13 +432,13 @@ class RuntimeRpcService:
 
         projected: dict[str, Any] = {}
         for key, item in value.items():
-            if key in DEVICE_ID_RESPONSE_KEYS and item == runtime_device_id:
+            if key in DEVICE_ID_RESPONSE_KEYS and item in device_aliases:
                 projected[key] = logical_device_id
                 continue
             projected[key] = cls._project_nested_device_ids(
                 item,
                 logical_device_id=logical_device_id,
-                runtime_device_id=runtime_device_id,
+                device_aliases=device_aliases,
             )
         return projected
 

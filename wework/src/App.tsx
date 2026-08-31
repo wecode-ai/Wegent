@@ -747,6 +747,9 @@ function AppShell() {
     socketBaseUrl: cloudConnection.socketBaseUrl,
     isConnected: cloudConnection.isConnected,
     token: cloudConnection.token,
+    registrationDeviceType: appPreferences?.preferences.remoteControlEnabled
+      ? ('remote' as const)
+      : ('app' as const),
   }
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
@@ -984,10 +987,7 @@ function AppShell() {
     }
     return (
       <CodexHomeInitializer>
-        <LocalRuntimeInitializer
-          initialCloudConnection={initialCloudConnection}
-          startupReady={false}
-        >
+        <LocalRuntimeInitializer startupReady={false}>
           <div />
         </LocalRuntimeInitializer>
       </CodexHomeInitializer>
@@ -1035,6 +1035,8 @@ function AppShell() {
             socketBaseUrl={cloudConnection.socketBaseUrl}
             isConnected={cloudConnection.isConnected}
             token={cloudConnection.token}
+            preferencesLoaded={appPreferences?.loaded ?? false}
+            remoteControlEnabled={appPreferences?.preferences.remoteControlEnabled ?? false}
           />
         ) : null}
         {isMainWindow && isElectron ? (
