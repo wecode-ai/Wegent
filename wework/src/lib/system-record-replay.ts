@@ -46,8 +46,8 @@ export function startSystemRecording(title: string): Promise<SystemRecordReplayS
   return invokeDesktopHost('systemRecordReplay.start', { title })
 }
 
-export function stopSystemRecording(preserveStepCount: number): Promise<void> {
-  return invokeDesktopHost('systemRecordReplay.stop', { preserveStepCount })
+export function stopSystemRecording(): Promise<void> {
+  return invokeDesktopHost('systemRecordReplay.stop')
 }
 
 export function deleteSystemRecording(id: string): Promise<boolean> {

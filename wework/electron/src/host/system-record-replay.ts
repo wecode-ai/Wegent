@@ -179,7 +179,7 @@ export class SystemRecordReplay {
     return { ...this.statusValue }
   }
 
-  async stop(preserveStepCount?: number): Promise<SystemRecording> {
+  async stop(): Promise<SystemRecording> {
     const active = this.activeRecording
     if (!active) throw new Error('No system recording is active')
     this.activeRecording = null
@@ -191,7 +191,7 @@ export class SystemRecordReplay {
       title: active.title,
       createdAt: active.startedAt,
       endedAt,
-      steps: preserveObservedSteps(active.steps, preserveStepCount),
+      steps: active.steps,
     }
     await this.mutate(recordings => [
       recording,
@@ -348,6 +348,7 @@ export class SystemRecordReplay {
         const delay = Math.min(MAX_REPLAY_DELAY_MS, Math.max(0, step.offsetMs - previousOffset))
         previousOffset = step.offsetMs
         if (delay) await wait(delay)
+        if (this.replayCancelled) return
         const result = await this.runHelper('execute', step)
         if (result.error) throw new Error(String(result.error))
       }
@@ -519,14 +520,6 @@ function normalizeStep(value: Record<string, unknown>): SystemRecordingStep | nu
     ...(value.deltaX !== undefined ? { deltaX: numberValue(value.deltaX) } : {}),
     ...(value.deltaY !== undefined ? { deltaY: numberValue(value.deltaY) } : {}),
   }
-}
-
-function preserveObservedSteps(
-  steps: SystemRecordingStep[],
-  preserveStepCount?: number
-): SystemRecordingStep[] {
-  if (preserveStepCount === undefined) return steps
-  return steps.slice(0, Math.max(0, Math.min(steps.length, preserveStepCount)))
 }
 
 function isActivePhase(phase: SystemRecordReplayStatus['phase']): boolean {

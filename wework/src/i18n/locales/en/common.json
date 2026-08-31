@@ -418,7 +418,7 @@
     "sites": "Applications",
     "automation": "Scheduled",
     "record_replay": "Record & Replay",
-    "record_replay_description": "Record global macOS mouse, keyboard, scrolling, and foreground-app context, then replay the system workflow. Sensitive input is not stored and high-risk actions pause.",
+    "record_replay_description": "Record global macOS mouse, keyboard, scrolling, and foreground-app context, then replay the system workflow. Sensitive key data is not stored and high-risk actions pause.",
     "record_replay_system_access": "System operation access",
     "record_replay_macos_only": "System recording is currently available on macOS only.",
     "record_replay_permissions_ready": "Accessibility and Input Monitoring are allowed. Other applications can be recorded.",

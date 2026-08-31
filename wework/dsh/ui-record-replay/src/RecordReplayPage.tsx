@@ -9,7 +9,7 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { Button } from '@/components/ui/button'
@@ -82,31 +82,42 @@ export function RecordReplayPage() {
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const loadRequestId = useRef(0)
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestId.current
     try {
       const [nextRecordings, nextStatus] = await Promise.all([
         listSystemRecordings(),
         readSystemRecordReplayStatus(),
       ])
+      if (requestId !== loadRequestId.current) return
       setRecordings(nextRecordings)
       setStatus(nextStatus)
       setError(null)
     } catch (loadError) {
+      if (requestId !== loadRequestId.current) return
       setError(errorMessage(loadError))
     } finally {
-      setLoading(false)
+      if (requestId === loadRequestId.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    const initialLoad = window.setTimeout(() => void load(), 0)
     const activePolling =
       status.phase === 'recording' || status.phase === 'replaying' || status.phase === 'paused'
-    const timer = window.setInterval(() => void load(), activePolling ? 500 : 3_000)
+    const interval = activePolling ? 500 : 3_000
+    let cancelled = false
+    let timer: number | undefined
+    const poll = async () => {
+      await load()
+      if (cancelled) return
+      timer = window.setTimeout(() => void poll(), interval)
+    }
+    timer = window.setTimeout(() => void poll(), 0)
     return () => {
-      window.clearTimeout(initialLoad)
-      window.clearInterval(timer)
+      cancelled = true
+      if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [load, status.phase])
 
@@ -122,6 +133,7 @@ export function RecordReplayPage() {
   const start = async () => {
     try {
       setError(null)
+      loadRequestId.current += 1
       setStatus(await startSystemRecording(title))
       setTitle('')
     } catch (startError) {
@@ -132,7 +144,7 @@ export function RecordReplayPage() {
   const stop = async () => {
     try {
       setError(null)
-      await stopSystemRecording(status.stepCount)
+      await stopSystemRecording()
       await load()
     } catch (stopError) {
       setError(errorMessage(stopError))
@@ -143,6 +155,7 @@ export function RecordReplayPage() {
     try {
       setBusyId(id)
       setError(null)
+      loadRequestId.current += 1
       setStatus(await replaySystemRecording(id))
     } catch (replayError) {
       setError(errorMessage(replayError))
@@ -201,6 +214,7 @@ export function RecordReplayPage() {
   const requestPermissions = async () => {
     try {
       setError(null)
+      loadRequestId.current += 1
       setStatus(await requestSystemRecordReplayPermissions())
     } catch (permissionError) {
       setError(errorMessage(permissionError))

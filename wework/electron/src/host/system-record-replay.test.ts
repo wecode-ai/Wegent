@@ -24,24 +24,25 @@ describe('system record replay', () => {
       inputMonitoringGranted: true,
     })
     await recorder.start('Desktop flow')
-    await vi.waitFor(async () =>
-      expect((await recorder.status()).stepCount).toBeGreaterThanOrEqual(2)
+    await vi.waitFor(
+      async () => expect((await recorder.status()).stepCount).toBeGreaterThanOrEqual(2),
+      { timeout: 3_000 }
     )
-    const recording = await recorder.stop(2)
+    const recording = await recorder.stop()
 
-    expect(recording.steps).toHaveLength(2)
+    expect(recording.steps.length).toBeGreaterThanOrEqual(2)
     expect(recording.steps[0]).toMatchObject({
       type: 'mouse',
       appName: 'Finder',
       appBundleId: 'com.apple.finder',
     })
-    expect(await recorder.list()).toMatchObject([
-      {
-        title: 'Desktop flow',
-        applicationCount: 2,
-        containsHandoff: false,
-      },
-    ])
+    const summaries = await recorder.list()
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      title: 'Desktop flow',
+      containsHandoff: false,
+    })
+    expect(summaries[0].applicationCount).toBeGreaterThanOrEqual(2)
     const persisted = JSON.parse(
       await readFile(join(root.path, 'system-recordings', 'recordings.json'), 'utf8')
     )
@@ -53,7 +54,9 @@ describe('system record replay', () => {
     const root = await temporaryDirectory('system-record-replay-')
     const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
     await recorder.start('Replay flow')
-    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
+    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0), {
+      timeout: 3_000,
+    })
     const recording = await recorder.stop()
 
     await recorder.replay(recording.id)
@@ -71,12 +74,13 @@ describe('system record replay', () => {
     try {
       const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
       await recorder.start('Noisy recording')
-      await vi.waitFor(async () =>
-        expect((await recorder.status()).stepCount).toBeGreaterThanOrEqual(1)
+      await vi.waitFor(
+        async () => expect((await recorder.status()).stepCount).toBeGreaterThanOrEqual(1),
+        { timeout: 3_000 }
       )
 
       expect(await recorder.status()).toMatchObject({ phase: 'recording' })
-      await recorder.stop(1)
+      await recorder.stop()
       expect(warning).toHaveBeenCalledWith(
         '[system-record-replay] recorder helper diagnostic',
         'non-fatal recorder diagnostic'
@@ -107,8 +111,10 @@ describe('system record replay', () => {
     const startedFile = join(root.path, 'helper-started')
     const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
     await recorder.start('Cancelled replay')
-    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
-    const recording = await recorder.stop(1)
+    await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0), {
+      timeout: 3_000,
+    })
+    const recording = await recorder.stop()
     process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_HANG = 'execute'
     process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE = startedFile
     try {
@@ -125,14 +131,42 @@ describe('system record replay', () => {
     }
   })
 
+  test('does not execute a replay step after cancellation during its delay', async () => {
+    const root = await temporaryDirectory('system-record-replay-')
+    const startedFile = join(root.path, 'delayed-helper-started')
+    const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
+    process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE = startedFile
+    try {
+      await recorder.start('Delayed cancellation')
+      await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0), {
+        timeout: 3_000,
+      })
+      const recording = await recorder.stop()
+      await recorder.replay(recording.id)
+      await vi.waitFor(async () => expect((await recorder.status()).currentStep).toBe(1))
+
+      recorder.cancel()
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      await expect(readFile(startedFile, 'utf8')).rejects.toThrow()
+      expect(await recorder.status()).toMatchObject({ phase: 'idle' })
+    } finally {
+      delete process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_STARTED_FILE
+      await recorder.dispose()
+      await root.remove()
+    }
+  })
+
   test('allows a new recording after replay failure', async () => {
     const root = await temporaryDirectory('system-record-replay-')
     const recorder = new SystemRecordReplay(root.path, fixture, 'darwin')
     process.env.WEWORK_SYSTEM_RECORD_REPLAY_FIXTURE_FAIL = 'execute'
     try {
       await recorder.start('Failed replay')
-      await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0))
-      const recording = await recorder.stop(1)
+      await vi.waitFor(async () => expect((await recorder.status()).stepCount).toBeGreaterThan(0), {
+        timeout: 3_000,
+      })
+      const recording = await recorder.stop()
       await recorder.replay(recording.id)
       await vi.waitFor(async () => expect((await recorder.status()).phase).toBe('failed'), {
         timeout: 3_000,

@@ -330,9 +330,7 @@ export function createElectronCapabilityRouter(
   router.register('systemRecordReplay.start', params =>
     desktopServices.systemRecordReplay.start(stringParam(params, 'title'))
   )
-  router.register('systemRecordReplay.stop', params =>
-    desktopServices.systemRecordReplay.stop(integerParam(params, 'preserveStepCount'))
-  )
+  router.register('systemRecordReplay.stop', () => desktopServices.systemRecordReplay.stop())
   router.register('systemRecordReplay.delete', params =>
     desktopServices.systemRecordReplay.remove(stringParam(params, 'id'))
   )
