@@ -1,10 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import {
-  CORE_TAB_STRIP_HEIGHT,
-  desktopWindowFrameOptions,
-  primaryDshBounds,
-  workbenchDshBounds,
-} from './window-layout.js'
+import { desktopWindowFrameOptions, primaryDshBounds } from './window-layout.js'
 
 describe('Electron window layout', () => {
   test('lays the Core DSH surface across the full content area', () => {
@@ -13,15 +8,6 @@ describe('Electron window layout', () => {
       y: 0,
       width: 1440,
       height: 960,
-    })
-  })
-
-  test('places independent workbench runtimes below the shared Core DSH tab strip', () => {
-    expect(workbenchDshBounds({ width: 1440, height: 960 })).toEqual({
-      x: 0,
-      y: CORE_TAB_STRIP_HEIGHT,
-      width: 1440,
-      height: 960 - CORE_TAB_STRIP_HEIGHT,
     })
   })
 

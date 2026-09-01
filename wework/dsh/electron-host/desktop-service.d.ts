@@ -42,7 +42,11 @@ export interface WeworkDesktopService {
     message(options: Record<string, unknown>): Promise<unknown>
   }
   readonly notification: {
-    show(options: { readonly title: string; readonly body: string }): Promise<void>
+    show(options: {
+      readonly title: string
+      readonly body: string
+      readonly taskAddressId?: string
+    }): Promise<void>
   }
   readonly rendererHealth: {
     getState(): Promise<WeworkRendererHealthSnapshot>

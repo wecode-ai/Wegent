@@ -10,8 +10,8 @@ Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互�
 
 内置浏览器由三层组成：
 
-- Wework Electron 原生层创建嵌入式 WebView，并通过命令更新位置、导航地址和显示状态。
-- Wework React 工作台负责把浏览器面板挂载到右侧 workspace pane，并维护面板、任务和批注状态。
+- Wework Electron 主进程管理嵌入页面的导航、页面状态、截图和逻辑 label；React renderer 创建并定位对应的 `<webview>` 宿主。
+- Wework React 工作台负责把浏览器面板挂载到右侧 workspace pane，并维护面板、任务、浮层和批注状态。
 - `executor/src/browser_mcp` 暴露给 Codex 的浏览器 MCP 工具，并通过 Wework bridge 操作当前任务绑定的 Electron browser view。
 
 Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏览器工具时，MCP server 读取当前 bridge identity，向 Wework 进程内的 loopback bridge 发送受控请求。bridge 再在主线程调度 Electron browser view 的导航、页面检查、DOM 动作、等待和截图。
@@ -165,7 +165,9 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 ## 主界面浮层与地址栏同步
 
-嵌入式浏览器是独立的原生 WebView，不能通过主 React WebView 的 `z-index` 覆盖。当主界面的 dialog、menu、listbox 或系统级浮层与浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见；浮层移除或不再相交后再恢复显示。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
+Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在共享的浏览器宿主根节点中。主界面的 dialog、menu 和 listbox 通过 portal 与系统级 `z-index` 正常覆盖该宿主；不要为应用标签页或智能工作台重新引入 `BrowserView`、`WebContentsView` 等主进程子视图，否则它们会脱离 renderer 的层叠上下文并遮住顶部标签菜单。
+
+仍使用独立原生 WebView 的桌面实现不能依赖 React `z-index`。当主界面浮层与这类浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见，并在浮层移除或不再相交后恢复。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
 
 页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；失焦时再恢复真实 URL。新增导航或页面状态同步路径时必须保留这条边界。
 
@@ -174,6 +176,7 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 - 内置浏览器子 WebView 只在 debug 构建中启用 DevTools；release 构建通过显式 build cfg 禁用。macOS debug 构建会在 Inspector frontend 首次显示前保存子 WebView frame、执行 detach 并原样恢复 frame，因此 F12 只能打开独立窗口，不能停靠、改变浏览器尺寸或覆盖工作台。主 WebView 的 Inspector 仍只通过 Developer Commands 显式打开。
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
 - Electron 中的 Wegent 智能体应用标签页也使用原生子 WebView，而不是跨源 iframe。所有应用标签共享同一个固定数据存储标识，因此同一来源的完整网站存储（包括全部 `localStorage` key、Cookie 和 IndexedDB）会在标签关闭、重新打开和应用重启后继续可用；标签 label 只标识 WebView 生命周期，不划分存储。macOS 14 及以上由 `data_store_identifier` 选择持久化 `WKWebsiteDataStore`，`data_directory` 主要服务其它平台。不要在 Wework 主界面逐 key 镜像或恢复页面存储。
+- Electron 智能工作台复用同一个 renderer-owned `<webview>` 承载链路，并使用稳定的 `smart-app:<installationId>` logical label。renderer 拥有可视宿主；主进程继续管理 Harness runtime 和嵌入式浏览器控制面，但不再创建可视 `WebContentsView`。组件重挂载时必须原子替换旧 guest，并让延迟关闭携带 expected native label，避免旧组件关闭新实例。
 - 浏览器 WebView 使用 Chromium 兼容 User-Agent，避免网站把缺少浏览器产品标识的 Chromium User-Agent 识别为不受支持的客户端。
 - 弹窗、OAuth、SSO 和支付流程可能通过 `window.open` 或新窗口导航触发。实现应把它们路由到受控浏览器窗口或明确交给外部系统处理，不能让 Agent 不可见地操作隐藏页面。
 - 下载处理器从应用偏好读取下载目录和“下载前询问”开关；取消系统保存对话框必须取消本次下载。

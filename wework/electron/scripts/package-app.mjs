@@ -9,6 +9,9 @@ import { acquireProcessLock } from '../../scripts/lib/process-lock.mjs'
 import identityModule from './build-identity.cjs'
 import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mjs'
 
+// Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
+process.noAsar = true
+
 const { resolveBuildIdentity } = identityModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const output = join(electronRoot, 'release')

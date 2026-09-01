@@ -50,6 +50,7 @@ import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -1476,12 +1477,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'activateRuntimeTaskCompletionNotification': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
+        taskAddressId: createTrayTaskMenuId(address),
+      })
+      return ''
+    }
     case 'getSystemNotifications':
       return JSON.stringify(
         (
           globalThis as typeof globalThis & {
             __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-              notifications: Array<{ title: string; body: string }>
+              notifications: Array<{
+                title: string
+                body: string
+                address?: RuntimeTaskAddress
+              }>
             }
           }
         ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
@@ -1489,7 +1501,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clearSystemNotifications': {
       const root = globalThis as typeof globalThis & {
         __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-          notifications: Array<{ title: string; body: string }>
+          notifications: Array<{
+            title: string
+            body: string
+            address?: RuntimeTaskAddress
+          }>
         }
       }
       root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ = { notifications: [] }
@@ -1938,6 +1954,51 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       scroller.scrollTop = nextScrollTop
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
+    }
+    case 'sampleRapidScrollContent': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const options = JSON.parse(command.value ?? '{}') as {
+        contentSelector?: string
+        ratios?: number[]
+      }
+      const contentSelector = options.contentSelector?.trim()
+      if (!contentSelector) {
+        throw new Error('sampleRapidScrollContent requires contentSelector')
+      }
+      const ratios = options.ratios ?? []
+      if (
+        ratios.length === 0 ||
+        ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+      ) {
+        throw new Error('sampleRapidScrollContent requires ratios between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const viewport = scroller.getBoundingClientRect()
+      const samples = ratios.map(ratio => {
+        const nextScrollTop = maxScrollTop * ratio
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = nextScrollTop
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+
+        const hasVisibleContent = Array.from(
+          scroller.querySelectorAll<HTMLElement>(contentSelector)
+        ).some(element => {
+          if (!element.textContent?.trim()) return false
+          const bounds = element.getBoundingClientRect()
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom
+        })
+        return { hasVisibleContent, ratio, scrollTop: scroller.scrollTop }
+      })
+      return JSON.stringify(samples)
     }
     case 'click': {
       const elements = findDesktopControlElements(command.selector)

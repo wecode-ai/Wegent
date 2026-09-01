@@ -43,7 +43,7 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
+const MARKDOWN_WINDOW_ROOT_MARGIN = '1600px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
@@ -325,17 +325,25 @@ function WindowedMarkdownChunk({
     return () => observer.disconnect()
   }, [eager])
 
+  const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content)
+
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={
-        nearViewport
-          ? undefined
-          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
-      }
+      style={nearViewport ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? children : null}
+      {nearViewport ? (
+        children
+      ) : (
+        <div
+          data-markdown-window-placeholder
+          className="overflow-hidden whitespace-pre-wrap leading-6"
+          style={{ maxHeight: reservedHeight }}
+        >
+          {content}
+        </div>
+      )}
     </div>
   )
 }

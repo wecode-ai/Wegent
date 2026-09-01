@@ -516,7 +516,7 @@ describe('MessageList', () => {
       unobserve = vi.fn()
       takeRecords = vi.fn(() => [])
       root = null
-      rootMargin = '800px 0px'
+      rootMargin = '1600px 0px'
       thresholds = [0]
     }
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
@@ -543,7 +543,21 @@ describe('MessageList', () => {
     expect(chunks.length).toBeGreaterThan(2)
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
 
     act(() => {
       intersectionCallbacks.forEach(callback =>
@@ -556,6 +570,12 @@ describe('MessageList', () => {
 
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {

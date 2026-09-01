@@ -188,7 +188,12 @@ export function useRuntimeTaskReminders({
         taskId: item.task.taskId,
         title: item.task.title,
       })
-      void getRuntimeTaskNotificationText(item).then(sendSystemNotification)
+      void getRuntimeTaskNotificationText(item).then(notification =>
+        sendSystemNotification({
+          ...notification,
+          address: item.address,
+        })
+      )
     }
   }, [
     itemsByKey,

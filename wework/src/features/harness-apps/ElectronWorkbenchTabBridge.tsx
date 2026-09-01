@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { harnessAppsApi } from '@/api/local/harnessApps'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -10,19 +9,6 @@ import { unregisterHarnessAppTab } from './harnessAppTabs'
 export function ElectronWorkbenchTabBridge() {
   const workspaceTabs = useWorkspaceTabs()
   const previousInstallationIds = useRef<Set<string>>(new Set())
-
-  useEffect(() => {
-    if (!isElectronRuntime()) return
-    const activeTab = workspaceTabs.tabs.find(tab => tab.id === workspaceTabs.activeTabId)
-    const installationId = activeTab
-      ? harnessAppInstallationIdFromPath(
-          new URL(activeTab.contentRoute, window.location.origin).pathname
-        )
-      : null
-    void invokeDesktopHost<void>('workbench.activate', { installationId }).catch(error => {
-      console.warn('[Wework] failed to activate Electron workbench surface', error)
-    })
-  }, [workspaceTabs.activeTabId, workspaceTabs.tabs])
 
   useEffect(() => {
     if (!isElectronRuntime()) return
