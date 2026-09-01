@@ -297,6 +297,12 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'approved') ?? false
     )
   )
+  router.register('browser.notifyAgentCursorArrived', params =>
+    browser.notifyAgentCursorArrived(
+      stringParam(params, 'label'),
+      integerParam(params, 'moveSequence') ?? 0
+    )
+  )
   router.register('browser.close', params =>
     browser.close(stringParam(params, 'label'), optionalStringParam(params, 'expectedNativeLabel'))
   )

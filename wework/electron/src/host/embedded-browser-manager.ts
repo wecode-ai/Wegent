@@ -59,6 +59,7 @@ interface BrowserEntry {
 export interface BrowserHostEvent {
   sequence: number
   type:
+    | 'agent-cursor'
     | 'agent-state'
     | 'close-request'
     | 'download'
@@ -84,6 +85,18 @@ interface BrowserAgentApproval {
   }
 }
 
+interface BrowserAgentCursorState {
+  x: number
+  y: number
+  moveSequence: number
+}
+
+interface BrowserAgentCursorArrivalWaiter {
+  moveSequence: number
+  resolve: (arrived: boolean) => void
+  timeout: NodeJS.Timeout
+}
+
 interface BrowserDownload {
   id: string
   item: DownloadItem
@@ -92,6 +105,7 @@ interface BrowserDownload {
   path: string | null
 }
 
+const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -110,8 +124,17 @@ export class EmbeddedBrowserManager {
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
+  private readonly agentActive = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
+  private readonly agentCursorStates = new Map<string, BrowserAgentCursorState>()
+  private readonly agentCursorArrivals = new Map<string, number>()
+  private readonly agentCursorArrivalWaiters = new Map<
+    string,
+    Set<BrowserAgentCursorArrivalWaiter>
+  >()
+  private readonly agentCursorHideTimers = new Map<string, NodeJS.Timeout>()
   private readonly history: BrowserHistoryStore
+  private agentCursorSequence = 0
   private eventSequence = 0
   private historyGeneration = 0
 
@@ -139,6 +162,14 @@ export class EmbeddedBrowserManager {
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
     this.attachedContents.set(normalizedLabel, contents)
+    contents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type !== 'mouseDown') return
+      const entry = [...this.entries.values()].find(
+        candidate => candidate.contents.id === contents.id
+      )
+      if (!entry || !this.agentActive.has(entry.label)) return
+      this.setAgentControlPaused(entry.label, true)
+    })
     contents.once('destroyed', () => {
       if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
         this.attachedContents.delete(normalizedLabel)
@@ -421,6 +452,19 @@ export class EmbeddedBrowserManager {
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)
+    const cursorState = this.agentCursorStates.get(fromLabel)
+    if (cursorState) {
+      this.agentCursorStates.delete(fromLabel)
+      this.agentCursorStates.set(target, cursorState)
+    }
+    const arrivedSequence = this.agentCursorArrivals.get(fromLabel)
+    if (arrivedSequence !== undefined) {
+      this.agentCursorArrivals.delete(fromLabel)
+      this.agentCursorArrivals.set(target, arrivedSequence)
+    }
+    this.clearAgentCursorHide(fromLabel)
+    if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
+    if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
   }
 
   setActiveTab(baseLabel: string, activeLabel: string): void {
@@ -541,8 +585,17 @@ export class EmbeddedBrowserManager {
       approval?: BrowserAgentApproval['payload'] | null
     } = {}
   ): void {
+    const normalizedLabel = requiredLabel(label)
+    if (status === 'running') {
+      this.agentActive.add(normalizedLabel)
+      this.clearAgentCursorHide(normalizedLabel)
+    } else {
+      this.agentActive.delete(normalizedLabel)
+      if (status === 'idle') this.scheduleAgentCursorHide(normalizedLabel)
+      else this.hideAgentCursor(normalizedLabel)
+    }
     this.emit('agent-state', {
-      label: requiredLabel(label),
+      label: normalizedLabel,
       status,
       action: detail.action ?? null,
       target: detail.target ?? null,
@@ -550,6 +603,86 @@ export class EmbeddedBrowserManager {
       errorCode: detail.errorCode ?? null,
       approval: detail.approval ?? null,
       createdAtUnixMs: Date.now(),
+    })
+  }
+
+  showAgentCursor(label: string, x: number, y: number): number {
+    const normalizedLabel = requiredLabel(label)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Browser agent cursor coordinates are invalid')
+    }
+    this.clearAgentCursorHide(normalizedLabel)
+    const moveSequence = ++this.agentCursorSequence
+    this.agentCursorStates.set(normalizedLabel, { x, y, moveSequence })
+    this.emit('agent-cursor', {
+      label: normalizedLabel,
+      visible: true,
+      x,
+      y,
+      animateMovement: true,
+      moveSequence,
+      createdAtUnixMs: Date.now(),
+    })
+    return moveSequence
+  }
+
+  hideAgentCursor(label: string): void {
+    const normalizedLabel = requiredLabel(label)
+    this.clearAgentCursorHide(normalizedLabel)
+    const state = this.agentCursorStates.get(normalizedLabel)
+    if (!state) return
+    this.emit('agent-cursor', {
+      label: normalizedLabel,
+      visible: false,
+      x: state.x,
+      y: state.y,
+      animateMovement: false,
+      moveSequence: state.moveSequence,
+      createdAtUnixMs: Date.now(),
+    })
+  }
+
+  notifyAgentCursorArrived(label: string, moveSequence: number): void {
+    const normalizedLabel = requiredLabel(label)
+    if (!Number.isInteger(moveSequence) || moveSequence < 1) {
+      throw new Error('Browser agent cursor sequence is invalid')
+    }
+    const latest = Math.max(this.agentCursorArrivals.get(normalizedLabel) ?? 0, moveSequence)
+    this.agentCursorArrivals.set(normalizedLabel, latest)
+    const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel)
+    if (!waiters) return
+    for (const waiter of waiters) {
+      if (waiter.moveSequence > latest) continue
+      clearTimeout(waiter.timeout)
+      waiters.delete(waiter)
+      waiter.resolve(true)
+    }
+    if (waiters.size === 0) this.agentCursorArrivalWaiters.delete(normalizedLabel)
+  }
+
+  waitForAgentCursorArrival(
+    label: string,
+    moveSequence: number,
+    timeoutMs = 2_500
+  ): Promise<boolean> {
+    const normalizedLabel = requiredLabel(label)
+    if ((this.agentCursorArrivals.get(normalizedLabel) ?? 0) >= moveSequence) {
+      return Promise.resolve(true)
+    }
+    return new Promise(resolve => {
+      const timeout = setTimeout(() => {
+        const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel)
+        if (waiters) {
+          for (const waiter of waiters) {
+            if (waiter.moveSequence === moveSequence) waiters.delete(waiter)
+          }
+          if (waiters.size === 0) this.agentCursorArrivalWaiters.delete(normalizedLabel)
+        }
+        resolve(false)
+      }, timeoutMs)
+      const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel) ?? new Set()
+      waiters.add({ moveSequence, resolve, timeout })
+      this.agentCursorArrivalWaiters.set(normalizedLabel, waiters)
     })
   }
 
@@ -575,6 +708,18 @@ export class EmbeddedBrowserManager {
     if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
     this.agentControlPaused.delete(label)
+    this.agentActive.delete(label)
+    this.clearAgentCursorHide(label)
+    this.agentCursorStates.delete(label)
+    this.agentCursorArrivals.delete(label)
+    const cursorWaiters = this.agentCursorArrivalWaiters.get(label)
+    if (cursorWaiters) {
+      this.agentCursorArrivalWaiters.delete(label)
+      for (const waiter of cursorWaiters) {
+        clearTimeout(waiter.timeout)
+        waiter.resolve(false)
+      }
+    }
     for (const [approvalId, approval] of this.agentApprovals) {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
@@ -584,6 +729,24 @@ export class EmbeddedBrowserManager {
 
   closeMany(labels: string[]): void {
     for (const label of labels) this.close(label)
+  }
+
+  private scheduleAgentCursorHide(label: string): void {
+    const normalizedLabel = requiredLabel(label)
+    this.clearAgentCursorHide(normalizedLabel)
+    if (!this.agentCursorStates.has(normalizedLabel)) return
+    const timer = setTimeout(() => {
+      this.agentCursorHideTimers.delete(normalizedLabel)
+      this.hideAgentCursor(normalizedLabel)
+    }, AGENT_CURSOR_IDLE_HIDE_MS)
+    this.agentCursorHideTimers.set(normalizedLabel, timer)
+  }
+
+  private clearAgentCursorHide(label: string): void {
+    const timer = this.agentCursorHideTimers.get(label)
+    if (!timer) return
+    clearTimeout(timer)
+    this.agentCursorHideTimers.delete(label)
   }
 
   async clearData(kinds: string[] | null): Promise<number> {
