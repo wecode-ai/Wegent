@@ -10,10 +10,14 @@ from fastapi import HTTPException
 from wecode.video.api.opencut import (
     _update_timeline,
     build_storycut_bundle,
+    generate_opencut_bgm,
+    get_opencut_bgm,
     storycut_payload_to_tracks,
 )
 from wecode.video.api.opencut_support import (
+    allowed_media_url,
     build_refined_timeline,
+    merge_tracks_with_original,
     validate_converted_media_tracks,
 )
 from wecode.video.api.opencut_urls import (
@@ -95,6 +99,9 @@ def test_opencut_urls_use_online_editor_and_signed_callbacks() -> None:
     assert query["returnUrl"][0].startswith(
         "http://10.2.3.4:8400/api/aigc-video/material-video/opencut/save/37"
     )
+    assert query["bgmUrl"][0].startswith(
+        "http://10.2.3.4:8400/api/aigc-video/material-video/opencut/bgm/37"
+    )
     assert query["embed"] == ["wegent"]
     assert verify_opencut_token(urls["token"], "37")["artifact_id"] == (
         "plan-timeline-1"
@@ -103,6 +110,87 @@ def test_opencut_urls_use_online_editor_and_signed_callbacks() -> None:
     with pytest.raises(HTTPException) as exc_info:
         verify_opencut_token(urls["token"], "38")
     assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_opencut_bgm_callbacks_use_signed_uid(monkeypatch) -> None:
+    urls = create_opencut_urls(
+        callback_base="http://10.2.3.4:8400",
+        session_id="53",
+        artifact_id="plan-timeline-1",
+        uid="feifei16",
+        user_id=2,
+    )
+    calls: list[dict] = []
+
+    async def request_aigc_json(**kwargs):
+        calls.append(kwargs)
+        return {"task_id": "bgm-task-1", "status": "completed"}
+
+    monkeypatch.setattr(
+        "wecode.video.api.opencut._request_aigc_json",
+        request_aigc_json,
+    )
+
+    submitted = await generate_opencut_bgm(
+        session_id="53",
+        token=urls["token"],
+        payload={
+            "generateBgmPayload": {
+                "task_id": "bgm-task-1",
+                "prompt": "轻柔钢琴",
+                "duration_ms": 6000,
+            }
+        },
+    )
+    status = await get_opencut_bgm(
+        session_id="53",
+        token=urls["token"],
+        task_id="bgm-task-1",
+    )
+
+    assert submitted["bgm"]["task_id"] == "bgm-task-1"
+    assert status["status"] == "completed"
+    assert calls == [
+        {
+            "method": "POST",
+            "path": "v2/material-video/generate-bgm-segment",
+            "uid": "feifei16",
+            "payload": {
+                "task_id": "bgm-task-1",
+                "prompt": "轻柔钢琴",
+                "duration_ms": 6000,
+                "session_id": "53",
+            },
+        },
+        {
+            "method": "GET",
+            "path": "v2/material-video/generate-bgm-segment/53",
+            "uid": "feifei16",
+            "params": {"task_id": "bgm-task-1"},
+        },
+    ]
+
+
+def test_opencut_media_allows_signed_wegent_attachment_url() -> None:
+    source = "http://10.218.17.35:8500/api/attachments/download/shared?token=signed"
+
+    assert allowed_media_url(source, "http://10.218.17.35:8500") == source
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "http://10.218.17.35:8500/api/attachments/12/download?token=signed",
+        "http://10.218.17.35:8500/api/attachments/download/shared",
+        "http://10.218.17.36:8500/api/attachments/download/shared?token=signed",
+    ],
+)
+def test_opencut_media_rejects_other_internal_urls(source: str) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        allowed_media_url(source, "http://10.218.17.35:8500")
+
+    assert exc_info.value.status_code == 400
 
 
 def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
@@ -141,6 +229,100 @@ def test_storycut_bundle_contains_timeline_media_and_overlay_tracks(
     ]
     assert len(sticker_tracks) == 2
     assert bundle["transitions"] == _timeline()["transition_tracks"]
+
+
+def test_storycut_bundle_uses_opencut_proxy_for_local_wegent_image(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "http://10.218.17.35:8500",
+    )
+    timeline = _timeline()
+    source = "http://10.218.17.35:8500/api/attachments/download/shared?token=signed"
+    timeline["video_tracks"][0].update(
+        {
+            "clip_id": "wegent-attachment-15",
+            "element_id": "video-0002-wegent-attachment-16",
+            "storycut_element_id": "video-0001-wegent-attachment-15",
+            "source_path": source,
+        }
+    )
+
+    bundle = build_storycut_bundle(
+        timeline=timeline,
+        session_id="53",
+        uid="feifei16",
+        token="opencut-token",
+    )
+
+    image_media = bundle["media"][0]
+    assert bundle["keyframes"][0]["id"] == "video-0001-wegent-attachment-15"
+    storycut = image_media["metadata"]["storycut"]
+    parsed = urlsplit(storycut["source"])
+    assert parsed.path == "/api/storycut/media-proxy"
+    assert parse_qs(parsed.query)["url"] == [image_media["url"]]
+    assert storycut["sourceUrl"] == storycut["source"]
+    assert image_media["metadata"]["originalSourceUrl"] == source
+
+
+def test_track_merge_prefers_clip_id_over_shared_signed_url() -> None:
+    original = {
+        "video": [
+            {
+                "clip_id": "wegent-attachment-15",
+                "element_id": "video-1",
+                "source_path": "http://wegent/api/attachments/download/shared?token=one",
+            },
+            {
+                "clip_id": "wegent-attachment-16",
+                "element_id": "video-2",
+                "source_path": "http://wegent/api/attachments/download/shared?token=two",
+            },
+        ]
+    }
+    converted = {
+        "video": [
+            {
+                "clip_id": "wegent-attachment-15",
+                "source_path": "http://wegent/api/attachments/download/shared?token=one",
+            },
+            {
+                "clip_id": "wegent-attachment-16",
+                "source_path": "http://wegent/api/attachments/download/shared?token=two",
+            },
+        ]
+    }
+
+    merged = merge_tracks_with_original(converted, original)
+
+    assert [item["element_id"] for item in merged["video"]] == ["video-1", "video-2"]
+
+
+def test_storycut_bundle_keeps_https_wegent_image_source(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "wecode.video.api.opencut.settings.WEGENT_SOCKET_URL",
+        "https://wegent.example.com",
+    )
+    timeline = _timeline()
+    source = "https://wegent.example.com/api/attachments/download/shared?token=signed"
+    timeline["video_tracks"][0].update(
+        {
+            "clip_id": "wegent-attachment-15",
+            "source_path": source,
+        }
+    )
+
+    bundle = build_storycut_bundle(
+        timeline=timeline,
+        session_id="53",
+        uid="feifei16",
+        token="opencut-token",
+    )
+
+    storycut = bundle["media"][0]["metadata"]["storycut"]
+    assert storycut["source"] == source
+    assert storycut["sourceUrl"] == source
 
 
 def test_storycut_bundle_uses_direct_https_for_weibo_video(monkeypatch) -> None:

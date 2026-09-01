@@ -572,11 +572,12 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
                     && data["updates"]["status"] == "streaming"
             })
             .is_some()
-            && find_runtime_event(runtime_events, "response.block.created", |event| {
-                let block = &event["payload"]["data"]["block"];
-                block["type"] == "text"
-                    && block["content"] == "done"
-                    && block["status"] == "streaming"
+            && find_runtime_event(runtime_events, "response.output_text.delta", |event| {
+                event["payload"]["data"]["delta"] == "done"
+            })
+            .is_some()
+            && find_runtime_event(runtime_events, "response.output_text.done", |event| {
+                event["payload"]["data"]["text"] == "done"
             })
             .is_some()
             && find_runtime_event(runtime_events, "response.completed", |event| {
@@ -632,27 +633,52 @@ async fn runtime_tasks_send_accepts_address_content_source_and_attachments() {
         "streaming"
     );
 
-    let final_process_block =
-        find_runtime_event(&runtime_events, "response.block.created", |event| {
-            let block = &event["payload"]["data"]["block"];
-            block["type"] == "text" && block["content"] == "done" && block["status"] == "streaming"
+    let final_delta_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.delta"
+                && event["payload"]["data"]["delta"] == "done")
+                .then_some(index)
         })
-        .expect("final-answer phase delta should create a process text block");
+        .collect::<Vec<_>>();
     assert_eq!(
-        final_process_block["payload"]["data"]["block"]["content"],
-        "done"
+        final_delta_positions.len(),
+        1,
+        "final-answer phase should emit exactly one matching output delta"
     );
-    assert!(
-        find_runtime_event(&runtime_events, "response.output_text.delta", |event| {
-            event["payload"]["data"]["delta"] == "done"
+    let final_delta_position = final_delta_positions[0];
+    let final_delta = &runtime_events[final_delta_position];
+    assert_eq!(final_delta["payload"]["data"]["item_id"], "final-2");
+    assert_eq!(final_delta["payload"]["data"]["delta"], "done");
+    let final_done_positions = runtime_events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| {
+            (event["event"] == "response.output_text.done"
+                && event["payload"]["data"]["text"] == "done")
+                .then_some(index)
         })
-        .is_none(),
-        "assistant text must not emit a final-text delta while the turn is streaming"
+        .collect::<Vec<_>>();
+    assert_eq!(
+        final_done_positions.len(),
+        1,
+        "completed final-answer item should emit exactly one matching output completion"
     );
-    let completed = find_runtime_event(&runtime_events, "response.completed", |event| {
-        event["payload"]["data"]["value"] == "done"
-    })
-    .expect("completed response should contain only the final answer");
+    let final_done_position = final_done_positions[0];
+    let final_done = &runtime_events[final_done_position];
+    assert_eq!(final_done["payload"]["data"]["item_id"], "final-2");
+    let completed_position = runtime_events
+        .iter()
+        .position(|event| {
+            event["event"] == "response.completed" && event["payload"]["data"]["value"] == "done"
+        })
+        .expect("completed response should contain only the final answer");
+    assert!(
+        final_delta_position < final_done_position && final_done_position < completed_position,
+        "final output events should be ordered delta, done, response.completed"
+    );
+    let completed = &runtime_events[completed_position];
     assert_eq!(completed["payload"]["data"]["value"], "done");
 }
 
@@ -995,6 +1021,87 @@ async fn runtime_tasks_fork_completed_turn_preserves_workspace_and_rejects_missi
     assert!(missing["error"]
         .as_str()
         .is_some_and(|error| error.contains("fork turn was not found")));
+}
+
+#[tokio::test]
+async fn runtime_tasks_wait_for_a_running_source_turn_before_forking_ephemeral_chat() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("runtime-side-source-ready-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = EnvGuard::set(
+        "CODEX_HOME",
+        &temp_path("runtime-side-source-ready-codex-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let log_path = temp_path("runtime-side-source-ready-log", "jsonl");
+    let fake_codex = write_fake_codex_delayed_source_turn(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let source = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "source-task",
+                "workspacePath": "/tmp/project",
+                "message": "source prompt",
+                "executionRequest": codex_execution_request(
+                    "source prompt",
+                    "/tmp/project",
+                    "gpt-5.5"
+                )
+            }
+        }))
+        .await
+        .expect("source task should be accepted");
+    assert_eq!(source["accepted"], true);
+    wait_for_thread_mapping(&handler, "source-task", "source-thread").await;
+    wait_for_method_count(&log_path, "turn/start", 1).await;
+
+    let side = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.create",
+            "payload": {
+                "taskId": "side-task",
+                "workspacePath": "/tmp/project",
+                "message": "side prompt",
+                "ephemeral": true,
+                "sideSource": {
+                    "taskId": "source-task",
+                    "workspacePath": "/tmp/project",
+                    "runtimeHandle": {
+                        "threadId": "source-thread"
+                    }
+                },
+                "executionRequest": {
+                    "task_id": "side-task",
+                    "subtask_id": "side-turn",
+                    "prompt": "side prompt",
+                    "project_workspace_path": "/tmp/project",
+                    "ephemeral": true,
+                    "bot": [{"shell_type": "ClaudeCode"}],
+                    "model_config": {
+                        "model": "openai",
+                        "model_id": "gpt-5.5",
+                        "api_format": "responses"
+                    }
+                }
+            }
+        }))
+        .await
+        .expect("side task should be accepted after the source turn starts");
+    assert_eq!(side["accepted"], true);
+
+    wait_for_method_count(&log_path, "turn/start", 2).await;
+    wait_until_task_idle(&handler, "side-task").await;
+    let calls = read_json_lines(&log_path);
+    assert!(calls.iter().any(|call| {
+        call["method"] == "thread/fork" && call["params"]["threadId"] == "source-thread"
+    }));
 }
 
 #[tokio::test]
@@ -3798,12 +3905,79 @@ while IFS= read -r line; do
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$progress_id"'","delta":"workspace."}}}}'
       printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$progress_id"'","type":"agentMessage","text":"Inspecting workspace.","phase":"commentary"}}}}}}'
       printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","itemId":"'"$final_id"'","delta":"done","phase":"finalAnswer"}}}}'
+      printf '%s\n' '{{"method":"item/completed","params":{{"threadId":"thread-1","turnId":"'"$turn_id"'","item":{{"id":"'"$final_id"'","type":"agentMessage","text":"done","phase":"finalAnswer"}}}}}}'
       printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"thread-1","turn":{{"id":"'"$turn_id"'","status":"completed"}}}}}}'
       ;;
   esac
 done
 "#,
         log_path.display()
+    );
+    write_executable(&path, &content);
+    path
+}
+
+fn write_fake_codex_delayed_source_turn(log_path: &Path) -> PathBuf {
+    let path = temp_path("fake-codex-delayed-source-turn", "sh");
+    let ready_path = temp_path("fake-codex-delayed-source-turn-ready", "flag");
+    let _ = fs::remove_file(log_path);
+    let _ = fs::remove_file(&ready_path);
+    let content = format!(
+        r#"#!/bin/sh
+LOG_PATH='{}'
+READY_PATH='{}'
+turn_count=0
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> "$LOG_PATH"
+  request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"protocolVersion":1}}}}'
+      ;;
+    *'"method":"initialized"'*)
+      ;;
+    *'"method":"thread/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"id":"source-thread","cwd":"/tmp/project","name":"Source task","preview":"source","path":"/tmp/codex/source-thread.jsonl","createdAt":1780000000,"updatedAt":1780000060,"status":"active","turns":[]}}],"nextCursor":null,"backwardsCursor":null}}}}'
+      ;;
+    *'"method":"thread/start"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"source-thread"}}}}}}'
+      ;;
+    *'"method":"thread/fork"'*)
+      if [ -f "$READY_PATH" ]; then
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"side-thread"}}}}}}'
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"error":{{"message":"rollout at /tmp/codex/source-thread.jsonl is empty"}}}}'
+      fi
+      ;;
+    *'"method":"thread/inject_items"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"thread/name/set"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{}}}}'
+      ;;
+    *'"method":"turn/start"'*)
+      turn_count=$((turn_count + 1))
+      if [ "$turn_count" -eq 1 ]; then
+        (
+          sleep 0.2
+          : > "$READY_PATH"
+          printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"source-turn","status":"inProgress"}}}}}}'
+          printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"source-thread","turn":{{"id":"source-turn","status":"inProgress"}}}}}}'
+          printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"source-thread","turnId":"source-turn","delta":"source done","phase":"finalAnswer"}}}}'
+          printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"source-thread","turn":{{"id":"source-turn","status":"completed"}}}}}}'
+        ) &
+      else
+        printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"side-turn","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"turn/started","params":{{"threadId":"side-thread","turn":{{"id":"side-turn","status":"inProgress"}}}}}}'
+        printf '%s\n' '{{"method":"item/agentMessage/delta","params":{{"threadId":"side-thread","turnId":"side-turn","delta":"side done","phase":"finalAnswer"}}}}'
+        printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"side-thread","turn":{{"id":"side-turn","status":"completed"}}}}}}'
+      fi
+      ;;
+  esac
+done
+"#,
+        log_path.display(),
+        ready_path.display()
     );
     write_executable(&path, &content);
     path

@@ -535,8 +535,8 @@ function makeRule() {
     origin: 'automation',
     version: 1,
     name: '未命名自动化',
-    description: '描述这条自动化要完成什么',
-    enabled: false,
+    description: '',
+    enabled: true,
     updatedAt: '尚未保存',
     trigger: {
       type: 'event',
@@ -780,8 +780,8 @@ export function AutomationRulesView({
   }
 
   const saveRule = async () => {
-    if (!draft.name.trim() || !draft.description.trim()) {
-      notify('请填写自动化名称和说明')
+    if (!draft.name.trim()) {
+      notify('请填写自动化名称')
       return null
     }
     const hasUnnamedNode = nodes =>
@@ -2264,7 +2264,7 @@ function TriggerSettings({ draft, projectTags, onChange, onRuleChange }) {
   return (
     <div className={automationClass('panel-settings')}>
       <label className={automationClass('panel-field')}>
-        <span>自动化说明</span>
+        <span>自动化说明（可选）</span>
         <textarea
           data-testid="automation-rule-description"
           value={draft.description}

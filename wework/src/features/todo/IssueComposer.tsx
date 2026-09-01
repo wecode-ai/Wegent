@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react'
+import { type MouseEvent, useContext, useEffect, useRef, useState } from 'react'
 import {
   Bot,
   ChevronDown,
@@ -13,7 +13,12 @@ import {
   Tag,
   X,
 } from 'lucide-react'
-import type { CloudLoopItem, CloudProject, CloudProjectMember } from '@/api/deliveries'
+import {
+  isDefaultWorkItemProject,
+  type CloudLoopItem,
+  type CloudProject,
+  type CloudProjectMember,
+} from '@/api/deliveries'
 import { type ProjectChatControls, type ProjectWorkControls } from '@/components/chat/ChatInput'
 import { AttachmentBadges } from '@/components/chat/composer/AttachmentBadges'
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
@@ -232,6 +237,13 @@ export function IssueComposer({
     projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
     projects[0] ??
     null
+  const isPersonalTaskBoard = isDefaultWorkItemProject(selectedWorkItemProject)
+  const newLightweightItemLabel = isPersonalTaskBoard
+    ? t('todo.new_task', '新建任务')
+    : t('todo.new_issue', '新建 Issue')
+  const createLightweightItemLabel = isPersonalTaskBoard
+    ? t('todo.add_task', '添加任务')
+    : t('todo.create_issue', '创建 Issue')
   const selectedProjectMembers = projectMembers[boardKey] ?? []
   const selectedAssigneeName =
     selectedProjectMembers.find(member => member.user_id === assigneeUserId)?.user_name ?? null
@@ -483,6 +495,14 @@ export function IssueComposer({
     contentRef.current = value
     setContent(value)
   }
+  const applyIssueTemplate = (event: MouseEvent<HTMLButtonElement>) => {
+    const value = event.currentTarget.dataset.templateContent ?? ''
+    contentRef.current = value
+    setContent(value)
+    window.requestAnimationFrame(() => {
+      panelRef.current?.querySelector<HTMLElement>('[data-testid="workspace-issue-input"]')?.focus()
+    })
+  }
   const commitTagDraft = () => {
     const nextTag = tagDraft.trim().replace(/^#/, '')
     if (nextTag && !tags.includes(nextTag)) setTags(current => [...current, nextTag])
@@ -642,6 +662,54 @@ export function IssueComposer({
           </button>
         </Tooltip>
       ) : null}
+      {creationMode === 'issue' && !content.trim() ? (
+        <div
+          data-testid="workspace-issue-templates"
+          className="mt-2 flex flex-wrap items-center gap-1.5 px-1"
+        >
+          <span className="mr-1 text-xs text-text-muted">
+            {t('todo.issue_templates_label', '从模板开始')}
+          </span>
+          {[
+            {
+              key: 'feature',
+              label: t('todo.issue_template_feature', '开发功能'),
+              content: t(
+                'todo.issue_template_feature_content',
+                '目标：\n\n背景：\n\n范围：\n\n验收标准：\n'
+              ),
+            },
+            {
+              key: 'bug',
+              label: t('todo.issue_template_bug', '修复问题'),
+              content: t(
+                'todo.issue_template_bug_content',
+                '问题现象：\n\n复现步骤：\n\n期望结果：\n'
+              ),
+            },
+            {
+              key: 'research',
+              label: t('todo.issue_template_research', '调研方案'),
+              content: t(
+                'todo.issue_template_research_content',
+                '待回答问题：\n\n输出要求：\n\n决策标准：\n'
+              ),
+            },
+          ].map(template => (
+            <button
+              key={template.key}
+              type="button"
+              data-testid={`workspace-issue-template-${template.key}`}
+              data-template-content={template.content}
+              disabled={busy}
+              onClick={applyIssueTemplate}
+              className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/30 disabled:opacity-40"
+            >
+              {template.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 
@@ -666,9 +734,7 @@ export function IssueComposer({
         data-testid="workspace-issue-composer-panel"
         role={presentation === 'popup' || fullScreen ? 'dialog' : undefined}
         aria-modal={presentation === 'popup' || fullScreen ? 'true' : undefined}
-        aria-label={
-          presentation === 'popup' || fullScreen ? t('todo.new_issue', '新建 Issue') : undefined
-        }
+        aria-label={presentation === 'popup' || fullScreen ? newLightweightItemLabel : undefined}
         onKeyDown={event => {
           if (
             fullScreen &&
@@ -718,7 +784,7 @@ export function IssueComposer({
                 <span className="truncate">
                   {selectedWorkItemProject?.name ??
                     t('workbench.default_work_item_board', '我的任务')}{' '}
-                  · {t('todo.new_issue', '新建 Issue')}
+                  · {newLightweightItemLabel}
                 </span>
               </span>
               <div
@@ -1027,7 +1093,9 @@ export function IssueComposer({
                   ) : null}
                   <span className="flex-1" />
                   <span className="hidden text-xs text-text-muted sm:inline">
-                    {t('todo.issue_create_shortcut', '⌘ Enter 创建 Issue')}
+                    {isPersonalTaskBoard
+                      ? t('todo.task_create_shortcut', '⌘ Enter 添加任务')
+                      : t('todo.issue_create_shortcut', '⌘ Enter 创建 Issue')}
                   </span>
                   <button
                     type="button"
@@ -1036,7 +1104,7 @@ export function IssueComposer({
                     onClick={() => void createIssue(content, title, continueCreating)}
                     className="flex h-8 items-center gap-2 rounded-lg bg-text-primary px-3.5 text-sm font-medium text-background transition hover:opacity-90 disabled:opacity-40"
                   >
-                    {busy ? t('todo.creating', '创建中…') : t('todo.create_issue', '创建 Issue')}
+                    {busy ? t('todo.creating', '创建中…') : createLightweightItemLabel}
                     <Check className="h-4 w-4" />
                   </button>
                 </div>
@@ -1053,15 +1121,22 @@ export function IssueComposer({
                   className="text-heading-md font-medium leading-7 tracking-normal text-text-primary/95"
                 >
                   {creationMode === 'issue'
-                    ? t('todo.issue_composer_title', '要推进什么？')
+                    ? isPersonalTaskBoard
+                      ? t('todo.task_composer_title', '要记录什么？')
+                      : t('todo.issue_composer_title', '要推进什么？')
                     : t('todo.issue_task_composer_title', '要执行什么？')}
                 </h1>
                 <p className="mt-2 max-w-[520px] text-sm leading-5 text-text-muted">
                   {creationMode === 'issue'
-                    ? t(
-                        'todo.issue_composer_subtitle',
-                        '描述目标、问题或交付，创建后会进入当前项目空间。'
-                      )
+                    ? isPersonalTaskBoard
+                      ? t(
+                          'todo.task_composer_subtitle',
+                          '先记录到我的任务，准备好后再推进或开始执行。'
+                        )
+                      : t(
+                          'todo.issue_composer_subtitle',
+                          '描述目标、问题或交付，创建后会进入当前项目空间。'
+                        )
                     : t(
                         'todo.issue_task_composer_subtitle',
                         '描述需要完成的工作，并选择本地工作空间和执行配置。'
@@ -1074,7 +1149,7 @@ export function IssueComposer({
                   <LayoutDashboard className="h-4 w-4 shrink-0 text-text-muted" />
                   <div className="min-w-0">
                     <h2 className="truncate text-sm font-medium text-text-primary">
-                      {t('todo.new_issue', '新建 Issue')}
+                      {newLightweightItemLabel}
                     </h2>
                     <p className="truncate text-xs text-text-muted">
                       {selectedWorkItemProject?.name ??
@@ -1113,7 +1188,9 @@ export function IssueComposer({
                       : 'text-text-secondary hover:text-text-primary'
                   )}
                 >
-                  {t('todo.create_issue_tab', '创建 Issue')}
+                  {isPersonalTaskBoard
+                    ? t('todo.add_task_tab', '添加任务')
+                    : t('todo.create_issue_tab', '创建 Issue')}
                 </button>
                 <button
                   type="button"
@@ -1128,9 +1205,30 @@ export function IssueComposer({
                       : 'text-text-secondary hover:text-text-primary'
                   )}
                 >
-                  {t('todo.create_task_tab', '创建任务')}
+                  {isPersonalTaskBoard
+                    ? t('todo.create_and_run_task_tab', '创建并执行')
+                    : t('todo.create_task_tab', '创建任务')}
                 </button>
               </div>
+              <p
+                data-testid="workspace-issue-creation-mode-description"
+                className="mt-2 text-xs text-text-muted"
+              >
+                {creationMode === 'issue'
+                  ? isPersonalTaskBoard
+                    ? t(
+                        'todo.add_task_mode_description',
+                        '先加入看板，稍后再补充负责人或启动执行。'
+                      )
+                    : t(
+                        'todo.create_issue_mode_description',
+                        'Issue 用于记录一个需要持续推进的目标、问题或交付。'
+                      )
+                  : t(
+                      'todo.create_task_mode_description',
+                      '任务会绑定工作空间和执行配置，创建后可立即开始处理。'
+                    )}
+              </p>
             </div>
             {creationMode === 'task' && workbench?.selectProject && selectedLocalProject ? (
               <ConnectedIssueProjectWork

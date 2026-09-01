@@ -41,6 +41,8 @@ Renderer 通过白名单 Electron capability 调用列举、安装、更新、�
 
 发送消息前的连接器授权预检只对明确包含 `plugin://` 引用或连接器认证提示的消息同步执行；普通消息直接发送，不读取插件清单，避免每次发送都被本机插件枚举阻塞。带插件引用时也只对消息中提到的插件做 `plugin/read` 补全连接器信息，禁止在发送路径上调用完整 `plugin/list` / `readState`，以免会话打开被拖慢约 10 秒。
 
+运行中授权恢复只检查当前会话最新的 assistant/system 消息，不在任务切换时重新扫描全部历史。检测文本必须有固定大小上限，只读取消息错误、正文以及工具块中的文本或已知结构化错误字段；不得序列化 `renderPayload` 或其它无界展示载荷。这样历史分页缓存或单条大型工具输出不会阻塞渲染进程主线程，旧的授权错误也不会在后续正常回复后重新弹出。
+
 `browser_oauth` 使用异步授权会话，状态依次为 `preparing`、`waiting_browser`、`verifying` 和 `ok/error`。关闭界面会调用 Executor 的 `cancel` RPC 并终止登录子进程。CLI 输出必须是单个状态 JSON，不得包含 token、cookie 或其他凭据。
 
 本地授权工具支持两种来源：
@@ -107,6 +109,8 @@ Codex app-server 的 `item/commandExecution/requestApproval`、`item/fileChange/
 ## 模型列表
 
 Wework 通过本机 executor 请求 Codex app-server 的 `model/list` 获取模型目录，并将返回的 provider 和模型数组顺序原样用于模型选择器。前端不会重排官方模型、默认模型或自定义 provider，也不会补充未由 Codex 返回的模型。请求使用 `includeHidden: false`，因此 Codex 标记为隐藏的模型不会显示。
+
+已有任务会保留创建或上次发送时保存的模型选择。如果该模型暂时不在当前模型目录中，Wework 会要求用户重新选择可用模型，并阻止继续发送；它不会把新任务的默认模型静默替换到已有任务中。
 
 ### 监督模型
 

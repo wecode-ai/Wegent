@@ -22,11 +22,14 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
   const version = '1.2.3'
   for (const name of [
-    `WeWork_${version}_macos_arm64.zip`,
-    `WeWork_${version}_macos_x64.zip`,
-    `WeWork_${version}_windows_x64-setup.exe`,
-    `WeWork_${version}_macos_arm64.app.tar.gz`,
-    `WeWork_${version}_macos_x64.app.tar.gz`,
+    `WeWork_${version}_darwin-aarch64.zip`,
+    `WeWork_${version}_darwin-x86_64.zip`,
+    `WeWork_${version}_windows-x64-setup.exe`,
+    `WeWork_${version}_darwin-aarch64.zip.blockmap`,
+    `WeWork_${version}_darwin-x86_64.zip.blockmap`,
+    `WeWork_${version}_windows-x64-setup.exe.blockmap`,
+    `WeWork_${version}_darwin-aarch64.app.tar.gz`,
+    `WeWork_${version}_darwin-x86_64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
@@ -65,9 +68,9 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
     )
   }
   for (const name of [
-    `WeWork_${version}_macos_arm64.app.tar.gz.sig`,
-    `WeWork_${version}_macos_x64.app.tar.gz.sig`,
-    `WeWork_${version}_windows_x64-setup.exe.sig`,
+    `WeWork_${version}_darwin-aarch64.app.tar.gz.sig`,
+    `WeWork_${version}_darwin-x86_64.app.tar.gz.sig`,
+    `WeWork_${version}_windows-x64-setup.exe.sig`,
   ]) {
     await writeFile(resolve(assets, name), `signature-${name}`)
   }
@@ -86,15 +89,15 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   ])
 
   const electron = await readFile(resolve(output, 'latest-mac.yml'), 'utf8')
-  expect(electron).toContain(`WeWork_${version}_macos_arm64.zip`)
-  expect(electron).toContain(`WeWork_${version}_macos_x64.zip`)
+  expect(electron).toContain(`WeWork_${version}_darwin-aarch64.zip`)
+  expect(electron).toContain(`WeWork_${version}_darwin-x86_64.zip`)
   expect(await readFile(resolve(output, 'beta.yml'), 'utf8')).toContain(
-    `WeWork_${version}_windows_x64-setup.exe`
+    `WeWork_${version}_windows-x64-setup.exe`
   )
   const legacy = JSON.parse(await readFile(resolve(output, 'stable-darwin-aarch64.json'), 'utf8'))
   expect(legacy.platforms['stable-darwin']).toEqual({
-    signature: `signature-WeWork_${version}_macos_arm64.app.tar.gz.sig`,
-    url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_macos_arm64.app.tar.gz`,
+    signature: `signature-WeWork_${version}_darwin-aarch64.app.tar.gz.sig`,
+    url: `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeWork_${version}_darwin-aarch64.app.tar.gz`,
   })
   const components = JSON.parse(
     await readFile(resolve(output, 'components-stable-macos-arm64.json'), 'utf8')
@@ -110,6 +113,40 @@ test('generates Electron and legacy Tauri rolling manifests from one release', a
   expect(components.components.executor.downloadUrl).toBe(
     `https://github.com/wecode-ai/Wegent/releases/download/wework-v1.2.3/WeworkComponent_executor_${createHash('sha256').update('macos-arm64-executor').digest('hex')}_macos_arm64.tar.gz`
   )
+})
+
+test('rejects a release without every differential update blockmap', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'wework-release-blockmaps-'))
+  temporaryDirectories.push(root)
+  const assets = resolve(root, 'assets')
+  const output = resolve(root, 'output')
+  const notes = resolve(root, 'notes.md')
+  await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
+  const version = '1.2.3'
+  for (const name of [
+    `WeWork_${version}_darwin-aarch64.zip`,
+    `WeWork_${version}_darwin-x86_64.zip`,
+    `WeWork_${version}_windows-x64-setup.exe`,
+    `WeWork_${version}_darwin-aarch64.zip.blockmap`,
+    `WeWork_${version}_windows-x64-setup.exe.blockmap`,
+  ]) {
+    await writeFile(resolve(assets, name), name)
+  }
+  await writeFile(notes, '## Changes\n')
+
+  await expect(
+    run([
+      resolve(process.cwd(), 'scripts/generate-desktop-update-manifests.mjs'),
+      assets,
+      output,
+      version,
+      'stable',
+      'wecode-ai/Wegent',
+      'wework-v1.2.3',
+      notes,
+      'a'.repeat(40),
+    ])
+  ).rejects.toThrow('manifest generator exited with code 1')
 })
 
 test('rejects an invalid release source SHA', async () => {
@@ -142,13 +179,14 @@ test('generates a MinIO macOS architecture release without requiring other targe
   await import('node:fs/promises').then(({ mkdir }) => mkdir(assets))
   const version = '1.2.4-beta.1'
   for (const name of [
-    `WeWork_${version}_macos_arm64.zip`,
-    `WeWork_${version}_macos_arm64.app.tar.gz`,
+    `WeWork_${version}_darwin-aarch64.zip`,
+    `WeWork_${version}_darwin-aarch64.zip.blockmap`,
+    `WeWork_${version}_darwin-aarch64.app.tar.gz`,
   ]) {
     await writeFile(resolve(assets, name), name)
   }
   await writeFile(
-    resolve(assets, `WeWork_${version}_macos_arm64.app.tar.gz.sig`),
+    resolve(assets, `WeWork_${version}_darwin-aarch64.app.tar.gz.sig`),
     'migration-signature'
   )
   const components = {}
@@ -198,13 +236,13 @@ test('generates a MinIO macOS architecture release without requiring other targe
 
   const electron = await readFile(resolve(output, 'beta-mac.yml'), 'utf8')
   expect(electron).toContain(
-    `https://minio.example/releases/wework/macos/WeWork_${version}_macos_arm64.zip`
+    `https://minio.example/releases/wework/macos/WeWork_${version}_darwin-aarch64.zip`
   )
   const bridge = JSON.parse(await readFile(resolve(output, 'latest.json'), 'utf8'))
   expect(bridge.platforms).toEqual({
     'darwin-aarch64': {
       signature: 'migration-signature',
-      url: `https://minio.example/releases/wework/macos/WeWork_${version}_macos_arm64.app.tar.gz`,
+      url: `https://minio.example/releases/wework/macos/WeWork_${version}_darwin-aarch64.app.tar.gz`,
     },
   })
   const componentManifest = JSON.parse(

@@ -20,11 +20,14 @@ Electron 发版构建命令：
 pnpm --dir wework/electron build:release
 ```
 
-产物位于 `wework/electron/release-installer/`，主要包括：
+发布流程会将 Electron Builder 的中间产物整理为统一的平台命名。最终发布资产主要
+包括：
 
 ```text
-WeWork_<version>_macos_<arch>.dmg
-WeWork_<version>_macos_<arch>.zip
+WeWork_<version>_darwin-aarch64.dmg
+WeWork_<version>_darwin-aarch64.zip
+WeWork_<version>_darwin-x86_64.dmg
+WeWork_<version>_darwin-x86_64.zip
 WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```
@@ -35,6 +38,12 @@ Electron 版本通过 `electron-updater` 检查 `wework-updater` Release 中的
 `latest*.yml` 或 `beta*.yml`，下载完成后先关闭本地运行时，再安装并重启。
 如果所选通道尚未发布 Electron 版本，对应 YAML 清单可以不存在；客户端将其视为
 “暂无可用更新”，而不是网络错误。其他检查失败仍需原样报告。
+
+macOS 和 Windows 的正式版本 Release 必须分别包含 ZIP 和 NSIS 安装器对应的
+`.blockmap`。`electron-updater` 使用上一版本缓存和新旧 blockmap 计算差分，只下载
+变化的数据块；首次更新、缓存被清理或差分失败时才回退到完整安装包。构建产物缺少
+任一 blockmap 时发布流程必须失败。差分计划、实际下载量和回退原因记录在应用日志
+目录的 `app-update.log` 中。
 
 为让已安装的 Tauri 版本直接使用设置页的“升级”迁移到 Electron，同一次发布还会
 生成旧 updater 协议的 JSON 和签名产物：
@@ -117,16 +126,24 @@ preload、打包资源或发布边界发生变化时，工作流才提升应用�
 Chromium。
 
 客户端只接受与当前 Electron 应用版本、通道、平台和架构完全匹配的组件清单。
-下载后先校验压缩包大小与 SHA-256，再解压并校验组件内容 SHA-256。组件先写入
-用户数据目录的内容寻址存储并标记为 `pending`，下次启动时通过一个原子状态文件
-整体切换。工作台和 Core DSH 完成启动后才确认新组件；如果启动失败或进程在确认前
-退出，下次启动自动回滚到上一组组件。打包内资源始终保留为最终兜底。
+清单中的 `downloadUrl` 可以指向版本 Release、共享依赖 Release 或独立对象存储，
+不要求与滚动清单同源或位于同一路径。下载内容的可信边界由完整性校验确定：客户端
+先校验压缩包大小与 SHA-256，再解压并校验组件内容 SHA-256。组件先写入用户数据
+目录的内容寻址存储并标记为 `pending`，下次启动时通过一个原子状态文件整体切换。
+工作台和 Core DSH 完成启动后才确认新组件；如果启动失败或进程在确认前退出，下次
+启动自动回滚到上一组组件。打包内资源始终保留为最终兜底。
 
 Wework 不再打包或下载第二份 Node。启动时会在用户数据目录生成轻量 `node`
 入口，将 `PATH`、`WEWORK_NODE_PATH`、`NODE` 和 `npm_node_execpath` 统一指向
 Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex skill 中
 显式执行的 `node script.ts` 或 `#!/usr/bin/env node` 都使用与当前 Electron
 版本绑定的 Node。
+
+该入口还会预加载标准流保护脚本。stdio MCP 或其他 Node 子进程的消费端关闭后，
+向已断开的 `stderr` 写诊断信息不得触发 Electron 的主进程异常弹窗；协议
+`stdout` 断开则表示调用方已经离开，子进程应正常退出。保护只处理 `EPIPE`，
+其他标准流错误仍保持失败并暴露根因。自定义 Node 可执行文件使用原生 Node
+错误处理，不加载这段 Electron 专用逻辑。
 
 ## Bundled sidecars 与资源
 
@@ -143,6 +160,35 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 `wework/electron/scripts/prepare-package-assets.mjs` 会把 sidecar、插件、图标和运行时
 描述复制到应用资源目录。不要重新建立第二份桌面资源目录或资源清单。
 
+桌面发行物还必须携带项目及 bundled sidecar 的许可证和归属信息：
+
+- 应用资源根目录的 `LICENSE` 是 Wegent 的 Apache-2.0 许可证；
+- `licenses/` 保存 CUA Driver 等 Electron 依赖的第三方许可证；
+- `codex/legal/` 保存 Codex 的 Apache-2.0 许可证、`NOTICE` 和 Ratatui MIT
+  许可证。
+
+`prepare-codex-binary.mjs` 生成 Codex legal 目录，
+`prepare-package-assets.mjs` 必须将其与目标架构二进制一起复制到桌面资源。修改
+打包链路时，应解包或检查真实应用产物，确认这些文件存在且与仓库中的源文件一致；
+仅检查中间资源目录不能证明最终发行物合规。
+
+## 开发模式热更新
+
+`pnpm --dir wework run dev:mac` 会通过
+`wework/scripts/dev-wework-app-watch.mjs` 持续构建原始 Wework 应用。监听器启动时
+清理一次 `dsh/app-wework/web`，后续增量构建不得再次清空该目录；正在运行的
+renderer 可能仍在请求上一代哈希资源，提前删除会在新产物写入期间造成白屏。
+
+每次构建只有在 Vite 完成 bundle、关闭构建结果并规范化文件查看器元数据后，才能
+写入 `.wework-build-id`。Core DSH 使用这个标记作为已发布构建 ID，页面只在标记
+变化后刷新，不能把 `index.html` 的中间写入状态当成可加载版本。
+
+开发热更新模式下，`/wework/app/` 下的静态资源必须返回
+`Cache-Control: no-store`。除哈希资源外，该目录还包含固定文件名的
+`plugins/*.js`；如果这些文件使用生产环境的长期 immutable 缓存，刷新后会把旧插件
+bundle 与新主 bundle 混合，导致 React Context 等模块出现两份实例。正式构建仍
+使用 `public, max-age=31536000, immutable`。
+
 ## 本地验证
 
 发布相关改动至少运行：
@@ -158,7 +204,7 @@ pnpm --dir wework/electron build:release
 Electron 会话验证：
 
 ```bash
-pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify start --packaged true
 ```
 
 多个 worktree 并行验证时，为每个实例使用独立 `WEWORK_PORT`。隔离会话会使用独立

@@ -17,6 +17,17 @@ import { flushSync } from 'react-dom'
 import { decodeMarkdownFilePath } from '@/components/chat/assistantMarkdownLinks'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isWorkspaceDirectoryCacheFresh } from '@/features/workbench/workspaceFileDirectoryCache'
+import {
+  isAbsoluteWorkspacePath,
+  normalizeAbsoluteWorkspacePath,
+} from '@/lib/workspace-file-contract'
+import {
+  createFilePreviewTraceId,
+  filePreviewElapsedMs,
+  filePreviewPathMetadata,
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
 import {
@@ -44,7 +55,8 @@ import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { WorkspaceFileTree } from './WorkspaceFileTree'
 import { isLikelyTextContent, isMarkdownFile, workspaceFilePreviewKind } from './workspaceFileTypes'
 
-const ELECTRON_E2E_FILE_TRANSITION_MS = 300
+// Keep the retained preview observable across slower Windows IPC control round trips.
+const ELECTRON_E2E_FILE_TRANSITION_MS = 1_000
 
 async function preserveElectronE2EFileTransition(): Promise<void> {
   if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
@@ -80,6 +92,7 @@ interface WorkspaceBinaryPreview {
   size: number
   modifiedAt?: string | null
   file: File
+  traceId: string
 }
 
 interface FilePreviewLoadingProgress {
@@ -127,7 +140,13 @@ function mimeTypeForFileName(name: string): string {
 function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string | null {
   const normalizedPath = decodeMarkdownFilePath(path.trim()).replace(/\\/g, '/')
   if (!normalizedPath) return null
-  if (normalizedPath.startsWith('/')) return normalizedPath
+  if (isAbsoluteWorkspacePath(normalizedPath)) {
+    try {
+      return normalizeAbsoluteWorkspacePath(normalizedPath, 'Workspace file path must be absolute')
+    } catch {
+      return null
+    }
+  }
 
   const segments: string[] = []
   for (const segment of normalizedPath.split('/')) {
@@ -137,7 +156,7 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
   }
   if (segments.length === 0) return null
 
-  const root = target.path.replace(/\/+$/, '') || '/'
+  const root = target.path.replace(/\\/g, '/').replace(/\/+$/, '') || '/'
   const child = segments.join('/')
   return root === '/' ? `/${child}` : `${root}/${child}`
 }
@@ -145,7 +164,8 @@ function resolveWorkspaceFilePath(target: WorkspaceTarget, path: string): string
 function workspaceParentPath(path: string): string {
   const normalized = path.replace(/\/+$/, '')
   const separatorIndex = normalized.lastIndexOf('/')
-  return separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
+  const parentPath = separatorIndex > 0 ? normalized.slice(0, separatorIndex) : '/'
+  return /^[a-zA-Z]:$/.test(parentPath) ? `${parentPath}/` : parentPath
 }
 
 function createPreviewLineTarget(
@@ -336,9 +356,16 @@ export function FileWorkspacePanel({
   const openFile = useCallback(
     async (entry: WorkspaceFileEntry, options?: WorkspaceFileOpenOptions) => {
       if (!stableTarget || entry.isDirectory) return
+      const traceId = options?.traceId ?? createFilePreviewTraceId()
+      const pathMetadata = filePreviewPathMetadata(entry.path)
       const requestId = fileRequestSequence.current + 1
       const nextLineTarget = createPreviewLineTarget(entry.path, options)
       fileRequestSequence.current = requestId
+      logFilePreviewDiagnostic(traceId, 'open_file_start', {
+        ...pathMetadata,
+        requestId,
+        workspaceSource: stableTarget.workspaceSource ?? null,
+      })
       flushSync(() => setPreviewTransitionVisible(true))
       setSelectedFilePath(entry.path)
       onSelectionChange?.({ path: entry.path, isDirectory: false })
@@ -347,6 +374,8 @@ export function FileWorkspacePanel({
       setSelectedApplicationPath(null)
       setPreviewLineTarget(nextLineTarget)
       setPreviewLoading(true)
+      logFilePreviewDiagnostic(traceId, 'preview_loading_set', { requestId })
+      scheduleFilePreviewMainThreadProbe(traceId, 'preview_loading_set')
       setPreviewLoadingProgress(null)
       setPreviewError(null)
       setEditing(false)
@@ -400,15 +429,36 @@ export function FileWorkspacePanel({
           })
         }
         while (!chunk?.eof) {
+          const chunkStartedAt = performance.now()
+          logFilePreviewDiagnostic(traceId, 'file_chunk_start', {
+            requestId,
+            offset,
+          })
           const nextChunk = await readWorkspaceFileChunk(
             stableTarget.deviceId,
             entry.path,
             offset,
             stableTarget.path
           )
+          logFilePreviewDiagnostic(traceId, 'file_chunk_end', {
+            requestId,
+            offset,
+            durationMs: filePreviewElapsedMs(chunkStartedAt),
+            responseBytes: nextChunk.contentBase64.length,
+            fileSize: nextChunk.size,
+            eof: nextChunk.eof,
+          })
+          scheduleFilePreviewMainThreadProbe(traceId, 'file_chunk_end')
           if (fileRequestSequence.current !== requestId) return
           chunk = nextChunk
+          const decodeStartedAt = performance.now()
           chunks.push(decodeBase64(chunk.contentBase64))
+          logFilePreviewDiagnostic(traceId, 'base64_decode_end', {
+            requestId,
+            offset,
+            durationMs: filePreviewElapsedMs(decodeStartedAt),
+            decodedBytes: chunks[chunks.length - 1].byteLength,
+          })
           offset += chunks[chunks.length - 1].byteLength
           setPreviewLoadingProgress({
             loadedBytes: Math.min(offset, chunk.size),
@@ -417,24 +467,39 @@ export function FileWorkspacePanel({
         }
         if (fileRequestSequence.current !== requestId) return
         if (!chunk) throw new Error('Failed to read workspace file')
+        const fileConstructionStartedAt = performance.now()
+        const binaryFile = new File(
+          chunks.map(part => {
+            const copy = new Uint8Array(part.byteLength)
+            copy.set(part)
+            return copy.buffer
+          }),
+          chunk.name,
+          { type: mimeTypeForFileName(chunk.name) }
+        )
+        logFilePreviewDiagnostic(traceId, 'file_constructed', {
+          requestId,
+          durationMs: filePreviewElapsedMs(fileConstructionStartedAt),
+          fileSize: chunk.size,
+          chunkCount: chunks.length,
+        })
         setPreview(null)
         setBinaryPreview({
           path: chunk.path,
           name: chunk.name,
           size: chunk.size,
           modifiedAt: chunk.modifiedAt,
-          file: new File(
-            chunks.map(part => {
-              const copy = new Uint8Array(part.byteLength)
-              copy.set(part)
-              return copy.buffer
-            }),
-            chunk.name,
-            { type: mimeTypeForFileName(chunk.name) }
-          ),
+          file: binaryFile,
+          traceId,
         })
+        logFilePreviewDiagnostic(traceId, 'binary_preview_state_queued', { requestId })
+        scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_state_queued')
       } catch (error) {
         if (fileRequestSequence.current !== requestId) return
+        logFilePreviewDiagnostic(traceId, 'open_file_failed', {
+          requestId,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        })
         setPreview(null)
         setEditing(false)
         setEditedContent('')
@@ -451,6 +516,13 @@ export function FileWorkspacePanel({
           setPreviewLoading(false)
           setPreviewTransitionVisible(false)
           setPreviewLoadingProgress(null)
+          logFilePreviewDiagnostic(traceId, 'preview_loading_clear_queued', { requestId })
+          scheduleFilePreviewMainThreadProbe(traceId, 'preview_loading_clear_queued')
+        } else {
+          logFilePreviewDiagnostic(traceId, 'preview_loading_clear_skipped', {
+            requestId,
+            currentRequestId: fileRequestSequence.current,
+          })
         }
       }
     },
@@ -469,6 +541,11 @@ export function FileWorkspacePanel({
       if (!stableTarget) return
       const resolvedPath = resolveWorkspaceFilePath(stableTarget, path)
       if (!resolvedPath) return
+      const traceId = options?.traceId ?? createFilePreviewTraceId()
+      const tracedOptions = { ...options, traceId }
+      const pathMetadata = filePreviewPathMetadata(resolvedPath)
+      logFilePreviewDiagnostic(traceId, 'open_file_path_start', pathMetadata)
+      scheduleFilePreviewMainThreadProbe(traceId, 'open_file_path_start')
 
       const openDirectoryPath = (entries?: WorkspaceFileEntry[]) => {
         fileRequestSequence.current += 1
@@ -515,7 +592,7 @@ export function FileWorkspacePanel({
             isDirectory: false,
             size: 0,
           },
-          options
+          tracedOptions
         )
 
       if (options?.lineStart !== undefined) {
@@ -523,18 +600,36 @@ export function FileWorkspacePanel({
         return
       }
 
+      const parentListStartedAt = performance.now()
+      logFilePreviewDiagnostic(traceId, 'parent_tree_start', pathMetadata)
       void listWorkspaceEntries(
         stableTarget.deviceId,
         workspaceParentPath(resolvedPath),
         stableTarget.path
-      ).then(result => {
-        const entry = result.entries.find(candidate => candidate.path === resolvedPath)
-        if (entry?.isDirectory) {
-          openDirectoryPath()
-          return
+      ).then(
+        result => {
+          logFilePreviewDiagnostic(traceId, 'parent_tree_end', {
+            ...pathMetadata,
+            durationMs: filePreviewElapsedMs(parentListStartedAt),
+            entryCount: result.entries.length,
+          })
+          scheduleFilePreviewMainThreadProbe(traceId, 'parent_tree_end')
+          const entry = result.entries.find(candidate => candidate.path === resolvedPath)
+          if (entry?.isDirectory) {
+            openDirectoryPath()
+            return
+          }
+          openAsFile()
+        },
+        error => {
+          logFilePreviewDiagnostic(traceId, 'parent_tree_failed', {
+            ...pathMetadata,
+            durationMs: filePreviewElapsedMs(parentListStartedAt),
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+          })
+          openAsFile()
         }
-        openAsFile()
-      }, openAsFile)
+      )
     },
     [listWorkspaceEntries, loadTree, onSelectionChange, openFile, stableTarget]
   )
@@ -638,6 +733,12 @@ export function FileWorkspacePanel({
 
   useEffect(() => {
     if (!openFileRequest?.path) return
+    const traceId = openFileRequest.traceId ?? createFilePreviewTraceId()
+    logFilePreviewDiagnostic(traceId, 'open_file_request_effect', {
+      ...filePreviewPathMetadata(openFileRequest.path),
+      requestVersion: openFileRequest.id,
+    })
+    scheduleFilePreviewMainThreadProbe(traceId, 'open_file_request_effect')
     let cancelled = false
     void Promise.resolve().then(() => {
       if (!cancelled) {
@@ -647,6 +748,7 @@ export function FileWorkspacePanel({
             lineStart: openFileRequest.lineStart,
             lineEnd: openFileRequest.lineEnd,
             isDirectory: openFileRequest.isDirectory,
+            traceId,
           })
         })
       }
@@ -662,6 +764,7 @@ export function FileWorkspacePanel({
     openFileRequest?.lineStart,
     openFileRequest?.isDirectory,
     openFileRequest?.path,
+    openFileRequest?.traceId,
   ])
 
   useEffect(() => {

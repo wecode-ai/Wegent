@@ -63,6 +63,10 @@ from app.services.knowledge.code_wiki.publish_gate import (
     PublishPolicy,
     evaluate_publish_gate,
 )
+from app.services.knowledge.code_wiki.quality_gate import (
+    QUALITY_REVIEW_EXT_KEY,
+    quality_gate_reason,
+)
 from app.services.knowledge.code_wiki.version_store import page_path_of
 from app.services.knowledge.content_scope import generated_wiki_pages
 
@@ -129,6 +133,16 @@ def read_version_pages(db: Session, generation_id: int) -> tuple[PageSource, ...
     return tuple(page for _, _, page in ranked)
 
 
+def _declared_order_paths(generation: WikiGeneration) -> list[str]:
+    """Read the page order exactly as the completing Writer submitted it."""
+    summary = (generation.ext or {}).get("content_write", {}).get("summary", {}) or {}
+    return [
+        str(path).strip()
+        for path in summary.get("structure_order") or []
+        if str(path).strip()
+    ]
+
+
 def _declared_order(db: Session, generation_id: int) -> dict[str, int]:
     """The page order the agent declared when it finished, keyed for matching.
 
@@ -139,13 +153,44 @@ def _declared_order(db: Session, generation_id: int) -> dict[str, int]:
     generation = db.get(WikiGeneration, generation_id)
     if generation is None:
         return {}
-    summary = (generation.ext or {}).get("content_write", {}).get("summary", {}) or {}
-    declared = summary.get("structure_order") or []
-    return {
-        collation_key(str(path)): index
-        for index, path in enumerate(declared)
-        if str(path).strip()
-    }
+    declared = _declared_order_paths(generation)
+    return {collation_key(path): index for index, path in enumerate(declared)}
+
+
+def _reviewed_order_error(
+    generation: WikiGeneration, pages: Sequence[PageSource]
+) -> str:
+    """Explain why a reviewed full rebuild cannot safely publish its order."""
+    review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    if not review.get("required"):
+        return ""
+
+    declared = _declared_order_paths(generation)
+    if not declared:
+        return "reviewed full rebuild requires --structure-order beginning with index"
+
+    declared_keys = [collation_key(path) for path in declared]
+    duplicate_keys = sorted(
+        {path for path in declared_keys if declared_keys.count(path) > 1}
+    )
+    if duplicate_keys:
+        return f"page order lists duplicate paths: {duplicate_keys}"
+
+    actual = {collation_key(page.path) for page in pages}
+    unknown = sorted(set(declared_keys) - actual)
+    if unknown:
+        return (
+            "page order lists paths not written in this version: "
+            f"{unknown}; pass each path separately or as a comma-separated list"
+        )
+
+    if declared_keys[0] != "index":
+        return "reviewed full rebuild page order must begin with index"
+
+    missing = sorted(actual - set(declared_keys))
+    if missing:
+        return f"reviewed full rebuild page order omits written paths: {missing}"
+    return ""
 
 
 def read_projected_pages(db: Session, kind_id: int) -> tuple[ProjectedPage, ...]:
@@ -252,6 +297,25 @@ def publish_generation(
 
     desired = read_version_pages(db, generation.id)
     existing = read_projected_pages(db, knowledge_base.id)
+
+    quality_reason = quality_gate_reason(generation, desired)
+    if quality_reason:
+        verdict = GateVerdict(passed=False, reason=quality_reason)
+        logger.warning(
+            "[code_wiki] generation %s rejected for missing quality evidence: %s",
+            generation.id,
+            quality_reason,
+        )
+        _record_verdict(generation, verdict)
+        db.commit()
+        return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
+
+    order_error = _reviewed_order_error(generation, desired)
+    if order_error:
+        verdict = GateVerdict(passed=False, reason=order_error)
+        _record_verdict(generation, verdict)
+        db.commit()
+        return PublishResult(published=False, verdict=verdict, reason=verdict.reason)
 
     # The gate is asked what readers would lose, so it is given what readers can see
     # now — the projected pages — rather than the published version's own page list.

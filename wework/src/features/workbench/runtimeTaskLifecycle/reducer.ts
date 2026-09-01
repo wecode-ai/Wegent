@@ -1,3 +1,4 @@
+import { dequal } from 'dequal'
 import { isRuntimeTaskAuthoritativeCompletion, isRuntimeTaskConfirmedActive } from './projection'
 import type { RuntimeTaskLifecycleEvent, RuntimeTaskLifecycleState } from './types'
 
@@ -19,8 +20,7 @@ export function reduceRuntimeTaskLifecycle(
         terminalStatus && (!hasIdentifiedActiveTurn || completionAdvanced)
       const transitionMismatch =
         snapshotRunning !== null && expectedRunning !== null && snapshotRunning !== expectedRunning
-      const snapshotConfirmsAutonomousTurn =
-        isRuntimeTaskConfirmedActive(event.task) && state.turnOutcome === null
+      const snapshotConfirmsAutonomousTurn = isRuntimeTaskConfirmedActive(event.task)
       const snapshotRevivesSettledTaskWithoutIntent =
         Boolean(state.task && isRuntimeTaskAuthoritativeCompletion(state.task)) &&
         isRuntimeTaskConfirmedActive(event.task) &&
@@ -51,7 +51,7 @@ export function reduceRuntimeTaskLifecycle(
       const activeTurnId =
         queuedStatus || terminalStatus || snapshotRunning === false ? null : state.activeTurnId
 
-      return {
+      const nextState: RuntimeTaskLifecycleState = {
         ...state,
         address: mergeAddress(state.address, event.address),
         task: event.task,
@@ -63,6 +63,7 @@ export function reduceRuntimeTaskLifecycle(
         expectedExecutorRunning:
           snapshotRunning !== null && event.task.optimistic !== true ? null : expectedRunning,
       }
+      return dequal(state, nextState) ? state : nextState
     }
 
     case 'send_requested':

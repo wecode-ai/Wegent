@@ -602,6 +602,8 @@ impl RuntimeWorkRpcHandler {
             let initial_thread_goal = initial_thread_goal_from_payload(&payload);
             let mut side_source = side_source_thread(&payload);
             if let Some(source) = &mut side_source {
+                self.wait_for_running_side_source_turn(&source.thread_id)
+                    .await;
                 if source.thread_path.is_none() {
                     source.thread_path = self.thread_path_for_id(&source.thread_id).await;
                 }
@@ -634,6 +636,16 @@ impl RuntimeWorkRpcHandler {
             (queue_position, runtime_handle.as_object_mut())
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
+        }
+        if !self
+            .local_task_link(&local_task_id)
+            .is_some_and(|link| link.ephemeral)
+        {
+            self.track_default_work_item_async(
+                local_task_id.clone(),
+                title.clone(),
+                string_field(&payload, "message").unwrap_or_default(),
+            );
         }
         match payload
             .get("friendlyTitleExecutionRequest")

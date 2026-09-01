@@ -1,5 +1,7 @@
 import type {
+  BrowserAnnotationComment,
   BrowserAnnotationScope,
+  BrowserAnnotationState,
   BrowserAnnotationTargetSnapshot,
   PageAnnotationDto,
 } from '@/types/browser-annotation'
@@ -45,6 +47,13 @@ export function browserSnapshotToContexts(
   )
 }
 
+export function browserAnnotationStateToContexts(
+  state: BrowserAnnotationState & { scope: BrowserAnnotationScope },
+  title: string | null
+): CodeCommentContext[] {
+  return state.comments.map(comment => browserCommentToContext(comment, state.scope, title))
+}
+
 interface BrowserAnnotationSnapshotInput {
   scope: BrowserAnnotationScope
   annotations: PageAnnotationDto[]
@@ -73,6 +82,69 @@ export function browserAnnotationToContext(
       target,
     },
     adjustments: annotation.adjustments.length > 0 ? annotation.adjustments : undefined,
+  }
+}
+
+function browserCommentToContext(
+  annotation: BrowserAnnotationComment,
+  scope: BrowserAnnotationScope,
+  title: string | null
+): CodeCommentContext {
+  const target = targetFromComment(annotation)
+  const adjustments = annotation.designChanges.map(change => ({
+    property: change.property as NonNullable<CodeCommentContext['adjustments']>[number]['property'],
+    before: change.previousValue,
+    after: change.value,
+  }))
+  return {
+    id: annotation.id,
+    source: 'browser_annotation',
+    filePath: `browser:${scope.url}`,
+    fileName: title || browserTitle(scope.url),
+    startLine: annotation.number,
+    endLine: annotation.number,
+    selectedText: JSON.stringify(
+      {
+        type: 'browser_annotation',
+        url: scope.url,
+        anchor: annotation.anchor,
+        target,
+        screenshotDataUrl: annotation.screenshotDataUrl,
+        designChanges: annotation.designChanges,
+        textChange: annotation.textChange,
+      },
+      null,
+      2
+    ),
+    comment: annotation.comment,
+    createdAt: annotation.createdAt,
+    updatedAt: annotation.updatedAt,
+    browserAnnotation: {
+      scope,
+      number: annotation.number,
+      target,
+      anchor: annotation.anchor,
+      screenshotDataUrl: annotation.screenshotDataUrl,
+    },
+    adjustments: adjustments.length > 0 ? adjustments : undefined,
+  }
+}
+
+function targetFromComment(annotation: BrowserAnnotationComment): BrowserAnnotationTargetSnapshot {
+  const anchor = annotation.anchor
+  if (anchor.kind === 'element') {
+    return {
+      tagName: anchor.tagName,
+      text: anchor.immediateText ?? '',
+      role: anchor.role,
+      name: anchor.name,
+      rect: anchor.rect,
+    }
+  }
+  return {
+    tagName: anchor.kind,
+    text: anchor.kind === 'text' ? anchor.selectedText : '',
+    rect: anchor.rect,
   }
 }
 

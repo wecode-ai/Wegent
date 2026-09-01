@@ -5,12 +5,32 @@ import engineeringRenderers from '@file-viewer/preset-engineering'
 import officeRenderers from '@file-viewer/preset-office'
 import liteRenderers from '@file-viewer/preset-lite'
 import { MessageSquare } from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  memo,
+  Profiler,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ProfilerOnRenderCallback,
+} from 'react'
 import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useOptionalAppearance } from '@/features/appearance'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isEditableShortcutTarget } from '@/lib/keybindings'
+import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
+import {
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
+import { installCodeViewTextDrag } from './codeViewTextDrag'
 import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
 import { WorkspaceTextFileEditor } from './WorkspaceTextFileEditor'
@@ -19,7 +39,7 @@ import { isMarkdownFile } from './workspaceFileTypes'
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
     --diffs-font-size: var(--text-code);
-    --diffs-line-height: calc(var(--text-code) * 1.8);
+    --diffs-line-height: var(--wework-workspace-code-line-height, calc(var(--text-code) * 1.8));
     --diffs-font-family: var(--font-code);
     --diffs-header-font-family: var(--font-ui);
     --diffs-light-bg: rgb(var(--color-bg-base));
@@ -94,6 +114,7 @@ interface WorkspaceFilePreviewProps {
     name: string
     size: number
     file: File
+    traceId?: string
   } | null
   loading: boolean
   loadingProgress?: { loadedBytes: number; totalBytes: number | null } | null
@@ -169,6 +190,34 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
     [themeType]
   )
 
+  useLayoutEffect(() => {
+    const traceId = file.traceId
+    if (!traceId) return
+    logFilePreviewDiagnostic(traceId, 'binary_preview_committed', {
+      fileSize: file.size,
+      viewerType: viewerType ?? null,
+    })
+    scheduleFilePreviewMainThreadProbe(traceId, 'binary_preview_committed')
+    return () => {
+      logFilePreviewDiagnostic(traceId, 'binary_preview_unmounted')
+    }
+  }, [file.size, file.traceId, viewerType])
+
+  const handleFileViewerRender = useCallback<ProfilerOnRenderCallback>(
+    (_id, phase, actualDuration, baseDuration, startTime, commitTime) => {
+      if (!file.traceId) return
+      logFilePreviewDiagnostic(file.traceId, 'file_viewer_react_commit', {
+        phase,
+        actualDurationMs: Math.round(actualDuration * 10) / 10,
+        baseDurationMs: Math.round(baseDuration * 10) / 10,
+        startTimeMs: Math.round(startTime * 10) / 10,
+        commitTimeMs: Math.round(commitTime * 10) / 10,
+        viewerType: viewerType ?? null,
+      })
+    },
+    [file.traceId, viewerType]
+  )
+
   if (/\.xmind$/i.test(file.name)) {
     return (
       <WorkspaceXMindPreview key={`${file.path}:${file.size}`} file={file.file} name={file.name} />
@@ -181,16 +230,18 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       ref={containerRef}
       className="wework-diagram-preview relative min-w-0 flex-1 overflow-hidden bg-background"
     >
-      <FileViewer
-        key={`${file.path}:${file.size}`}
-        file={file.file}
-        filename={file.name}
-        type={viewerType}
-        size={file.size}
-        data-viewer-theme={themeType}
-        className="wework-workspace-file-viewer h-full w-full"
-        options={viewerOptions}
-      />
+      <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
+        <FileViewer
+          key={`${file.path}:${file.size}`}
+          file={file.file}
+          filename={file.name}
+          type={viewerType}
+          size={file.size}
+          data-viewer-theme={themeType}
+          className="wework-workspace-file-viewer h-full w-full"
+          options={viewerOptions}
+        />
+      </Profiler>
       {isDiagram ? (
         <DiagramImageActions
           containerRef={containerRef}
@@ -208,6 +259,7 @@ interface SelectionState {
   selectedText: string
   startLine: number
   endLine: number
+  source: 'line' | 'keyboard'
 }
 
 interface CommentState {
@@ -289,12 +341,14 @@ function normalizeTargetLineRange(
 function WorkspaceFilePreviewContent({
   file,
   themeType,
+  codeFontSize,
   targetLineStart,
   targetLineEnd,
   onAddCodeComment,
-}: WorkspaceFilePreviewContentProps) {
+}: WorkspaceFilePreviewContentProps & { codeFontSize: number }) {
   const { t } = useTranslation('common')
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
+  const codeViewHostRef = useRef<HTMLDivElement>(null)
   const [selection, setSelection] = useState<SelectionState | null>(null)
   const [commentState, setCommentState] = useState<CommentState>({
     filePath: null,
@@ -308,6 +362,7 @@ function WorkspaceFilePreviewContent({
   const targetLineKey = targetLineRange
     ? `${file.path}:${targetLineRange.start}:${targetLineRange.end}`
     : `${file.path}:none`
+  const codeLineHeight = Math.round(codeFontSize * 1.8)
   const codeViewItems = useMemo<CodeViewItem[]>(
     () => [
       {
@@ -325,21 +380,44 @@ function WorkspaceFilePreviewContent({
   )
   const activeSelection =
     selection?.filePath === file.path && selection.targetKey === targetLineKey ? selection : null
+  const activeCommentSelection = activeSelection?.source === 'line' ? activeSelection : null
   const comment = commentState.filePath === file.path ? commentState.value : ''
-  const selectedLines = activeSelection
-    ? {
-        id: file.path,
-        range: {
-          start: activeSelection.startLine,
-          end: activeSelection.endLine,
-        },
-      }
-    : targetLineRange
-      ? {
-          id: file.path,
-          range: targetLineRange,
-        }
-      : null
+  const selectedLines = useMemo<WorkspaceCodeViewLineSelection | null>(
+    () =>
+      activeSelection
+        ? {
+            id: file.path,
+            range: {
+              start: activeSelection.startLine,
+              end: activeSelection.endLine,
+            },
+          }
+        : targetLineRange
+          ? {
+              id: file.path,
+              range: targetLineRange,
+            }
+          : null,
+    [activeSelection, file.path, targetLineRange]
+  )
+  const allLinesSelected =
+    activeSelection?.startLine === 1 && activeSelection.endLine === lines.length
+
+  useEffect(() => {
+    const source = `workspace-preview:${file.path}`
+    const host = codeViewHostRef.current
+    const cleanup =
+      host && activeCommentSelection
+        ? installCodeViewTextDrag(host, activeCommentSelection.selectedText, rect => {
+            publishSelectedTextSelection(source, activeCommentSelection.selectedText, rect)
+          })
+        : undefined
+    if (!activeCommentSelection) publishSelectedTextSelection(source, null)
+    return () => {
+      cleanup?.()
+      publishSelectedTextSelection(source, null)
+    }
+  }, [activeCommentSelection, file.path])
 
   useEffect(() => {
     if (!targetLineRange) return
@@ -352,41 +430,60 @@ function WorkspaceFilePreviewContent({
     })
   }, [file.path, targetLineRange])
 
-  const captureLineSelection = (selectionRange: WorkspaceCodeViewLineSelection | null) => {
-    if (!selectionRange || selectionRange.id !== file.path) {
-      setSelection(null)
-      return
-    }
-    const { range } = selectionRange
-    const startLine = Math.min(range.start, range.end)
-    const endLine = Math.max(range.start, range.end)
-    const selectedText = lines
-      .slice(startLine - 1, endLine)
-      .join('\n')
-      .trim()
-    if (!selectedText) {
-      setSelection(null)
-      return
-    }
-    setSelection({
-      filePath: file.path,
-      targetKey: targetLineKey,
-      selectedText,
-      startLine,
-      endLine,
-    })
-    setCommentState({ filePath: file.path, value: '' })
-  }
+  const captureLineSelection = useCallback(
+    (selectionRange: WorkspaceCodeViewLineSelection | null) => {
+      if (!selectionRange || selectionRange.id !== file.path) {
+        setSelection(null)
+        return
+      }
+      const { range } = selectionRange
+      const startLine = Math.min(range.start, range.end)
+      const endLine = Math.max(range.start, range.end)
+      const selectedText = lines
+        .slice(startLine - 1, endLine)
+        .join('\n')
+        .trim()
+      if (!selectedText) {
+        setSelection(null)
+        return
+      }
+      setSelection({
+        filePath: file.path,
+        targetKey: targetLineKey,
+        selectedText,
+        startLine,
+        endLine,
+        source: 'line',
+      })
+      setCommentState({ filePath: file.path, value: '' })
+    },
+    [file.path, lines, targetLineKey]
+  )
+  const codeViewOptions = useMemo(
+    () => ({
+      disableFileHeader: true,
+      enableLineSelection: true,
+      lineHoverHighlight: 'both' as const,
+      overflow: 'scroll' as const,
+      stickyHeaders: false,
+      itemMetrics: { lineHeight: codeLineHeight },
+      layout: { paddingTop: 0, paddingBottom: codeLineHeight, gap: 0 },
+      theme: { dark: 'pierre-dark', light: 'pierre-light' },
+      themeType,
+      unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
+    }),
+    [codeLineHeight, themeType]
+  )
 
   const addComment = () => {
-    if (!file || !activeSelection || !comment.trim()) return
+    if (!file || !activeCommentSelection || !comment.trim()) return
     onAddCodeComment({
       id: `code-comment-${Date.now()}`,
       filePath: file.path,
       fileName: file.name,
-      startLine: activeSelection.startLine,
-      endLine: activeSelection.endLine,
-      selectedText: activeSelection.selectedText,
+      startLine: activeCommentSelection.startLine,
+      endLine: activeCommentSelection.endLine,
+      selectedText: activeCommentSelection.selectedText,
       comment: comment.trim(),
       createdAt: new Date().toISOString(),
     })
@@ -394,10 +491,50 @@ function WorkspaceFilePreviewContent({
     setCommentState({ filePath: file.path, value: '' })
   }
 
+  const selectEntireFile = () => {
+    setSelection({
+      filePath: file.path,
+      targetKey: targetLineKey,
+      selectedText: file.content,
+      startLine: 1,
+      endLine: lines.length,
+      source: 'keyboard',
+    })
+    setCommentState({ filePath: file.path, value: '' })
+  }
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (isEditableShortcutTarget(event.target)) return
+    const usesShortcutModifier = event.ctrlKey || event.metaKey
+    if (
+      !usesShortcutModifier ||
+      event.altKey ||
+      event.shiftKey ||
+      event.key.toLowerCase() !== 'a'
+    ) {
+      return
+    }
+    event.preventDefault()
+    selectEntireFile()
+  }
+
+  const handleCopy = (event: ClipboardEvent<HTMLElement>) => {
+    if (!allLinesSelected) return
+    event.preventDefault()
+    event.clipboardData.setData('text/plain', file.content)
+  }
+
   return (
     <section
       data-testid="workspace-file-preview"
+      draggable={Boolean(activeCommentSelection)}
+      onDragStart={event => {
+        if (!activeCommentSelection) return
+        writeSelectedTextDragData(event.dataTransfer, activeCommentSelection.selectedText)
+      }}
       className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background"
+      onCopy={handleCopy}
+      onKeyDown={handleKeyDown}
     >
       <div
         data-testid="workspace-file-preview-code-view"
@@ -406,22 +543,19 @@ function WorkspaceFilePreviewContent({
       >
         <CodeView
           ref={codeViewRef}
+          containerRef={codeViewHostRef}
           items={codeViewItems}
           selectedLines={selectedLines}
           onSelectedLinesChange={captureLineSelection}
-          options={{
-            disableFileHeader: true,
-            enableLineSelection: true,
-            lineHoverHighlight: 'both',
-            overflow: 'scroll',
-            stickyHeaders: false,
-            layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-            theme: { dark: 'pierre-dark', light: 'pierre-light' },
-            themeType,
-            unsafeCSS: PIERRE_WORKSPACE_CODE_VIEW_CSS,
-          }}
+          options={codeViewOptions}
           className="h-full min-h-0 w-full scrollbar-soft"
-          style={{ height: '100%', overflow: 'auto' }}
+          style={
+            {
+              height: '100%',
+              overflow: 'auto',
+              '--wework-workspace-code-line-height': `${codeLineHeight}px`,
+            } as CSSProperties
+          }
         />
       </div>
       {file.truncated && (
@@ -429,7 +563,7 @@ function WorkspaceFilePreviewContent({
           {t('workbench.workspace_file_truncated', '文件过大，仅显示前 256 KiB')}
         </div>
       )}
-      {activeSelection && (
+      {activeCommentSelection && (
         <div className="absolute bottom-4 left-4 right-4 rounded-xl border border-border bg-background p-3 shadow-xl">
           <div className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
             <MessageSquare className="h-4 w-4" />
@@ -498,6 +632,7 @@ export function WorkspaceFilePreview({
     (typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
       ? 'dark'
       : 'light')
+  const codeFontSize = appearance?.appearance.codeFontSize ?? defaultAppearance.codeFontSize
 
   if (loading && !file && !binaryFile) {
     const progress =
@@ -583,6 +718,7 @@ export function WorkspaceFilePreview({
     <WorkspaceFilePreviewContent
       file={file}
       themeType={themeType}
+      codeFontSize={codeFontSize}
       targetLineStart={targetLineStart}
       targetLineEnd={targetLineEnd}
       onAddCodeComment={onAddCodeComment}

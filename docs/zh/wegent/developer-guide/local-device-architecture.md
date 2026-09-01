@@ -78,6 +78,18 @@ Electron 层不保存事件日志、不生成序号，也不实现重放或合�
 
 Backend 是可选能力，而不是本地 app 的必需依赖。需要登录、模型/能力同步、云端项目或网页版控制本机时，executor 可以使用 Backend Socket.IO 通道注册为本地设备；同一个 executor sidecar 会复用同一个 command handler 和 runtime work handler，一边通过本地 app IPC 端点服务 Wework App 和 core DSH，一边通过 Socket.IO 服务 Backend。这个设计不引入本机 HTTP gateway，也不要求 Wework App 自己启动 Backend。
 
+### 跨组件请求日志关联
+
+Wework 在请求进入跨进程或跨服务边界时生成 request ID，并在同一次请求的后续日志中复用它。该字段只用于诊断单次请求，不替代任务 ID、设备 ID、线程 ID 或 OpenTelemetry trace ID，也不能用于推断业务状态。
+
+- Renderer 发往 Backend 的 HTTP 请求使用 `wework-http-<uuid>`，通过 `X-Request-ID` 传递。Backend 复用该值写入请求上下文，并在响应中返回 `X-Request-ID`；CORS 配置显式暴露该响应头。
+- Renderer 通过 core DSH 调用本地 executor 时使用 `wework-local-<uuid>`。同一个 `request_id` 同时写入 DSH 的请求开始、完成或失败日志，以及 executor 的 `runtime:rpc` 接收与响应日志。
+- Wework 通过 Backend Socket.IO 调用远程 executor 时使用 `cloud-runtime-<uuid>`。Backend 在处理 `runtime:request` 时把该值绑定到请求上下文，并原样放入下游 `runtime:rpc` 信封；远程 executor 的对应日志继续使用同一个值。
+
+调用方没有 request ID 时，协议层不发送空的 `request_id` 字段；各组件日志使用自身的无上下文占位符。请求 ID 必须是有界、可打印的诊断标识，日志不得同时记录请求正文、认证信息、模型密钥或本地凭据。
+
+排查一条请求时，先从用户可见失败附近的 Wework frontend、DSH 或 Backend 日志取得 `request_id`，再在同一诊断目录或集中式日志系统中按精确值搜索。开始和结束日志还会记录方法名、结果与耗时，因此缺失的边界可以直接定位请求停留在哪个组件，而不需要按相近时间或任务名称猜测。
+
 ### Executor 启动环境与 Codex Home 初始化
 
 Unix executor 在创建异步运行时和启动 Agent 子进程之前，通过运行当前用户的交互式登录 shell 读取完整环境。shell 优先使用系统用户数据库中的登录 shell，并依次回退到 `$SHELL`、`zsh`、`bash` 和 `sh`。采集过程有固定超时；失败时 executor 保留父进程环境，并继续补充 Homebrew、`/usr/local` 等标准开发目录。最终环境由 executor 统一传递给 Codex、Claude Code、插件、技能、Hooks、PTY 和设备命令，因此 Wework 本地 sidecar、独立本地设备以及 Linux 云端或远程设备使用同一套 PATH 解析逻辑。

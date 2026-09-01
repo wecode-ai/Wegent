@@ -19,7 +19,7 @@ The Settings module provides configuration functionality for the Wegent system, 
 | [Keyboard Shortcuts](./keyboard-shortcuts.md)           | Manage local shortcuts for the Wework desktop app              |
 | [Desktop App Preferences](./desktop-app-preferences.md) | Configure Wework desktop launch, background, and tray behavior |
 | [Browser settings](./browser-settings.md)               | Configure built-in browser links, privacy, and downloads       |
-| [Workbench tabs](./workspace-tabs.md)                    | Configure fixed, startup, and temporary regular tabs            |
+| [Workbench tabs](./workspace-tabs.md)                   | Configure fixed, startup, and temporary regular tabs           |
 
 ---
 
@@ -74,6 +74,18 @@ Skills are Claude Code capability extension packages:
 In intranet deployments, users can bind the current Wegent account to a Weibo uid. When users visit `https://wegent.intra.weibo.com` and are already logged in to `weibo.com`, the browser carries the Weibo login cookie (`SUB`). From **Settings** → **General**, the Weibo account binding action sends the request to the backend, which reads `SUB` and calls the internal resolver service to obtain the Weibo uid, nickname, and avatar.
 
 The frontend first shows the resolved Weibo account profile and reminds users that they can switch accounts at `weibo.com`. Binding is written only after the user confirms. During confirmation, the backend resolves the current `SUB` again; if the uid changed, the user must confirm again. After binding succeeds, the page shows the bound Weibo uid, nickname, avatar, and binding time. Users can rebind to refresh the uid or unbind the account. Binding data is stored in the current user's preferences and does not require a separate database table. Unbinding only removes the Weibo binding data and keeps other preferences unchanged.
+
+### OAuth Apps Management
+
+Application developers can create and manage external OAuth clients under **Settings → Developer Credentials → OAuth Apps** so external systems can verify the current Wegent user's identity. The page returns the `client_id` after creation; a confidential client's `client_secret` is shown only once.
+
+Each OAuth App requires an application name, a client type, and one or more exact redirect URIs. The provider centrally manages token lifetimes, TokenIssuer, and SigningKey; developers and administrators do not configure them per application.
+
+Developers can view and maintain only the OAuth Apps they created. Administrators use **Administration → API Keys → OAuth Apps** only for global review, disabling, and deletion.
+
+External access tokens may read only OAuth userinfo, which returns `id`, `user_name`, and `email`; they cannot call Wegent business APIs and do not grant roles, resource permissions, Git credentials, or other internal privileges.
+
+Changing the client type, rotating the secret, disabling the app, or deleting the app invalidates existing refresh tokens. See the [External OAuth 2.0 Integration Guide](../../developer-guide/external-oauth-integration.md) for the complete flow.
 
 ### Archived Chat Management
 

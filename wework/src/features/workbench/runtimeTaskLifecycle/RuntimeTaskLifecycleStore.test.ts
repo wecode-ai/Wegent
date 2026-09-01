@@ -111,6 +111,33 @@ describe('RuntimeTaskLifecycleStore', () => {
     )
   })
 
+  test('does not publish a new store snapshot for identical executor work', () => {
+    const store = new RuntimeTaskLifecycleStore('identical-executor-work-test')
+    const work = runtimeWork(
+      task({
+        running: true,
+        status: 'running',
+        threadStatus: 'active',
+        turnStatus: 'inProgress',
+        updatedAt: 1_786_676_400_000,
+        gitInfo: {
+          branch: 'fix/runtime-lifecycle',
+          changes: [{ path: 'RuntimeTaskLifecycleStore.ts', status: 'modified' }],
+        },
+      })
+    )
+    store.syncRuntimeWork(work)
+    const snapshot = store.getSnapshot()
+    const listener = vi.fn()
+    const unsubscribe = store.subscribe(listener)
+
+    store.syncRuntimeWork(structuredClone(work))
+
+    expect(store.getSnapshot()).toBe(snapshot)
+    expect(listener).not.toHaveBeenCalled()
+    unsubscribe()
+  })
+
   test('uses one lifecycle machine for canonical workspace and remote host addresses', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     const remoteAddress = {
@@ -1160,6 +1187,8 @@ describe('RuntimeTaskLifecycleStore', () => {
   test('accepts an executor-confirmed autonomous turn after the previous turn settles', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.turnStarted(address, 'turn-1')
+    store.turnSettled(address, 'turn-1', 'succeeded')
     store.executorSettled(address)
 
     store.syncRuntimeWork(
@@ -1175,7 +1204,11 @@ describe('RuntimeTaskLifecycleStore', () => {
 
     const snapshot = store.getTask(address)
     expect(snapshot?.execution.running).toBe(true)
+    expect(snapshot?.turn.outcome).toBe('succeeded')
     expect(snapshot?.derived.shouldShowSidebarRunning).toBe(true)
+    expect(store.getSnapshot().runningTaskKeys).toEqual(
+      new Set([getRuntimeTaskLifecycleKey(address)])
+    )
   })
 
   test('does not let an optimistic projection settle an executor that remains active', () => {

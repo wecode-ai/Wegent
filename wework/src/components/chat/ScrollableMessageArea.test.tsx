@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { createRef } from 'react'
+import { createRef, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
@@ -51,6 +51,14 @@ function mockScrollRelativeRect(
 function flushScheduledTimers() {
   act(() => {
     vi.runOnlyPendingTimers()
+  })
+}
+
+function flushStreamingFollow() {
+  act(() => {
+    for (let frame = 0; frame < 180; frame += 1) {
+      vi.runOnlyPendingTimers()
+    }
   })
 }
 
@@ -330,11 +338,84 @@ describe('ScrollableMessageArea', () => {
     expect(button).toBeInTheDocument()
 
     fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 600,
       behavior: 'smooth',
     })
+  })
+
+  test('keeps following the bottom after the scroll button is clicked during layout growth', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+
+    class ResizeObserverMock {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback)
+      }
+
+      observe = vi.fn()
+      disconnect = vi.fn()
+    }
+
+    vi.stubGlobal('ResizeObserver', ResizeObserverMock)
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="scroll-button-layout-growth"
+        messages={[
+          {
+            id: '1',
+            role: 'assistant',
+            content: '长内容',
+            status: 'done',
+            createdAt: '2026-08-31T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    Object.defineProperty(scroller, 'clientHeight', {
+      value: 200,
+      configurable: true,
+    })
+    let scrollHeight = 600
+    Object.defineProperty(scroller, 'scrollHeight', {
+      get: () => scrollHeight,
+      configurable: true,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 0,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top, behavior }: ScrollToOptions) => {
+      scroller.scrollTop = behavior === 'smooth' ? 80 : Number(top)
+      fireEvent.scroll(scroller)
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    fireEvent.scroll(scroller)
+    const button = screen.getByTestId('scroll-to-bottom-button')
+
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(60)
+    })
+
+    expect(scroller.scrollTop).toBe(600)
+
+    scrollHeight = 900
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(900)
+    expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
   })
 
   test('does not auto-scroll from content resize while auto-scroll is suspended', () => {
@@ -463,6 +544,167 @@ describe('ScrollableMessageArea', () => {
     } finally {
       vi.stubGlobal('ResizeObserver', originalResizeObserver)
     }
+  })
+
+  test('keeps the user anchor when a width reflow clamps the scroller before resize observation', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    render(
+      <ScrollableMessageArea
+        conversationKey="width-reflow-clamp"
+        messages={[
+          {
+            id: 'width-reflow-clamp-message',
+            role: 'assistant',
+            content: '关闭文件面板后仍在阅读的段落',
+            status: 'done',
+            createdAt: '2026-08-30T00:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const scroller = screen.getByTestId('chat-message-scroll-area')
+    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
+    let scrollHeight = 2_000
+    let anchorTopAtScrollZero = 1_300
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: 1_800,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn(({ top }: ScrollToOptions) => {
+      scroller.scrollTop = Math.min(Number(top), scrollHeight - scroller.clientHeight)
+    })
+    mockRect(scroller, 100, 300)
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const top = anchorTopAtScrollZero - scroller.scrollTop
+      return {
+        top,
+        bottom: top + 40,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.scroll(scroller)
+    scroller.scrollTop = 1_200
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 1_300
+    anchorTopAtScrollZero = 500
+    scroller.scrollTop = 1_100
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(400)
+    expect(anchor.getBoundingClientRect().top).toBe(100)
+  })
+
+  test('keeps a bottom-origin user anchor when width reflow clamps toward zero', () => {
+    const resizeCallbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class ResizeObserverMock {
+        constructor(callback: ResizeObserverCallback) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        disconnect() {}
+      }
+    )
+
+    const externalScrollRef = createRef<HTMLDivElement>()
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="bottom-origin-width-reflow-clamp"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            {
+              id: 'bottom-origin-width-reflow-clamp-message',
+              role: 'assistant',
+              content: '关闭文件面板后仍在阅读的段落',
+              status: 'done',
+              createdAt: '2026-08-31T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    const anchor = screen.getByText('关闭文件面板后仍在阅读的段落').closest('[data-scroll-anchor]')!
+    let scrollHeight = 2_000
+    let anchorContentTop = 1_200
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      get: () => scrollHeight,
+    })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: -600,
+      writable: true,
+      configurable: true,
+    })
+    mockRect(scroller, 100, 300)
+    anchor.getBoundingClientRect = vi.fn(() => {
+      const contentScrollTop = scrollHeight - scroller.clientHeight + scroller.scrollTop
+      const top = 100 + anchorContentTop - contentScrollTop
+      return {
+        top,
+        bottom: top + 40,
+        left: 0,
+        right: 320,
+        width: 320,
+        height: 40,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect
+    })
+
+    fireEvent.wheel(scroller, { deltaY: -80 })
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 10_000
+    anchorContentTop = 9_100
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+
+    scrollHeight = 1_300
+    anchorContentTop = 400
+    scroller.scrollTop = 0
+    fireEvent.scroll(scroller)
+    act(() => {
+      resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
+    })
+
+    expect(scroller.scrollTop).toBe(-700)
+    expect(anchor.getBoundingClientRect().top).toBe(100)
   })
 
   test('keeps the first visible text line fixed when width changes reflow a paragraph', () => {
@@ -605,7 +847,7 @@ describe('ScrollableMessageArea', () => {
     Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
     Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 320,
+      value: -480,
       writable: true,
       configurable: true,
     })
@@ -638,8 +880,59 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 320,
+      top: -480,
       behavior: 'auto',
+    })
+  })
+
+  test('saves the bottom target instead of a smooth-scroll intermediate position', () => {
+    const externalScrollRef = createRef<HTMLDivElement>()
+    render(
+      <div ref={externalScrollRef}>
+        <ScrollableMessageArea
+          conversationKey="external-smooth-bottom"
+          externalScrollRef={externalScrollRef}
+          messages={[
+            {
+              id: 'external-smooth-bottom-message',
+              role: 'assistant',
+              content: '桌面外部滚动容器中的长消息',
+              status: 'done',
+              createdAt: '2026-08-31T00:00:00.000Z',
+            },
+          ]}
+        />
+      </div>
+    )
+
+    const scroller = externalScrollRef.current!
+    Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
+    Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
+    Object.defineProperty(scroller, 'scrollTop', {
+      value: -200,
+      writable: true,
+      configurable: true,
+    })
+    scroller.scrollTo = vi.fn()
+
+    fireEvent.wheel(scroller, { deltaY: -120 })
+    fireEvent.scroll(scroller)
+    const button = screen.getByTestId('scroll-to-bottom-button')
+
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+    act(() => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(scroller.scrollTo).toHaveBeenLastCalledWith({
+      top: -0,
+      behavior: 'smooth',
+    })
+    expect(scroller.scrollTop).toBe(-200)
+    expect(getConversationScrollSnapshot('external-smooth-bottom')).toEqual({
+      distanceFromBottomPx: 0,
+      pinnedToBottom: true,
     })
   })
 
@@ -670,7 +963,7 @@ describe('ScrollableMessageArea', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 800,
+      value: 0,
       writable: true,
       configurable: true,
     })
@@ -702,13 +995,13 @@ describe('ScrollableMessageArea', () => {
     )
 
     scrollHeight = 3000
-    flushScheduledTimers()
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 3000,
+      top: -0,
       behavior: 'auto',
     })
-    expect(scroller.scrollTop).toBe(3000)
+    expect(scroller.scrollTop).toBe(-0)
   })
 
   test('stops external bottom following when the scroll position leaves the bottom', () => {
@@ -734,7 +1027,7 @@ describe('ScrollableMessageArea', () => {
     Object.defineProperty(scroller, 'clientHeight', { value: 200, configurable: true })
     Object.defineProperty(scroller, 'scrollHeight', { value: 1000, configurable: true })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 800,
+      value: 0,
       writable: true,
       configurable: true,
     })
@@ -765,7 +1058,7 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
-    scroller.scrollTop = 350
+    scroller.scrollTop = -450
     fireEvent.wheel(scroller)
     fireEvent.scroll(scroller)
     flushScheduledTimers()
@@ -774,7 +1067,6 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('external-stream-a')).toEqual({
       distanceFromBottomPx: 450,
       pinnedToBottom: false,
-      scrollTopPx: 350,
     })
   })
 
@@ -1211,6 +1503,83 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
 
     expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+  })
+
+  test('aligns the active navigation marker in the task-switch commit', () => {
+    function NavigationFrame({ prefix }: { prefix: string }) {
+      const scrollRef = useRef<HTMLDivElement>(null)
+      const contentRef = useRef<HTMLDivElement>(null)
+      const messages = [
+        {
+          id: `${prefix}-user-1`,
+          role: 'user' as const,
+          content: 'Earlier request',
+          status: 'done' as const,
+          createdAt: '2026-08-31T00:00:00.000Z',
+        },
+        {
+          id: `${prefix}-user-2`,
+          role: 'user' as const,
+          content: 'Visible request',
+          status: 'done' as const,
+          createdAt: '2026-08-31T00:00:01.000Z',
+        },
+      ]
+
+      return (
+        <>
+          <div
+            ref={node => {
+              scrollRef.current = node
+              if (!node) return
+              node.dataset.scrollOrigin = 'bottom'
+              Object.defineProperties(node, {
+                clientHeight: { value: 300, configurable: true },
+                scrollHeight: { value: 1_000, configurable: true },
+                scrollTop: { value: 0, writable: true, configurable: true },
+              })
+              mockRect(node, 0, 300)
+            }}
+          >
+            <div ref={contentRef}>
+              <div
+                data-message-id={`${prefix}-user-1`}
+                ref={node => {
+                  if (node) mockRect(node, -650, -590)
+                }}
+              >
+                Earlier request
+              </div>
+              <div
+                data-message-id={`${prefix}-user-2`}
+                ref={node => {
+                  if (node) mockRect(node, 50, 110)
+                }}
+              >
+                Visible request
+              </div>
+            </div>
+          </div>
+          <MessageTurnNavigation
+            messages={messages}
+            scrollRef={scrollRef}
+            contentRef={contentRef}
+          />
+        </>
+      )
+    }
+
+    const view = render(<NavigationFrame prefix="first-task" />)
+    let markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+
+    view.rerender(<NavigationFrame prefix="second-task" />)
+
+    markers = screen.getAllByTestId('message-turn-navigation-marker')
+    expect(markers[0]).toHaveAttribute('data-active', 'false')
+    expect(markers[1]).toHaveAttribute('data-active', 'true')
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   test('deduplicates retry navigation entries that point to the same user message', () => {
@@ -2064,7 +2433,6 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('navigation-settle')).toEqual({
       distanceFromBottomPx: 1216,
       pinnedToBottom: false,
-      scrollTopPx: 84,
     })
     expect(content).toBeInTheDocument()
     vi.stubGlobal('ResizeObserver', originalResizeObserver)
@@ -2549,7 +2917,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     flushScheduledTimers()
-    expect(scroller.scrollTop).toBe(1_000)
+    expect(scroller.scrollTop).toBe(-0)
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
 
@@ -2567,10 +2935,10 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: scrollHeight,
+      top: -0,
       behavior: 'auto',
     })
-    expect(scroller.scrollTop).toBe(1_140)
+    expect(scroller.scrollTop).toBe(-0)
   })
 
   test('follows the assistant response after latest-user placement stabilizes', () => {
@@ -2651,8 +3019,9 @@ describe('ScrollableMessageArea', () => {
       />
     )
 
+    flushStreamingFollow()
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 1000,
+      top: 800,
       behavior: 'auto',
     })
     flushScheduledTimers()
@@ -2661,11 +3030,11 @@ describe('ScrollableMessageArea', () => {
     scrollHeight = 1600
     act(() => {
       resizeCallbacks.forEach(callback => callback([], {} as ResizeObserver))
-      vi.runOnlyPendingTimers()
     })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 1600,
+      top: 1400,
       behavior: 'auto',
     })
   })
@@ -2890,10 +3259,10 @@ describe('ScrollableMessageArea', () => {
         messages={[...initialMessages, assistantMessage]}
       />
     )
-    flushScheduledTimers()
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 600,
+      top: 400,
       behavior: 'auto',
     })
   })
@@ -2943,7 +3312,7 @@ describe('ScrollableMessageArea', () => {
     })
     scroller.scrollTop = 37
     fireEvent.scroll(scroller)
-    flushScheduledTimers()
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 180.5,
@@ -2991,7 +3360,7 @@ describe('ScrollableMessageArea', () => {
     flushScheduledTimers()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 300,
+      top: 500,
       behavior: 'auto',
     })
   })
@@ -3124,7 +3493,6 @@ describe('ScrollableMessageArea', () => {
     expect(getConversationScrollSnapshot('streaming-unmount-bottom')).toEqual({
       distanceFromBottomPx: 0,
       pinnedToBottom: true,
-      scrollTopPx: 400,
     })
   })
 
@@ -3245,9 +3613,7 @@ describe('ScrollableMessageArea', () => {
       <ScrollableMessageArea conversationKey="conversation-loading-a" messages={[messageA]} />
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
       top: 180,
@@ -3332,12 +3698,10 @@ describe('ScrollableMessageArea', () => {
       140
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 300,
+      top: 500,
       behavior: 'auto',
     })
   })
@@ -3425,12 +3789,10 @@ describe('ScrollableMessageArea', () => {
       32
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 300,
+      top: 500,
       behavior: 'auto',
     })
   })
@@ -3513,7 +3875,7 @@ describe('ScrollableMessageArea', () => {
     })
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 40,
+      top: 0,
       behavior: 'auto',
     })
 
@@ -3808,10 +4170,16 @@ describe('ScrollableMessageArea', () => {
       />
     )
 
-    flushScheduledTimers()
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+    expect(scroller.scrollTop).toBeGreaterThan(240)
+    expect(scroller.scrollTop).toBeLessThan(800)
+
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 1000,
+      top: 800,
       behavior: 'auto',
     })
   })
@@ -3862,12 +4230,10 @@ describe('ScrollableMessageArea', () => {
       />
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 800,
+      top: 600,
       behavior: 'auto',
     })
   })
@@ -3923,12 +4289,10 @@ describe('ScrollableMessageArea', () => {
       />
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 800,
+      top: 600,
       behavior: 'auto',
     })
     expect(screen.queryByTestId('scroll-to-bottom-button')).not.toBeInTheDocument()
@@ -4025,6 +4389,7 @@ describe('ScrollableMessageArea', () => {
     fireEvent.scroll(scroller)
     ;(scroller.scrollTo as ReturnType<typeof vi.fn>).mockClear()
     scroller.scrollTop = 400
+    fireEvent.wheel(scroller, { deltaY: 80 })
     fireEvent.scroll(scroller)
     Object.defineProperty(scroller, 'scrollHeight', {
       value: 800,
@@ -4043,12 +4408,10 @@ describe('ScrollableMessageArea', () => {
       />
     )
 
-    act(() => {
-      vi.runOnlyPendingTimers()
-    })
+    flushStreamingFollow()
 
     expect(scroller.scrollTo).toHaveBeenLastCalledWith({
-      top: 800,
+      top: 600,
       behavior: 'auto',
     })
   })

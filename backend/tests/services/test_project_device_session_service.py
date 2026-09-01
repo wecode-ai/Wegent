@@ -484,6 +484,43 @@ async def test_local_device_session_service_calls_device_start_session(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_external_session_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.services.device import session_service
+
+    online_info = AsyncMock(return_value={"socket_id": "socket-123"})
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: SimpleNamespace(
+            json={"spec": {"deviceType": "app"}}
+        ),
+    )
+    monkeypatch.setattr(
+        session_service.device_service,
+        "get_device_online_info",
+        online_info,
+    )
+
+    with pytest.raises(
+        session_service.DeviceSessionError,
+        match="Remote control is disabled for this app device",
+    ):
+        await session_service.local_device_session_service.start_session(
+            db=object(),
+            user_id=7,
+            device_id="app-device",
+            project_id=123,
+            session_type="terminal",
+            path="/repo",
+            allow_app_device=False,
+        )
+
+    online_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_local_device_session_service_maps_terminal_registry_failures(
     monkeypatch,
 ):

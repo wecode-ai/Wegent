@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
@@ -11,6 +20,7 @@ import {
   getAuthenticatedAttachmentId,
   isAuthenticatedAttachmentImageSrc,
   isHtmlFilePath,
+  localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
   type MarkdownLinkTarget,
 } from './assistantMarkdownLinks'
@@ -23,9 +33,11 @@ import { splitCodexInlineVisualizations } from '@/lib/codex-directives'
 import { openExternalUrl } from '@/lib/external-links'
 import { getRecognizedLink } from '@/lib/link-preview'
 import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
+import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -41,8 +53,10 @@ const TRAILING_CONTENT_REFERENCE_CITATION_PATTERN = /\uE200cite(?:\uE202[\s\S]*)
 const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
+const WEWORK_MARKDOWN_IMAGE_PATH = '/markdown-image'
+const WEWORK_MARKDOWN_IMAGE_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_IMAGE_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
+const MARKDOWN_WINDOW_ROOT_MARGIN = '1600px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
@@ -50,6 +64,7 @@ const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingplantuml', 'plantuml'],
   ['weworkstreamingpuml', 'puml'],
 ])
+const MarkdownStreamingContext = createContext(false)
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -106,6 +121,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const streamdownMode =
+    variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
@@ -116,7 +133,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
-      const windowed = chunks.length > 1
+      const windowed = windowMarkdown
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
   }, [displayContent, windowMarkdown])
@@ -187,7 +204,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
+        <MarkdownCode {...props} compact={variant === 'process'} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -232,7 +249,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, isStreaming, openFile, variant]
+    [headingClasses, openFile, variant]
   )
 
   return (
@@ -254,34 +271,39 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             content={part.content}
             eager={index === 0 || index === contentParts.length - 1}
           >
+            <MarkdownStreamingContext.Provider
+              value={isStreaming && index === contentParts.length - 1}
+            >
+              <Streamdown
+                mode={streamdownMode}
+                isAnimating={false}
+                controls={false}
+                linkSafety={{ enabled: false }}
+                lineNumbers={false}
+                urlTransform={url => url}
+                components={components}
+              >
+                {prepareAssistantMarkdownContent(
+                  part.content,
+                  isStreaming && index === contentParts.length - 1
+                )}
+              </Streamdown>
+            </MarkdownStreamingContext.Provider>
+          </WindowedMarkdownChunk>
+        ) : (
+          <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
             <Streamdown
-              mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
-              isAnimating={isStreaming && index === contentParts.length - 1}
+              mode={streamdownMode}
+              isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(
-                part.content,
-                isStreaming && index === contentParts.length - 1
-              )}
+              {prepareAssistantMarkdownContent(part.content, isStreaming)}
             </Streamdown>
-          </WindowedMarkdownChunk>
-        ) : (
-          <Streamdown
-            key={`markdown-${index}`}
-            mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={isStreaming}
-            controls={false}
-            linkSafety={{ enabled: false }}
-            lineNumbers={false}
-            urlTransform={url => url}
-            components={components}
-          >
-            {prepareAssistantMarkdownContent(part.content, isStreaming)}
-          </Streamdown>
+          </MarkdownStreamingContext.Provider>
         )
       )}
     </div>
@@ -304,7 +326,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,19 +344,27 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
+
+  const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content)
 
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={
-        nearViewport
-          ? undefined
-          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
-      }
+      style={nearViewport ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? children : null}
+      {nearViewport ? (
+        children
+      ) : (
+        <div
+          data-markdown-window-placeholder
+          className="overflow-hidden whitespace-pre-wrap leading-6"
+          style={{ maxHeight: reservedHeight }}
+        >
+          {content}
+        </div>
+      )}
     </div>
   )
 }
@@ -347,17 +377,10 @@ function estimateMarkdownChunkHeight(content: string): number {
 type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
-  isStreaming?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({
-  className,
-  children,
-  node,
-  compact = false,
-  isStreaming = false,
-  ...props
-}: MarkdownCodeProps) {
+function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+  const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
@@ -476,16 +499,62 @@ function stripUnsupportedContentReferenceCitations(content: string): string {
     .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
 }
 
+function splitMarkdownImageDestination(rawHref: string): {
+  destination: string
+  titleSuffix: string
+} {
+  const href = rawHref.trim()
+  if (href.startsWith('<')) {
+    const closingBracket = href.indexOf('>')
+    if (closingBracket > 0) {
+      return {
+        destination: href.slice(1, closingBracket),
+        titleSuffix: href.slice(closingBracket + 1),
+      }
+    }
+  }
+
+  const titledDestination = href.match(/^(.*?)(\s+(?:"[^"]*"|'[^']*'))$/)
+  return titledDestination
+    ? {
+        destination: titledDestination[1].trim(),
+        titleSuffix: titledDestination[2],
+      }
+    : { destination: href, titleSuffix: '' }
+}
+
 function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
-    if (imageMarker) return match
     const href = String(rawHref).trim()
+    if (imageMarker) {
+      const { destination, titleSuffix } = splitMarkdownImageDestination(href)
+      const localPath = localMarkdownImagePath(destination)
+      return localPath
+        ? `![${label}](${WEWORK_MARKDOWN_IMAGE_PREFIX}${encodeURIComponent(localPath)}${titleSuffix})`
+        : match
+    }
     const target = classifyMarkdownLink(href)
     if (target.kind !== 'file') return match
     return `[${label}](${WEWORK_MARKDOWN_FILE_LINK_PREFIX}${encodeURIComponent(
       decodeMarkdownFilePath(href)
     )})`
   })
+}
+
+function decodeLocalMarkdownImageSrc(src: string): string {
+  try {
+    const url = new URL(src)
+    if (
+      url.protocol === 'https:' &&
+      url.hostname === WEWORK_MARKDOWN_FILE_LINK_HOST &&
+      url.pathname === WEWORK_MARKDOWN_IMAGE_PATH
+    ) {
+      return url.searchParams.get('path') ?? src
+    }
+  } catch {
+    return src
+  }
+  return src
 }
 
 function decodeLocalMarkdownHref(href?: string): string | undefined {
@@ -604,41 +673,42 @@ function AssistantMarkdownLink({
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
     return (
-      <button
-        type="button"
-        className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
-        data-testid="assistant-markdown-link"
-        onClick={() => {
-          if (isHtmlFilePath(filePath)) {
-            if (requestEmbeddedBrowserOpen(filePath)) return
-          }
-          if (openOptions) {
-            onOpenFile?.(filePath, openOptions)
-            return
-          }
-          onOpenFile?.(filePath)
-        }}
-        aria-label={tooltip}
+      <Tooltip
+        label={tooltip}
+        align="start"
+        testId="assistant-markdown-link-tooltip"
+        className="min-w-0 max-w-full !shrink align-baseline"
       >
-        {icon}
-        <span
-          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
-          data-testid="assistant-markdown-link-label"
+        <button
+          type="button"
+          className={ASSISTANT_MARKDOWN_LINK_CLASS}
+          data-testid="assistant-markdown-link"
+          onClick={() => {
+            if (isHtmlFilePath(filePath)) {
+              if (requestEmbeddedBrowserOpen(filePath)) return
+            }
+            if (openOptions) {
+              onOpenFile?.(filePath, openOptions)
+              return
+            }
+            onOpenFile?.(filePath)
+          }}
+          aria-label={tooltip}
         >
-          {children}
-        </span>
-        {lineLabel ? (
-          <span className="shrink-0" data-testid="assistant-markdown-link-line">
-            ({lineLabel})
+          {icon}
+          <span
+            className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+            data-testid="assistant-markdown-link-label"
+          >
+            {children}
           </span>
-        ) : null}
-        <span
-          data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
-        >
-          {tooltip}
-        </span>
-      </button>
+          {lineLabel ? (
+            <span className="shrink-0" data-testid="assistant-markdown-link-line">
+              ({lineLabel})
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
     )
   }
 
@@ -669,16 +739,18 @@ function AssistantMarkdownLink({
 
 function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   const fetchAttachmentBlob = useAttachmentDownload()
-  const rawSrc = typeof src === 'string' ? src.trim() : ''
-  const [authenticatedPreview, setAuthenticatedPreview] = useState<{
+  const rawSrc = typeof src === 'string' ? decodeLocalMarkdownImageSrc(src.trim()) : ''
+  const [loadedPreview, setLoadedPreview] = useState<{
     rawSrc: string
     url: string
   } | null>(null)
   const [failedSrc, setFailedSrc] = useState<string | null>(null)
   const isAuthenticatedSrc = rawSrc ? isAuthenticatedAttachmentImageSrc(rawSrc) : false
-  const resolvedSrc = isAuthenticatedSrc
-    ? authenticatedPreview?.rawSrc === rawSrc
-      ? authenticatedPreview.url
+  const localPath = rawSrc ? localMarkdownImagePath(rawSrc) : null
+  const requiresBlobPreview = isAuthenticatedSrc || Boolean(localPath && isElectronRuntime())
+  const resolvedSrc = requiresBlobPreview
+    ? loadedPreview?.rawSrc === rawSrc
+      ? loadedPreview.url
       : null
     : rawSrc
       ? resolveDirectMarkdownImageSrc(rawSrc)
@@ -689,26 +761,33 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
     let objectUrl: string | null = null
     let isMounted = true
 
-    if (!rawSrc || !isAuthenticatedSrc) {
+    if (!rawSrc || !requiresBlobPreview) {
       return () => {
         isMounted = false
       }
     }
 
-    async function loadAuthenticatedImage() {
+    async function loadImage() {
       try {
-        const attachmentId = getAuthenticatedAttachmentId(rawSrc)
-        if (attachmentId === null) {
-          throw new Error('Failed to resolve markdown attachment')
-        }
-        const blob = await fetchAttachmentBlob(attachmentId)
-        if (!blob.type.startsWith('image/')) {
-          throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
+        let blob: Blob
+        if (isAuthenticatedSrc) {
+          const attachmentId = getAuthenticatedAttachmentId(rawSrc)
+          if (attachmentId === null) {
+            throw new Error('Failed to resolve markdown attachment')
+          }
+          blob = await fetchAttachmentBlob(attachmentId)
+          if (!blob.type.startsWith('image/')) {
+            throw new Error(`Markdown image response is not an image: ${blob.type || 'unknown'}`)
+          }
+        } else if (localPath) {
+          blob = new Blob([await readElectronLocalFile(localPath)])
+        } else {
+          throw new Error('Failed to resolve local markdown image')
         }
 
         objectUrl = URL.createObjectURL(blob)
         if (isMounted) {
-          setAuthenticatedPreview({ rawSrc, url: objectUrl })
+          setLoadedPreview({ rawSrc, url: objectUrl })
         } else {
           URL.revokeObjectURL(objectUrl)
         }
@@ -719,7 +798,7 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       }
     }
 
-    void loadAuthenticatedImage()
+    void loadImage()
 
     return () => {
       isMounted = false
@@ -727,7 +806,7 @@ function AssistantMarkdownImage({ src, alt }: { src?: string; alt?: string }) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [fetchAttachmentBlob, isAuthenticatedSrc, rawSrc])
+  }, [fetchAttachmentBlob, isAuthenticatedSrc, localPath, rawSrc, requiresBlobPreview])
 
   if (hasError) {
     return (

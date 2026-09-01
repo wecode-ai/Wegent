@@ -31,6 +31,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       snapshot: 'snapshot',
       debug: 'getWorkbenchDebugSnapshot',
       'active-element': 'getActiveElementTestId',
+      'activate-task-notification': 'activateRuntimeTaskCompletionNotification',
       click: 'click',
       'click-at': 'clickAt',
       'click-then-macrotask': 'clickThenMacrotask',
@@ -48,6 +49,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       reload: 'reloadApp',
       'close-to-tray': 'closeMainWindowToTray',
       'request-close': 'requestMainWindowClose',
+      'selection-offset': 'getSelectionOffset',
       'dismiss-popout': 'dismissPopoutWindow',
       drag: 'drag',
       'drop-file': 'dropFile',
@@ -58,17 +60,20 @@ describe('AI_VERIFY_ACTIONS', () => {
       metrics: 'getElementMetrics',
       navigate: 'navigate',
       'paste-paths': 'pastePaths',
+      'paste-text': 'pasteText',
       'pointer-move': 'pointerMove',
       press: 'press',
       submit: 'submit',
       'scroll-into-view': 'scrollIntoView',
       'select-text': 'selectText',
+      'set-selection-offset': 'setSelectionOffset',
       'show-popout': 'showPopoutWindow',
       'system-drag-drop': 'completeSystemDragDrop',
       'verify-browser-inspector': 'verifyEmbeddedBrowserDetachedInspector',
       'wait-for': 'waitFor',
       'window-focus-snapshot': 'getWindowFocusSnapshot',
       text: 'getText',
+      value: 'getValue',
     })
   })
 })
@@ -420,8 +425,11 @@ describe('buildSourceRuntimeEnvironment', () => {
     const environment = await buildSourceRuntimeEnvironment('darwin', 'arm64')
 
     expect(environment).not.toHaveProperty('WEWORK_NODE_PATH')
-    expect(environment.WEWORK_EXECUTOR_PATH).toContain('/debug/wegent-executor')
+    expect(environment.WEWORK_EXECUTOR_PATH).toContain(
+      '/executor/target/ai-verify/debug/wegent-executor'
+    )
     expect(environment.WEWORK_COMPONENT_RESOURCES_ROOT).toContain('/electron/resources')
+    expect(environment.WEWORK_CORE_PLUGIN_ROOT).toContain('/electron/resources/wework-core-plugins')
     expect(environment.WEWORK_HARNESS_RUNTIME_ROOT).toContain('harness-runtime-dev')
   })
 })

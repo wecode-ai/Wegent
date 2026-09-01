@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEventHandler } from 'react'
+import { DEFAULT_WORK_ITEM_PROJECT_ID } from '@/api/deliveries'
 import type { ProjectCreateMode } from '@/components/chat/ChatInput'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useAuth } from '@/features/auth/useAuth'
@@ -51,7 +52,6 @@ import {
   closeLocalTerminal,
   isLocalHarnessAvailable,
   listLocalHarnessSessions,
-  updateLocalHarnessSessionTitle,
   WEWORK_LOCAL_HARNESS_SESSIONS_CHANGED_EVENT,
 } from '@/lib/local-terminal'
 import type {
@@ -103,6 +103,13 @@ function boardRouteProjectRef(contentRoute: string): RuntimeProjectSpaceRef | nu
   const projectStore = boardRouteParam(contentRoute, 'projectStore')
   if (!projectId || (projectStore !== 'local' && projectStore !== 'backend')) return null
   return { projectId, projectStore }
+}
+
+function boardRouteRequestsDefaultProject(contentRoute: string): boolean {
+  return (
+    boardRouteParam(contentRoute, 'projectId') === DEFAULT_WORK_ITEM_PROJECT_ID &&
+    boardRouteParam(contentRoute, 'projectStore') === null
+  )
 }
 
 interface DesktopWorkbenchLayoutProps {
@@ -397,7 +404,6 @@ export function DesktopWorkbenchLayout({
   const openRuntimeTaskOutsideHarness = useCallback(
     async (address: RuntimeTaskAddress) => {
       setActiveLocalHarnessSessionId(null)
-      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
       activateSplitPane(
         getWorkbenchPaneKey({
           currentRuntimeTask: address,
@@ -407,6 +413,7 @@ export function DesktopWorkbenchLayout({
       if (!(currentPath === '/' && isSameRuntimeTask(state.currentRuntimeTask, address))) {
         await onOpenRuntimeTask(address)
       }
+      requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
     },
     [activateSplitPane, currentPath, onOpenRuntimeTask, state.currentRuntimeTask]
   )
@@ -422,20 +429,6 @@ export function DesktopWorkbenchLayout({
     },
     []
   )
-  const updateHarnessSessionTitle = useCallback((sessionId: string, title: string) => {
-    const normalized = title.trim().replace(/\s+/g, ' ').slice(0, 80)
-    if (!normalized) return
-    setLocalHarnessSessions(current =>
-      current.map(session =>
-        session.sessionId === sessionId && session.title !== normalized
-          ? { ...session, title: normalized }
-          : session
-      )
-    )
-    void updateLocalHarnessSessionTitle(sessionId, normalized).catch(error => {
-      console.warn('Failed to persist local Harness session title:', error)
-    })
-  }, [])
   const openLocalHarnessSession = useCallback((sessionId: string) => {
     setActiveLocalHarnessSessionId(sessionId)
     navigateTo('/')
@@ -1070,6 +1063,7 @@ export function DesktopWorkbenchLayout({
                 runtimeWork={state.runtimeWork}
                 runtimeTaskLifecycle={runtimeTaskLifecycle}
                 services={services}
+                startupActive={routeActive && todoOpen}
                 onCreateLocalCodeProject={onCreateLocalRuntimeProject}
                 onGetDeviceHomeDirectory={onGetDeviceHomeDirectory}
                 onListDeviceDirectories={onListDeviceDirectories}
@@ -1084,6 +1078,10 @@ export function DesktopWorkbenchLayout({
                     ? boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
                     : undefined
                 }
+                defaultProjectRequested={
+                  workspaceTabs?.activeTab.kind === 'board' &&
+                  boardRouteRequestsDefaultProject(workspaceTabs.activeTab.contentRoute)
+                }
                 focusedItemId={
                   workspaceTabs?.activeTab.kind === 'board'
                     ? boardRouteParam(workspaceTabs.activeTab.contentRoute, 'itemId')
@@ -1092,10 +1090,15 @@ export function DesktopWorkbenchLayout({
                 onFocusedItemHandled={() => {
                   if (!workspaceTabs || workspaceTabs.activeTab.kind !== 'board') return
                   const projectRef = boardRouteProjectRef(workspaceTabs.activeTab.contentRoute)
+                  const defaultProjectRequested = boardRouteRequestsDefaultProject(
+                    workspaceTabs.activeTab.contentRoute
+                  )
                   const params = new URLSearchParams()
                   if (projectRef) {
                     params.set('projectStore', projectRef.projectStore)
                     params.set('projectId', projectRef.projectId)
+                  } else if (defaultProjectRequested) {
+                    params.set('projectId', DEFAULT_WORK_ITEM_PROJECT_ID)
                   }
                   workspaceTabs.updateActiveTab({
                     contentRoute: `/todo${params.size ? `?${params.toString()}` : ''}`,
@@ -1138,7 +1141,6 @@ export function DesktopWorkbenchLayout({
               localHarnessSessions={localHarnessSessions}
               activeLocalHarnessSessionId={activeLocalHarnessSessionId}
               onLocalHarnessSessionStarted={registerLocalHarnessSession}
-              onLocalHarnessSessionTitleChange={updateHarnessSessionTitle}
               onLocalHarnessSessionClose={closeLocalHarnessSession}
               onLocalHarnessSessionExit={markLocalHarnessSessionInactive}
             />

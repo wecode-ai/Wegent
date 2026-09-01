@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { AspectRatioOption, ResolutionOption } from '@/apis/models'
+import { getVideoParamVisibility } from '@/features/tasks/utils/teamModeSpec'
 import { formatVideoDuration } from '@/features/tasks/utils/videoDuration'
 
 export interface VideoSettingsPopoverProps {
@@ -38,6 +39,7 @@ export interface VideoSettingsPopoverProps {
   // State
   disabled?: boolean
   showDuration?: boolean
+  hiddenVideoParams?: string[]
   triggerVariant?: 'default' | 'menu-item'
   iconOnly?: boolean
 }
@@ -79,11 +81,20 @@ export function VideoSettingsPopover({
   resolutionOptions,
   disabled = false,
   showDuration = true,
+  hiddenVideoParams = [],
   triggerVariant = 'default',
   iconOnly = false,
 }: VideoSettingsPopoverProps) {
   const { t } = useTranslation('chat')
   const [isOpen, setIsOpen] = useState(false)
+  const {
+    showRatio,
+    showDuration: showVideoDuration,
+    showResolution,
+    showSettings,
+  } = getVideoParamVisibility(hiddenVideoParams, showDuration)
+
+  if (!showSettings) return null
 
   // Build summary text for trigger button
   const selectedRatioLabel =
@@ -94,9 +105,9 @@ export function VideoSettingsPopover({
   const autoDurationLabel = t('video.duration_auto')
   const selectedDurationLabel = formatVideoDuration(selectedDuration, autoDurationLabel)
   const summaryText = [
-    selectedRatioLabel,
-    ...(showDuration ? [selectedDurationLabel] : []),
-    selectedResolutionLabel,
+    ...(showRatio ? [selectedRatioLabel] : []),
+    ...(showVideoDuration ? [selectedDurationLabel] : []),
+    ...(showResolution ? [selectedResolutionLabel] : []),
   ].join(' · ')
   const displayedRatios = ratioOptions?.length
     ? ratioOptions
@@ -140,7 +151,7 @@ export function VideoSettingsPopover({
       >
         <div className="space-y-4">
           {/* Aspect Ratio Section */}
-          <div>
+          <div hidden={!showRatio}>
             <h4 className="text-sm font-medium text-text-primary mb-2">
               {t('video.ratio_section')}
             </h4>
@@ -166,7 +177,7 @@ export function VideoSettingsPopover({
             </div>
           </div>
 
-          {showDuration && (
+          {showVideoDuration && (
             <div>
               <h4 className="text-sm font-medium text-text-primary mb-2">
                 {t('video.duration_section')}
@@ -193,7 +204,7 @@ export function VideoSettingsPopover({
           )}
 
           {/* Resolution Section */}
-          <div>
+          <div hidden={!showResolution}>
             <h4 className="text-sm font-medium text-text-primary mb-2">
               {t('video.resolution_section')}
             </h4>

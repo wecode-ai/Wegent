@@ -1,6 +1,6 @@
 # 🛠️ 开发者指南
 
-[English](../../en/developer-guide/README.md) | 简体中文
+[English](../../../en/wegent/developer-guide/README.md) | 简体中文
 
 欢迎使用 Wegent 开发者指南！本指南将帮助您了解如何开发和扩展 Wegent。
 
@@ -24,6 +24,7 @@
 
 - [MCP 工具重构指南](./mcp-refactoring-guide.md) - Knowledge MCP 工具重构架构
 - [外部知识库 MCP](./external-knowledge-mcp.md) - 受信任外部系统的知识库 MCP 集成
+- [外部 OAuth 2.0 接入](./external-oauth-integration.md) - Authorization Code、PKCE、userinfo、刷新与撤销
 
 ### 💬 Chat Shell
 

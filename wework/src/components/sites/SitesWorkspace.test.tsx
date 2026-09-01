@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import type { ComponentProps } from 'react'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -6,7 +8,21 @@ import { ApiError } from '@/api/http'
 import type { MiniProgram, Site, SiteListItem, SitesApi } from '@/api/sites'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { SitesWorkspace } from './SitesWorkspace'
+import { SitesWorkspace as SitesWorkspaceComponent } from './SitesWorkspace'
+
+type SitesWorkspaceProps = Omit<ComponentProps<typeof SitesWorkspaceComponent>, 'search'>
+
+function SitesWorkspace(props: SitesWorkspaceProps) {
+  const [search, setSearch] = useState(window.location.search)
+
+  useEffect(() => {
+    const syncSearch = () => setSearch(window.location.search)
+    window.addEventListener('popstate', syncSearch)
+    return () => window.removeEventListener('popstate', syncSearch)
+  }, [])
+
+  return <SitesWorkspaceComponent {...props} search={search} />
+}
 
 vi.mock('@/lib/clipboard', () => ({
   copyTextToClipboard: vi.fn().mockResolvedValue(undefined),

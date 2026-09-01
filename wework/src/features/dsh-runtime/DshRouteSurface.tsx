@@ -1,11 +1,14 @@
-import { createElement, Suspense, use, type ComponentType } from 'react'
+import { createElement, Suspense, use, useCallback, type ComponentType } from 'react'
 
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { navigateTo } from '@/lib/navigation'
 import { DshSlotSurface } from './DshSlotSurface'
 import type { WeworkDshRoute } from './dshRoutes'
 import { WEWORK_DSH_SLOTS } from './dshUiSlots'
 import { getLoadedDshUiModule, importDshUiModule } from './dshUiModules'
 
 interface DshRouteModuleProps {
+  onNavigate?: (path: string) => void
   search?: string
 }
 
@@ -19,11 +22,35 @@ function DshRouteModuleLoader({ module, ...props }: DshRouteModuleProps & { modu
   return createElement(loaded.default, props)
 }
 
-export function DshRouteSurface({ route, search }: { route: WeworkDshRoute; search: string }) {
+export function DshRouteSurface({
+  route,
+  search,
+  workspaceTabId,
+}: {
+  route: WeworkDshRoute
+  search: string
+  workspaceTabId: string
+}) {
+  const workspaceTabs = useOptionalWorkspaceTabs()
+  const onNavigate = useCallback(
+    (path: string) => {
+      if (workspaceTabs) {
+        if (workspaceTabs.activeTabId === workspaceTabId) {
+          workspaceTabs.updateActiveTab({ contentRoute: path })
+          return
+        }
+        workspaceTabs.selectTab(workspaceTabId, { contentRoute: path })
+        return
+      }
+      navigateTo(path)
+    },
+    [workspaceTabId, workspaceTabs]
+  )
+
   if (route.module) {
     return (
       <Suspense fallback={<div className="h-full min-h-0" data-testid="dsh-route-loading" />}>
-        <DshRouteModuleLoader module={route.module} search={search} />
+        <DshRouteModuleLoader module={route.module} onNavigate={onNavigate} search={search} />
       </Suspense>
     )
   }
@@ -31,7 +58,7 @@ export function DshRouteSurface({ route, search }: { route: WeworkDshRoute; sear
     <DshSlotSurface
       className="h-full min-h-0"
       entryId={route.id}
-      props={{ search }}
+      props={{ onNavigate, search }}
       slot={WEWORK_DSH_SLOTS.route}
       testId={`dsh-route-surface-${route.id}`}
     />

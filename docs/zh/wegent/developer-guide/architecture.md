@@ -359,13 +359,20 @@ WARMPOOL_TEMPLATE_NAME: ""           # Sandbox 与标准 Executor 共用的模�
 EXECUTOR_WARMPOOL_ENABLED: true       # 是否允许标准 Executor 使用共享预热池
 EXECUTOR_NON_GIT_WARMPOOL_ENABLED: false # 是否允许非 Git Executor 使用共享预热池
 EXECUTOR_GIT_WARMPOOL_ENABLED: false  # 是否允许安全的 HTTPS Git 任务使用共享预热池
+WEGENT_GIT_CLONE_TIMEOUT_SECONDS: 600 # Git clone 总超时，取值范围 1-3600 秒
+WEGENT_GIT_HTTP_LOW_SPEED_LIMIT: 1024 # Git HTTP 最低传输速率（字节/秒）
+WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS: 60 # 低速持续多久后由 Git 中止
 ```
 
 #### Kubernetes Executor 预热池
 
 Kubernetes 部署中的标准 `online` 任务与交互式 Sandbox 共用 `WARMPOOL_TEMPLATE_NAME` 指向的同一个 `SandboxTemplate` 和 `SandboxWarmPool`，不再创建独立的 Executor 池。非 Git 任务只有在 `EXECUTOR_WARMPOOL_ENABLED=true` 且显式开启 `EXECUTOR_NON_GIT_WARMPOOL_ENABLED=true` 时才使用共享池；新开关默认关闭，因此未配置时仍直建 Pod。Git 任务不依赖非 Git 开关，但必须同时开启标准 Executor 总开关和 `EXECUTOR_GIT_WARMPOOL_ENABLED`，并满足：仓库使用 HTTPS、请求携带与仓库域名精确匹配的加密 Token、凭据传输方式为 `encrypted_request_token`。SSH、HTTP、`git_worktree`、缺少 Token、仍依赖用户 Secret、自定义 Executor 镜像或 `base_image` 的任务继续直建 Pod。用户配置过 Git 账号本身不代表当前任务是 Git 任务。
 
-预热 Pod 启动时只包含静态运行时配置，不预置 task ID、认证 Token、Git Token、技能身份或任务心跳 ID。Executor Manager 领取 Pod 后只写入非敏感任务标签；加密 Git Token 随首次 `/v1/responses` 请求传入，由 Executor 解密后写入任务私有的 AskPass 文件，并通过任务进程环境提供给 Git、`gh` 和 `glab`。Token 不进入 clone URL、进程 argv、Pod 标签、annotation 或 Redis binding。`WARMPOOL_ENABLED` 是共享池总开关，Git 开关默认关闭。上线前必须先将共享池模板升级到包含动态任务心跳和任务级 Git 认证能力、且与 `EXECUTOR_IMAGE` 一致的镜像，并同时验证 Sandbox、非 Git Executor 与 HTTPS Git Executor。
+预热 Pod 启动时只包含静态运行时配置，不预置 task ID、认证 Token、Git Token、技能身份或任务心跳 ID。Executor Manager 领取 Pod 后只写入非敏感任务标签；加密 Git Token 随首次 `/v1/responses` 请求传入，由 Executor 解密后写入任务私有的 AskPass 文件，并通过任务进程环境提供给 Git、`gh` 和 `glab`。Token 不进入 clone URL、进程 argv、Pod 标签、annotation 或 Redis binding。`WARMPOOL_ENABLED` 是共享池总开关，Git 开关默认关闭；只有部署显式设置 `EXECUTOR_GIT_WARMPOOL_ENABLED=true` 时才会启用。上线前必须先将共享池模板升级到包含动态任务心跳和任务级 Git 认证能力、且与 `EXECUTOR_IMAGE` 一致的镜像，并同时验证 Sandbox、非 Git Executor 与 HTTPS Git Executor。
+
+Git 任务领取前，Executor Manager 会校验 `SandboxTemplate` 的镜像、GitHub 域名代理配置以及 `/etc/wegent-executor-secret` 对应的 AES Secret 挂载；领取后会再次校验实际 Pod，防止同名模板更新后仍领取到旧 standby Pod。任一检查缺失或无法完成时，该 Claim 会被丢弃，任务改为创建 direct Pod，不会向不兼容的预热 Pod 下发 Git 凭据。
+
+Executor 执行 `git clone` 时禁用交互式凭据提示，并同时使用总超时和 Git HTTP low-speed 限制。总超时后会终止 Git 所在的整个进程组、清理本次 clone 的半成品目录，并向任务返回终态错误；已有工作区也必须通过本地 `HEAD` 校验，避免把中断 clone 留下的 `.git` 目录误判为可用仓库。该流程不会自动重试。
 
 预热 Executor 的删除必须以 `SandboxClaim` 为所有权边界：显式删除、按 task ID 删除和孤儿资源清理都会优先删除 Claim，由控制器级联清理 Sandbox、Service 和 Pod。非 Git Executor 领取后会在 Claim 和 Pod 上标记 `pool-profile=executor-standard`、task ID 和 `pool-state=bound`；孤儿扫描只处理这类已领取 Pod，明确排除未领取的共享池容量和交互式 Sandbox，并可通过 Claim 标签清理 Pod 已丢失的遗留绑定。删除成功后同时移除任务心跳、RunningTaskTracker 状态和 Redis executor binding。
 
@@ -398,11 +405,13 @@ Kubernetes 部署中的标准 `online` 任务与交互式 Sandbox 共用 `WARMPO
 
 Rust executor 是唯一的 executor 运行时实现。Backend 的 Chat shell 仍可走进程内路径，其他任务由 standalone/local executor 执行；Wework 打包 App 的 local-first 模式不启动本地 Backend，而是通过 Electron IPC 直接调用 executor。Codex 运行时通过 `codex app-server --stdio` 的 JSON-RPC 协议创建、继续、读取、归档和重命名线程，executor 只保存必要的本地任务索引和 `localTaskId -> threadId` 关联。
 
+Executor 准备 Git 工作区时会禁用交互式凭据提示，并同时使用总超时和 Git HTTP low-speed 限制。`WEGENT_GIT_CLONE_TIMEOUT_SECONDS` 控制总超时，默认 600 秒并限制在 1-3600 秒；`WEGENT_GIT_HTTP_LOW_SPEED_LIMIT` 和 `WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS` 默认分别为 1024 字节/秒和 60 秒。总超时后会终止 Git 所在的整个进程组、清理本次 clone 的半成品目录，并向任务返回终态错误；已有工作区也必须通过本地 `HEAD` 校验，避免把中断 clone 留下的 `.git` 目录误判为可用仓库。该流程不会自动重试。
+
 Claude Code 恢复交互表单会话时，executor 只把与本次已回答表单具有相同 `tool_use_id`、且工具类型仍为交互表单的 defer 视为恢复阶段残留结果。模型随后返回不同 `tool_use_id` 的表单表示新的用户澄清，即使同一响应还包含文本，也必须继续代理到交互 MCP 并等待用户输入，不能按旧 defer 丢弃。
 
 附件在进入 Codex 前由 executor 按类型转换：图片作为本地图片输入，文本附件附带受限预览和完整本地路径，ZIP、PDF 等二进制附件则附带文件名、MIME 类型、大小和本地路径。即使用户只发送附件而正文为空，Codex 仍能从输入上下文定位该文件；不同类型的上下文互斥生成，避免图片或文本附件被重复注入。
 
-图片转换可能生成仅供模型读取的临时 `*.model-input.*` 文件，但该路径不能作为 Wework 消息附件的持久化地址。executor 从 Codex transcript 恢复用户消息时，优先使用文件提及上下文或本地 runtime handle 中保留的原始附件路径；临时模型输入仅用于推理阶段。这样临时文件清理后，历史消息、任务切换和重开任务仍能显示原始图片预览。
+图片转换可能生成仅供模型读取的临时 `*.model-input.*` 文件，但该路径不能作为 Wework 消息附件的持久化地址。renderer 创建的 `blob:` URL 也只在当前页面生命周期内有效；只要附件已有 `local_path`，executor 写入本地 runtime handle 和恢复 transcript 时都必须用该路径规范化 `local_preview_url`，不能持久化 `blob:` URL。executor 从 Codex transcript 恢复用户消息时，优先使用文件提及上下文或本地 runtime handle 中保留的原始附件路径；临时模型输入仅用于推理阶段。这样临时文件清理、页面刷新后，历史消息、任务切换和重开任务仍能显示原始图片预览。
 
 Codex transcript 分页必须保持严格的页边界。本地 runtime handle 中用于补齐附件、引用或 supervisor 输入的用户消息 presentation，只有在 client message ID 已命中当前页，或其 turn ID / 创建时间属于当前页范围时，才能合入该页；不能因为 `ensureVisible` 就把新页消息重复注入旧页。Wework 在请求更早页或补齐中间缺口前记录当前 `scrollHeight` 和距底部距离，临时关闭浏览器原生滚动锚定，并在分页内容完成布局后恢复同一距底部位置。这样旧消息 prepend、虚拟列表重测量和底部 sticky composer 共享一个确定的滚动事务，不会产生消息重复或输入框随内容漂移。
 

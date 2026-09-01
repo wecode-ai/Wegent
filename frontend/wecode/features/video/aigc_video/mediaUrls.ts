@@ -2,11 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export function getAigcVideoPlaybackUrl(videoUrl: string): string {
+export function getAigcVideoPlaybackUrl(videoUrl: string, shareToken?: string): string {
   try {
     const hostname = new URL(videoUrl).hostname.toLowerCase()
     if (hostname === 'weibocdn.com' || hostname.endsWith('.weibocdn.com')) {
-      return `/api/aigc-video/media/playback?video_url=${encodeURIComponent(videoUrl)}`
+      const query = new URLSearchParams({ video_url: videoUrl })
+      if (shareToken) query.set('share_token', shareToken)
+      return `/api/aigc-video/media/playback?${query}`
     }
   } catch {
     return videoUrl
@@ -14,7 +16,7 @@ export function getAigcVideoPlaybackUrl(videoUrl: string): string {
   return videoUrl
 }
 
-export function getAigcVideoImageUrl(imageUrl?: string): string | undefined {
+export function getAigcVideoImageUrl(imageUrl?: string, shareToken?: string): string | undefined {
   if (!imageUrl) return undefined
   try {
     const hostname = new URL(imageUrl).hostname.toLowerCase()
@@ -24,7 +26,9 @@ export function getAigcVideoImageUrl(imageUrl?: string): string | undefined {
       hostname === 'weibocdn.com' ||
       hostname.endsWith('.weibocdn.com')
     ) {
-      return `/api/aigc-video/media/image?image_url=${encodeURIComponent(imageUrl)}`
+      const query = new URLSearchParams({ image_url: imageUrl })
+      if (shareToken) query.set('share_token', shareToken)
+      return `/api/aigc-video/media/image?${query}`
     }
   } catch {
     return imageUrl

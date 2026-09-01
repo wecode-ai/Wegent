@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
+from app.services.attachment.public_link import verify_public_attachment_token
 from app.services.execution.skill_generation import (
     apply_skill_generation_to_skills,
     enrich_skill_generation_context,
@@ -115,6 +117,36 @@ def test_attachment_media_content_extracts_hosted_video_and_audio() -> None:
         {"type": "input_audio", "file_id": "audio-456"},
         {"type": "input_image", "file_id": "image-789"},
     ]
+
+
+def test_attachment_media_content_uses_signed_url_for_local_image(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "wecode.video.api.skill_context.settings.WEGENT_BACKEND_PUBLIC_URL",
+        "http://10.218.17.35:8500",
+    )
+    attachments = [
+        SimpleNamespace(
+            id=14,
+            type_data={
+                "mime_type": "image/png",
+                "image_pid_status": "failed",
+            },
+        )
+    ]
+
+    content = build_attachment_media_content(attachments)
+
+    assert len(content) == 1
+    assert content[0]["type"] == "input_image"
+    assert content[0]["file_id"] == "wegent-attachment-14"
+    assert content[0]["image_source"] == "wegent_attachment_url"
+    parsed = urlsplit(content[0]["image_url"])
+    assert parsed.netloc == "10.218.17.35:8500"
+    assert parsed.path == "/api/attachments/download/shared"
+    token = parse_qs(parsed.query)["token"][0]
+    assert verify_public_attachment_token(token)["attachment_id"] == 14
 
 
 def test_attachment_media_content_merges_without_duplicates() -> None:

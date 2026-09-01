@@ -219,6 +219,43 @@ async fn app_ipc_initializes_a_blank_codex_home() {
 }
 
 #[tokio::test]
+async fn app_ipc_imports_external_codex_content() {
+    let _lock = env_lock().await;
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let codex_home = root.path().join("wework-codex");
+    fs::create_dir_all(home.join(".codex/skills/example")).unwrap();
+    fs::write(home.join(".codex/config.toml"), "model = \"gpt-5\"\n").unwrap();
+    fs::write(home.join(".codex/skills/example/SKILL.md"), "example").unwrap();
+    let _home = EnvGuard::set("HOME", &home.display().to_string());
+    let _codex_home = EnvGuard::set("WEGENT_CODEX_HOME", &codex_home.display().to_string());
+
+    let result = AppIpcServer::new()
+        .dispatch(
+            "executor.codex_home.import_external_content",
+            json!({"source": "codex"}),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result["source"], "codex");
+    assert_eq!(
+        result["sourcePath"],
+        home.join(".codex").display().to_string()
+    );
+    assert_eq!(result["destinationPath"], codex_home.display().to_string());
+    assert_eq!(result["importedEntries"], json!(["config.toml", "skills"]));
+    assert_eq!(
+        fs::read_to_string(codex_home.join("config.toml")).unwrap(),
+        "model = \"gpt-5\"\n"
+    );
+    assert_eq!(
+        fs::read_to_string(codex_home.join("skills/example/SKILL.md")).unwrap(),
+        "example"
+    );
+}
+
+#[tokio::test]
 async fn app_ipc_routes_local_first_plugin_install_as_runtime_rpc() {
     let server = AppIpcServer::new().with_runtime_work_handler(LocalPluginInstallRuntimeHandler);
 
@@ -428,6 +465,64 @@ async fn app_ipc_manages_local_projects_and_nested_todos() {
     assert_eq!(projects[0]["id"], "default-work-items");
     assert_eq!(projects[0]["name"], "我的任务");
     assert!(executor_home.path().join("data/tasks.sqlite").is_file());
+}
+
+#[tokio::test]
+async fn app_ipc_reconciles_runtime_status_at_task_service_boundaries() {
+    let _lock = env_lock().await;
+    let executor_home = tempfile::tempdir().unwrap();
+    let _executor_home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &executor_home.path().display().to_string(),
+    );
+    let reconciliations = Arc::new(Mutex::new(0));
+    let server = AppIpcServer::new().with_runtime_work_handler(ProjectionRuntimeHandler {
+        reconciliations: Arc::clone(&reconciliations),
+    });
+    let project = server
+        .dispatch(
+            "projects.create",
+            json!({
+                "name": "Bound Runtime",
+                "project_key": "BOUND",
+                "task_provider": "local"
+            }),
+        )
+        .await
+        .unwrap();
+    let task = server
+        .dispatch(
+            "todos.create",
+            json!({
+                "project_id": project["id"],
+                "todo": {"title": "Track running task"}
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch(
+            "todos.bind",
+            json!({
+                "project_id": project["id"],
+                "item_id": task["id"],
+                "task": {
+                    "device_id": "local-device",
+                    "task_id": "runtime-running-1",
+                    "task_title": "Track running task"
+                }
+            }),
+        )
+        .await
+        .unwrap();
+
+    server
+        .dispatch("todos.list", json!({"project_id": project["id"]}))
+        .await
+        .unwrap();
+
+    assert_eq!(*reconciliations.lock().unwrap(), 2);
 }
 
 #[tokio::test]
@@ -1823,6 +1918,10 @@ async fn app_ipc_describes_the_versioned_desktop_protocol() {
     assert!(description["renderer_methods"]
         .as_array()
         .unwrap()
+        .contains(&json!("executor.codex_home.import_external_content")));
+    assert!(description["renderer_methods"]
+        .as_array()
+        .unwrap()
         .contains(&json!("executor.codex_home.initialize")));
     assert!(description["capabilities"]
         .as_array()
@@ -1879,6 +1978,27 @@ impl RuntimeWorkHandler for RuntimeHandler {
                 })
             );
             Ok(json!({"success": true, "workspaces": []}))
+        })
+    }
+}
+
+struct ProjectionRuntimeHandler {
+    reconciliations: Arc<Mutex<usize>>,
+}
+
+impl RuntimeWorkHandler for ProjectionRuntimeHandler {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        _data: Value,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
+        Box::pin(async { Ok(json!({})) })
+    }
+
+    fn reconcile_bound_task_statuses<'a>(
+        &'a self,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            *self.reconciliations.lock().unwrap() += 1;
         })
     }
 }

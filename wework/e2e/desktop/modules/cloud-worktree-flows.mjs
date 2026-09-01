@@ -39,6 +39,7 @@ const WORKTREE_QUEUE_SCENARIO = 'worktree_queue_hold'
 const WORKTREE_RESTART_SCENARIO = 'worktree_restart_hold'
 const WORKTREE_QUEUE_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_QUEUE_HOLD'
 const WORKTREE_RESTART_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_RESTART_HOLD'
+const WORKTREE_ARCHIVE_RESTORE_PROMPT = 'WEWORK_DESKTOP_E2E_WORKTREE_ARCHIVE_RESTORE_HOLD'
 
 function scenarioRequestCount(control, scenario) {
   return control.scenarioRequests.get(scenario)?.length ?? 0
@@ -373,12 +374,12 @@ async function verifyCapability(context) {
   const log = await readFile(cloudEnvironment.remoteExecutorLogPath, 'utf8')
   assert.match(
     log,
-    /runtime:rpc received method=runtime\.worktrees\.capabilities/,
+    /runtime:rpc received [^\n]*method=runtime\.worktrees\.capabilities/,
     'The capability assertion did not cross the real Backend-to-Executor RPC route'
   )
   assert.match(
     log,
-    /runtime:rpc received method=runtime\.worktrees\.preflight/,
+    /runtime:rpc received [^\n]*method=runtime\.worktrees\.preflight/,
     'The preflight assertion did not cross the real Backend-to-Executor RPC route'
   )
 }
@@ -689,18 +690,68 @@ async function verifyTools(context) {
 }
 
 async function verifyArchiveRestore(context) {
-  const task = await launchTask(context, {
-    prompt: `${CHECKPOINT_TASK_PROMPT} archive-restore`,
-  })
-  await assertWorktreeCreated(task, context.workspacePath)
+  context.control.holdScenarioResponse(WORKTREE_RESTART_SCENARIO)
+  let task
   const markerName = 'worktree-archive-marker.txt'
-  const markerText = `restore ${task.taskId}\n`
-  await writeFile(join(task.workspacePath, markerName), markerText)
-  await archiveTask(context.control, task)
+  let markerText
+  let rowSelector
+  try {
+    task = await launchTask(context, {
+      prompt: WORKTREE_ARCHIVE_RESTORE_PROMPT,
+      scenario: WORKTREE_RESTART_SCENARIO,
+      waitForCompletion: false,
+    })
+    await assertWorktreeCreated(task, context.workspacePath)
+    await context.control.command(
+      'waitFor',
+      `[data-testid="runtime-local-task-running-${task.taskId}"]`,
+      { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+    )
+    markerText = `restore ${task.taskId}\n`
+    await writeFile(join(task.workspacePath, markerName), markerText)
 
-  const archivedState = await readJson(runtimeWorkPath('worktrees.json'))
-  const archivedRecord = archivedState.records?.[task.workspacePath]
-  assert.equal(archivedRecord?.state, 'restorable', 'Archiving did not persist restorable state')
+    rowSelector = `[data-testid="${task.rowTestId}"]`
+    await context.control.command('hover', rowSelector)
+    await context.control.command(
+      'click',
+      `[data-testid="runtime-local-task-archive-${task.taskId}"]`
+    )
+    const archiveToastSelector = `[data-testid="runtime-local-task-archive-toast-${task.taskId}"]`
+    await context.control.command('waitFor', archiveToastSelector, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.match(
+      await context.control.command('getAttribute', archiveToastSelector, { value: 'class' }),
+      /electron-titlebar-interactive-region/,
+      'The archive undo notice remained inside the native titlebar drag region'
+    )
+    await context.control.command(
+      'clickWhenEnabled',
+      `[data-testid="runtime-local-task-archive-undo-${task.taskId}"]`
+    )
+    await context.control.command('waitFor', rowSelector, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    assert.equal(
+      await pathExists(task.workspacePath),
+      true,
+      'Undoing the pending archive still removed the managed Worktree'
+    )
+
+    await archiveTask(context.control, task)
+  } finally {
+    context.control.releaseScenarioResponse(WORKTREE_RESTART_SCENARIO)
+  }
+
+  const archivedRecord = await waitForCondition(
+    async () => {
+      const archivedState = await readJson(runtimeWorkPath('worktrees.json'))
+      const record = archivedState.records?.[task.workspacePath]
+      return record?.state === 'restorable' ? record : null
+    },
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Archiving did not persist restorable state'
+  )
   assert.match(
     archivedRecord?.snapshotRef ?? '',
     /^refs\/wegent\/worktree-snapshots\//,
@@ -743,6 +794,15 @@ async function verifyArchiveRestore(context) {
     'active',
     'Restoring did not return the Worktree record to active state'
   )
+  await context.control.command('click', '[data-testid="settings-back-button"]')
+  await context.control.command('waitFor', rowSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await context.control.command('click', rowSelector)
+  await context.control.command('waitFor', '[data-testid="user-message-content"]', {
+    text: WORKTREE_ARCHIVE_RESTORE_PROMPT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
   await deleteWorktreeFromSettings(context.control, task)
 }
 

@@ -34,6 +34,7 @@ import { HarnessSettingsPage } from './HarnessSettingsPage'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 import { ConnectionsDeviceSettingsPage } from './ConnectionsSettingsPage'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
 interface MobileSettingsPageProps {
@@ -42,7 +43,7 @@ interface MobileSettingsPageProps {
   services?: WorkbenchServices
   devices?: DeviceInfo[]
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
 }
 
 export function MobileSettingsPage({

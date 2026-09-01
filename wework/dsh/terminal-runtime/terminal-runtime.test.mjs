@@ -141,7 +141,7 @@ test('rejects unsafe session ids, relative cwd and invalid dimensions', async ()
   )
 })
 
-test('starts an explicit Harness executable with arguments and initial input', async () => {
+test('starts an explicit Harness executable with arguments', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-harness-runtime-'))
   const pty = new FakePty()
   const spawns = []
@@ -159,51 +159,12 @@ test('starts an explicit Harness executable with arguments and initial input', a
       cwd: directory,
       executable: '/usr/bin/example-harness',
       args: ['--model', 'fixture'],
-      initial_input: 'inspect this project\r',
       env: { HARNESS_FIXTURE: '1' },
     })
 
     assert.equal(spawns[0].executable, '/usr/bin/example-harness')
     assert.deepEqual(spawns[0].args, ['--model', 'fixture'])
     assert.equal(spawns[0].options.env.HARNESS_FIXTURE, '1')
-    assert.deepEqual(pty.written, [])
-    pty.emitData('harness ready\r\n')
-    assert.deepEqual(pty.written, ['inspect this project\r'])
-    pty.emitData('next output\r\n')
-    assert.deepEqual(pty.written, ['inspect this project\r'])
-  } finally {
-    runtime.dispose()
-    await rm(directory, { recursive: true, force: true })
-  }
-})
-
-test('waits for the Harness readiness marker before writing initial input once', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'wework-harness-readiness-'))
-  const pty = new FakePty()
-  const runtime = new TerminalRuntime({
-    environment: { HOME: directory },
-    spawn() {
-      return pty
-    },
-  })
-
-  try {
-    await runtime.request('terminal.start', {
-      session_id: 'kimi-harness-1',
-      cwd: directory,
-      executable: '/usr/bin/example-kimi',
-      initial_input: '\u001b[200~inspect this project\u001b[201~\r',
-      initial_input_readiness_marker: 'No session yet',
-    })
-
-    pty.emitData('Welcome to Kimi Code\r\n')
-    assert.deepEqual(pty.written, [])
-    pty.emitData('No session')
-    assert.deepEqual(pty.written, [])
-    pty.emitData(' yet\r\n')
-    assert.deepEqual(pty.written, ['\u001b[200~inspect this project\u001b[201~\r'])
-    pty.emitData('Working\r\n')
-    assert.deepEqual(pty.written, ['\u001b[200~inspect this project\u001b[201~\r'])
   } finally {
     runtime.dispose()
     await rm(directory, { recursive: true, force: true })

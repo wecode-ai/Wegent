@@ -21,11 +21,14 @@ Build release installers with:
 pnpm --dir wework/electron build:release
 ```
 
-Artifacts are written under `wework/electron/release-installer/`:
+The release flow normalizes Electron Builder's intermediate output to one
+platform naming convention. Published assets include:
 
 ```text
-WeWork_<version>_macos_<arch>.dmg
-WeWork_<version>_macos_<arch>.zip
+WeWork_<version>_darwin-aarch64.dmg
+WeWork_<version>_darwin-aarch64.zip
+WeWork_<version>_darwin-x86_64.dmg
+WeWork_<version>_darwin-x86_64.zip
 WeWork_<version>_windows_x64-setup.exe
 WeWork_<version>_linux_x64.AppImage
 ```
@@ -38,6 +41,14 @@ update, Wework shuts down its local runtime and then restarts into the new
 version. A channel that has not published an Electron release may omit its YAML
 manifest; the client treats that state as no available update rather than a
 network failure. Other update-check failures remain visible.
+
+Formal macOS and Windows releases must include the `.blockmap` matching each ZIP
+and NSIS installer. `electron-updater` compares the previous cached package with
+the old and new blockmaps and downloads only changed blocks. It falls back to
+the full installer only for a first update, a cleared cache, or a differential
+download failure. The release workflow must fail when any required blockmap is
+missing. Differential plans, transferred sizes, and fallback reasons are
+written to `app-update.log` in the application log directory.
 
 The same release also emits signed manifests and artifacts for the legacy Tauri
 updater so installed Tauri builds can migrate through the existing Update UI:
@@ -141,14 +152,18 @@ only components that actually changed and do not redownload Electron and
 Chromium for a component-only change.
 
 The client accepts only a component manifest that exactly matches the running
-Electron application version, channel, platform, and architecture. It verifies
-the archive size and SHA-256 before extraction, then verifies the extracted
-component content SHA-256. Downloads enter a content-addressed store under the
-user data directory as `pending` and the complete component set switches
-through one atomic state file on the next startup. Wework confirms the new set
-only after the workbench and Core DSH start successfully. A failed startup, or
-a process exit before confirmation, rolls back to the previous set on the next
-launch. Packaged resources remain the final fallback.
+Electron application version, channel, platform, and architecture. A
+manifest's `downloadUrl` may point to a version Release, a shared dependency
+Release, or independent object storage; it does not need to share the rolling
+manifest's origin or path. Content integrity defines the download trust
+boundary: the client verifies the archive size and SHA-256 before extraction,
+then verifies the extracted component content SHA-256. Downloads enter a
+content-addressed store under the user data directory as `pending` and the
+complete component set switches through one atomic state file on the next
+startup. Wework confirms the new set only after the workbench and Core DSH
+start successfully. A failed startup, or a process exit before confirmation,
+rolls back to the previous set on the next launch. Packaged resources remain
+the final fallback.
 
 Wework no longer packages or downloads a second Node runtime. At startup it
 creates a lightweight `node` entry under the user data directory, prepends it
@@ -156,6 +171,14 @@ to `PATH`, points `WEWORK_NODE_PATH`, `NODE`, and `npm_node_execpath` at
 Electron, and sets `ELECTRON_RUN_AS_NODE=1`. Core DSH and Codex skills therefore
 use Electron's version-bound Node for both explicit `node script.ts` commands
 and `#!/usr/bin/env node` entry points.
+
+The entry point also preloads a standard-stream guard. After the consumer of a
+stdio MCP or another Node child process closes, diagnostic writes to a broken
+`stderr` must not surface as an Electron main-process error dialog. A broken
+protocol `stdout` means the caller has gone away, so the child exits normally.
+The guard handles only `EPIPE`; other stream errors still fail and expose their
+root cause. A configured external Node executable keeps native Node error
+handling and does not load this Electron-specific guard.
 
 ## Bundled sidecars and resources
 
@@ -173,6 +196,45 @@ with SHA-512. Prepared desktop resources live under `wework/resources/`.
 icons, and runtime descriptors into the application resources. Do not maintain
 a second desktop resource tree or manifest.
 
+Desktop distributions must also include the project and bundled-sidecar
+licenses and attribution notices:
+
+- `LICENSE` at the application resource root contains Wegent's Apache-2.0
+  license;
+- `licenses/` contains third-party licenses for Electron dependencies such as
+  CUA Driver;
+- `codex/legal/` contains the Codex Apache-2.0 license, `NOTICE`, and the
+  Ratatui MIT license.
+
+`prepare-codex-binary.mjs` generates the Codex legal directory, and
+`prepare-package-assets.mjs` must copy it together with the target architecture
+binary. Packaging changes must inspect the real packaged application and
+confirm that these files exist and match their repository sources. Inspecting
+only an intermediate resource directory does not prove that the distribution
+is complete.
+
+## Development hot reload
+
+`pnpm --dir wework run dev:mac` continuously builds the original Wework
+application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher
+clears `dsh/app-wework/web` once at startup and must not clear it again for
+incremental builds. A running renderer may still request hashed assets from the
+previous generation, and deleting them while the next generation is being
+written can leave the window blank.
+
+Each build publishes `.wework-build-id` only after Vite finishes the bundle,
+the build result is closed, and file-viewer metadata is normalized. Core DSH
+uses this marker as the published build ID, so the page reloads only after the
+marker changes instead of treating an intermediate `index.html` write as a
+loadable generation.
+
+In development hot-reload mode, static resources under `/wework/app/` must use
+`Cache-Control: no-store`. In addition to hashed assets, this tree contains
+fixed-name `plugins/*.js` bundles. Serving those files with the production
+immutable cache can mix an old plugin bundle with a new main bundle after
+reload, creating duplicate instances of modules such as React contexts.
+Formal builds continue to use `public, max-age=31536000, immutable`.
+
 ## Local verification
 
 Release changes must run at least:
@@ -188,7 +250,7 @@ Changes to windows, tray behavior, IPC, the built-in browser, sidecars, or
 packaged resources must also be verified in an isolated real Electron session:
 
 ```bash
-pnpm --filter wework ai:verify start
+pnpm --filter wework ai:verify start --packaged true
 ```
 
 Give each concurrent worktree a distinct `WEWORK_PORT`. Isolated sessions use

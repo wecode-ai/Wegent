@@ -221,6 +221,26 @@ async function findLegacyTarball(paths) {
   return existingPaths.find(Boolean)
 }
 
+export async function resolveCodexLegalSources(
+  codexRepo,
+  bundledLicense,
+  bundledNotice,
+  pathExistsImpl = pathExists
+) {
+  const sourceLicensePath = codexRepo ? join(codexRepo, 'LICENSE') : null
+  const sourceNoticePath = codexRepo ? join(codexRepo, 'NOTICE') : null
+  return {
+    license:
+      sourceLicensePath && (await pathExistsImpl(sourceLicensePath))
+        ? sourceLicensePath
+        : bundledLicense,
+    notice:
+      sourceNoticePath && (await pathExistsImpl(sourceNoticePath))
+        ? sourceNoticePath
+        : bundledNotice,
+  }
+}
+
 async function ensureTarballIntegrity(tarballPath, entry, target) {
   const actualIntegrity = await integrityFile(tarballPath)
   if (actualIntegrity === entry.integrity) return
@@ -296,19 +316,16 @@ async function copyLegalFiles() {
   const codexRepo = process.env.CODEX_SOURCE_DIR
   const legalDir = join(outputRoot, 'legal')
   const repoRoot = resolve(weworkDir, '..')
+  const bundledLicense = join(repoRoot, 'LICENSES', 'Apache-2.0.txt')
   const bundledNotice = join(weworkDir, 'third_party', 'codex', 'NOTICE')
+  const bundledRatatuiLicense = join(weworkDir, 'third_party', 'codex', 'RATATUI-LICENSE.txt')
   await rm(join(outputRoot, '.resource-placeholder'), { force: true })
+  await rm(legalDir, { recursive: true, force: true })
   await mkdir(legalDir, { recursive: true })
-  if (codexRepo && (await pathExists(join(codexRepo, 'LICENSE')))) {
-    await cp(join(codexRepo, 'LICENSE'), join(legalDir, 'LICENSE'))
-    if (await pathExists(join(codexRepo, 'NOTICE'))) {
-      await cp(join(codexRepo, 'NOTICE'), join(legalDir, 'NOTICE'))
-    }
-    return
-  }
-
-  await cp(join(repoRoot, 'LICENSE'), join(legalDir, 'LICENSE'))
-  await cp(bundledNotice, join(legalDir, 'NOTICE'))
+  const sources = await resolveCodexLegalSources(codexRepo, bundledLicense, bundledNotice)
+  await cp(sources.license, join(legalDir, 'LICENSE'))
+  await cp(sources.notice, join(legalDir, 'NOTICE'))
+  await cp(bundledRatatuiLicense, join(legalDir, 'RATATUI-LICENSE.txt'))
 }
 
 async function main() {

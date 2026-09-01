@@ -143,6 +143,11 @@ describe('default workbench project-space services', () => {
       socketBaseUrl: 'https://backend.example.com',
       socketPath: '/socket.io',
       token: 'token',
+      user: {
+        id: 9,
+        user_name: 'hongyu9',
+        email: 'hongyu9@example.com',
+      },
     })
 
     expect(services.feedbackApi).toBeDefined()
@@ -159,8 +164,28 @@ describe('default workbench project-space services', () => {
       socketBaseUrl: 'https://backend.example.com',
       socketPath: '/socket.io',
       token: 'token',
+      user: {
+        id: 9,
+        user_name: 'hongyu9',
+        email: 'hongyu9@example.com',
+      },
     })
 
     expect(services.feedbackApi).toBeUndefined()
+  })
+
+  test('rejects a connected cloud runtime without authenticated user identity', () => {
+    vi.mocked(isLocalFirstAppRuntime).mockReturnValue(true)
+
+    expect(() =>
+      createDefaultWorkbenchServices({
+        isConnected: true,
+        backendUrl: 'https://backend.example.com',
+        apiBaseUrl: 'https://backend.example.com/api',
+        socketBaseUrl: 'https://backend.example.com',
+        socketPath: '/socket.io',
+        token: 'token',
+      })
+    ).toThrow('Connected cloud runtime configuration is incomplete')
   })
 })

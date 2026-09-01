@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
+import {
+  cancelSafeAnimationFrame,
+  requestSafeAnimationFrame,
+  type SafeAnimationFrameHandle,
+} from './safeAnimationFrame'
+
+const FALLBACK_FLUSH_MS = 100
 
 export function useBufferedStreamingText(content: string, isStreaming: boolean): string {
   const [bufferedContent, setBufferedContent] = useState(content)
   const targetContentRef = useRef(content)
   const bufferedContentRef = useRef(content)
-  const frameRef = useRef<number | null>(null)
+  const frameRef = useRef<SafeAnimationFrameHandle | null>(null)
   const fallbackTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -12,7 +19,7 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
 
     const cancelFrame = () => {
       if (frameRef.current === null) return
-      cancelAnimationFrame(frameRef.current)
+      cancelSafeAnimationFrame(frameRef.current)
       frameRef.current = null
     }
 
@@ -22,49 +29,35 @@ export function useBufferedStreamingText(content: string, isStreaming: boolean):
       fallbackTimerRef.current = null
     }
 
-    const syncImmediately = () => {
+    const syncLatestContent = () => {
       cancelFrame()
-      cancelFallbackTimer()
-      bufferedContentRef.current = content
-      setBufferedContent(content)
-    }
-
-    if (!isStreaming || !content.startsWith(bufferedContentRef.current)) {
-      syncImmediately()
-      return
-    }
-
-    const advanceFrame = () => {
-      frameRef.current = null
       cancelFallbackTimer()
       const target = targetContentRef.current
       bufferedContentRef.current = target
       setBufferedContent(target)
     }
 
+    if (!isStreaming || !content.startsWith(bufferedContentRef.current)) {
+      syncLatestContent()
+      return
+    }
+
     if (frameRef.current === null && bufferedContentRef.current !== content) {
-      frameRef.current = requestAnimationFrame(advanceFrame)
-      fallbackTimerRef.current = window.setTimeout(() => {
-        cancelFrame()
-        fallbackTimerRef.current = null
-        const target = targetContentRef.current
-        bufferedContentRef.current = target
-        setBufferedContent(target)
-      }, 100)
+      frameRef.current = requestSafeAnimationFrame(() => {
+        frameRef.current = null
+        syncLatestContent()
+      })
+      fallbackTimerRef.current = window.setTimeout(syncLatestContent, FALLBACK_FLUSH_MS)
     }
   }, [content, isStreaming])
 
   useEffect(
     () => () => {
-      if (frameRef.current !== null) {
-        cancelAnimationFrame(frameRef.current)
-      }
-      if (fallbackTimerRef.current !== null) {
-        clearTimeout(fallbackTimerRef.current)
-      }
+      if (frameRef.current !== null) cancelSafeAnimationFrame(frameRef.current)
+      if (fallbackTimerRef.current !== null) clearTimeout(fallbackTimerRef.current)
     },
     []
   )
 
-  return bufferedContent
+  return isStreaming ? bufferedContent : content
 }

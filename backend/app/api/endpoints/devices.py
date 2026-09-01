@@ -724,6 +724,7 @@ async def execute_device_command(
             ),
             timeout_seconds=request.timeout_seconds,
             max_output_bytes=request.max_output_bytes,
+            allow_app_device=False,
         )
     except DeviceCommandNotFoundError as exc:
         raise HTTPException(
@@ -871,6 +872,7 @@ async def start_device_terminal(
             session_type="terminal",
             path=session_path,
             create_if_missing=not bool(requested_path),
+            allow_app_device=False,
         )
     except DeviceSessionError as exc:
         raise HTTPException(
@@ -916,6 +918,7 @@ async def start_device_code_server(
             session_type="code_server",
             path=session_path,
             create_if_missing=not bool(requested_path),
+            allow_app_device=False,
         )
     except DeviceSessionError as exc:
         raise HTTPException(

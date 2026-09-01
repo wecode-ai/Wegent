@@ -221,6 +221,7 @@ def _validate_limit(
 def resolve_uploaded_media(
     user_subtask_id: Optional[int],
     user_id: int,
+    attachment_ids: Optional[list[int]] = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[dict[str, str]]]:
     """Resolve uploaded media into provider-readable signed URLs."""
     if not user_subtask_id:
@@ -235,6 +236,24 @@ def resolve_uploaded_media(
             db,
             user_subtask_id,
         )
+        if attachment_ids:
+            attachments_by_id = {
+                attachment.id: attachment
+                for attachment in attachments
+                if attachment.id in attachment_ids
+            }
+            ordered = [
+                attachments_by_id[attachment_id]
+                for attachment_id in attachment_ids
+                if attachment_id in attachments_by_id
+            ]
+            ordered_ids = {attachment.id for attachment in ordered}
+            ordered.extend(
+                attachment
+                for attachment in attachments
+                if attachment.id not in ordered_ids
+            )
+            attachments = ordered
         images: list[dict[str, str]] = []
         videos: list[dict[str, str]] = []
         audios: list[dict[str, str]] = []

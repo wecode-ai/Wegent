@@ -103,7 +103,7 @@ describe('AigcVideoPanel layout', () => {
     )
 
     expect(await screen.findByTestId('video-script-panel')).toBeInTheDocument()
-    expect(scriptApi.getScript).toHaveBeenCalledWith(12)
+    expect(scriptApi.getScript).toHaveBeenCalledWith(12, { shareToken: undefined })
     expect(screen.getByText(/完整的第二幕与结尾内容/)).toBeInTheDocument()
     expect(screen.queryByText(/旁\.\.\./)).not.toBeInTheDocument()
     expect(screen.getByTestId('script-full-content')).toHaveClass('sm:pl-[60px]')
@@ -113,5 +113,41 @@ describe('AigcVideoPanel layout', () => {
     fireEvent.click(action)
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(onChatButtonClick).toHaveBeenCalledWith('开始生成主体')
+  })
+
+  it('loads shared scripts read-only and hides workflow actions', async () => {
+    jest.mocked(scriptApi.getScript).mockResolvedValue({
+      script_id: 24,
+      task_id: 35,
+      title: '共享剧本',
+      is_draft: true,
+      draft_content: '# 完整共享剧本',
+    })
+
+    render(
+      <AigcVideoPanel
+        embedded
+        onClose={jest.fn()}
+        panelProps={{
+          title: '共享剧本',
+          link: '/chat?taskId=35&openPanel=script&scriptId=24',
+          shareToken: 'shared-token',
+          buttons: [
+            {
+              button_id: 'generate-entities',
+              button_name: '开始生成主体',
+              button_type: 'chat',
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(await screen.findByText('# 完整共享剧本')).toBeInTheDocument()
+    expect(scriptApi.getScript).toHaveBeenCalledWith(24, { shareToken: 'shared-token' })
+    expect(screen.queryByTestId('script-edit')).not.toBeInTheDocument()
+    expect(
+      screen.queryByTestId('aigc-video-panel-action-generate-entities')
+    ).not.toBeInTheDocument()
   })
 })

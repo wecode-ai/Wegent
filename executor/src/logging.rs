@@ -99,10 +99,11 @@ pub fn log_executor_event(event: &str, fields: &[(&str, String)]) {
 pub fn write_executor_log_line(line: &str) {
     if STDOUT_RESERVED_FOR_PROTOCOL.load(Ordering::Relaxed) {
         eprintln!("{line}");
-        let _ = std::io::stderr().flush();
     } else {
         println!("{line}");
-        let _ = std::io::stdout().flush();
+        if env_flag("WEGENT_EXECUTOR_DISABLE_FILE_LOG") {
+            let _ = std::io::stdout().flush();
+        }
     }
     write_rolling_log_line(line);
 }
@@ -118,6 +119,11 @@ pub fn write_executor_error_line(line: &str) {
 }
 
 pub fn init_executor_logging(config: &DeviceConfig) {
+    if env_flag("WEGENT_EXECUTOR_DISABLE_FILE_LOG") {
+        let mut logger = rolling_logger().lock().expect("rolling logger lock");
+        *logger = None;
+        return;
+    }
     let log_config = rolling_log_config_from_device(config);
     match create_rolling_log_file(log_config, &config.executor_home) {
         Ok(file) => {
@@ -239,6 +245,13 @@ fn env_u32(name: &str) -> Option<u32> {
     env::var(name)
         .ok()
         .and_then(|value| value.trim().parse::<u32>().ok())
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 fn open_log_file(path: &Path) -> io::Result<fs::File> {

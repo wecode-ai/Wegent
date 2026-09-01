@@ -140,13 +140,43 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       const taskRowTestId = await waitForNewTaskRow(control, knownRows, uiTimeoutMs)
+      const taskId = taskRowTestId.replace('runtime-local-task-row-', '')
+      const taskRow = `[data-testid="${taskRowTestId}"]`
+      const renameInput = `[data-testid="rename-runtime-local-task-input-${taskId}"]`
+      const renameCloseButton = `[data-testid="rename-runtime-local-task-input-${taskId}-close-button"]`
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('doubleClick', taskRow)
+      await control.command('waitFor', renameInput, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      const doubleClickSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        doubleClickSnapshot.workbench?.currentRuntimeTask?.taskId,
+        taskId,
+        'Double-clicking a sidebar conversation did not open it before rename'
+      )
+      await captureScreenshot(
+        control,
+        'running-conversation-history-00-double-click-rename.png',
+        'body'
+      )
+      await control.command('click', renameCloseButton)
+      await control.command('waitFor', renameInput, {
+        visible: false,
+        timeoutMs: uiTimeoutMs,
+      })
+
       assert.ok(restartDesktopApp, 'The running-history scenario cannot restart Wework')
       await restartDesktopApp(async () => {
         const indexPath = join(executorHome, 'runtime-work', 'index.json')
         const index = JSON.parse(await readFile(indexPath, 'utf8'))
         const task = Object.values(index.tasks ?? {}).find(
-          candidate =>
-            candidate.local_task_id === taskRowTestId.replace('runtime-local-task-row-', '')
+          candidate => candidate.local_task_id === taskId
         )
         assert.ok(task, 'The running-history task was missing from the persisted runtime index')
         delete task.runtime_handle?.completedTranscriptMessages

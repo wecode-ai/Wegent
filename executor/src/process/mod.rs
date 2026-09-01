@@ -821,6 +821,59 @@ enum StreamingStdoutOutcome {
     },
 }
 
+struct ProcessTreeGuard {
+    #[cfg(windows)]
+    pid: Option<u32>,
+}
+
+impl ProcessTreeGuard {
+    fn new(pid: Option<u32>) -> Self {
+        #[cfg(not(windows))]
+        let _ = pid;
+        Self {
+            #[cfg(windows)]
+            pid,
+        }
+    }
+
+    fn disarm(&mut self) {
+        #[cfg(windows)]
+        {
+            self.pid = None;
+        }
+    }
+}
+
+impl Drop for ProcessTreeGuard {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if let Some(pid) = self.pid.take() {
+            kill_windows_process_tree(pid);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_windows_process_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let pid = pid.to_string();
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", pid.as_str(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    if let Err(error) = status {
+        log_executor_event(
+            "windows process tree termination failed",
+            &[("pid", pid), ("error", error.to_string())],
+        );
+    }
+}
+
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
     let mut command = command_from_spec(&spec);
     hide_windows_console(&mut command);
@@ -954,13 +1007,17 @@ fn command_from_spec(spec: &CommandSpec) -> Command {
 pub fn spawn_program_parts(program: &str) -> (PathBuf, Vec<String>) {
     #[cfg(windows)]
     {
-        let program_path = Path::new(program);
-        if windows_batch::is_batch_file(program_path) {
-            if let Some(target) = windows_batch::resolve_batch_target(program_path) {
+        let search_path = env::var_os("PATH");
+        let program_path =
+            windows_batch::resolve_program_path(Path::new(program), search_path.as_deref());
+        if windows_batch::is_batch_file(&program_path) {
+            if let Some(target) = windows_batch::resolve_batch_target(&program_path) {
                 return (target.program, target.prefix_args);
             }
         }
+        return (program_path, Vec::new());
     }
+    #[cfg(not(windows))]
     (PathBuf::from(program), Vec::new())
 }
 
@@ -986,6 +1043,7 @@ where
             };
         }
     };
+    let mut process_tree = ProcessTreeGuard::new(child.id());
 
     let writer = stdin.and_then(|input| {
         child.stdin.take().map(|mut child_stdin| {
@@ -1009,19 +1067,21 @@ where
     let stderr_task = stderr.map(|stderr| tokio::spawn(read_process_output(stderr)));
 
     let status = child.wait().await;
-    if let Some(writer) = writer {
-        if let Ok(Err(error)) = writer.await {
-            if status.is_ok() {
-                return CommandOutcome::Failure {
-                    stderr: error.to_string(),
-                    stdout: String::new(),
-                    exit_code: None,
-                };
-            }
-        }
-    }
+    let writer_error = match writer {
+        Some(writer) => writer.await.ok().and_then(Result::err),
+        None => None,
+    };
     let stdout = join_streaming_stdout(stdout_task).await;
     let stderr = join_output(stderr_task).await;
+    process_tree.disarm();
+
+    if let Some(error) = writer_error.filter(|_| status.is_ok()) {
+        return CommandOutcome::Failure {
+            stderr: error.to_string(),
+            stdout: String::new(),
+            exit_code: None,
+        };
+    }
 
     let stdout = match stdout {
         StreamingStdoutOutcome::Success(stdout) => stdout,
@@ -1246,7 +1306,7 @@ fn emit_claude_tool_result(
     let event = if is_claude_subagent_tool(&tool_use.name) {
         builder.response_subagent_block_updated(
             &tool_use.id,
-            None,
+            Some(if is_error { "error" } else { "completed" }),
             output,
             None,
             tool_use.parent_tool_use_id.as_deref(),

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { create } from 'tar'
 
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
+import { desktopComponentIds } from './lib/desktop-component-ids.mjs'
 import identityModule from '../electron/scripts/build-identity.cjs'
 
 const { resolveBuildIdentity } = identityModule
@@ -34,11 +35,13 @@ await mkdir(output, { recursive: true })
 
 if (platform === 'macos') {
   const appDirectory = join(installerRoot, arch === 'arm64' ? 'mac-arm64' : 'mac')
+  const releasePlatform = arch === 'arm64' ? 'darwin-aarch64' : 'darwin-x86_64'
   await requireDirectory(appDirectory)
   const appName = `${identity.productName}.app`
   const appPath = join(appDirectory, appName)
   await requireDirectory(appPath)
   packagedComponentResourcesRoot = join(appPath, 'Contents', 'Resources')
+  await requireFile(join(packagedComponentResourcesRoot, 'app-update.yml'))
   const dmg = await findFile(
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.dmg$`)
@@ -47,19 +50,28 @@ if (platform === 'macos') {
     installerRoot,
     new RegExp(`^WeWork_${escape(version)}_macos_${arch}\\.zip$`)
   )
-  const bridge = join(output, `WeWork_${version}_macos_${arch}.app.tar.gz`)
+  const blockmap = `${zip}.blockmap`
+  await requireFile(blockmap)
+  const releaseBaseName = `WeWork_${version}_${releasePlatform}`
+  const releaseZip = join(output, `${releaseBaseName}.zip`)
+  const bridge = join(output, `${releaseBaseName}.app.tar.gz`)
   await create({ cwd: appDirectory, file: bridge, gzip: true, portable: true }, [appName])
-  await Promise.all([cp(dmg, join(output, basename(dmg))), cp(zip, join(output, basename(zip)))])
+  await Promise.all([
+    cp(dmg, join(output, `${releaseBaseName}.dmg`)),
+    cp(zip, releaseZip),
+    cp(blockmap, `${releaseZip}.blockmap`),
+  ])
   await signBridge(bridge)
 } else if (platform === 'windows') {
   const installer = await findFile(
     installerRoot,
-    new RegExp(`^WeWork_${escape(version)}_windows_${arch}-setup\\.exe$`)
+    new RegExp(`^WeWork_${escape(version)}_windows-${arch}-setup\\.exe$`)
   )
   const target = join(output, basename(installer))
-  await cp(installer, target)
   const blockmap = `${installer}.blockmap`
-  if (await isFile(blockmap)) await cp(blockmap, `${target}.blockmap`)
+  await requireFile(blockmap)
+  await cp(installer, target)
+  await cp(blockmap, `${target}.blockmap`)
   await signBridge(target)
 } else if (platform === 'linux') {
   const appImage = await findFile(
@@ -77,7 +89,7 @@ async function prepareComponentAssets() {
     await readFile(join(packagedComponentResourcesRoot, 'components.json'), 'utf8')
   )
   const componentAssets = {}
-  for (const id of ['coreDsh', 'weworkCorePlugins', 'bundledPlugins', 'executor', 'codex', 'dws']) {
+  for (const id of desktopComponentIds) {
     const component = packaged.components[id]
     if (!component?.path || !component?.sha256 || !component?.version) {
       throw new Error(`Packaged component metadata is incomplete: ${id}`)
@@ -156,8 +168,10 @@ async function requireDirectory(path) {
   }
 }
 
-async function isFile(path) {
-  return (await stat(path).catch(() => null))?.isFile() === true
+async function requireFile(path) {
+  if (!(await stat(path).catch(() => null))?.isFile()) {
+    throw new Error(`Required release file is missing: ${path}`)
+  }
 }
 
 function escape(value) {

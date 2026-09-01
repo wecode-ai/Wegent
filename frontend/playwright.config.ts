@@ -2,8 +2,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 const EXECUTOR_REGRESSION_SPEC =
   /tasks\/(agent-conversation-regression|provider-native-claudecode)\.spec\.ts/
+// Specs that share the mock provider MCP server and must run serially.
 const PROVIDER_NATIVE_CHAT_SPEC =
-  /tasks\/provider-native-(chat|dingtalk|state-and-contract)\.spec\.ts/
+  /(tasks\/provider-native-(chat|dingtalk|state-and-contract)|knowledge\/dingtalk-import)\.spec\.ts/
 
 /**
  * Playwright configuration for Wegent E2E testing

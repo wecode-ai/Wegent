@@ -86,13 +86,13 @@ describe('ElectronTrayManager', () => {
     })
     expect(tray.setToolTip).toHaveBeenCalledWith('Codex: 42%')
     expect(tray.setTitle).toHaveBeenCalledWith('42%')
-    expect(manager.snapshot().created).toBe(true)
+    expect(manager.snapshot()).toMatchObject({ created: true, guid: null })
 
     manager.destroy()
     manager.destroy()
 
     expect(tray.destroy).toHaveBeenCalledTimes(1)
-    expect(manager.snapshot().created).toBe(false)
+    expect(manager.snapshot()).toMatchObject({ created: false, guid: null })
   })
 
   test('builds localized running, unread, pinned, recent, and action menus', () => {

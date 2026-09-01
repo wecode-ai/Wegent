@@ -63,14 +63,15 @@ UPDATER_KEY_PATH="${WEWORK_UPDATER_KEY_PATH:-$HOME/.tauri/wework-internal-update
 WINDOWS_BUILD_TARGET="${WINDOWS_BUILD_TARGET:-x86_64-pc-windows-msvc}"
 BRAND_CONFIG="${WEWORK_BRAND_CONFIG:-$WEWORK_DIR/branding/weibo.json}"
 UPLOAD="false"
+UNSIGNED="false"
 
 usage() {
   cat <<'EOF'
 Usage: bash wework/scripts/build-minio-windows-release.sh --version <version> [options]
 
-Build the same signed Electron Windows release used by GitHub CI and optionally
-publish either the full app update or only its independently updatable
-components to MinIO. Run this script on a native Windows host.
+Build the Electron Windows release used by GitHub CI and optionally publish
+either the full app update or only its independently updatable components to
+MinIO. Run this script on a native Windows host.
 
 Options:
   --version <version>       Release version. Required.
@@ -86,10 +87,12 @@ Options:
                             Only x86_64-pc-windows-msvc is supported.
   --brand-config <path>     Brand identity and internal runtime defaults.
                             Default: wework/branding/weibo.json.
+  --unsigned                Build without Windows Authenticode signing.
+                            Legacy Tauri updater bridge signing is preserved.
   --upload                  Upload artifacts and rolling manifests.
   -h, --help                Show this help message.
 
-Signing environment:
+Windows Authenticode signing environment unless --unsigned:
   WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
 
 The Tauri updater private key signs only the Electron installer for clients
@@ -131,8 +134,7 @@ upload_artifacts() {
   RELEASE_CHANNEL="$CHANNEL" \
   RELEASE_KIND="$RELEASE_KIND" \
   RELEASE_OUTPUT_DIR="$OUTPUT_DIR" \
-    uv run --project "$PROJECT_DIR/backend" \
-      python "$SCRIPT_DIR/upload-windows-release-to-s3.py"
+    uv run --script "$SCRIPT_DIR/upload-windows-release-to-s3.py"
 }
 
 verify_uploaded_artifacts() {
@@ -143,13 +145,14 @@ verify_uploaded_artifacts() {
     exit 1
   fi
   node "$SCRIPT_DIR/verify-minio-component-release.mjs" \
-    "$UPDATE_BASE_URL" "$VERSION" "$CHANNEL" windows x64
+    "$UPDATE_BASE_URL" "$COMPONENT_BASE_URL" \
+    "$VERSION" "$CHANNEL" windows x64
   if [ "$RELEASE_KIND" = "component" ]; then
     return
   fi
   [ "$CHANNEL" = "stable" ] && electron_channel="latest"
   for url in \
-    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows_x64-setup.exe" \
+    "$UPDATE_BASE_URL/WeWork_${VERSION}_windows-x64-setup.exe" \
     "$UPDATE_BASE_URL/$electron_channel.yml" \
     "$UPDATE_BASE_URL/$CHANNEL-windows-x86_64.json"; do
     if ! curl -fsSI -o /dev/null "$url"; then
@@ -173,6 +176,7 @@ while [ "$#" -gt 0 ]; do
     --output-dir) OUTPUT_DIR="$2"; shift 2 ;;
     --windows-build-target) WINDOWS_BUILD_TARGET="$2"; shift 2 ;;
     --brand-config) BRAND_CONFIG="$2"; shift 2 ;;
+    --unsigned) UNSIGNED="true"; shift ;;
     --upload) UPLOAD="true"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
@@ -252,7 +256,14 @@ require_command node
 require_command pnpm
 require_command uv
 wework_configure_internal_updater_key "$PROJECT_DIR" "$UPDATER_KEY_PATH"
-require_env WIN_CSC_LINK
+if [ "$UNSIGNED" = "true" ]; then
+  export CSC_IDENTITY_AUTO_DISCOVERY=false
+  unset WIN_CSC_LINK
+  unset WIN_CSC_KEY_PASSWORD
+  echo "Windows Authenticode signing is disabled; Tauri updater bridge signing remains enabled."
+else
+  require_env WIN_CSC_LINK
+fi
 
 echo "Building Wework Electron Windows x64 release $VERSION ($CHANNEL)"
 CARGO_BUILD_TARGET="$WINDOWS_BUILD_TARGET" \
@@ -269,7 +280,7 @@ VITE_WEWORK_RUNTIME_MODE=local-first \
 
 node "$SCRIPT_DIR/prepare-desktop-release-assets.mjs" \
   windows x64 "$VERSION" "$OUTPUT_DIR"
-notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows_x64.md"
+notes_path="$OUTPUT_DIR/WeWork_${VERSION}_windows-x64.md"
 printf '%s\n' "$RELEASE_NOTES" > "$notes_path"
 WEWORK_RELEASE_BASE_URL="$UPDATE_BASE_URL" \
 WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL" \

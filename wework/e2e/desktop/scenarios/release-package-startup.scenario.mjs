@@ -163,8 +163,9 @@ async function assertReleasePackageResources() {
     process.platform === 'darwin'
       ? resolve(appBinary, '..', '..', 'Resources')
       : resolve(appBinary, '..', 'resources')
-  const [components] = await Promise.all([
+  const [components, appUpdateConfiguration] = await Promise.all([
     readFile(join(resourcesRoot, 'components.json'), 'utf8').then(JSON.parse),
+    readFile(join(resourcesRoot, 'app-update.yml'), 'utf8'),
     readFile(join(resourcesRoot, 'harness-runtime', 'runtimes.json')),
     readFile(join(resourcesRoot, 'codex', 'WEGENT_CODEX_BINARY.json')),
     readFile(join(resourcesRoot, 'wework-core-plugins', 'wework-app', 'package.json')),
@@ -199,10 +200,18 @@ async function assertReleasePackageResources() {
     assert.equal(typeof component.version, 'string')
     if ('path' in component) assert.match(component.sha256, /^[0-9a-f]{64}$/)
   }
+  assert.match(appUpdateConfiguration, /^provider: generic$/m)
+  assert.match(appUpdateConfiguration, /^url: /m)
+  assert.match(appUpdateConfiguration, /^updaterCacheDirName: /m)
   await readFile(join(resourcesRoot, components.components.codex.path))
 }
 
-export async function createDesktopScenario({ electronUserDataDirectory, resultDir, uiTimeoutMs }) {
+export async function createDesktopScenario({
+  electronUserDataDirectory,
+  resultDir,
+  uiTimeoutMs,
+  workbenchReadyTimeoutMs,
+}) {
   await assertReleasePackageResources()
   await seedTauriProfile(electronUserDataDirectory)
   const profileManifest = join(
@@ -218,7 +227,7 @@ export async function createDesktopScenario({ electronUserDataDirectory, resultD
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="app-shell"]', {
-        timeoutMs: uiTimeoutMs,
+        timeoutMs: workbenchReadyTimeoutMs,
       })
       await verifyEmbeddedNodeSkillRuntime(electronUserDataDirectory, resultDir)
       await control.command('waitFor', 'body[data-native-dsh-provider-loaded]', {

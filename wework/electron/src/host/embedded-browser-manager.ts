@@ -1,4 +1,14 @@
-import { BrowserWindow, session, shell, type DownloadItem, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  session,
+  shell,
+  type ContextMenuParams,
+  type DownloadItem,
+  type MenuItemConstructorOptions,
+  type WebContents,
+} from 'electron'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -49,6 +59,7 @@ interface BrowserEntry {
 export interface BrowserHostEvent {
   sequence: number
   type:
+    | 'agent-cursor'
     | 'agent-state'
     | 'close-request'
     | 'download'
@@ -56,6 +67,7 @@ export interface BrowserHostEvent {
     | 'open-request'
     | 'page-state'
     | 'popup'
+    | 'annotation-request'
   payload: Record<string, unknown>
 }
 
@@ -73,6 +85,18 @@ interface BrowserAgentApproval {
   }
 }
 
+interface BrowserAgentCursorState {
+  x: number
+  y: number
+  moveSequence: number
+}
+
+interface BrowserAgentCursorArrivalWaiter {
+  moveSequence: number
+  resolve: (arrived: boolean) => void
+  timeout: NodeJS.Timeout
+}
+
 interface BrowserDownload {
   id: string
   item: DownloadItem
@@ -81,7 +105,7 @@ interface BrowserDownload {
   path: string | null
 }
 
-const MAX_EVENTS = 1024
+const AGENT_CURSOR_IDLE_HIDE_MS = 4_000
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -100,13 +124,24 @@ export class EmbeddedBrowserManager {
   private readonly activeTabs = new Map<string, string>()
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
+  private readonly agentActive = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
-  private readonly events: BrowserHostEvent[] = []
+  private readonly agentCursorStates = new Map<string, BrowserAgentCursorState>()
+  private readonly agentCursorArrivals = new Map<string, number>()
+  private readonly agentCursorArrivalWaiters = new Map<
+    string,
+    Set<BrowserAgentCursorArrivalWaiter>
+  >()
+  private readonly agentCursorHideTimers = new Map<string, NodeJS.Timeout>()
   private readonly history: BrowserHistoryStore
+  private agentCursorSequence = 0
   private eventSequence = 0
   private historyGeneration = 0
 
-  constructor(dataDirectory: string) {
+  constructor(
+    dataDirectory: string,
+    private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
+  ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
     session
       .fromPartition(EMBEDDED_BROWSER_PARTITION)
@@ -120,9 +155,21 @@ export class EmbeddedBrowserManager {
 
   attach(label: string, contents: WebContents): void {
     const normalizedLabel = requiredLabel(label)
+    const existing = this.entries.get(normalizedLabel)
+    if (existing && existing.contents.id !== contents.id) {
+      this.close(normalizedLabel, existing.nativeLabel)
+    }
     const previous = this.attachedContents.get(normalizedLabel)
     if (previous && previous.id !== contents.id && !previous.isDestroyed()) previous.close()
     this.attachedContents.set(normalizedLabel, contents)
+    contents.on('before-mouse-event', (_event, mouse) => {
+      if (mouse.type !== 'mouseDown') return
+      const entry = [...this.entries.values()].find(
+        candidate => candidate.contents.id === contents.id
+      )
+      if (!entry || !this.agentActive.has(entry.label)) return
+      this.setAgentControlPaused(entry.label, true)
+    })
     contents.once('destroyed', () => {
       if (this.attachedContents.get(normalizedLabel)?.id === contents.id) {
         this.attachedContents.delete(normalizedLabel)
@@ -138,6 +185,26 @@ export class EmbeddedBrowserManager {
       clearTimeout(waiter.timeout)
       waiter.resolve(contents)
     }
+  }
+
+  requestPopupTab(parentLabel: string, url: string): void {
+    const entry = this.entries.get(parentLabel)
+    if (!entry || !isBrowserUrl(url)) {
+      if (isBrowserUrl(url)) void shell.openExternal(url)
+      return
+    }
+    this.emit('popup', {
+      popupId: randomUUID(),
+      parentLabel: entry.label,
+      parentNativeLabel: entry.nativeLabel,
+      url,
+      origin: new URL(url).origin,
+      kind: 'context-menu',
+      strategy: 'new-tab',
+      status: 'pending',
+      createdAtUnixMs: Date.now(),
+      warning: null,
+    })
   }
 
   async open(input: {
@@ -174,6 +241,24 @@ export class EmbeddedBrowserManager {
       historyId: null,
       historyGeneration: this.historyGeneration,
     }
+    contents.on('before-input-event', (event, input) => {
+      const isBareF12 =
+        input.type === 'keyDown' &&
+        (input.key === 'F12' || input.code === 'F12') &&
+        !input.isAutoRepeat &&
+        !input.isComposing &&
+        !input.alt &&
+        !input.control &&
+        !input.meta &&
+        !input.shift
+      if (!isBareF12) return
+      event.preventDefault()
+      if (contents.isDevToolsOpened()) contents.closeDevTools()
+      else contents.openDevTools({ mode: 'detach', activate: true })
+    })
+    contents.on('context-menu', (_event, params) => {
+      this.showContextMenu(entry, params)
+    })
     contents.setWindowOpenHandler(({ url }) => {
       if (isBrowserUrl(url)) {
         this.emit('popup', {
@@ -315,6 +400,28 @@ export class EmbeddedBrowserManager {
     return this.required(label).contents.executeJavaScript(expression, true)
   }
 
+  clickAt(label: string, x: number, y: number): void {
+    const contents = this.required(label).contents
+    const point = {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+    }
+    contents.focus()
+    contents.sendInputEvent({ type: 'mouseMove', ...point })
+    contents.sendInputEvent({
+      type: 'mouseDown',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+    contents.sendInputEvent({
+      type: 'mouseUp',
+      ...point,
+      button: 'left',
+      clickCount: 1,
+    })
+  }
+
   state(label: string): BrowserPageState {
     const entry = this.required(label)
     const contents = entry.contents
@@ -345,6 +452,20 @@ export class EmbeddedBrowserManager {
     this.entries.delete(entry.label)
     entry.label = target
     this.entries.set(target, entry)
+    const cursorState = this.agentCursorStates.get(fromLabel)
+    if (cursorState) {
+      this.agentCursorStates.delete(fromLabel)
+      this.agentCursorStates.set(target, cursorState)
+    }
+    const arrivedSequence = this.agentCursorArrivals.get(fromLabel)
+    if (arrivedSequence !== undefined) {
+      this.agentCursorArrivals.delete(fromLabel)
+      this.agentCursorArrivals.set(target, arrivedSequence)
+    }
+    this.cancelAgentCursorArrivalWaiters(fromLabel)
+    this.clearAgentCursorHide(fromLabel)
+    if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
+    if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
   }
 
   setActiveTab(baseLabel: string, activeLabel: string): void {
@@ -465,8 +586,17 @@ export class EmbeddedBrowserManager {
       approval?: BrowserAgentApproval['payload'] | null
     } = {}
   ): void {
+    const normalizedLabel = requiredLabel(label)
+    if (status === 'running') {
+      this.agentActive.add(normalizedLabel)
+      this.clearAgentCursorHide(normalizedLabel)
+    } else {
+      this.agentActive.delete(normalizedLabel)
+      if (status === 'idle') this.scheduleAgentCursorHide(normalizedLabel)
+      else this.hideAgentCursor(normalizedLabel)
+    }
     this.emit('agent-state', {
-      label: requiredLabel(label),
+      label: normalizedLabel,
       status,
       action: detail.action ?? null,
       target: detail.target ?? null,
@@ -474,6 +604,86 @@ export class EmbeddedBrowserManager {
       errorCode: detail.errorCode ?? null,
       approval: detail.approval ?? null,
       createdAtUnixMs: Date.now(),
+    })
+  }
+
+  showAgentCursor(label: string, x: number, y: number): number {
+    const normalizedLabel = requiredLabel(label)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      throw new Error('Browser agent cursor coordinates are invalid')
+    }
+    this.clearAgentCursorHide(normalizedLabel)
+    const moveSequence = ++this.agentCursorSequence
+    this.agentCursorStates.set(normalizedLabel, { x, y, moveSequence })
+    this.emit('agent-cursor', {
+      label: normalizedLabel,
+      visible: true,
+      x,
+      y,
+      animateMovement: true,
+      moveSequence,
+      createdAtUnixMs: Date.now(),
+    })
+    return moveSequence
+  }
+
+  hideAgentCursor(label: string): void {
+    const normalizedLabel = requiredLabel(label)
+    this.clearAgentCursorHide(normalizedLabel)
+    const state = this.agentCursorStates.get(normalizedLabel)
+    if (!state) return
+    this.emit('agent-cursor', {
+      label: normalizedLabel,
+      visible: false,
+      x: state.x,
+      y: state.y,
+      animateMovement: false,
+      moveSequence: state.moveSequence,
+      createdAtUnixMs: Date.now(),
+    })
+  }
+
+  notifyAgentCursorArrived(label: string, moveSequence: number): void {
+    const normalizedLabel = requiredLabel(label)
+    if (!Number.isInteger(moveSequence) || moveSequence < 1) {
+      throw new Error('Browser agent cursor sequence is invalid')
+    }
+    const latest = Math.max(this.agentCursorArrivals.get(normalizedLabel) ?? 0, moveSequence)
+    this.agentCursorArrivals.set(normalizedLabel, latest)
+    const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel)
+    if (!waiters) return
+    for (const waiter of waiters) {
+      if (waiter.moveSequence > latest) continue
+      clearTimeout(waiter.timeout)
+      waiters.delete(waiter)
+      waiter.resolve(true)
+    }
+    if (waiters.size === 0) this.agentCursorArrivalWaiters.delete(normalizedLabel)
+  }
+
+  waitForAgentCursorArrival(
+    label: string,
+    moveSequence: number,
+    timeoutMs = 2_500
+  ): Promise<boolean> {
+    const normalizedLabel = requiredLabel(label)
+    if ((this.agentCursorArrivals.get(normalizedLabel) ?? 0) >= moveSequence) {
+      return Promise.resolve(true)
+    }
+    return new Promise(resolve => {
+      const timeout = setTimeout(() => {
+        const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel)
+        if (waiters) {
+          for (const waiter of waiters) {
+            if (waiter.moveSequence === moveSequence) waiters.delete(waiter)
+          }
+          if (waiters.size === 0) this.agentCursorArrivalWaiters.delete(normalizedLabel)
+        }
+        resolve(false)
+      }, timeoutMs)
+      const waiters = this.agentCursorArrivalWaiters.get(normalizedLabel) ?? new Set()
+      waiters.add({ moveSequence, resolve, timeout })
+      this.agentCursorArrivalWaiters.set(normalizedLabel, waiters)
     })
   }
 
@@ -493,11 +703,17 @@ export class EmbeddedBrowserManager {
     }
   }
 
-  close(label: string): void {
+  close(label: string, expectedNativeLabel?: string | null): void {
     const entry = this.entries.get(label)
     if (!entry) return
+    if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
     this.entries.delete(label)
     this.agentControlPaused.delete(label)
+    this.agentActive.delete(label)
+    this.clearAgentCursorHide(label)
+    this.agentCursorStates.delete(label)
+    this.agentCursorArrivals.delete(label)
+    this.cancelAgentCursorArrivalWaiters(label)
     for (const [approvalId, approval] of this.agentApprovals) {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
@@ -507,6 +723,34 @@ export class EmbeddedBrowserManager {
 
   closeMany(labels: string[]): void {
     for (const label of labels) this.close(label)
+  }
+
+  private scheduleAgentCursorHide(label: string): void {
+    const normalizedLabel = requiredLabel(label)
+    this.clearAgentCursorHide(normalizedLabel)
+    if (!this.agentCursorStates.has(normalizedLabel)) return
+    const timer = setTimeout(() => {
+      this.agentCursorHideTimers.delete(normalizedLabel)
+      this.hideAgentCursor(normalizedLabel)
+    }, AGENT_CURSOR_IDLE_HIDE_MS)
+    this.agentCursorHideTimers.set(normalizedLabel, timer)
+  }
+
+  private clearAgentCursorHide(label: string): void {
+    const timer = this.agentCursorHideTimers.get(label)
+    if (!timer) return
+    clearTimeout(timer)
+    this.agentCursorHideTimers.delete(label)
+  }
+
+  private cancelAgentCursorArrivalWaiters(label: string): void {
+    const waiters = this.agentCursorArrivalWaiters.get(label)
+    if (!waiters) return
+    this.agentCursorArrivalWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(false)
+    }
   }
 
   async clearData(kinds: string[] | null): Promise<number> {
@@ -541,9 +785,33 @@ export class EmbeddedBrowserManager {
     return this.history.remove(ids)
   }
 
-  async capture(label: string): Promise<string> {
+  async capture(label: string, rect?: BrowserBounds): Promise<string> {
     const entry = this.required(label)
-    return captureWebContentsDataUrl(entry.contents)
+    return captureWebContentsDataUrl(entry.contents, { rect })
+  }
+
+  labelForContentsId(contentsId: number): string | null {
+    return [...this.entries.values()].find(entry => entry.contents.id === contentsId)?.label ?? null
+  }
+
+  send(label: string, channel: string, payload: unknown): void {
+    this.required(label).contents.send(channel, payload)
+  }
+
+  pageRectToScreen(
+    label: string,
+    rect: BrowserBounds
+  ): { x: number; y: number; width: number; height: number } {
+    const entry = this.required(label)
+    const hostContents = entry.contents.hostWebContents
+    const owner = hostContents ? BrowserWindow.fromWebContents(hostContents) : null
+    const contentBounds = owner?.getContentBounds() ?? { x: 0, y: 0, width: 0, height: 0 }
+    return {
+      x: contentBounds.x + entry.bounds.x + rect.x,
+      y: contentBounds.y + entry.bounds.y + rect.y,
+      width: rect.width,
+      height: rect.height,
+    }
   }
 
   async verifyDetachedInspector(label: string): Promise<{
@@ -589,19 +857,6 @@ export class EmbeddedBrowserManager {
       return contents.isDevToolsOpened() && contents.devToolsWebContents !== null
     }).length
     return BrowserWindow.getAllWindows().length + detachedInspectors
-  }
-
-  readEvents(after: number): {
-    events: BrowserHostEvent[]
-    latestSequence: number
-    historyLost: boolean
-  } {
-    const earliest = this.events[0]?.sequence ?? this.eventSequence + 1
-    return {
-      events: this.events.filter(event => event.sequence > after),
-      latestSequence: this.eventSequence,
-      historyLost: after > 0 && after < earliest - 1,
-    }
   }
 
   pauseDownload(id: string): void {
@@ -700,7 +955,7 @@ export class EmbeddedBrowserManager {
   }
 
   private emitPageState(entry: BrowserEntry): void {
-    if (!this.entries.has(entry.label)) return
+    if (this.entries.get(entry.label) !== entry) return
     this.emit('page-state', this.state(entry.label) as unknown as Record<string, unknown>)
   }
 
@@ -759,13 +1014,62 @@ export class EmbeddedBrowserManager {
     this.emitPageState(entry)
   }
 
+  private showContextMenu(entry: BrowserEntry, params: ContextMenuParams): void {
+    const contents = entry.contents
+    const labels = embeddedBrowserContextMenuLabels(app.getLocale())
+    const requestAnnotation = (mode: 'quick' | 'batch') => {
+      this.emit('annotation-request', {
+        label: entry.label,
+        nativeLabel: entry.nativeLabel,
+        mode,
+        x: params.x,
+        y: params.y,
+      })
+    }
+    const items: MenuItemConstructorOptions[] = [
+      {
+        label: labels.quickAnnotate,
+        click: () => requestAnnotation('quick'),
+      },
+      {
+        label: labels.annotate,
+        click: () => requestAnnotation('batch'),
+      },
+      { type: 'separator' },
+    ]
+    if (isPlainBrowserContext(params)) {
+      items.push(
+        {
+          label: labels.back,
+          enabled: contents.navigationHistory.canGoBack(),
+          click: () => contents.navigationHistory.goBack(),
+        },
+        {
+          label: labels.forward,
+          enabled: contents.navigationHistory.canGoForward(),
+          click: () => contents.navigationHistory.goForward(),
+        },
+        {
+          label: labels.reload,
+          enabled: Boolean(this.currentVisibleUrl(entry) || entry.requestedUrl),
+          click: () => contents.reload(),
+        },
+        { type: 'separator' }
+      )
+    }
+    items.push({
+      label: labels.inspect,
+      click: () => contents.inspectElement(params.x, params.y),
+    })
+    Menu.buildFromTemplate(items).popup()
+  }
+
   private emit(type: BrowserHostEvent['type'], payload: Record<string, unknown>): void {
-    this.events.push({
+    this.onEvent({
       sequence: ++this.eventSequence,
       type,
       payload,
     })
-    if (this.events.length > MAX_EVENTS) this.events.shift()
   }
 
   private waitForAttachedContents(label: string): Promise<WebContents> {
@@ -882,6 +1186,47 @@ function isBrowserUrl(value: string): boolean {
   } catch {
     return false
   }
+}
+
+interface EmbeddedBrowserContextMenuLabels {
+  quickAnnotate: string
+  annotate: string
+  back: string
+  forward: string
+  reload: string
+  inspect: string
+}
+
+function embeddedBrowserContextMenuLabels(language: string): EmbeddedBrowserContextMenuLabels {
+  if (language.trim().toLowerCase().startsWith('zh')) {
+    return {
+      quickAnnotate: '快速评论',
+      annotate: '评论',
+      back: '返回',
+      forward: '前进',
+      reload: '重新加载',
+      inspect: '检查',
+    }
+  }
+  return {
+    quickAnnotate: 'Quick annotate',
+    annotate: 'Annotate',
+    back: 'Back',
+    forward: 'Forward',
+    reload: 'Reload',
+    inspect: 'Inspect',
+  }
+}
+
+function isPlainBrowserContext(params: ContextMenuParams): boolean {
+  return (
+    !params.isEditable &&
+    params.formControlType === 'none' &&
+    params.mediaType === 'none' &&
+    !params.linkURL &&
+    !params.srcURL &&
+    !params.selectionText.trim()
+  )
 }
 
 function isHistoryRecordableUrl(value: string): boolean {

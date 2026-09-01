@@ -135,6 +135,13 @@ to the current task, that empty result must not clear the lifecycle Goal
 status. This lets an active Goal continue to constrain task lifecycle even
 when stream settlement races ahead of Goal persistence.
 
+When restoring a runtime task from the URL, the pane may initially know only
+the device ID and task ID before the task list hydrates its workspace, thread,
+and runtime fields. Goal and transcript loading must run again after that
+address hydration, while both addresses still belong to the same stable task
+identity. Rehydration must not create a new conversation or replay turn
+lifecycle events that were already processed.
+
 ### Claude Code Conversation Executor
 
 Claude Code uses the same ordinary runtime-task conversation UI as Codex in
@@ -354,6 +361,15 @@ including an unfinished trailing marker during streaming. These internal
 protocol characters must never appear as ordinary response text. They may be
 converted into visible citations only after the matching metadata and
 interaction component are available.
+
+Assistant Markdown images in Electron chat may reference a local absolute path
+or a `file://` URL. The renderer must read the file through the Electron file
+bridge and display it through a Blob URL; an HTTP page must not load the
+`file://` resource directly. The image file must still exist when the message
+is rendered, and read failures show an explicit image error placeholder. After
+changing this path, run the CI-covered desktop `rendering-extensions`
+checkpoint, which reads a real PNG from the system temporary directory and
+asserts that the final image uses a Blob URL.
 
 ## Guidance Message Order
 

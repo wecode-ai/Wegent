@@ -84,7 +84,10 @@ export type ArchiveRuntimeTaskResult = {
   status: 'archived' | 'dirty_worktree' | 'failed'
 }
 
-export type RefreshWorkLists = (options?: { syncCloud?: boolean }) => Promise<void>
+export type RefreshWorkLists = (options?: {
+  syncCloud?: boolean
+  unarchivedTasks?: RuntimeTaskAddress[]
+}) => Promise<void>
 
 export type ArchiveRuntimeConversationsResult = ArchiveRuntimeTaskResult
 
@@ -421,11 +424,6 @@ export interface WorkbenchContextValue {
     input: string,
     options: CreateProjectRuntimeTaskOptions
   ) => Promise<RuntimeTaskAddress | false>
-  retryFailedMessage: (
-    messageId: string,
-    messagesOverride?: WorkbenchMessage[],
-    retryUserMessageOverride?: WorkbenchMessage
-  ) => Promise<boolean>
   pauseCurrentResponse: (messagesOverride?: WorkbenchMessage[]) => Promise<void>
   loadTurnFileChangesDiff: (
     subtaskId: string,
@@ -472,7 +470,6 @@ export interface WorkbenchProviderProps {
   prewarmComposerApps?: boolean
   publishDebugSnapshots?: boolean
   syncCoreDshModels?: boolean
-  syncProjectTaskTracking?: boolean
   syncRemoteProjects?: boolean
   syncRuntimeTaskLifecycle?: boolean
 }

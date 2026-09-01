@@ -28,6 +28,12 @@ pnpm --filter wework dev:windows
 `wework/electron` 主进程加载 Wework renderer。Electron 通过子进程 stdin/stdout
 与 Executor sidecar 交换 JSONL，不依赖 Unix Domain Socket 或固定 TCP 端口。
 
+开发模式下，脚本会先构建 renderer 产物（`wework/dsh/app-wework/web`）并启动
+Vite watch 构建，再通过 `WEWORK_APP_WEB_ROOT`/`WEWORK_APP_HOT_RELOAD` 让
+运行的桌面应用直接服务最新构建并在产物变化时自动刷新（与 `dev-mac-app.sh`
+一致）。因此切换分支或修改 renderer 源码后，无需手动同步打包插件产物即可
+生效。
+
 运行时与 Executor 构建缓存默认放在 `%LOCALAPPDATA%\wegent\`（可用
 `WEWORK_DEV_CACHE_ROOT`、`WEGENT_CARGO_TARGET_ROOT` 覆盖），首次准备较慢，
 之后为增量。可用 `-- --executor-isolation` 使用临时 Executor Home，或用
@@ -60,6 +66,24 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --dir wework/electron build:release
 ```
+
+桌面 E2E 使用的原生测试应用可通过统一入口构建：
+
+```powershell
+$env:CI = "true"
+pnpm --filter wework ai:verify:electron:build
+```
+
+该命令会准备 Electron、Codex、DWS 和 Executor sidecar，并在当前操作系统生成原生
+应用；Windows 产物为
+`wework/electron/release/WeWork-win32-x64/WeWork.exe`，不能用 Linux 或 macOS
+产物替代。
+
+`.github/workflows/wework-e2e.yml` 会在 `windows-latest` 上构建该原生应用，并让
+Windows Desktop Core E2E 复用 Linux 的同一份 Core 分片矩阵。完整回归会运行全部
+17 个 Core 分片；路径分类只选中部分 checkpoint 时，两个平台仍运行完全相同的已选
+分片。Windows 路径、盘符、UNC 路径、命名管道和 `.exe` sidecar 行为必须由这个
+Windows job 验证，其他平台的通过结果不能替代它。
 
 正式安装器、代码签名、Electron YAML 更新清单和旧 Tauri JSON/签名桥接清单由
 `.github/workflows/wework-app.yml` 在 `windows-latest` 上生成。

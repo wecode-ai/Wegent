@@ -32,7 +32,6 @@ import { KnowledgeSidebar } from './KnowledgeSidebar'
 import { CodeWikiWorkspace } from '@/features/knowledge/code-wiki/CodeWikiWorkspace'
 import { KnowledgeDetailPanel } from './KnowledgeDetailPanel'
 import { KnowledgeGroupListPage, type KbDataItem } from './KnowledgeGroupListPage'
-import { DingtalkDocsPage } from './DingtalkDocs'
 import { useKnowledgeSourceViews } from '@/features/knowledge/knowledgeSourceViewRegistry'
 import { CreateKnowledgeBaseDialog, type AvailableGroup } from './CreateKnowledgeBaseDialog'
 import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
@@ -228,7 +227,6 @@ export function KnowledgeDocumentPageDesktop({
     selectKb: sidebar.selectKb,
     selectGroup: sidebar.selectGroup,
     selectGroups: sidebar.selectGroups,
-    selectDingtalk: sidebar.selectDingtalk,
     selectSourceView: sidebar.selectSourceView,
     clearSelection: sidebar.clearSelection,
   })
@@ -342,11 +340,6 @@ export function KnowledgeDocumentPageDesktop({
     updateUrlParams({ kb: null, group: 'all-groups' })
   }, [sidebar, updateUrlParams])
 
-  const handleSelectDingtalk = useCallback(() => {
-    sidebar.selectDingtalk()
-    updateUrlParams({ kb: null, group: 'dingtalk' })
-  }, [sidebar, updateUrlParams])
-
   const handleSelectSourceView = useCallback(
     (sourceViewId: string) => {
       sidebar.selectSourceView(sourceViewId)
@@ -447,24 +440,6 @@ export function KnowledgeDocumentPageDesktop({
         <div className="flex-1 flex items-center justify-center">
           <Spinner size="lg" />
         </div>
-      )
-    }
-
-    if (sidebar.viewMode === 'dingtalk') {
-      // Wait for DingTalk status to finish loading before rendering
-      if (sidebar.isDingtalkLoading) {
-        return (
-          <div className="flex-1 flex items-center justify-center">
-            <Spinner size="lg" />
-          </div>
-        )
-      }
-      return (
-        <DingtalkDocsPage
-          isConfigured={sidebar.isDingtalkConfigured}
-          isWikispaceConfigured={sidebar.isWikispaceConfigured}
-          onSyncComplete={() => sidebar.refreshAll()}
-        />
       )
     }
 
@@ -689,11 +664,8 @@ export function KnowledgeDocumentPageDesktop({
             onSelectGroup={handleSelectGroup}
             onSelectAll={handleSelectAll}
             onSelectGroups={handleSelectGroups}
-            onSelectDingtalk={handleSelectDingtalk}
             onSelectSourceView={handleSelectSourceView}
             sourceViews={sourceViews}
-            dingtalkDocCount={sidebar.dingtalkDocCount + sidebar.wikispaceDocCount}
-            isDingtalkConfigured={sidebar.isDingtalkConfigured}
             summary={sidebar.summary}
             allKnowledgeBases={sidebar.allKnowledgeBases}
             onCollapse={() => updateSidebarCollapsed(true)}

@@ -20,6 +20,8 @@ The Task page and auxiliary product pages such as Plugins and Cloud Work share t
 
 The top-level **Workspace** tab is where users browse boards, issues, and their linked tasks. It remains independent from Task tabs, preserving its selected board, route, and interface state.
 
+Selecting the fixed top-level **Workspace** tab from another page opens **My tasks**; selecting it again while it is active preserves the current board. Even when both local and cloud storage contain a system-generated `default-work-items` space, the sidebar presents a single logical **My tasks** entry instead of two identically named destinations.
+
 Selecting **New Issue** in a workspace opens a lightweight composer instead of a task form. Choose the destination board and describe the outcome in natural language; the first non-empty line becomes the title and the remaining text becomes the description. The issue is created directly in the selected status column and opens immediately for follow-up details such as participants and execution steps. The board header and every status column expose the same creation flow.
 
 Without any setup, new tasks select **My tasks** by default. Sending the first message creates a work item, links the runtime task, and keeps its execution status synchronized. Existing runtime tasks are also linked into **My tasks**, so this board is another view of the Task-page inventory rather than an independent task list.
@@ -76,6 +78,8 @@ New tasks appear immediately at the top of their project's task list. Tasks with
 ## Use IM notifications
 
 IM notifications are generally available and do not require **Experimental features**. Use the message-bubble entry in the sidebar account area to configure away-from-computer reminders. After opening a runtime task, select **Continue in private chat** in the title bar to bind that task to an available IM private chat.
+
+The away-reminder panel shows the current delivery conversation. When cloud connectivity is available, **Change conversation** and the primary enable or disable action remain fully visible in the same action row, so either setting can be adjusted directly.
 
 After binding succeeds, Wework's switch confirmation uses the current task title instead of an internal `runtime-xxx` task identifier. Later task replies continue to be delivered to the selected private chat.
 
@@ -134,6 +138,8 @@ Message, scroll-position, and measured-height caches are bounded. Archiving a ta
 ## Use selected response text
 
 Select text in an assistant response to add it to the current conversation composer or ask a follow-up question in the sidebar. These actions remain available while the response is streaming; later content updates do not dismiss an action menu that is already open.
+
+Process text shown above tool calls while a task is running is also selectable response content. Selecting it opens the same action menu and can add the text directly to the current task composer.
 
 ## Review and undo changes
 

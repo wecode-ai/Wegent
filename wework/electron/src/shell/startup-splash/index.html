@@ -12,112 +12,186 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main id="splash-root" class="splash" aria-label="Wework is starting">
-      <div class="workbench-scene" aria-hidden="true">
-        <svg class="workbench" viewBox="0 0 300 126">
-          <path class="floor-line" d="M17 108h266" />
+    <div class="startup-stage">
+      <svg class="ambient-workflow" viewBox="0 0 760 520" aria-hidden="true">
+        <path class="ambient-path ambient-path-primary" d="M56 164h112c30 0 44-18 44-46V72" />
+        <path class="ambient-path ambient-path-secondary" d="M704 356H592c-30 0-44 18-44 46v46" />
+        <path class="ambient-path ambient-path-tertiary" d="M104 400h74c24 0 36 12 36 36v26" />
+        <path class="ambient-path ambient-path-tertiary" d="M656 120h-74c-24 0-36-12-36-36V58" />
+        <circle class="ambient-node ambient-node-one" cx="56" cy="164" r="4" />
+        <circle class="ambient-node ambient-node-two" cx="704" cy="356" r="4" />
+        <circle class="ambient-node ambient-node-three" cx="104" cy="400" r="3" />
+        <circle class="ambient-node ambient-node-four" cx="656" cy="120" r="3" />
+        <circle class="ambient-node ambient-node-accent" cx="212" cy="88" r="3" />
+        <circle class="ambient-node ambient-node-accent" cx="548" cy="432" r="3" />
+      </svg>
+      <span class="stage-corner stage-corner-top-left" aria-hidden="true"></span>
+      <span class="stage-corner stage-corner-top-right" aria-hidden="true"></span>
+      <span class="stage-corner stage-corner-bottom-left" aria-hidden="true"></span>
+      <span class="stage-corner stage-corner-bottom-right" aria-hidden="true"></span>
 
-          <g transform="translate(27 18)">
-            <g class="robot">
-              <g class="robot-antenna">
-                <path d="M35 7V1" />
-                <circle class="robot-antenna-tip" cx="35" cy="0" r="3" />
-              </g>
-              <g class="robot-head">
-                <rect x="5" y="7" width="60" height="40" rx="14" />
-                <path class="robot-ear" d="M5 21H1v13h4M65 21h4v13h-4" />
-                <g class="robot-eyes">
-                  <rect x="19" y="23" width="8" height="5" rx="2.5" />
-                  <rect x="43" y="23" width="8" height="5" rx="2.5" />
+      <main id="splash-root" class="splash" aria-label="Wework is starting">
+        <div class="workbench-scene" aria-hidden="true">
+          <svg class="workbench" viewBox="0 0 300 126">
+            <path class="floor-line" d="M17 108h266" />
+
+            <g transform="translate(27 18)">
+              <g class="robot">
+                <g class="robot-antenna">
+                  <path d="M35 7V1" />
+                  <circle class="robot-antenna-tip" cx="35" cy="0" r="3" />
                 </g>
-                <path class="robot-smile" d="M29 36h12" />
+                <g class="robot-head">
+                  <rect x="5" y="7" width="60" height="40" rx="14" />
+                  <path class="robot-ear" d="M5 21H1v13h4M65 21h4v13h-4" />
+                  <g class="robot-eyes">
+                    <rect x="19" y="23" width="8" height="5" rx="2.5" />
+                    <rect x="43" y="23" width="8" height="5" rx="2.5" />
+                  </g>
+                  <path class="robot-smile" d="M29 36h12" />
+                </g>
+
+                <g class="robot-body">
+                  <rect x="14" y="50" width="42" height="38" rx="12" />
+                  <circle cx="35" cy="63" r="7" />
+                  <path d="M29 77h12" />
+                </g>
+
+                <path class="robot-arm robot-arm-back" d="M15 57C3 59 1 72 9 78" />
+                <g class="robot-working-arm">
+                  <path class="robot-arm" d="M55 57c13 0 17-8 24-14" />
+                  <circle class="robot-hand" cx="80" cy="42" r="5" />
+                </g>
+                <path class="robot-leg" d="M25 87v13M46 87v13M19 101h12M40 101h12" />
               </g>
+            </g>
 
-              <g class="robot-body">
-                <rect x="14" y="50" width="42" height="38" rx="12" />
-                <circle cx="35" cy="63" r="7" />
-                <path d="M29 77h12" />
+            <g class="toolbox">
+              <rect x="108" y="70" width="32" height="28" rx="8" />
+              <path d="M117 70v-6h14v6M114 82h20" />
+            </g>
+
+            <g class="monitor">
+              <rect class="monitor-shell" x="139" y="18" width="105" height="68" rx="14" />
+              <rect class="monitor-screen" x="147" y="26" width="89" height="52" rx="9" />
+              <path class="monitor-stand" d="M192 86v9M173 96h38" />
+              <g class="morph-icon" transform="translate(171 27) scale(2)">
+                <path id="morph-primary" />
+                <path id="morph-secondary" />
+                <path id="morph-tertiary" />
               </g>
+              <circle class="monitor-status" cx="229" cy="71" r="2" />
+            </g>
 
-              <path class="robot-arm robot-arm-back" d="M15 57C3 59 1 72 9 78" />
-              <g class="robot-working-arm">
-                <path class="robot-arm" d="M55 57c13 0 17-8 24-14" />
-                <circle class="robot-hand" cx="80" cy="42" r="5" />
+            <g class="keyboard">
+              <rect x="157" y="99" width="72" height="10" rx="5" />
+              <path d="M168 104h50" />
+            </g>
+
+            <g class="human">
+              <circle class="human-head" cx="270" cy="34" r="15" />
+              <path class="human-hair" d="M256 34c1-10 6-15 14-15 9 0 14 6 15 15" />
+              <g class="human-face">
+                <circle cx="265" cy="34" r="1.5" />
+                <circle cx="275" cy="34" r="1.5" />
+                <path d="M266 41h8" />
               </g>
-              <path class="robot-leg" d="M25 87v13M46 87v13M19 101h12M40 101h12" />
+              <path class="human-body" d="M248 108V82c0-18 9-29 22-29s22 11 22 29v26" />
+              <g class="human-working-arm">
+                <path class="human-arm" d="M256 68c-8 7-10 22-25 29" />
+                <circle class="human-hand" cx="228" cy="99" r="5" />
+              </g>
             </g>
-          </g>
 
-          <g class="toolbox">
-            <rect x="108" y="70" width="32" height="28" rx="8" />
-            <path d="M117 70v-6h14v6M114 82h20" />
-          </g>
-
-          <g class="monitor">
-            <rect class="monitor-shell" x="139" y="18" width="105" height="68" rx="14" />
-            <rect class="monitor-screen" x="147" y="26" width="89" height="52" rx="9" />
-            <path class="monitor-stand" d="M192 86v9M173 96h38" />
-            <g class="morph-icon" transform="translate(171 27) scale(2)">
-              <path id="morph-primary" />
-              <path id="morph-secondary" />
-              <path id="morph-tertiary" />
+            <g class="robot-sparks">
+              <path d="m113 48 5-3M114 55h6M110 42v-5" />
+              <circle cx="121" cy="40" r="2" />
             </g>
-            <circle class="monitor-status" cx="229" cy="71" r="2" />
-          </g>
 
-          <g class="keyboard">
-            <rect x="157" y="99" width="72" height="10" rx="5" />
-            <path d="M168 104h50" />
-          </g>
-
-          <g class="human">
-            <circle class="human-head" cx="270" cy="34" r="15" />
-            <path class="human-hair" d="M256 34c1-10 6-15 14-15 9 0 14 6 15 15" />
-            <g class="human-face">
-              <circle cx="265" cy="34" r="1.5" />
-              <circle cx="275" cy="34" r="1.5" />
-              <path d="M266 41h8" />
+            <g class="assembly-piece assembly-piece-one">
+              <rect x="121" y="39" width="12" height="12" rx="3" />
+              <path d="M125 45h4" />
             </g>
-            <path class="human-body" d="M248 108V82c0-18 9-29 22-29s22 11 22 29v26" />
-            <g class="human-working-arm">
-              <path class="human-arm" d="M256 68c-8 7-10 22-25 29" />
-              <circle class="human-hand" cx="228" cy="99" r="5" />
+            <g class="assembly-piece assembly-piece-two">
+              <circle cx="127" cy="45" r="6" />
+              <path d="m124 45 2 2 4-5" />
             </g>
-          </g>
-
-          <g class="robot-sparks">
-            <path d="m113 48 5-3M114 55h6M110 42v-5" />
-            <circle cx="121" cy="40" r="2" />
-          </g>
-
-          <g class="assembly-piece assembly-piece-one">
-            <rect x="121" y="39" width="12" height="12" rx="3" />
-            <path d="M125 45h4" />
-          </g>
-          <g class="assembly-piece assembly-piece-two">
-            <circle cx="127" cy="45" r="6" />
-            <path d="m124 45 2 2 4-5" />
-          </g>
-        </svg>
-      </div>
-      <div class="splash-copy">
-        <h1 id="splash-title">We're preparing your workbench</h1>
-        <p id="splash-status" aria-live="polite">Opening your projects</p>
-      </div>
-      <div
-        id="stage-indicator"
-        class="stage-indicator"
-        role="progressbar"
-        aria-label="Preparing your workbench"
-        aria-valuemin="1"
-        aria-valuemax="3"
-        aria-valuenow="1"
-      >
-        <span class="stage-dot is-active"></span>
-        <span class="stage-dot"></span>
-        <span class="stage-dot"></span>
-      </div>
-    </main>
+          </svg>
+        </div>
+        <div class="splash-copy">
+          <h1 id="splash-title">We're preparing your workbench</h1>
+          <p id="splash-status" aria-live="polite">Opening your projects</p>
+        </div>
+        <div
+          id="stage-indicator"
+          class="stage-indicator"
+          role="progressbar"
+          aria-label="Preparing your workbench"
+          aria-valuemin="1"
+          aria-valuemax="3"
+          aria-valuenow="1"
+        >
+          <span class="stage-dot is-active"></span>
+          <span class="stage-dot"></span>
+          <span class="stage-dot"></span>
+        </div>
+        <div id="startup-recovery" class="startup-recovery" hidden>
+          <div class="startup-actions">
+            <button
+              id="startup-retry"
+              data-testid="startup-retry-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            >
+              Retry
+            </button>
+            <button
+              id="startup-recover"
+              data-testid="startup-recover-button"
+              class="startup-button startup-button-primary"
+              type="button"
+            >
+              Recover workbench
+            </button>
+            <button
+              id="startup-reset-open"
+              data-testid="startup-reset-options-button"
+              class="startup-link-button"
+              type="button"
+            >
+              More reset options
+            </button>
+          </div>
+          <p id="startup-action-error" class="startup-action-error" role="alert" hidden></p>
+        </div>
+        <div
+          id="startup-confirmation"
+          class="startup-confirmation"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="startup-confirmation-title"
+          aria-describedby="startup-confirmation-description"
+          hidden
+        >
+          <h2 id="startup-confirmation-title"></h2>
+          <p id="startup-confirmation-description"></p>
+          <div class="startup-confirmation-actions">
+            <button
+              id="startup-confirmation-cancel"
+              data-testid="startup-confirmation-cancel-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            ></button>
+            <button
+              id="startup-confirmation-submit"
+              data-testid="startup-confirmation-submit-button"
+              class="startup-button startup-button-danger"
+              type="button"
+            ></button>
+          </div>
+        </div>
+      </main>
+    </div>
     <script src="./splash.js"></script>
   </body>
 </html>

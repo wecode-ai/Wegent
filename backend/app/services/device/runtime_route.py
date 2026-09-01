@@ -43,6 +43,7 @@ class RuntimeRouteIdentity:
     runtime_device_id: str
     runtime_instance_id: str | None
     device_type: DeviceType
+    app_device_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ class RuntimeRoute:
     device_type: DeviceType
     socket_id: str
     online_info: dict[str, Any]
+    app_device_id: str | None = None
 
 
 def _device_type(device: Kind) -> DeviceType:
@@ -88,13 +90,26 @@ def _app_device_id(device: Kind) -> str | None:
     return value or None
 
 
+def _identity_from_device(device: Kind) -> RuntimeRouteIdentity | None:
+    runtime_device_id = _runtime_device_id(device)
+    if not runtime_device_id:
+        return None
+    return RuntimeRouteIdentity(
+        logical_device_id=device.name,
+        runtime_device_id=runtime_device_id,
+        runtime_instance_id=_runtime_instance_id(device),
+        device_type=_device_type(device),
+        app_device_id=_app_device_id(device),
+    )
+
+
 def resolve_runtime_route_identity(
     db: Session,
     *,
     user_id: int,
     submitted_device_id: str,
 ) -> RuntimeRouteIdentity | None:
-    """Resolve a logical or legacy Runtime ID within one user's active devices."""
+    """Resolve a logical, app exposure, or Runtime ID for one user."""
 
     base_filter = and_(
         Kind.user_id == user_id,
@@ -108,31 +123,17 @@ def resolve_runtime_route_identity(
         .first()
     )
     if logical_match is not None:
-        runtime_device_id = _runtime_device_id(logical_match)
-        if not runtime_device_id:
-            return None
-        return RuntimeRouteIdentity(
-            logical_device_id=logical_match.name,
-            runtime_device_id=runtime_device_id,
-            runtime_instance_id=_runtime_instance_id(logical_match),
-            device_type=_device_type(logical_match),
-        )
+        return _identity_from_device(logical_match)
 
     devices = db.query(Kind).filter(base_filter).all()
     app_matches = [
-        device for device in devices if _app_device_id(device) == submitted_device_id
+        device
+        for device in devices
+        if _app_device_id(device) == submitted_device_id
+        and _device_type(device) in {DeviceType.APP, DeviceType.REMOTE}
     ]
     if len(app_matches) == 1:
-        app_match = app_matches[0]
-        runtime_device_id = _runtime_device_id(app_match)
-        if not runtime_device_id:
-            return None
-        return RuntimeRouteIdentity(
-            logical_device_id=submitted_device_id,
-            runtime_device_id=runtime_device_id,
-            runtime_instance_id=_runtime_instance_id(app_match),
-            device_type=_device_type(app_match),
-        )
+        return _identity_from_device(app_matches[0])
     if len(app_matches) > 1:
         return None
 
@@ -144,13 +145,7 @@ def resolve_runtime_route_identity(
     if len(runtime_matches) != 1:
         return None
 
-    runtime_match = runtime_matches[0]
-    return RuntimeRouteIdentity(
-        logical_device_id=runtime_match.name,
-        runtime_device_id=submitted_device_id,
-        runtime_instance_id=_runtime_instance_id(runtime_match),
-        device_type=_device_type(runtime_match),
-    )
+    return _identity_from_device(runtime_matches[0])
 
 
 class RuntimeRouteResolver:
@@ -249,6 +244,7 @@ class RuntimeRouteResolver:
             device_type=identity.device_type,
             socket_id=socket_id.strip(),
             online_info=online_info,
+            app_device_id=identity.app_device_id,
         )
 
 

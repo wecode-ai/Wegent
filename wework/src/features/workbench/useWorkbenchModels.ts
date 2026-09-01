@@ -31,6 +31,7 @@ interface UseWorkbenchModelsOptions {
   persistSelection?: boolean
   selectionConfig?: ModelSelectionConfig | null
   defaultSelectionConfig?: (models: UnifiedModel[]) => ModelSelectionConfig | null
+  fallbackWhenConfiguredModelUnavailable?: boolean
   selectionReady?: boolean
   onSelectionChange?: (selection: ModelSelectionConfig) => void
   onSelectionBlocked?: (
@@ -85,6 +86,7 @@ export function useWorkbenchModels({
   persistSelection = true,
   selectionConfig,
   defaultSelectionConfig,
+  fallbackWhenConfiguredModelUnavailable = true,
   selectionReady = true,
   onSelectionChange,
   onSelectionBlocked,
@@ -110,30 +112,54 @@ export function useWorkbenchModels({
   const [restoredSelectionKeyByScope, setRestoredSelectionKeyByScope] = useState<
     Record<string, string | null>
   >({})
+  const [locallySelectedReplacementByScope, setLocallySelectedReplacementByScope] = useState<
+    Record<string, boolean>
+  >({})
   const effectiveSelectionConfig = useMemo(() => {
-    if (selectionConfig?.modelName && findModelForSelection(models, selectionConfig)) {
-      return selectionConfig
+    if (selectionConfig?.modelName) {
+      if (
+        findModelForSelection(models, selectionConfig) ||
+        !fallbackWhenConfiguredModelUnavailable
+      ) {
+        return selectionConfig
+      }
     }
     return defaultSelectionConfig?.(models) ?? selectionConfig ?? null
-  }, [defaultSelectionConfig, models, selectionConfig])
+  }, [defaultSelectionConfig, fallbackWhenConfiguredModelUnavailable, models, selectionConfig])
   const selectionKey = useMemo(
     () => getSelectionKey(effectiveSelectionConfig),
     [effectiveSelectionConfig]
   )
+  const configuredModelAvailable = Boolean(
+    effectiveSelectionConfig?.modelName && findModelForSelection(models, effectiveSelectionConfig)
+  )
+  const selectedModelAvailable = Boolean(
+    selectedModel && models.some(model => isSameModelSelection(model, selectedModel))
+  )
+  const hasLocallySelectedReplacement = Boolean(
+    !persistSelection &&
+    !configuredModelAvailable &&
+    locallySelectedReplacementByScope[scopeKey] &&
+    selectedModelAvailable
+  )
   const selectionMatchesConfig = Boolean(
+    hasLocallySelectedReplacement ||
+    (selectedModel && findModelForSelection([selectedModel], effectiveSelectionConfig))
+  )
+  const configuredModelUnavailable = Boolean(
     effectiveSelectionConfig?.modelName &&
-    selectedModel &&
-    selectedModel.name === effectiveSelectionConfig.modelName &&
-    (!effectiveSelectionConfig.modelType ||
-      selectedModel.type === effectiveSelectionConfig.modelType)
+    !configuredModelAvailable &&
+    !hasLocallySelectedReplacement
   )
   const isSelectionReady = useMemo(
     () =>
       !enabled ||
       (selectionReady &&
         !isLoading &&
+        !configuredModelUnavailable &&
         (restoredSelectionKeyByScope[scopeKey] === selectionKey || selectionMatchesConfig)),
     [
+      configuredModelUnavailable,
       enabled,
       isLoading,
       restoredSelectionKeyByScope,
@@ -160,6 +186,9 @@ export function useWorkbenchModels({
         if (areModelOptionsEqual(current[scopeKey] ?? {}, nextOptions)) return current
         return { ...current, [scopeKey]: nextOptions }
       })
+      setLocallySelectedReplacementByScope(current =>
+        current[scopeKey] ? { ...current, [scopeKey]: false } : current
+      )
     },
     [scopeKey]
   )
@@ -308,6 +337,10 @@ export function useWorkbenchModels({
       selectedModelOptionsRef.current[scopeKey] = nextOptions
       setSelectedModelByScope(current => ({ ...current, [scopeKey]: model }))
       setSelectedModelOptionsByScope(current => ({ ...current, [scopeKey]: nextOptions }))
+      setLocallySelectedReplacementByScope(current => ({
+        ...current,
+        [scopeKey]: !persistSelection && Boolean(model),
+      }))
       if (model && persistSelection) {
         onSelectionChange?.(toSelectionConfig(model, nextOptions))
       }
@@ -378,6 +411,7 @@ export function useWorkbenchModels({
     selectedModel,
     selectedModelOptions,
     isSelectionReady,
+    isConfiguredModelUnavailable: configuredModelUnavailable,
     setSelectedModel,
     setSelectedModelAndOptions,
     setSelectedModelOption,

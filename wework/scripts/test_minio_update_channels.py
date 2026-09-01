@@ -72,6 +72,9 @@ class FakeClient:
             )
         return SimpleNamespace(size=len(self.objects[object_name]))
 
+    def copy_object(self, _bucket: str, object_name: str, source, **_kwargs) -> None:
+        self.objects[object_name] = self.objects[source.object_name]
+
 
 class FakeResponse:
     def __init__(self, content: bytes) -> None:
@@ -178,6 +181,27 @@ def test_windows_stable_manifest_bootstraps_channel_targets(tmp_path: Path) -> N
     assert published["platforms"]["windows-x86_64"] == entry
     assert published["platforms"]["stable-windows"] == entry
     assert published["platforms"]["beta-windows"] == entry
+
+
+def test_windows_latest_installer_uses_canonical_release_name(tmp_path: Path) -> None:
+    module = load_script("upload-windows-release-to-s3.py")
+    client = FakeClient()
+    version = "1.2.3"
+    installer = tmp_path / f"WeWork_{version}_windows-x64-setup.exe"
+    installer.write_bytes(b"installer")
+    client.objects[f"wework/windows/{installer.name}"] = installer.read_bytes()
+
+    module.publish_latest_installer(
+        client,
+        "releases",
+        "wework/windows",
+        version,
+        [installer],
+    )
+
+    assert client.objects["wework/windows/WeWork_latest_windows-x64-setup.exe"] == (
+        b"installer"
+    )
 
 
 def test_stable_versions_sort_after_beta_versions() -> None:
@@ -548,7 +572,7 @@ def test_component_only_secondary_channel_keeps_a_different_app_version(
 
 
 def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
-    artifact = tmp_path / "WeWork_1.2.3_macos_arm64.dmg"
+    artifact = tmp_path / "WeWork_1.2.3_darwin-aarch64.dmg"
     artifact.write_bytes(b"local")
     client = FakeClient()
     client.objects[f"wework/macos/{artifact.name}"] = b"remote"
@@ -565,6 +589,9 @@ def test_versioned_release_assets_are_immutable(tmp_path: Path) -> None:
 
 def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-mac-release.sh").read_text(encoding="utf-8")
+    preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
+        encoding="utf-8"
+    )
 
     assert "pnpm --filter wework build:release" in script
     assert "prepare-desktop-release-assets.mjs" in script
@@ -578,6 +605,11 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert "WeWork_${VERSION}_$(release_platform).dmg" in script
+    assert "WeWork_${VERSION}_$(release_platform).zip" in script
+    assert "const releaseBaseName = `WeWork_${version}_${releasePlatform}`" in preparer
+    assert "cp(dmg, join(output, basename(dmg)))" not in preparer
+    assert "cp(zip, join(output, basename(zip)))" not in preparer
     assert "WEWORK_NOTARYTOOL_S3_ACCELERATION" in script
     assert "WEWORK_CUSTOM_MACOS_NOTARIZATION" in script
     assert "--resume-signed-app" in script
@@ -597,11 +629,19 @@ def test_minio_macos_build_uses_the_electron_release_and_tauri_bridge() -> None:
 
 def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> None:
     script = (SCRIPT_DIR / "build-minio-windows-release.sh").read_text(encoding="utf-8")
+    preparer = (SCRIPT_DIR / "prepare-desktop-release-assets.mjs").read_text(
+        encoding="utf-8"
+    )
 
     assert "pnpm --filter wework build:release" in script
     assert "prepare-desktop-release-assets.mjs" in script
     assert "generate-desktop-update-manifests.mjs" in script
     assert "WEWORK_RELEASE_TARGETS=windows-x64" in script
+    assert "WeWork_${VERSION}_windows-x64-setup.exe" in script
+    assert "WeWork_${VERSION}_windows-x64.md" in script
+    assert "windows_" + "x64" not in script
+    assert "windows-${arch}-setup" in preparer
+    assert "windows_${arch}-setup" not in preparer
     assert 'WEWORK_COMPONENT_BASE_URL="$COMPONENT_BASE_URL"' in script
     assert '--release-kind) RELEASE_KIND="$2"' in script
     assert '"$notes_path" "$SOURCE_SHA"' in script
@@ -610,6 +650,12 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert 'WEWORK_BRAND_CONFIG="$BRAND_CONFIG"' in script
     assert 'WEWORK_RELEASE_VERSION="$VERSION"' in script
     assert 'WEWORK_SOURCE_SHA="$SOURCE_SHA"' in script
+    assert '--unsigned) UNSIGNED="true"' in script
+    assert 'if [ "$UNSIGNED" = "true" ]' in script
+    assert "export CSC_IDENTITY_AUTO_DISCOVERY=false" in script
+    assert "unset WIN_CSC_LINK" in script
+    assert "wework_configure_internal_updater_key" in script
+    assert "Legacy Tauri updater bridge signing is preserved." in script
     assert "node -p process.platform" in script
     assert "sync-desktop-release-version.mjs" not in script
     assert "VERSION_BACKUP_DIR" not in script
@@ -617,6 +663,29 @@ def test_minio_windows_build_uses_native_electron_release_and_tauri_bridge() -> 
     assert "cargo-xwin" not in script
     assert "src-tauri" not in script
     assert "pnpm exec tauri build" not in script
+
+
+def test_windows_jenkins_pipeline_builds_unsigned_with_the_tauri_bridge() -> None:
+    pipeline = (SCRIPT_DIR.parent / "jenkins/windows-release/Jenkinsfile").read_text(
+        encoding="utf-8"
+    )
+
+    assert "label 'windows'" in pipeline
+    assert "C:\\\\Windows\\\\System32\\\\cmd.exe" in pipeline
+    assert "C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe" in pipeline
+    assert "build-minio-windows-release.sh" in pipeline
+    assert "--unsigned" in pipeline
+    assert "WEWORK_UPDATER_KEY_PATH" in pipeline
+    assert "Required legacy updater key file is missing or empty" in pipeline
+    assert "WeWork_${version}_windows-x64-setup.exe" in pipeline
+    assert "windows_" + "x64" not in pipeline
+    assert "windows-x86_64" in pipeline
+    assert "latest.json" in pipeline
+    assert "archiveArtifacts" in pipeline
+    assert "wegent-windows-signing-pfx" not in pipeline
+    assert "wegent-windows-signing-password" not in pipeline
+    assert "pwsh.exe" in pipeline
+    assert "\n        powershell" not in pipeline.lower()
 
 
 @pytest.mark.parametrize(
@@ -648,10 +717,34 @@ def test_harness_runtime_install_uses_the_requested_target_platform() -> None:
     script = (SCRIPT_DIR / "prepare-harness-runtime.mjs").read_text(encoding="utf-8")
 
     assert "WEWORK_RUNTIME_TARGET" in script
-    assert "dsh-runtime-tar-gzip-v6" in script
+    assert "dsh-runtime-tar-gzip-v9" in script
     assert "supportedArchitectures" in script
+    assert "--config.node-linker=hoisted" in script
+    assert "from 'tar'" in script
+    assert "run('tar'" not in script
+    assert (
+        "crossTargetRequested() && entry.name === 'pnpm-workspace.yaml'" not in script
+    )
     assert "--ignore-scripts" in script
     assert "prepareTargetSpawnHelpers" in script
+
+
+@pytest.mark.parametrize(
+    ("build_script", "upload_script"),
+    [
+        ("build-minio-mac-release.sh", "upload-mac-release-to-s3.py"),
+        ("build-minio-windows-release.sh", "upload-windows-release-to-s3.py"),
+    ],
+)
+def test_minio_uploaders_use_an_isolated_uv_script(
+    build_script: str, upload_script: str
+) -> None:
+    build = (SCRIPT_DIR / build_script).read_text(encoding="utf-8")
+    uploader = (SCRIPT_DIR / upload_script).read_text(encoding="utf-8")
+
+    assert f'uv run --script "$SCRIPT_DIR/{upload_script}"' in build
+    assert 'uv run --project "$PROJECT_DIR/backend"' not in build
+    assert '# dependencies = ["minio==7.2.20"]' in uploader
 
 
 @pytest.mark.parametrize(

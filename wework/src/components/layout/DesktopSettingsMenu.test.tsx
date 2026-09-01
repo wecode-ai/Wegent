@@ -1,8 +1,9 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { getLocalCodexUsageDisplay } from '@/api/local/codexUsage'
 import { getWegentUsageDisplay } from '@/api/wegentUsage'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
 import { DesktopSettingsMenu } from './DesktopSettingsMenu'
 
 const mockCheckNow = vi.fn()
@@ -14,7 +15,7 @@ let mockUpdateState = {
   availableUpdate: null as null | { currentVersion: string; version: string },
   status: 'idle',
   downloadProgress: null as null | { downloadedBytes: number; totalBytes: number | null },
-  error: null as string | null,
+  error: null as AppUpdateError | null,
   checkNow: mockCheckNow,
   installUpdate: mockInstallUpdate,
 }
@@ -240,7 +241,7 @@ describe('DesktopSettingsMenu', () => {
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: {
         downloadedBytes: 50,
         totalBytes: 100,
@@ -256,6 +257,45 @@ describe('DesktopSettingsMenu', () => {
     expect(screen.getByTestId('app-update-download-progress')).toHaveTextContent('正在下载更新 50%')
   })
 
+  test('shows a compact network error and opens sanitized diagnostics', async () => {
+    const checkNow = vi.fn().mockResolvedValue(null)
+    mockUpdateState = {
+      ...mockUpdateState,
+      status: 'error',
+      error: {
+        stage: 'check',
+        kind: 'network',
+        code: 'APP_UPDATE_NETWORK_UNAVAILABLE',
+        occurredAt: Date.parse('2026-08-31T02:22:00Z'),
+        detail: null,
+      },
+      checkNow,
+    }
+
+    renderMenu()
+
+    const status = screen.getByTestId('app-update-status')
+    expect(status).toHaveTextContent('网络不可用，无法检查更新')
+    expect(status).toHaveTextContent('查看错误详情')
+    expect(status).not.toHaveTextContent('<html')
+    expect(status).not.toHaveClass('text-red-400')
+
+    await userEvent.click(screen.getByTestId('app-update-error-details-button'))
+
+    const dialog = screen.getByTestId('app-update-error-dialog')
+    expect(dialog).toHaveTextContent('网络连接失败')
+    expect(dialog).toHaveTextContent('APP_UPDATE_NETWORK_UNAVAILABLE')
+    expect(dialog).toHaveTextContent('检查应用更新')
+    expect(dialog).not.toHaveTextContent('https://')
+    await waitFor(() => {
+      expect(screen.getByTestId('app-update-error-dialog-close')).toHaveFocus()
+    })
+
+    await userEvent.click(screen.getByTestId('app-update-error-retry'))
+
+    expect(checkNow).toHaveBeenCalledTimes(1)
+  })
+
   test('keeps download progress directly below the update action', () => {
     mockUpdateState = {
       ...mockUpdateState,
@@ -263,7 +303,7 @@ describe('DesktopSettingsMenu', () => {
         currentVersion: '0.1.0',
         version: '0.1.1',
       },
-      status: 'installing',
+      status: 'downloading',
       downloadProgress: {
         downloadedBytes: 50,
         totalBytes: 100,

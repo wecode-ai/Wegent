@@ -31,6 +31,11 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
     async verify(control) {
       const tray = JSON.parse(await control.command('getTraySnapshot', 'body'))
       assert.equal(tray.created, true, 'The Electron Tray was not created')
+      assert.equal(
+        tray.guid,
+        null,
+        'The Electron Tray must keep the default macOS item identity used by menu bar managers'
+      )
       assert.ok(
         tray.menu.some(item => item.id === 'settings'),
         'The Electron Tray did not expose Settings'

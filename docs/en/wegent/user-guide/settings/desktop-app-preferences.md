@@ -46,6 +46,8 @@ The executor schedules the waiting queue in memory and stores a sealed recovery 
 
 Open **Settings → General → Popout Window** to configure the lightweight input window that is independent of the main interface. The default global shortcut is `⌥⇧Space`. Select the pencil to record another modifier-plus-main-key combination, or select delete to disable the global shortcut.
 
+The new combination takes effect immediately and is registered again when Wework restarts. If another application already owns the combination, Wework keeps the currently working shortcut; choose a different combination and save again. When the shortcut opens the Popout Window, the native window waits for its content to be ready before becoming visible, which prevents a transparent empty window.
+
 Wework prewarms the Popout Window in the background after launch, so the first display and later reopens reuse the same WebView. The window is not resizable. Drag any visible surface outside the text input to move it, and press `Esc` to hide it without activating the main window. When collapsed, the native window occupies only the rounded visible composer surface, so clicking it focuses the window directly. Opening the model, project, or more menu temporarily expands the window to hold the overlay, then restores its compact size when the menu closes.
 
 Enable **Settings → General → Popout Window → System drag panel** to show a compact action panel at the top of the current screen while dragging files or text from another application. Selecting **Create new chat** activates the Popout Window and adds the dropped content to a new task. Disable the setting to keep the system drag panel hidden.
@@ -65,9 +67,11 @@ The lower-left quota menu and the settings item use the full quota source name, 
 **Settings → General → Import work from other AI apps** imports compatible content from other local coding apps into Wework's separate Codex home. Importing replaces files with the same name in the destination, but does not remove content from the source app.
 
 - **Codex**: Imports the same content as Wework's first-launch Codex migration, including configuration, sign-in information, global instructions, plugins, Skills, and related caches.
-- **Claude Code**: Imports `~/.claude/CLAUDE.md` as the Codex global `AGENTS.md` and imports `~/.claude/skills/`.
+- **Claude Code**: Imports `~/.claude/CLAUDE.md` as the Codex global `AGENTS.md`, plus settings, plugins, and Skills.
 
-The first release does not import project lists, Claude Code plugins, or conversation history. Import is available only in the Wework desktop app. If the source directory is missing or contains no compatible content, Wework keeps the dialog open and shows an error so the import can be retried after the source is fixed.
+The Wework-managed local Executor performs the import; the Renderer does not access user directories directly. The Executor accepts only import methods explicitly declared by the desktop protocol. If Wework's `auth.json` already links to the same source Codex sign-in file, importing preserves that link and continues copying the other compatible content instead of overwriting the same credential file.
+
+The first release does not import project lists or conversation history. Import is available only in the Wework desktop app. If the source directory is missing or contains no compatible content, Wework keeps the dialog open and shows an error so the import can be retried after the source is fixed.
 
 ## Continue Running After Closing the Window
 
