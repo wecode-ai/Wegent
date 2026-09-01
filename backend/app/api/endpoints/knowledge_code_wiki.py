@@ -92,7 +92,7 @@ from app.services.knowledge.code_wiki.source import (
     assert_user_can_read_source,
 )
 from app.services.knowledge.orchestrator import knowledge_orchestrator
-from shared.telemetry.decorators import add_span_event, trace_sync
+from shared.telemetry.decorators import add_span_event, trace_async, trace_sync
 
 logger = logging.getLogger(__name__)
 
@@ -463,7 +463,7 @@ def get_code_wiki_status(
     "/{knowledge_base_id}/code-wiki/generations/{generation_id}/cancel",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-@trace_sync("cancel_code_wiki_generation", "knowledge.api")
+@trace_async("cancel_code_wiki_generation", "knowledge.api")
 async def cancel_code_wiki_generation(
     knowledge_base_id: int,
     generation_id: int,

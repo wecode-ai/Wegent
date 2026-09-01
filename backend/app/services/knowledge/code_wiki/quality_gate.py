@@ -368,13 +368,23 @@ def _assert_open_allowed(
         if current.get("attempt") == 1 and current.get("status") == "changes_requested":
             return
         raise HTTPException(status_code=409, detail="Plan amendment is already closed")
-    if phase == "qa" and (plan is None or plan.get("status") != "passed"):
-        raise HTTPException(
-            status_code=409,
-            detail="QA is allowed only after the plan review passes",
-        )
-    if phase == "qa" and current is not None:
-        raise HTTPException(status_code=409, detail="QA review is already closed")
+    if phase == "qa":
+        if plan is None or plan.get("status") != "passed":
+            raise HTTPException(
+                status_code=409,
+                detail="QA is allowed only after the plan review passes",
+            )
+        amendment = _latest(checkpoints, PLAN_AMENDMENT_PHASE)
+        amendment_handoff = _latest(handoffs, PLAN_AMENDMENT_PHASE)
+        if amendment_handoff is not None and (
+            amendment is None or amendment.get("status") != "passed"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="QA is allowed only after the Plan amendment passes",
+            )
+        if current is not None:
+            raise HTTPException(status_code=409, detail="QA review is already closed")
     if phase == "recheck" and (qa is None or qa.get("status") != "changes_requested"):
         raise HTTPException(
             status_code=409,

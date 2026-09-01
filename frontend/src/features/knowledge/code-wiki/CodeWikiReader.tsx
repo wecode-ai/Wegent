@@ -467,6 +467,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
             <AlertDialogFooter>
               <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
               <AlertDialogAction
+                variant="primary"
                 onClick={handleCancel}
                 data-testid="code-wiki-cancel-confirm-action"
               >

@@ -415,6 +415,26 @@ def test_qa_requires_a_passed_plan(test_db, test_user):
         _open(test_db, generation, "qa")
 
 
+def test_qa_requires_an_open_plan_amendment_to_pass(test_db, test_user):
+    generation = _generation(test_db, test_user)
+    _page(test_db, generation, "index")
+    _review(test_db, generation, "plan", "passed")
+
+    _open(test_db, generation, "plan_amendment", paths=["index", "operations"])
+    with pytest.raises(HTTPException, match="only after the Plan amendment passes"):
+        _open(test_db, generation, "qa")
+
+    _review(
+        test_db,
+        generation,
+        "plan_amendment",
+        "changes_requested",
+        paths=["index", "operations"],
+    )
+    with pytest.raises(HTTPException, match="only after the Plan amendment passes"):
+        _open(test_db, generation, "qa")
+
+
 def test_a_recheck_requires_qa_to_request_changes(test_db, test_user):
     generation = _generation(test_db, test_user)
     _page(test_db, generation, "index")

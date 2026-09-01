@@ -8,7 +8,7 @@
  * required for a document knowledge base and deliberately optional for a code wiki.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
@@ -161,16 +161,29 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
   })
 
   it('silently falls back to automatic defaults when no profile is usable', async () => {
-    mockedGetKnowledgeBaseRetrievalProfile.mockResolvedValue({
-      version: 1,
-      retrieval_config: null,
-      health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
-    })
+    let resolveProfile: (value: {
+      version: number
+      retrieval_config: null
+      health: { status: string; fallback_reason: string }
+    }) => void
+    mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveProfile = resolve
+        })
+    )
     render(<CreateKnowledgeBaseDialog open onOpenChange={jest.fn()} onSubmit={jest.fn()} />)
 
-    await waitFor(() => {
-      expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(mockedGetKnowledgeBaseRetrievalProfile).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      resolveProfile({
+        version: 1,
+        retrieval_config: null,
+        health: { status: 'invalid', fallback_reason: 'retriever_unavailable' },
+      })
+      await Promise.resolve()
     })
+
     expect(screen.queryByTestId('knowledge-retrieval-profile-fallback')).not.toBeInTheDocument()
   })
 
