@@ -16,6 +16,9 @@ export const paths = {
     wework_authorize: {
       getHref: () => '/auth/wework/authorize',
     },
+    oauth_authorize: {
+      getHref: () => '/auth/oauth/authorize',
+    },
     password_login: {
       getHref: () => '/login',
     },

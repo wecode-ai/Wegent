@@ -385,6 +385,12 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
         try:
             payload = decode_jose_jwt(token, algorithms=[settings.ALGORITHM])
             if not is_user_session_payload(payload):
+                if is_telemetry_enabled():
+                    span.set_attribute(SpanAttributes.AUTH_RESULT, "failure")
+                    span.set_attribute(
+                        SpanAttributes.AUTH_FAILURE_REASON,
+                        "non_session_token_rejected",
+                    )
                 return None
             username: str = payload.get("sub")
             if username is None:

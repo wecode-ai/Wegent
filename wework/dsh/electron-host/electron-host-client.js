@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 export const ELECTRON_HOST_PROTOCOL_VERSION = 1
-const MAX_FRAME_BYTES = 1024 * 1024
+const MAX_FRAME_BYTES = 64 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 120_000
 
 export class ElectronHostError extends Error {

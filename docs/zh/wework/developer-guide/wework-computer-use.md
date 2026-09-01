@@ -51,9 +51,15 @@ macOS 需要向实际运行的 Wework 应用授予：
 `Electron`。macOS 修改权限后通常需要重启对应应用进程。Windows 和 Linux
 不显示 macOS 权限引导，但仍由 Driver 报告平台能力和运行错误。
 
-总开关保存在 Wework 桌面偏好中。应用启动后读取偏好并尝试启动 Driver；权限尚未
-满足时保持启用意图但不创建 bridge，设置页持续显示缺少的权限。权限满足后状态查询
-会再次尝试启动。
+总开关保存在 Wework 桌面偏好中。Electron 配置 Desktop Runtime 时只创建
+`ComputerUseService`，不读取启用偏好，也不加载 Driver。主界面达到可操作状态后，
+Renderer 通过 `renderer.startupReady` 关闭启动页；Electron 随后只调度一次后台偏好
+恢复，不等待原生 Driver 初始化完成。这样 CUA 原生模块加载和 macOS 权限检查不会
+阻塞 Executor、Core DSH 或首个可操作工作台。
+
+后台恢复开始前会重新读取最新偏好；功能已关闭或应用正在退出时不启动 Driver。权限
+尚未满足时保持启用意图但不创建 bridge，设置页持续显示缺少的权限。权限满足后状态
+查询会再次尝试启动。
 
 ## 发布集成
 
@@ -97,7 +103,9 @@ WeWork.app/Contents/Resources/
 
 ```bash
 pnpm --dir wework/electron typecheck
-pnpm --dir wework/electron test src/host/computer-use-service.test.ts
+pnpm --dir wework/electron test \
+  src/host/computer-use-startup.test.ts \
+  src/host/computer-use-service.test.ts
 pnpm --filter wework test \
   src/components/settings/ComputerUseSettingsPage.test.tsx \
   src/features/computer-use/ComputerUseActivityIndicator.test.tsx \

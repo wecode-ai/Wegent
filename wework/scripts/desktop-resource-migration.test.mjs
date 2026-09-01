@@ -81,7 +81,9 @@ describe('desktop resource migration', () => {
       'vite build --base /wework/app/ --outDir dsh/app-wework/web --emptyOutDir'
     )
     expect(devAppWatcher).toContain('outDir: appWebRoot')
-    expect(devAppWatcher).toContain('emptyOutDir: true')
+    expect(devAppWatcher).toContain('await rm(appWebRoot, { recursive: true, force: true })')
+    expect(devAppWatcher).toContain('emptyOutDir: false')
+    expect(devAppWatcher).toContain("path.join(appWebRoot, '.wework-build-id')")
     expect(devAppWatcher).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(viteConfig).not.toContain('WEWORK_DSH_APP_OUT_DIR')
     expect(devMacScript).not.toContain('node electron/node_modules/electron/install.js')

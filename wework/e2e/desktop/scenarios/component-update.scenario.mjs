@@ -105,6 +105,7 @@ export async function createDesktopScenario({
   return {
     usesReleasePackageRuntimeAssets: true,
     appEnvironment: {
+      WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '0',
       WEWORK_UPDATE_BASE_URL: origin,
     },
 

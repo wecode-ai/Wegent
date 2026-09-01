@@ -16,6 +16,8 @@ interface StoryboardVideoPreviewProps {
   imageHeight?: number
   trimStart?: number | null
   trimEnd?: number | null
+  readOnly?: boolean
+  shareToken?: string
 }
 
 export function StoryboardVideoPreview({
@@ -27,6 +29,8 @@ export function StoryboardVideoPreview({
   imageHeight = 375,
   trimStart,
   trimEnd,
+  readOnly = false,
+  shareToken,
 }: StoryboardVideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -44,9 +48,12 @@ export function StoryboardVideoPreview({
   const hasVideo =
     storyboard.video_clip?.generation_status === 3 && storyboard.video_clip?.model_video_url
   const hasVideoFailed = storyboard.video_clip?.generation_status === 9
-  const firstImage = getAigcVideoImageUrl(storyboard.image_urls[0])
-  const videoCoverUrl = getAigcVideoImageUrl(storyboard.video_clip?.video_cover_url)
-  const videoSource = getAigcVideoPlaybackUrl(storyboard.video_clip?.model_video_url || '')
+  const firstImage = getAigcVideoImageUrl(storyboard.image_urls[0], shareToken)
+  const videoCoverUrl = getAigcVideoImageUrl(storyboard.video_clip?.video_cover_url, shareToken)
+  const videoSource = getAigcVideoPlaybackUrl(
+    storyboard.video_clip?.model_video_url || '',
+    shareToken
+  )
   const posterImage = videoCoverUrl || firstImage || ''
 
   const effectiveTrimStart = trimStart && trimStart > 0 ? trimStart : 0
@@ -325,13 +332,15 @@ export function StoryboardVideoPreview({
           >
             分镜视频待生成
           </span>
-          <button
-            onClick={onPlayClick}
-            className="mt-10 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[18px] bg-white px-4 py-2 text-[14px] font-medium leading-5 text-[#FF8200] transition-colors hover:bg-[#fff7ef]"
-            style={{ fontFamily: "'PingFang SC', sans-serif" }}
-          >
-            开始生成
-          </button>
+          {!readOnly ? (
+            <button
+              onClick={onPlayClick}
+              className="mt-10 inline-flex h-9 items-center justify-center whitespace-nowrap rounded-[18px] bg-white px-4 py-2 text-[14px] font-medium leading-5 text-[#FF8200] transition-colors hover:bg-[#fff7ef]"
+              style={{ fontFamily: "'PingFang SC', sans-serif" }}
+            >
+              开始生成
+            </button>
+          ) : null}
         </div>
       </div>
     )
@@ -484,7 +493,7 @@ export function StoryboardVideoPreview({
         </div>
       )}
 
-      {(posterImage || hasVideo) && (
+      {!readOnly && (posterImage || hasVideo) && (
         <button
           onClick={handlePlayClick}
           className="absolute inset-0 flex items-center justify-center group"

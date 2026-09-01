@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export class PreferencesStore {
@@ -22,6 +22,10 @@ export class PreferencesStore {
       await rename(temporary, path)
       return preferences
     })
+  }
+
+  clear(): Promise<void> {
+    return this.serial(() => rm(this.path(), { force: true }))
   }
 
   private path(): string {

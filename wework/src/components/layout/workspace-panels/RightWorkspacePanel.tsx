@@ -47,6 +47,7 @@ import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
 import { WorkspacePanelCards } from './WorkspacePanelCards'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
 import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
+import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
 import {
   resolveRightWorkspaceExtensionDescriptor,
   rightWorkspaceDshSidebar,
@@ -132,6 +133,7 @@ export interface RightWorkspaceBrowserState {
   title: string | null
   faviconUrl: string | null
   isLoading: boolean
+  agentActive?: boolean
   hasActiveDownload: boolean
   openRequest: EmbeddedBrowserOpenRequest | null
   developmentPreview?: {
@@ -270,6 +272,10 @@ function RightWorkspaceBrowserPanelSlot({
     (isLoading: boolean) => onBrowserStateChange(tab, { isLoading }),
     [onBrowserStateChange, tab]
   )
+  const handleAgentActiveChange = useCallback(
+    (agentActive: boolean) => onBrowserStateChange(tab, { agentActive }),
+    [onBrowserStateChange, tab]
+  )
   const handleTitleChange = useCallback(
     (title: string | null) => onBrowserStateChange(tab, { title }),
     [onBrowserStateChange, tab]
@@ -295,6 +301,7 @@ function RightWorkspaceBrowserPanelSlot({
       onDownloadActivityChange={handleDownloadActivityChange}
       onFaviconChange={handleFaviconChange}
       onLoadingChange={handleLoadingChange}
+      onAgentActiveChange={handleAgentActiveChange}
       onTitleChange={handleTitleChange}
       onNativeLabelChange={handleNativeLabelChange}
     />
@@ -582,6 +589,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
               browserStates[tab]?.developmentPreview?.status === 'starting' ||
               browserStates[tab]?.developmentPreview?.status === 'reloading')
           }
+          agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
           onSelect={getTabSelectHandler(tab)}
           onClose={() => closeTab(tab)}
         />
@@ -915,6 +923,7 @@ function RightWorkspaceTitleTab({
   extensionState,
   iconSrc,
   loading = false,
+  agentActive = false,
   onSelect,
   onClose,
 }: {
@@ -925,6 +934,7 @@ function RightWorkspaceTitleTab({
   extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading?: boolean
+  agentActive?: boolean
   onSelect: () => void
   onClose: () => void
 }) {
@@ -965,6 +975,7 @@ function RightWorkspaceTitleTab({
           extensionState={extensionState}
           iconSrc={iconSrc}
           loading={loading}
+          agentActive={agentActive}
           testId={getRightWorkspaceTabTestId(tab)}
         />
         <span className="min-w-0 flex-1 truncate">{label}</span>
@@ -992,16 +1003,22 @@ function RightWorkspaceTabIcon({
   extensionState,
   iconSrc,
   loading,
+  agentActive,
   testId,
 }: {
   icon: ComponentType<{ className?: string }>
   extensionState?: RightWorkspaceExtensionTabState
   iconSrc?: string | null
   loading: boolean
+  agentActive: boolean
   testId: string
 }) {
   const [failedIconSrc, setFailedIconSrc] = useState<string | null>(null)
   const imageFailed = Boolean(iconSrc && failedIconSrc === iconSrc)
+
+  if (agentActive) {
+    return <BrowserAgentCursorIcon testId={`${testId}-agent-icon`} className="h-4 w-4" />
+  }
 
   if (loading) {
     return (

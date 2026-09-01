@@ -298,6 +298,12 @@ assistant 之前。canonical `turns` 是前端 transcript 的唯一输入，不�
 不能把这些内部协议字符作为普通正文显示；只有在同时接入引用元数据和对应交互组件后，
 才能把它们转换为可见引用。
 
+Electron 聊天中的 assistant Markdown 图片可以引用本机绝对路径或 `file://` URL。
+渲染器必须先通过 Electron 文件桥读取文件，再使用 Blob URL 展示，不能让 HTTP 页面
+直接加载 `file://` 资源。图片文件必须在消息渲染时仍然存在；读取失败时显示明确的图片
+错误占位。修改这条链路后，运行 CI 覆盖的 desktop `rendering-extensions` checkpoint，
+其中会从系统临时目录读取真实 PNG，并断言最终图片使用 Blob URL。
+
 ## 引导消息顺序
 
 运行中的 Codex LocalTask 支持把队列消息作为原生引导发送。引导是当前 turn 内的用户输入，不是新的 follow-up turn，所以 UI 必须在发送开始时就把本地用户消息插入到当前 assistant 中间：

@@ -125,4 +125,26 @@ describe('MaterialTimelinePanel', () => {
       expect(screen.queryByTestId('material-timeline-opencut-frame')).not.toBeInTheDocument()
     )
   })
+
+  test('auto-opens OpenCut and closes its parent panel with the editor', async () => {
+    const onOpenCutClose = jest.fn()
+    render(<MaterialTimelinePanel sessionId="25" autoOpenOpenCut onOpenCutClose={onOpenCutClose} />)
+
+    await screen.findByTestId('material-timeline-panel')
+    await waitFor(() =>
+      expect(materialTimelineApi.openInOpenCut).toHaveBeenCalledWith('25', 'plan-timeline-1')
+    )
+    expect(await screen.findByTestId('material-timeline-opencut-frame')).toBeInTheDocument()
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          origin: 'https://timeline-cut.weibo.com',
+          data: { type: 'storycut:opencut-close' },
+        })
+      )
+    })
+
+    await waitFor(() => expect(onOpenCutClose).toHaveBeenCalledTimes(1))
+  })
 })

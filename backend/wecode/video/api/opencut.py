@@ -138,6 +138,38 @@ def _aigc_url(path: str) -> str:
     )
 
 
+async def _request_aigc_json(
+    *,
+    method: str,
+    path: str,
+    uid: str,
+    payload: Optional[dict[str, Any]] = None,
+    params: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
+            response = await client.request(
+                method,
+                _aigc_url(path),
+                headers={"UID": uid},
+                json=payload,
+                params=params,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="AIGC video service is unavailable"
+        ) from exc
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=502, detail="AIGC video service returned invalid JSON"
+        ) from exc
+    return result if isinstance(result, dict) else {"result": result}
+
+
 async def _fetch_timeline(
     *, session_id: str, uid: str, artifact_id: Optional[str] = None
 ) -> dict[str, Any]:
@@ -243,6 +275,10 @@ def _media_proxy_url(
     )
 
 
+def _opencut_resource_proxy_url(source: str) -> str:
+    return f"/api/storycut/media-proxy?url={quote(source, safe='')}"
+
+
 def _is_direct_media_source(source: str) -> bool:
     parsed = urlsplit(source)
     host = (parsed.hostname or "").lower()
@@ -305,6 +341,14 @@ def _media_item(
     browser_safe_original_source = (
         _https_media_source(source) if _is_direct_media_source(source) else source
     )
+    storycut_source = browser_safe_original_source
+    if (
+        kind == "image"
+        and str(item.get("clip_id") or "").startswith("wegent-attachment-")
+        and urlsplit(source).scheme == "http"
+        and public_source != source
+    ):
+        storycut_source = _opencut_resource_proxy_url(public_source)
     source_window = _time_window(item, "source_window")
     timeline_window = _time_window(item)
     duration = source_window["duration"] or timeline_window["duration"] or 3000
@@ -316,8 +360,8 @@ def _media_item(
         "url": browser_source,
         "originalSourceUrl": browser_safe_original_source,
         "storycut": {
-            "source": browser_safe_original_source,
-            "sourceUrl": browser_safe_original_source,
+            "source": storycut_source,
+            "sourceUrl": storycut_source,
             "browserSafeSource": browser_source,
             "metadata": dict(item),
         },
@@ -463,8 +507,8 @@ def build_storycut_bundle(
             media.append(media_item)
             window = _time_window(item)
             element_id = str(
-                item.get("element_id")
-                or item.get("storycut_element_id")
+                item.get("storycut_element_id")
+                or item.get("element_id")
                 or _stable_id(source_kind, reference["media_id"], index)
             )
             data_type = (
@@ -711,6 +755,7 @@ def _visual_item(
         "volume_db": volume_db,
         "volume_scale": 0.0 if muted else _db_to_scale(volume_db),
         "muted": muted,
+        "element_id": str(element.get("id") or ""),
         "storycut_track_muted": track_muted,
         "storycut_element_muted": element_muted,
         "storycut_element_id": str(element.get("id") or ""),
@@ -984,6 +1029,40 @@ async def save_opencut_timeline(
     }
 
 
+@router.post("/material-video/opencut/bgm/{session_id}")
+async def generate_opencut_bgm(
+    session_id: str,
+    token: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    token_payload = verify_opencut_token(token, session_id)
+    generate_payload = payload.get("generateBgmPayload")
+    if not isinstance(generate_payload, dict):
+        raise HTTPException(status_code=400, detail="generateBgmPayload is required")
+    result = await _request_aigc_json(
+        method="POST",
+        path="v2/material-video/generate-bgm-segment",
+        uid=str(token_payload["uid"]),
+        payload={**generate_payload, "session_id": str(session_id)},
+    )
+    return {"bgm": result}
+
+
+@router.get("/material-video/opencut/bgm/{session_id}")
+async def get_opencut_bgm(
+    session_id: str,
+    token: str,
+    task_id: str,
+) -> dict[str, Any]:
+    token_payload = verify_opencut_token(token, session_id)
+    return await _request_aigc_json(
+        method="GET",
+        path=f"v2/material-video/generate-bgm-segment/{quote(session_id, safe='')}",
+        uid=str(token_payload["uid"]),
+        params={"task_id": task_id},
+    )
+
+
 @router.get("/material-video/opencut/media/{session_id}/{media_id}")
 async def stream_opencut_media(
     session_id: str,
@@ -1013,7 +1092,10 @@ async def stream_opencut_media(
     )
     if media is None:
         raise HTTPException(status_code=404, detail="OpenCut media not found")
-    source = allowed_media_url(_media_source(media))
+    source = allowed_media_url(
+        _media_source(media),
+        settings.WEGENT_BACKEND_PUBLIC_URL,
+    )
     client = httpx.AsyncClient(timeout=120, trust_env=False, follow_redirects=False)
     stream = client.stream(
         "GET", source, headers={"Range": range_header} if range_header else {}

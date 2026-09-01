@@ -102,6 +102,8 @@ export interface AigcVideoPanelPayload {
   previewText?: string
   buttons?: AigcVideoButton[]
   onChatButtonClick?: (message: string) => void | Promise<void>
+  autoOpenOpenCut?: boolean
+  shareToken?: string
 }
 
 export function parseVideoPanelTarget(link?: string): VideoPanelTarget {
@@ -153,6 +155,8 @@ export function AigcVideoPanel({
     previewText = '',
     buttons = [],
     onChatButtonClick,
+    autoOpenOpenCut = false,
+    shareToken,
   } = panelProps
   const target = parseVideoPanelTarget(link)
   const taskId = target.taskId ?? fallbackTaskId
@@ -168,7 +172,7 @@ export function AigcVideoPanel({
       target.panel === 'timeline')
   const isEntity = target.panel === 'entity' && taskId
   const isScript = target.panel === 'script' && Boolean(target.scriptId)
-  const chatButtons = buttons.filter(button => button.button_type !== 'link')
+  const chatButtons = shareToken ? [] : buttons.filter(button => button.button_type !== 'link')
   const finalVideoButton =
     chatButtons.find(button => /最终|合成|final/i.test(button.button_name)) ?? chatButtons.at(-1)
 
@@ -206,10 +210,19 @@ export function AigcVideoPanel({
           initialIndex={target.index}
           onClose={onClose}
           embedded={embedded}
-          onGenerateFinalVideo={onChatButtonClick ? () => handleContinue() : undefined}
+          readOnly={Boolean(shareToken)}
+          shareToken={shareToken}
+          onGenerateFinalVideo={
+            !shareToken && onChatButtonClick ? () => handleContinue() : undefined
+          }
         />
       ) : isScript ? (
-        <ScriptPanel scriptId={target.scriptId!} onClose={onClose}>
+        <ScriptPanel
+          scriptId={target.scriptId!}
+          onClose={onClose}
+          readOnly={Boolean(shareToken)}
+          shareToken={shareToken}
+        >
           {chatButtons.length > 0 ? (
             <div className="w-full">
               {chatButtons.map(button => {
@@ -253,10 +266,14 @@ export function AigcVideoPanel({
                 sessionId={sessionId}
                 taskUuid={target.taskUuid}
                 onContinue={onChatButtonClick ? handleContinue : undefined}
+                autoOpenOpenCut={autoOpenOpenCut && target.panel === 'timeline'}
+                onOpenCutClose={autoOpenOpenCut ? onClose : undefined}
               />
             ) : isEntity ? (
               <EntityPanel
                 taskId={taskId!}
+                readOnly={Boolean(shareToken)}
+                shareToken={shareToken}
                 onContinue={onChatButtonClick ? handleContinue : undefined}
               />
             ) : (

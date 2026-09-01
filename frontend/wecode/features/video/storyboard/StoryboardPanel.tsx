@@ -211,8 +211,10 @@ export function StoryboardPanel({
           id: sb.id,
           // 优先使用视频封面，其次是首帧图片
           image_url:
-            getAigcVideoImageUrl(currentStoryboardVideoClip?.video_cover_url || sb.image_urls[0]) ||
-            '',
+            getAigcVideoImageUrl(
+              currentStoryboardVideoClip?.video_cover_url || sb.image_urls[0],
+              shareToken
+            ) || '',
           entity_name: `${t('video')}${(sb.sequence_number ?? 0) + 1}`,
           // 视频生成中或首帧生成中显示 loading
           isGenerating,
@@ -223,7 +225,7 @@ export function StoryboardPanel({
           ),
         }
       }),
-    [selectedVersionMap, storyboards, t, videoGeneratingIds]
+    [selectedVersionMap, shareToken, storyboards, t, videoGeneratingIds]
   )
 
   // Clamp index when storyboards change
@@ -1304,7 +1306,7 @@ export function StoryboardPanel({
                     className="absolute top-1/2 flex -translate-y-1/2 items-center"
                     style={{ right: isMobile ? '14px' : '24px' }}
                   >
-                    {(currentStoryboard.video_versions?.length ?? 0) > 0 ? (
+                    {!readOnly && (currentStoryboard.video_versions?.length ?? 0) > 0 ? (
                       <StoryboardVersionSelector
                         currentVersion={currentVersion}
                         versions={currentStoryboard.video_versions ?? []}
@@ -1359,6 +1361,8 @@ export function StoryboardPanel({
                     imageHeight={imageHeight}
                     trimStart={currentVersion?.trim_start}
                     trimEnd={currentVersion?.trim_end}
+                    readOnly={readOnly}
+                    shareToken={shareToken}
                   />
                 )
               }}

@@ -974,12 +974,15 @@ async function verifyCloudProjectFlow(
     value =>
       value.testIds.includes(runningTaskTestId) &&
       value.testIds.includes('pause-response-button') &&
-      value.testIds.includes('thinking-indicator') &&
       !value.testIds.includes('send-message-button') &&
       !value.testIds.includes(unreadTaskTestId),
-    'The cloud follow-up task did not render a consistent sidebar, composer, and message state',
+    'The cloud follow-up task did not remain active while streaming text',
     DEFAULT_STEP_TIMEOUT_MS
   )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
   control.releaseCloudFollowUpResponse()
   await control.command('click', `[data-testid="${taskRowTestId}"]`)
   await control.command('waitFor', '[data-testid="message-assistant"]', {
