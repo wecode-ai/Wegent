@@ -210,6 +210,28 @@ confirm that these files exist and match their repository sources. Inspecting
 only an intermediate resource directory does not prove that the distribution
 is complete.
 
+## Development hot reload
+
+`pnpm --dir wework run dev:mac` continuously builds the original Wework
+application through `wework/scripts/dev-wework-app-watch.mjs`. The watcher
+clears `dsh/app-wework/web` once at startup and must not clear it again for
+incremental builds. A running renderer may still request hashed assets from the
+previous generation, and deleting them while the next generation is being
+written can leave the window blank.
+
+Each build publishes `.wework-build-id` only after Vite finishes the bundle,
+the build result is closed, and file-viewer metadata is normalized. Core DSH
+uses this marker as the published build ID, so the page reloads only after the
+marker changes instead of treating an intermediate `index.html` write as a
+loadable generation.
+
+In development hot-reload mode, static resources under `/wework/app/` must use
+`Cache-Control: no-store`. In addition to hashed assets, this tree contains
+fixed-name `plugins/*.js` bundles. Serving those files with the production
+immutable cache can mix an old plugin bundle with a new main bundle after
+reload, creating duplicate instances of modules such as React contexts.
+Formal builds continue to use `public, max-age=31536000, immutable`.
+
 ## Local verification
 
 Release changes must run at least:
