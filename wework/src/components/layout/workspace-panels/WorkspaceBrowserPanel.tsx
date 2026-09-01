@@ -74,7 +74,7 @@ import {
 } from '@/lib/embedded-browser-download-store'
 import { openExternalUrl } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
-import { revealLocalFile } from '@/lib/local-terminal'
+import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
 import { normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
 import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
@@ -122,6 +122,7 @@ const EMBEDDED_BROWSER_VISIBLE_HOST_TIMEOUT_MS = 12_000
 const EMBEDDED_BROWSER_VISIBLE_HOST_INTERVAL_MS = 50
 const EMBEDDED_BROWSER_POST_OPEN_SYNC_DELAYS_MS = [0, 120, 300, 600]
 const BROWSER_CLEAR_STARTED_NOTICE_MIN_MS = 600
+const DOWNLOAD_PEEK_DURATION_MS = 8000
 const BROWSER_ANNOTATION_LOG_PREFIX = '[Wework][BrowserAnnotation]'
 
 interface BrowserOcclusionState {
@@ -352,6 +353,7 @@ export function WorkspaceBrowserTabPanel({
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const electronRuntime = isElectronRuntime()
+  const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
@@ -414,6 +416,18 @@ export function WorkspaceBrowserTabPanel({
   const [originalViewHeld, setOriginalViewHeld] = useState(false)
   const [downloads, setDownloads] = useState<BrowserDownload[]>([])
   const [downloadsOpen, setDownloadsOpen] = useState(false)
+  const [downloadPeek, setDownloadPeek] = useState<{
+    id: string
+    fileName: string
+    path: string | null
+    status: 'finished' | 'failed'
+  } | null>(null)
+
+  useEffect(() => {
+    if (!downloadPeek) return
+    const timer = window.setTimeout(() => setDownloadPeek(null), DOWNLOAD_PEEK_DURATION_MS)
+    return () => window.clearTimeout(timer)
+  }, [downloadPeek])
   const [localFilePreviewToast, setLocalFilePreviewToast] = useState<{
     id: number
     message: string
@@ -483,14 +497,22 @@ export function WorkspaceBrowserTabPanel({
       if (download.status === 'deleted') return remaining
       return [download, ...remaining].slice(0, 10)
     })
-    setDownloadsOpen(true)
+    // Codex-style interaction: the downloads list never opens itself. A
+    // transient peek card surfaces completion or failure and dismisses itself.
+    if (download.status === 'finished' || download.status === 'failed') {
+      setDownloadPeek({
+        id: `${download.id}-${Date.now()}`,
+        fileName: download.path?.split(/[\\/]/).pop() || download.url,
+        path: download.path,
+        status: download.status,
+      })
+    }
   }, [])
 
   const reconcileDownloadSnapshot = useCallback(
     (nativeLabel: string) => {
       const snapshot = readEmbeddedBrowserDownloadSnapshot(nativeLabel).slice(0, 10)
       setDownloads(snapshot)
-      setDownloadsOpen(snapshot.length > 0)
       activeDownloadIdsRef.current = new Set(
         snapshot
           .filter(download => download.status === 'started' || download.status === 'progress')
@@ -2264,6 +2286,7 @@ export function WorkspaceBrowserTabPanel({
 
   return (
     <div
+      ref={browserPanelRef}
       data-testid="workspace-browser-panel"
       data-embedded-browser-label={label}
       data-browser-annotation-original-view={annotationOriginalView}
@@ -2271,7 +2294,7 @@ export function WorkspaceBrowserTabPanel({
       data-browser-annotation-runtime-revision={annotationRuntimeRevision}
       onKeyDown={handleBrowserKeyDown}
       className={cn(
-        'flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
+        'relative flex h-full min-h-0 w-full flex-col bg-background text-text-primary',
         !active && 'hidden'
       )}
     >
@@ -2612,6 +2635,20 @@ export function WorkspaceBrowserTabPanel({
           data-testid="workspace-browser-downloads-panel"
           className="flex max-h-40 shrink-0 flex-col overflow-y-auto border-b border-border bg-surface px-3 py-2"
         >
+          <div className="flex items-center justify-between pb-1">
+            <span className="text-xs font-medium text-text-secondary">
+              {t('workbench.browser_downloads')}
+            </span>
+            <button
+              type="button"
+              data-testid="workspace-browser-downloads-close"
+              aria-label={t('workbench.browser_downloads_close')}
+              className="rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => setDownloadsOpen(false)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
           {downloads.length === 0 ? (
             <span className="text-xs text-text-muted">
               {t('workbench.browser_downloads_empty')}
@@ -2719,12 +2756,91 @@ export function WorkspaceBrowserTabPanel({
         message={localFilePreviewToast?.message ?? null}
         tone="error"
         onClear={clearLocalFilePreviewToast}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
+      {downloadPeek ? (
+        <div
+          key={downloadPeek.id}
+          data-testid="workspace-browser-download-peek"
+          role="status"
+          className="absolute bottom-4 right-4 z-20 flex w-72 flex-col gap-2 rounded-lg border border-border bg-surface p-3 shadow-[0_8px_28px_rgba(0,0,0,0.12)]"
+        >
+          <div className="flex items-center gap-2">
+            {downloadPeek.status === 'finished' ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
+            ) : (
+              <CircleAlert className="h-4 w-4 shrink-0 text-red-500" />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-text-primary">
+                {t(`workbench.browser_download_${downloadPeek.status}`)}
+              </p>
+              <p
+                className="truncate text-xs text-text-muted"
+                title={downloadPeek.path ?? downloadPeek.fileName}
+              >
+                {downloadPeek.fileName}
+              </p>
+            </div>
+            <button
+              type="button"
+              data-testid="workspace-browser-download-peek-dismiss"
+              aria-label={t('workbench.browser_download_peek_dismiss')}
+              className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => setDownloadPeek(null)}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {downloadPeek.status === 'finished' && downloadPeek.path ? (
+              <>
+                <button
+                  type="button"
+                  data-testid="workspace-browser-download-peek-open"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  onClick={() => {
+                    void openLocalFile(downloadPeek.path ?? undefined)
+                    setDownloadPeek(null)
+                  }}
+                >
+                  {t('workbench.browser_download_peek_open')}
+                </button>
+                <button
+                  type="button"
+                  data-testid="workspace-browser-download-peek-show-in-folder"
+                  className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  onClick={() => {
+                    void revealLocalFile(downloadPeek.path ?? undefined)
+                    setDownloadPeek(null)
+                  }}
+                >
+                  {fileManagerRevealLabel(t)}
+                </button>
+              </>
+            ) : null}
+            <button
+              type="button"
+              data-testid="workspace-browser-download-peek-view-downloads"
+              className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => {
+                setDownloadPeek(null)
+                setDownloadsOpen(true)
+              }}
+            >
+              {t('workbench.browser_download_peek_view_downloads')}
+            </button>
+          </div>
+        </div>
+      ) : null}
       <TransientNotice
         key={clearDataNotice?.id ?? 'workspace-browser-clear-data-toast'}
         message={clearDataNotice?.message ?? null}
         tone={clearDataNotice?.tone}
         onClear={clearClearDataNotice}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {invalidTlsCertificate ? (
         <div

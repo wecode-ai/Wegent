@@ -4362,10 +4362,10 @@ async fn execution_mapper_does_not_rebind_queued_notification_to_new_active_turn
     let event = event_rx
         .try_recv()
         .expect("the global router should emit the historical turn once");
-    assert_eq!(event["event"], "response.block.created");
+    assert_eq!(event["event"], "response.output_text.done");
     assert_eq!(event["payload"]["subtaskId"], "turn-initial");
     assert_eq!(
-        event["payload"]["data"]["block"]["content"],
+        event["payload"]["data"]["text"],
         "Initial goal turn complete"
     );
     assert!(

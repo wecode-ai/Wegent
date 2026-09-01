@@ -437,7 +437,8 @@
     "description": "管理服务密钥、个人 API 密钥和对外签发配置",
     "service_keys": "服务密钥",
     "personal_keys": "个人密钥",
-    "outbound_tokens": "对外签发"
+    "outbound_tokens": "对外签发",
+    "oauth_clients": "OAuth 应用"
   },
   "service_keys": {
     "title": "服务密钥管理",

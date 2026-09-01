@@ -32,6 +32,8 @@ from app.api.endpoints import (
     local_executor,
     loop_item_executions,
     mcp_providers,
+    oauth_clients,
+    oauth_provider,
     oidc,
     openapi_responses,
     pet,
@@ -125,6 +127,10 @@ from app.api.router import api_router
 api_router.include_router(health.router, tags=["health"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
+api_router.include_router(oauth_provider.router)
+api_router.include_router(
+    oauth_clients.router, prefix="/oauth-clients", tags=["oauth-clients"]
+)
 api_router.include_router(
     wework_auth.router, prefix="/auth/wework", tags=["auth", "wework"]
 )

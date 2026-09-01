@@ -145,6 +145,13 @@ function annotationState(
   }
 }
 
+// The downloads list only opens from the toolbar; download events surface a
+// transient peek instead.
+function openDownloadsPanel(container?: HTMLElement) {
+  const scope = container ? within(container) : screen
+  fireEvent.click(scope.getByTestId('workspace-browser-downloads-button'))
+}
+
 function mockBrowserHostRect() {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
     bottom: 420,
@@ -285,6 +292,40 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('transient-notice')).toHaveTextContent('浏览数据已清除')
     })
+  })
+
+  test('hides the clear-data notice while the browser panel is inactive', async () => {
+    vi.useFakeTimers()
+    const clearData = createDeferred<number>()
+    embeddedBrowserMocks.clearEmbeddedBrowserData.mockReturnValueOnce(clearData.promise)
+    const view = render(<WorkspaceBrowserPanel active />)
+
+    try {
+      fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+      fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
+      fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
+
+      view.rerender(<WorkspaceBrowserPanel active={false} />)
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
+
+      await act(async () => {
+        clearData.resolve(1)
+        await clearData.promise
+        await Promise.resolve()
+      })
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('reports a failed browser data clear', async () => {
@@ -1044,8 +1085,28 @@ describe('WorkspaceBrowserPanel', () => {
   })
 
   test('shows completed downloads with their saved file path', async () => {
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
-      handler({
+      handleDownload = handler
+      return null
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+
+    act(() => {
+      handleDownload({
         id: 'download-1',
         label: 'workspace-browser',
         nativeLabel: 'workspace-browser-native-1',
@@ -1055,11 +1116,16 @@ describe('WorkspaceBrowserPanel', () => {
         receivedBytes: 1024,
         totalBytes: 1024,
       })
-      return null
     })
 
-    render(<WorkspaceBrowserPanel active />)
+    // The list stays closed; a transient peek announces the completion.
+    expect(await screen.findByTestId('workspace-browser-download-peek')).toHaveTextContent(
+      'app.dmg'
+    )
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
 
+    fireEvent.click(screen.getByTestId('workspace-browser-download-peek-view-downloads'))
+    expect(screen.queryByTestId('workspace-browser-download-peek')).not.toBeInTheDocument()
     expect(await screen.findByTestId('workspace-browser-downloads-panel')).toBeInTheDocument()
     expect(screen.getByTestId('workspace-browser-download-item')).toHaveTextContent('app.dmg')
     expect(screen.getByTestId('workspace-browser-download-item')).toHaveTextContent('下载完成')
@@ -1083,12 +1149,71 @@ describe('WorkspaceBrowserPanel', () => {
 
     render(<WorkspaceBrowserPanel active />)
 
+    fireEvent.click(screen.getByTestId('workspace-browser-downloads-button'))
     expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
       '50% · 5.0 MB / 10.0 MB'
     )
     expect(screen.getByTestId('workspace-browser-download-progress').firstChild).toHaveStyle({
       width: '50%',
     })
+  })
+
+  test('never auto-opens the downloads panel and shows a dismissible peek on completion', async () => {
+    let handleDownload!: (download: {
+      id: string
+      label: string
+      nativeLabel: string
+      url: string
+      path: string | null
+      status: string
+      receivedBytes: number | null
+      totalBytes: number | null
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockImplementation(handler => {
+      handleDownload = handler
+      return Promise.resolve(vi.fn())
+    })
+
+    render(<WorkspaceBrowserPanel active />)
+
+    const emit = (status: string, id = 'download-1') =>
+      act(() => {
+        handleDownload({
+          id,
+          label: 'workspace-browser',
+          nativeLabel: 'workspace-browser-native-1',
+          url: 'https://example.com/app.dmg',
+          path: '/Users/test/Downloads/app.dmg',
+          status,
+          receivedBytes: 512,
+          totalBytes: 1024,
+        })
+      })
+
+    await waitFor(() =>
+      expect(embeddedBrowserMocks.readEmbeddedBrowserPageState).toHaveBeenCalled()
+    )
+    emit('started')
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-browser-download-peek')).not.toBeInTheDocument()
+
+    emit('progress')
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-browser-download-peek')).not.toBeInTheDocument()
+
+    emit('finished')
+    expect(await screen.findByTestId('workspace-browser-download-peek')).toHaveTextContent(
+      'app.dmg'
+    )
+    expect(screen.queryByTestId('workspace-browser-downloads-panel')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByTestId('workspace-browser-download-peek-dismiss'))
+    expect(screen.queryByTestId('workspace-browser-download-peek')).not.toBeInTheDocument()
+
+    // A second download gets its own peek without reviving the first record.
+    emit('finished', 'download-2')
+    expect(await screen.findByTestId('workspace-browser-download-peek')).toBeInTheDocument()
+    expect(screen.getAllByTestId('workspace-browser-download-peek')).toHaveLength(1)
   })
 
   test('allows paused downloads to resume or be deleted', async () => {
@@ -1108,6 +1233,7 @@ describe('WorkspaceBrowserPanel', () => {
 
     render(<WorkspaceBrowserPanel active />)
 
+    openDownloadsPanel()
     fireEvent.click(await screen.findByTestId('workspace-browser-download-resume-button'))
     fireEvent.click(screen.getByTestId('workspace-browser-download-delete-button'))
     expect(embeddedBrowserMocks.resumeEmbeddedBrowserDownload).toHaveBeenCalledWith(
@@ -1163,6 +1289,7 @@ describe('WorkspaceBrowserPanel', () => {
       })
     })
 
+    openDownloadsPanel()
     expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
       'handoff.dmg'
     )
@@ -1204,6 +1331,8 @@ describe('WorkspaceBrowserPanel', () => {
         totalBytes: 1024,
       })
     })
+
+    openDownloadsPanel()
     expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
       'relabel.dmg'
     )
@@ -1251,6 +1380,8 @@ describe('WorkspaceBrowserPanel', () => {
         totalBytes: 1024,
       })
     })
+
+    openDownloadsPanel(source.container)
     expect(
       await within(source.container).findByTestId('workspace-browser-download-item')
     ).toHaveTextContent('handoff.dmg')
@@ -1277,6 +1408,7 @@ describe('WorkspaceBrowserPanel', () => {
       )
     )
 
+    openDownloadsPanel(destination.container)
     expect(
       await within(destination.container).findByTestId('workspace-browser-download-item')
     ).toHaveTextContent('下载完成')
@@ -1329,6 +1461,8 @@ describe('WorkspaceBrowserPanel', () => {
       )
     })
 
+    openDownloadsPanel(source.container)
+    openDownloadsPanel(destination.container)
     expect(
       within(source.container).queryByTestId('workspace-browser-download-item')
     ).not.toBeInTheDocument()
@@ -1386,9 +1520,11 @@ describe('WorkspaceBrowserPanel', () => {
       )
     })
 
+    openDownloadsPanel(destination.container)
     expect(
       await within(destination.container).findByTestId('workspace-browser-download-item')
     ).toHaveTextContent('下载完成')
+    openDownloadsPanel(source.container)
     expect(
       within(source.container).queryByTestId('workspace-browser-download-item')
     ).not.toBeInTheDocument()
@@ -1507,6 +1643,7 @@ describe('WorkspaceBrowserPanel', () => {
       })
     })
 
+    openDownloadsPanel()
     expect(await screen.findByTestId('workspace-browser-download-item')).toHaveTextContent(
       'target.dmg'
     )

@@ -169,6 +169,14 @@ Electron, and sets `ELECTRON_RUN_AS_NODE=1`. Core DSH and Codex skills therefore
 use Electron's version-bound Node for both explicit `node script.ts` commands
 and `#!/usr/bin/env node` entry points.
 
+The entry point also preloads a standard-stream guard. After the consumer of a
+stdio MCP or another Node child process closes, diagnostic writes to a broken
+`stderr` must not surface as an Electron main-process error dialog. A broken
+protocol `stdout` means the caller has gone away, so the child exits normally.
+The guard handles only `EPIPE`; other stream errors still fail and expose their
+root cause. A configured external Node executable keeps native Node error
+handling and does not load this Electron-specific guard.
+
 ## Bundled sidecars and resources
 
 Prepare Codex and DWS before packaging:

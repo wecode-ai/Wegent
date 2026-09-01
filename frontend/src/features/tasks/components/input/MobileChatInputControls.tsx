@@ -50,6 +50,7 @@ import { getChatSendState } from './chatSendState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { AspectRatioOption, ResolutionOption, VideoGenerationMode } from '@/apis/models'
+import { getVideoParamVisibility } from '../../utils/teamModeSpec'
 
 const MOBILE_ACTION_MENU_WIDTH = 224
 const MOBILE_ACTION_MENU_MARGIN = 12
@@ -242,6 +243,8 @@ export function MobileChatInputControls({
   const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const isVideoMode = taskType === 'video' || showVideoControlsInChat
+  const hiddenVideoParams = selectedTeam?.mode_spec?.hiddenVideoParams ?? []
+  const videoParamVisibility = getVideoParamVisibility(hiddenVideoParams, !hideDurationSelector)
   const isGenerationMode = taskType === 'image' || isVideoMode
   const showAttachmentAction = isGenerationMode
     ? selectedVideoGenerationMode !== 'first_last_frame'
@@ -271,14 +274,28 @@ export function MobileChatInputControls({
     effectiveRequiresWorkspace !== false
   const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
   const showVideoSettings = Boolean(
-    isVideoMode && onResolutionChange && onRatioChange && onDurationChange
+    isVideoMode &&
+    videoParamVisibility.showSettings &&
+    onResolutionChange &&
+    onRatioChange &&
+    onDurationChange
   )
   const hasSecondaryActions =
     showAttachmentAction || showChatContexts || showSkillAction || showVideoSettings
+  const showMoreActions =
+    hasSecondaryActions ||
+    showClarificationAction ||
+    showCorrectionAction ||
+    showGuidanceAction ||
+    showRepositoryAction ||
+    showBranchAction
   const closeMoreMenu = useCallback(() => {
     setMoreMenuOpen(false)
     setContextSelectorOpen(false)
   }, [])
+  useEffect(() => {
+    if (!showMoreActions && moreMenuOpen) closeMoreMenu()
+  }, [closeMoreMenu, moreMenuOpen, showMoreActions])
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
       closeMoreMenu()
@@ -484,28 +501,30 @@ export function MobileChatInputControls({
         data-tour="input-controls"
       >
         {/* Secondary actions menu */}
-        <Button
-          ref={moreMenuButtonRef}
-          type="button"
-          variant="ghost"
-          size="sm"
-          aria-expanded={moreMenuOpen}
-          aria-label="More actions"
-          data-testid="mobile-input-more-actions-button"
-          title="More actions"
-          onClick={() => {
-            if (moreMenuOpen) {
-              closeMoreMenu()
-              return
-            }
-            setMoreMenuOpen(true)
-          }}
-          className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
-        >
-          <Plus className="h-4 w-4" />
-        </Button>
+        {showMoreActions && (
+          <Button
+            ref={moreMenuButtonRef}
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-expanded={moreMenuOpen}
+            aria-label="More actions"
+            data-testid="mobile-input-more-actions-button"
+            title="More actions"
+            onClick={() => {
+              if (moreMenuOpen) {
+                closeMoreMenu()
+                return
+              }
+              setMoreMenuOpen(true)
+            }}
+            className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
 
-        {moreMenuOpen && (
+        {showMoreActions && moreMenuOpen && (
           <div
             ref={moreMenuRef}
             data-testid="mobile-input-more-actions-menu"
@@ -529,6 +548,7 @@ export function MobileChatInputControls({
                     resolutionOptions={resolutionOptions}
                     disabled={isStreaming}
                     showDuration={!hideDurationSelector}
+                    hiddenVideoParams={hiddenVideoParams}
                     triggerVariant="menu-item"
                   />
                 )}
@@ -633,7 +653,7 @@ export function MobileChatInputControls({
             disabled={isStreaming}
           />
         )}
-        {isVideoMode && onVideoModelChange && (
+        {isVideoMode && videoParamVisibility.showModel && onVideoModelChange && (
           <div className="flex-1 min-w-0 overflow-hidden">
             <MobileModelSelector
               selectedModel={selectedVideoModel ?? null}

@@ -88,6 +88,17 @@ async function waitForActiveTaskIdle(control) {
   throw new Error('The active task did not become idle before sending the next prompt')
 }
 
+async function waitForLastElementAbove(control, selector, top, description) {
+  const startedAt = Date.now()
+  let element
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    element = (await getElementMetrics(control, selector)).at(-1)
+    if (element && element.bottom <= top + 2) return element
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description}: ${JSON.stringify(element)}`)
+}
+
 async function sendPrompt(control, selector, prompt) {
   await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
@@ -699,37 +710,19 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('expandProcessingSummaries', 'body')
-  const assistantProcessTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
-  await control.command('waitFor', assistantProcessTextSelector, {
-    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('markElementWithText', assistantProcessTextSelector, {
-    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
-    value: 'guidance-scroll-pre-tool-assistant',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const assistantTranscriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${assistantProcessTextSelector}`
-  )
-  assert.equal(
-    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
-    1,
-    'The final text from before guidance was duplicated after the guidance message'
-  )
-
-  const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
+  const guidanceMessageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  const { element: visibleGuidanceMessage, scroller } = await waitForElementInsideScroller(
     control,
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    guidanceMessageSelector,
     scrollerSelector,
-    'The newly applied guidance message did not become visible'
+    'The newly applied guidance message did not become visible',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   assert.ok(
-    guidanceMessage.top >= scroller.top - 2 && guidanceMessage.bottom <= scroller.bottom + 2,
+    visibleGuidanceMessage.top >= scroller.top - 2 &&
+      visibleGuidanceMessage.bottom <= scroller.bottom + 2,
     `The newly applied guidance message was outside the viewport: ${JSON.stringify({
-      guidanceMessage,
+      guidanceMessage: visibleGuidanceMessage,
       scroller,
     })}`
   )
@@ -740,6 +733,12 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     )
   ).at(-1)
   assert.ok(composerMetrics, 'The conversation composer was not rendered after guidance')
+  const guidanceMessage = await waitForLastElementAbove(
+    control,
+    guidanceMessageSelector,
+    composerMetrics.top,
+    'The newly applied guidance message did not settle above the composer'
+  )
   assert.ok(
     guidanceMessage.bottom <= composerMetrics.top + 2,
     `The newly applied guidance message rendered below the composer: ${JSON.stringify({
@@ -748,6 +747,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     })}`
   )
   await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
+
+  await control.command('expandProcessingSummaries', 'body')
+  const assistantTranscriptTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
+  await control.command('waitFor', assistantTranscriptTextSelector, {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('markElementWithText', assistantTranscriptTextSelector, {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    value: 'guidance-scroll-pre-tool-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const assistantTranscriptText = await control.command('getText', assistantTranscriptTextSelector)
+  assert.equal(
+    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    1,
+    'The final text from before guidance was duplicated after the guidance message'
+  )
 
   control.releaseGuidanceScrollCompletion()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -826,6 +843,132 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
+}
+
+async function verifyEnvironmentPanelScrollStability(control) {
+  const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
+  const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+  const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
+  await control.command(
+    'waitFor',
+    `${environmentPanelSelector} [data-testid="environment-info-popover"]`,
+    {
+      visible: true,
+      stableMs: COMPOSER_READY_STABILITY_MS,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  const scrollerBeforeScroll = await getSingleElementMetrics(
+    control,
+    scrollerSelector,
+    'The conversation before verifying the fixed environment panel'
+  )
+  const scrollFrameBeforeScroll = await getSingleElementMetrics(
+    control,
+    scrollFrameSelector,
+    'The full-width workbench scroll frame'
+  )
+  assert.ok(
+    scrollerBeforeScroll.scrollHeight > scrollerBeforeScroll.clientHeight,
+    `The environment-panel fixture did not overflow: ${JSON.stringify(scrollerBeforeScroll)}`
+  )
+  const environmentPanelBeforeScroll = await getSingleElementMetrics(
+    control,
+    environmentPanelSelector,
+    'The environment panel before scrolling the conversation'
+  )
+  assert.ok(
+    Math.abs(scrollerBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1 &&
+      Math.abs(scrollerBeforeScroll.width - scrollFrameBeforeScroll.width) <= 1,
+    `The conversation scrollbar was not aligned to the workbench right edge: ${JSON.stringify({
+      scrollFrame: scrollFrameBeforeScroll,
+      scroller: scrollerBeforeScroll,
+    })}`
+  )
+  assert.ok(
+    Math.abs(environmentPanelBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1,
+    `The fixed environment panel was not aligned to the workbench right edge: ${JSON.stringify({
+      environmentPanel: environmentPanelBeforeScroll,
+      scrollFrame: scrollFrameBeforeScroll,
+    })}`
+  )
+  const assertEnvironmentPanelDidNotMove = (metrics, description) => {
+    for (const property of ['top', 'right', 'bottom', 'left', 'width', 'height']) {
+      assert.ok(
+        Math.abs(metrics[property] - environmentPanelBeforeScroll[property]) <= 1,
+        `${description}: ${property} changed from ${environmentPanelBeforeScroll[property]} to ${metrics[property]}`
+      )
+    }
+  }
+  await captureVerificationScreenshot(control, 'environment-panel-scroll-01-before.png')
+
+  const upwardScrollTop = Number(
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.15' })
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await assertDesktopComposerDocked(
+    control,
+    await getSingleElementMetrics(control, scrollerSelector, 'The conversation after scrolling up'),
+    'The composer after scrolling upward while the environment panel is visible'
+  )
+  const environmentPanelAfterUpwardScroll = await getSingleElementMetrics(
+    control,
+    environmentPanelSelector,
+    'The environment panel after scrolling upward'
+  )
+  assertEnvironmentPanelDidNotMove(
+    environmentPanelAfterUpwardScroll,
+    'The environment panel moved with the upward conversation scroll'
+  )
+  await captureVerificationScreenshot(control, 'environment-panel-scroll-02-upward.png')
+
+  const downwardScrollTop = Number(
+    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.75' })
+  )
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
+  await assertDesktopComposerDocked(
+    control,
+    await getSingleElementMetrics(
+      control,
+      scrollerSelector,
+      'The conversation after scrolling down'
+    ),
+    'The composer after scrolling downward while the environment panel is visible'
+  )
+  const environmentPanelAfterDownwardScroll = await getSingleElementMetrics(
+    control,
+    environmentPanelSelector,
+    'The environment panel after scrolling downward'
+  )
+  assert.ok(
+    Number.isFinite(upwardScrollTop) && Number.isFinite(downwardScrollTop),
+    `The conversation scroller did not report numeric offsets: ${JSON.stringify({
+      downwardScrollTop,
+      upwardScrollTop,
+    })}`
+  )
+  assert.notEqual(
+    downwardScrollTop,
+    upwardScrollTop,
+    'The conversation did not move between the environment-panel assertions'
+  )
+  assertEnvironmentPanelDidNotMove(
+    environmentPanelAfterDownwardScroll,
+    'The environment panel moved with the downward conversation scroll'
+  )
+  console.log(
+    'Environment panel scroll metrics:',
+    JSON.stringify({
+      afterDownwardScroll: environmentPanelAfterDownwardScroll,
+      afterUpwardScroll: environmentPanelAfterUpwardScroll,
+      beforeScroll: environmentPanelBeforeScroll,
+      downwardScrollTop,
+      scrollFrame: scrollFrameBeforeScroll,
+      scroller: scrollerBeforeScroll,
+      upwardScrollTop,
+    })
+  )
+  await captureVerificationScreenshot(control, 'environment-panel-scroll-03-downward.png')
 }
 
 export async function waitForComposerFocus(control, timeoutMs, failureMessage) {
@@ -916,30 +1059,7 @@ async function reopenCurrentTurnNavigationTask(
       'Loading the older transcript page changed the assistant-message count'
     )
 
-    const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
-    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.15' })
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-    await assertDesktopComposerDocked(
-      control,
-      await getSingleElementMetrics(
-        control,
-        scrollerSelector,
-        'The paginated conversation after scrolling upward'
-      ),
-      'The composer after scrolling upward in a paginated conversation'
-    )
-    await control.command('scrollToRatioAsUser', scrollerSelector, { value: '0.75' })
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 500))
-    await assertDesktopComposerDocked(
-      control,
-      await getSingleElementMetrics(
-        control,
-        scrollerSelector,
-        'The paginated conversation after scrolling downward'
-      ),
-      'The composer after scrolling downward in a paginated conversation'
-    )
-    await captureVerificationScreenshot(control, 'turn-navigation-00-paginated-scroll-stable.png')
+    await verifyEnvironmentPanelScrollStability(control)
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
@@ -1401,6 +1521,7 @@ export {
   verifyBackgroundGuidanceNavigation,
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
+  verifyEnvironmentPanelScrollStability,
   reopenCurrentTurnNavigationTask,
   verifyStandaloneViewImageTask,
   verifyVisionSidecar,

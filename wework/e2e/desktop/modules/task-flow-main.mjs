@@ -30,6 +30,7 @@ import {
   verifyBackgroundTaskPlanRestoration,
   verifyFollowUpMessageRestoration,
   verifyForegroundGuidanceScroll,
+  verifyEnvironmentPanelScrollStability,
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
@@ -73,6 +74,7 @@ import {
 import {
   ensureTaskRowVisible,
   verifyConcurrentTaskMemory,
+  verifyLocalMarkdownImage,
   verifyMemoryGrowth,
   verifyToolBlockChronologicalOrder,
 } from './memory-tool-flows.mjs'
@@ -1096,6 +1098,7 @@ async function main() {
       DEVICE_SESSION_GATEWAY_PORT: '0',
       VITE_WEWORK_E2E: 'true',
       WEWORK_E2E_BACKGROUND_WINDOW: process.env.WEWORK_E2E_BACKGROUND_WINDOW ?? '1',
+      WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
       ...(DESKTOP_SEGMENT === 'local-file-preview'
         ? { WEWORK_E2E_LOCAL_FILE_READ_DELAY_MS: '1500' }
         : {}),
@@ -3101,6 +3104,38 @@ last_updated = "2026-07-30T00:00:00Z"`
       }
     }
 
+    if (shouldRunDesktopCheckpoint('environment-panel-scroll')) {
+      phase = 'environment-panel-scroll'
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL)
+      control.setScenario('turn_navigation')
+      const environmentPanelTurnCount = E2E_TRANSCRIPT_PAGE_SIZE + 4
+      for (let index = 0; index < environmentPanelTurnCount; index += 1) {
+        const turnNumber = index + 1
+        await sendPrompt(
+          control,
+          ACTIVE_COMPOSER_SELECTOR,
+          `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${turnNumber}`
+        )
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+          {
+            text: `${TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX}_${turnNumber}`,
+            timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+          }
+        )
+      }
+      await verifyEnvironmentPanelScrollStability(control)
+      if (shouldStopAfterDesktopCheckpoint('environment-panel-scroll')) {
+        console.log(`Wework desktop environment-panel-scroll E2E passed. Evidence: ${resultDir}`)
+        return
+      }
+    }
+
     if (shouldRunDesktopCheckpoint('conversation-state')) {
       await ensureExperimentalFeaturesEnabled(control)
       if (!taskRowTestId) {
@@ -3887,6 +3922,12 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'standalone-view-image'
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
+
+      phase = 'local-markdown-image'
+      await verifyLocalMarkdownImage({
+        composerSelector,
+        control,
+      })
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'

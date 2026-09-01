@@ -258,6 +258,69 @@ describe('MobileChatInputControls layout', () => {
     )
   })
 
+  it('hides workflow-owned mobile video controls through hiddenVideoParams', async () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        selectedTeam={{
+          ...selectedTeam,
+          mode_spec: {
+            allowedModelCategories: ['video'],
+            hiddenVideoParams: ['duration', 'model', 'resolution', 'ratio'],
+          },
+        }}
+        showVideoControlsInChat
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('mobile-video-model-selector')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('mobile-model-selector')).not.toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('mobile-input-more-actions-button'))
+    expect(screen.queryByTestId('mobile-video-settings')).not.toBeInTheDocument()
+  })
+
+  it('hides more actions when the workflow exposes no mobile actions', () => {
+    render(
+      <MobileChatInputControls
+        {...buildProps()}
+        selectedTeam={{
+          ...selectedTeam,
+          agent_type: 'dify',
+          mode_spec: {
+            allowedModelCategories: ['video'],
+            hiddenVideoParams: ['duration', 'model', 'resolution', 'ratio'],
+          },
+        }}
+        showVideoControlsInChat
+        selectedVideoGenerationMode="first_last_frame"
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('mobile-input-more-actions-button')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mobile-input-more-actions-menu')).not.toBeInTheDocument()
+    expect(screen.getByTestId('send-button')).toBeInTheDocument()
+  })
+
   it('keeps long selector labels clipped without clipping the overflow menu', async () => {
     render(<MobileChatInputControls {...buildProps()} />)
 

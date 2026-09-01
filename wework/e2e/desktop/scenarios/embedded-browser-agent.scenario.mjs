@@ -13,7 +13,7 @@ const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid
 const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
-const TRANSIENT_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="transient-notice"]`
+const TRANSIENT_NOTICE_SELECTOR = '[data-testid="transient-notice"]'
 const WORKBENCH_BROWSER_LABEL_SELECTOR =
   '[data-testid="desktop-workbench-content"][data-embedded-browser-label]'
 const BROWSER_LABEL = 'workspace-browser'
@@ -204,6 +204,35 @@ async function withTimeout(promise, timeoutMs, message) {
       timer = setTimeout(() => reject(new Error(message)), timeoutMs)
     }),
   ]).finally(() => clearTimeout(timer))
+}
+
+async function assertNoticeCenteredInBrowserPanel(control) {
+  const [noticeMetrics] = JSON.parse(
+    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR)
+  )
+  const [panelMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+    )
+  )
+  const noticeCenter = noticeMetrics.left + noticeMetrics.width / 2
+  const panelCenter = panelMetrics.left + panelMetrics.width / 2
+
+  assert.ok(
+    Math.abs(noticeCenter - panelCenter) <= 1,
+    `Browser notice was not centered in the browser panel: ${JSON.stringify({
+      noticeMetrics,
+      panelMetrics,
+    })}`
+  )
+  assert.ok(
+    noticeMetrics.left >= panelMetrics.left && noticeMetrics.right <= panelMetrics.right,
+    `Browser notice exceeded the browser panel width: ${JSON.stringify({
+      noticeMetrics,
+      panelMetrics,
+    })}`
+  )
 }
 
 async function waitForControlValue(control, selector, expected, timeoutMs, message) {
@@ -892,6 +921,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: BROWSER_CLEAR_STARTED_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await assertNoticeCenteredInBrowserPanel(control)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_COMPLETED_TEXT,
         timeoutMs: 35_000,
