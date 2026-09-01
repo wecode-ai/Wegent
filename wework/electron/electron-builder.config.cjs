@@ -59,6 +59,7 @@ module.exports = {
     { from: '../resources/licenses', to: 'licenses' },
     { from: '../resources/icons', to: 'icons' },
     { from: 'resources/vnc', to: 'vnc' },
+    { from: '../../LICENSE', to: 'LICENSE' },
   ],
   publish: {
     provider: 'generic',

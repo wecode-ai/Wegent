@@ -1734,62 +1734,6 @@ export function useWorkbenchRuntimeMessaging({
     ]
   )
 
-  const retryFailedMessage = useCallback(
-    async (
-      messageId: string,
-      messagesOverride?: WorkbenchMessage[],
-      retryUserMessageOverride?: WorkbenchMessage
-    ): Promise<boolean> => {
-      const messageSource = messagesOverride ?? []
-      const failedMessageIndex = messageSource.findIndex(
-        message =>
-          message.id === messageId && message.role === 'assistant' && message.status === 'failed'
-      )
-      if (failedMessageIndex === -1) {
-        dispatch({ type: 'error_set', error: '未找到可重试的失败消息' })
-        return false
-      }
-      const failedMessage = messageSource[failedMessageIndex]
-
-      const previousUserMessage =
-        retryUserMessageOverride?.role === 'user'
-          ? retryUserMessageOverride
-          : [...messageSource]
-              .slice(0, failedMessageIndex)
-              .reverse()
-              .find(message => message.role === 'user')
-      if (!previousUserMessage) {
-        dispatch({ type: 'error_set', error: '未找到可重试的用户消息' })
-        return false
-      }
-
-      if (state.currentRuntimeTask) {
-        const runtimeSelectedModel =
-          modelSelection.getSelectedModel?.() ??
-          modelSelection.selectedModel ??
-          resolveAutomaticModel(modelSelection.models)
-        const runtimeSelectedModelOptions =
-          modelSelection.getSelectedModelOptions?.() ?? modelSelection.selectedModelOptions
-        const previousAttachments = previousUserMessage.attachments ?? []
-        const attachmentIds = remoteAttachmentIds(previousAttachments)
-        const attachments = localRuntimeAttachments(previousAttachments)
-        return sendRuntimePaneMessage({
-          address: state.currentRuntimeTask,
-          message: previousUserMessage.content,
-          clientUserMessageId: previousUserMessage.id,
-          retrySourceTurnId: failedMessage.turnId ?? failedMessage.subtaskId,
-          ...selectedModelExecutionFields(runtimeSelectedModel, runtimeSelectedModelOptions),
-          ...(attachmentIds.length > 0 ? { attachmentIds } : {}),
-          ...(attachments.length > 0 ? { attachments } : {}),
-        })
-      }
-
-      reportSendBlocked('当前没有可重试的 LocalTask')
-      return false
-    },
-    [dispatch, modelSelection, reportSendBlocked, sendRuntimePaneMessage, state.currentRuntimeTask]
-  )
-
   const createEphemeralRuntimeTask = useCallback(
     async (
       input: string,
@@ -2077,7 +2021,6 @@ export function useWorkbenchRuntimeMessaging({
     createTemporaryRuntimeTask,
     createEphemeralRuntimeTask,
     createProjectRuntimeTask,
-    retryFailedMessage,
     pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,

@@ -360,6 +360,7 @@ async def start_project_terminal_session_endpoint(
         session_type="terminal",
         client_origin=client_origin,
         task_id=payload.task_id if payload else None,
+        allow_app_device=False,
     )
 
 
@@ -382,6 +383,7 @@ async def start_project_code_server_session_endpoint(
         session_type="code_server",
         client_origin=client_origin,
         task_id=payload.task_id if payload else None,
+        allow_app_device=False,
     )
 
 

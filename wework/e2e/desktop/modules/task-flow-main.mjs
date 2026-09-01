@@ -37,6 +37,7 @@ import {
   verifyTurnNavigationTracksVisibleTurnMessages,
   verifyUserMessageNavigation,
   verifyVisionSidecar,
+  waitForComposerFocus,
 } from './conversation-navigation.mjs'
 
 import {
@@ -49,6 +50,7 @@ import {
   toolDetailsMcpConfigToml,
   verifyCloudProjectFlow,
   verifyConnectedModelsOnLocalExecution,
+  verifyLocalRemoteControlFlow,
   verifyModelProtocolMatrix,
   verifyRemoteDockerCommandFlow,
   verifyRetryFailureRestoration,
@@ -273,6 +275,7 @@ import {
 import {
   captureVerificationScreenshot,
   verifyDefaultTaskBoardAssociation,
+  verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
@@ -1338,6 +1341,7 @@ last_updated = "2026-07-30T00:00:00Z"`
 
     if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
       phase = 'remote-device-onboarding'
+      await verifyLocalRemoteControlFlow(control, cloudEnvironment)
       await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
       console.log(
         `Wework desktop remote-device onboarding checkpoint passed. Evidence: ${resultDir}`
@@ -2237,7 +2241,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     let associatedTaskTabTestId = null
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync')
+      shouldRunDesktopCheckpoint('task-status-sync') ||
+      shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
       associatedTaskTabTestId = await verifyDefaultTaskBoardAssociation(control, projectRowSelector)
@@ -2308,7 +2313,8 @@ last_updated = "2026-07-30T00:00:00Z"`
     let taskRowCompletionText = COMPLETION_TEXT
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync')
+      shouldRunDesktopCheckpoint('task-status-sync') ||
+      shouldRunDesktopCheckpoint('task-board-association')
     ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
       await control.command('waitFor', activeModelSelector, {
@@ -2381,6 +2387,26 @@ last_updated = "2026-07-30T00:00:00Z"`
           'utf8'
         )
         console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
+        return
+      }
+      if (shouldRunDesktopCheckpoint('task-board-association')) {
+        phase = 'project-space-task-board-association'
+        control.releaseInitialToolExecution()
+        await control.command('waitFor', '[data-testid="message-assistant"]', {
+          text: COMPLETION_TEXT,
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        await verifyExistingTaskBoardAssociation(control, associatedTaskTabTestId, {
+          captureScreenshots: false,
+        })
+        await writeFile(
+          join(resultDir, 'model-requests.json'),
+          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+          'utf8'
+        )
+        console.log(
+          `Wework desktop task-board-association checkpoint passed. Evidence: ${resultDir}`
+        )
         return
       }
       await verifyUserMessageNavigation({
@@ -3494,6 +3520,11 @@ last_updated = "2026-07-30T00:00:00Z"`
           activeTaskWorkbenchSelector
         )
       }
+      await waitForComposerFocus(
+        control,
+        DEFAULT_STEP_TIMEOUT_MS,
+        'Restoring a task with an open terminal did not leave keyboard focus in the composer'
+      )
       await control.command(
         'waitFor',
         `${activeTaskWorkbenchSelector} [data-testid="file-changes-review-file-tree"]`,

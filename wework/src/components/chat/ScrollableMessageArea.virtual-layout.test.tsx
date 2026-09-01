@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { ScrollableMessageArea } from './ScrollableMessageArea'
 
 interface MockMessageListProps {
+  conversationKey?: string | number | null
   virtualAnchorToEnd?: boolean
 }
 
@@ -13,9 +14,10 @@ vi.mock('@/lib/runtime-environment', () => ({
 }))
 
 vi.mock('./MessageList', () => ({
-  MessageList: ({ virtualAnchorToEnd }: MockMessageListProps) => (
+  MessageList: ({ conversationKey, virtualAnchorToEnd }: MockMessageListProps) => (
     <div
       data-testid="virtual-message-list"
+      data-conversation-key={conversationKey ?? 'keyless'}
       data-virtual-anchor-to={virtualAnchorToEnd ? 'end' : 'start'}
     />
   ),
@@ -106,8 +108,12 @@ describe('ScrollableMessageArea virtual layout ownership', () => {
       writable: true,
       configurable: true,
     })
+    const firstConversationList = screen.getByTestId('virtual-message-list')
 
     rerender(<ScrollableMessageArea conversationKey="long-b" messages={[message('b')]} />)
+    const secondConversationList = screen.getByTestId('virtual-message-list')
+    expect(secondConversationList).not.toBe(firstConversationList)
+    expect(secondConversationList).toHaveAttribute('data-conversation-key', 'long-b')
     rerender(
       <ScrollableMessageArea
         conversationKey="long-b"

@@ -50,6 +50,8 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import type { BrowserAnnotationController } from './browser-annotation-controller.js'
+import { RotatingLog } from '../runtime/rotating-log.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -57,13 +59,45 @@ export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
+  openRuntimeTask: (taskAddressId: string) => void
   plugins: WorkbenchPluginManager
   vnc?: VncSessionManager
   cleanupStaleTemporaryImages: () => Promise<void>
   coreDshPlugins: () => CoreDshPluginService | null
   updatePreferences?: (patch: Record<string, unknown>) => Promise<Record<string, unknown>>
+}
+
+interface ElectronNotificationHandle {
+  once(event: 'click', listener: () => void): void
+  show(): void
+}
+
+interface ElectronNotificationInput {
+  title: string
+  body: string
+  taskAddressId?: string
+}
+
+export function showElectronNotification(
+  input: ElectronNotificationInput,
+  openRuntimeTask: (taskAddressId: string) => void,
+  createNotification: (options: {
+    title: string
+    body: string
+  }) => ElectronNotificationHandle = options => new Notification(options)
+): void {
+  const notification = createNotification({
+    title: input.title,
+    body: input.body,
+  })
+  const taskAddressId = input.taskAddressId
+  if (taskAddressId) {
+    notification.once('click', () => openRuntimeTask(taskAddressId))
+  }
+  notification.show()
 }
 
 export interface CoreDshPluginService {
@@ -76,7 +110,6 @@ export interface CoreDshPluginService {
 
 export interface ElectronE2EHost {
   capturePopout: () => Promise<string>
-  captureWorkbench: (tabId: string) => Promise<string>
   captureTarget: (windowLabel: string) => WebContents | null
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
@@ -87,7 +120,6 @@ export interface ElectronE2EHost {
   }) => Promise<void>
   dismissPopout: () => void
   dismissSystemDragPanel: () => void
-  evaluateWorkbench: (tabId: string, expression: string) => Promise<unknown>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
   dockVisible: () => boolean
@@ -97,6 +129,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  rendererStartupReady: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -137,14 +170,12 @@ export function createElectronCapabilityRouter(
   desktopServices: ElectronDesktopServices,
   e2eHost: ElectronE2EHost = {
     capturePopout: () => Promise.reject(new Error('Popout Window is unavailable')),
-    captureWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     captureTarget: () => null,
     cancelCloseToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     closeToTray: () => Promise.reject(new Error('Close to tray is unavailable')),
     completeSystemDragDrop: () => Promise.reject(new Error('System drag is unavailable')),
     dismissPopout: () => undefined,
     dismissSystemDragPanel: () => undefined,
-    evaluateWorkbench: () => Promise.reject(new Error('Workbench tabs are unavailable')),
     focusWindow: () => undefined,
     hideMainWindow: () => Promise.reject(new Error('Main window backgrounding is unavailable')),
     dockVisible: () => true,
@@ -154,6 +185,7 @@ export function createElectronCapabilityRouter(
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    rendererStartupReady: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -173,12 +205,22 @@ export function createElectronCapabilityRouter(
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
   const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const filePreviewLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
+  router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('diagnostics.filePreview', params => {
+    const event = recordParam(params, 'event')
+    return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
@@ -203,6 +245,7 @@ export function createElectronCapabilityRouter(
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
   )
+  registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>
     browser.setBounds(
       stringParam(params, 'label'),
@@ -238,9 +281,7 @@ export function createElectronCapabilityRouter(
   router.register('browser.evaluate', params => {
     const label = stringParam(params, 'label')
     const expression = stringParam(params, 'expression')
-    return isWorkbenchTabLabel(label)
-      ? e2eHost.evaluateWorkbench(label, expression)
-      : browser.evaluate(label, expression)
+    return browser.evaluate(label, expression)
   })
   router.register('browser.pageState', params => browser.state(stringParam(params, 'label')))
   router.register('browser.relabel', params =>
@@ -262,7 +303,9 @@ export function createElectronCapabilityRouter(
       booleanParam(params, 'approved') ?? false
     )
   )
-  router.register('browser.close', params => browser.close(stringParam(params, 'label')))
+  router.register('browser.close', params =>
+    browser.close(stringParam(params, 'label'), optionalStringParam(params, 'expectedNativeLabel'))
+  )
   router.register('browser.closeMany', params =>
     browser.closeMany(stringArrayParam(params, 'labels') ?? [])
   )
@@ -271,7 +314,7 @@ export function createElectronCapabilityRouter(
   )
   router.register('browser.capture', params => {
     const label = stringParam(params, 'label')
-    return isWorkbenchTabLabel(label) ? e2eHost.captureWorkbench(label) : browser.capture(label)
+    return browser.capture(label)
   })
   router.register('browser.pauseDownload', params =>
     browser.pauseDownload(stringParam(params, 'id'))
@@ -338,11 +381,12 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
-    const contents = e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main')
+    const windowLabel = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(windowLabel)
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents)
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')
@@ -360,9 +404,12 @@ export function createElectronCapabilityRouter(
         `Workspace DSH view is unavailable: ${label}`
       )
     }
-    return captureWebContentsDataUrl(contents)
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
+  router.register('e2e.activateRuntimeTaskNotification', params => {
+    desktopServices.openRuntimeTask(stringParam(params, 'taskAddressId'))
+  })
   router.register('e2e.focusMainWindow', () => {
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
@@ -475,7 +522,14 @@ export function createElectronCapabilityRouter(
     }
     const title = stringParam(params, 'title')
     const body = stringParam(params, 'body')
-    new Notification({ title, body }).show()
+    showElectronNotification(
+      {
+        title,
+        body,
+        taskAddressId: optionalStringParam(params, 'taskAddressId')?.trim() || undefined,
+      },
+      desktopServices.openRuntimeTask
+    )
   })
   router.register('preferences.get', () => preferences.read())
   router.register('preferences.update', async params => {
@@ -665,10 +719,6 @@ export function createElectronCapabilityRouter(
   router.register('smartApps.takeContextToken', params =>
     requiredSmartApps(smartApps).takeContextToken(stringParam(params, 'installationId'))
   )
-  router.register('workbench.activate', params => {
-    const installationId = nullableStringParam(params, 'installationId') ?? null
-    requiredSmartApps(smartApps).activate(installationId)
-  })
   return router
 }
 
@@ -762,6 +812,36 @@ export function registerDesktopServiceCapabilities(
 function requiredVnc(vnc: VncSessionManager | undefined): VncSessionManager {
   if (!vnc) throw new HostCapabilityError('unavailable', 'VNC session service is unavailable')
   return vnc
+}
+
+export function registerBrowserAnnotationCapabilities(
+  router: HostCapabilityRouter,
+  annotations: BrowserAnnotationController | undefined
+): void {
+  router.register('browser.annotation.start', params => {
+    const controller = requiredBrowserAnnotations(annotations)
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
+    const x = nullableNumberParam(params, 'x')
+    const y = nullableNumberParam(params, 'y')
+    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
+    controller.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
+  })
+  router.register('browser.annotation.stop', params =>
+    requiredBrowserAnnotations(annotations).stop(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.clear', params =>
+    requiredBrowserAnnotations(annotations).clear(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.state', params =>
+    requiredBrowserAnnotations(annotations).state(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.setOriginalView', params =>
+    requiredBrowserAnnotations(annotations).setOriginalView(
+      stringParam(params, 'label'),
+      booleanParam(params, 'enabled') ?? false
+    )
+  )
 }
 
 interface CpuTimeSample {
@@ -936,10 +1016,6 @@ function localAttachmentRoot(): string {
     'attachments',
     'draft'
   )
-}
-
-function isWorkbenchTabLabel(label: string): boolean {
-  return label.startsWith('smart-app:')
 }
 
 function requiredSmartApps(resolveSmartApps: () => SmartAppManager | null): SmartAppManager {
@@ -1279,6 +1355,15 @@ function compact<Value extends object>(value: Value): Value {
 function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
   if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
   return value
+}
+
+function requiredBrowserAnnotations(
+  annotations: BrowserAnnotationController | undefined
+): BrowserAnnotationController {
+  if (!annotations) {
+    throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
+  }
+  return annotations
 }
 
 function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {

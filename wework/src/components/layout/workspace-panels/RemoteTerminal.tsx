@@ -13,6 +13,7 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchComposerFocus'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
@@ -343,7 +344,7 @@ export function RemoteTerminal({
           terminal,
           terminalKind: 'remote',
         })
-        terminal.textarea?.focus({ preventScroll: true })
+        focusTerminalUnlessComposerFocusRequested(terminal.textarea)
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
         return

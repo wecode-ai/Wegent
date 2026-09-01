@@ -219,6 +219,9 @@ export const ProjectChatComposer = forwardRef<ComposerTextareaHandle, ProjectCha
     useImperativeHandle(
       ref,
       () => ({
+        get element() {
+          return composerRef.current?.element ?? null
+        },
         focus: () => composerRef.current?.focus(),
         getValue: () => composerRef.current?.getValue() ?? value,
         setValue: (nextValue, selectionOffset) =>

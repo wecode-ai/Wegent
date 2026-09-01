@@ -833,7 +833,7 @@ jobs:
           E2E_SEGMENT: ${{ matrix.segment }}
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/WeWork
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/bin/wegent-executor
-          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || '' }}
+          WEWORK_E2E_DESKTOP_SCENARIO_MODULE: ${{ matrix.segment == 'embedded-browser' && './scenarios/embedded-browser-agent.scenario.mjs' || matrix.segment == 'browser-multi-tabs' && './scenarios/embedded-browser-multi-tabs.scenario.mjs' || matrix.segment == 'browser-toolbar-actions' && './scenarios/embedded-browser-toolbar-actions.scenario.mjs' || startsWith(matrix.segment, 'browser-annotation-') && './scenarios/embedded-browser-annotation.scenario.mjs' || '' }}
           WEWORK_E2E_ISOLATED_XVFB: "true"
         run: |
           test -x "$CODEX_BIN"
@@ -1076,6 +1076,16 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+
+      - name: Run Wework desktop macOS browser annotation overlay E2E
+        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        env:
+          CI: true
+        run: |
+          test -x "$CODEX_BIN"
+          test -x "$WEWORK_E2E_APP_BIN"
+          test -x "$WEWORK_E2E_EXECUTOR_BIN"
+          pnpm --filter wework e2e:desktop -- --segment browser-annotation-design
 
       - name: Save shared Wework Electron build dependencies
         if: github.ref == 'refs/heads/main' && steps.wework-cargo-sources-cache.outputs.cache-hit != 'true'

@@ -637,6 +637,16 @@ impl RuntimeWorkRpcHandler {
         {
             runtime_handle.insert("queuePosition".to_owned(), json!(queue_position));
         }
+        if !self
+            .local_task_link(&local_task_id)
+            .is_some_and(|link| link.ephemeral)
+        {
+            self.track_default_work_item_async(
+                local_task_id.clone(),
+                title.clone(),
+                string_field(&payload, "message").unwrap_or_default(),
+            );
+        }
         match payload
             .get("friendlyTitleExecutionRequest")
             .cloned()

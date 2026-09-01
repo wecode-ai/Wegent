@@ -259,6 +259,47 @@ describe('MessageList', () => {
     expect(await screen.findByTestId('message-selection-actions')).toBeInTheDocument()
   })
 
+  test('offers Electron selection actions for streaming process text before tools', async () => {
+    runtimeMock.electron = true
+    const onAddSelectionToConversation = vi.fn()
+    render(
+      <MessageList
+        messages={[
+          {
+            id: 'assistant-process-selection',
+            role: 'assistant',
+            content: '',
+            status: 'streaming',
+            blocks: [
+              {
+                id: 'process-before-tool',
+                type: 'text',
+                content: '我现在沿唯一正确链路继续取证。',
+                status: 'done',
+                createdAt: 1770000000000,
+              },
+              {
+                id: 'running-tool',
+                type: 'tool',
+                toolName: 'Bash',
+                toolInput: { command: 'pwd' },
+                status: 'streaming',
+                createdAt: 1770000000001,
+              },
+            ],
+            createdAt: '2026-08-31T06:00:00Z',
+          },
+        ]}
+        onAddSelectionToConversation={onAddSelectionToConversation}
+        onAskSelectionInSidebar={vi.fn()}
+      />
+    )
+
+    selectText(screen.getByTestId('process-text-block'), '唯一正确链路')
+    await userEvent.click(await screen.findByTestId('add-selection-to-conversation-button'))
+    expect(onAddSelectionToConversation).toHaveBeenCalledWith('唯一正确链路')
+  })
+
   test('keeps captured selection actions when streaming replaces the selected text node', async () => {
     const onAddSelectionToConversation = vi.fn()
     const { rerender } = render(
@@ -516,7 +557,7 @@ describe('MessageList', () => {
       unobserve = vi.fn()
       takeRecords = vi.fn(() => [])
       root = null
-      rootMargin = '800px 0px'
+      rootMargin = '1600px 0px'
       thresholds = [0]
     }
     vi.stubGlobal('IntersectionObserver', IntersectionObserverMock)
@@ -543,7 +584,21 @@ describe('MessageList', () => {
     expect(chunks.length).toBeGreaterThan(2)
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
-    expect(chunks.slice(1, -1).every(chunk => chunk.childElementCount === 0)).toBe(true)
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
+    expect(
+      chunks.slice(1, -1).every(chunk => {
+        const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
+        return (
+          placeholder?.style.maxHeight === (chunk as HTMLElement).style.minHeight &&
+          placeholder.classList.contains('overflow-hidden')
+        )
+      })
+    ).toBe(true)
 
     act(() => {
       intersectionCallbacks.forEach(callback =>
@@ -556,6 +611,12 @@ describe('MessageList', () => {
 
     expect(chunks[0]).not.toBeEmptyDOMElement()
     expect(chunks.at(-1)).not.toBeEmptyDOMElement()
+    expect(
+      chunks
+        .slice(1, -1)
+        .every(chunk => Boolean(chunk.querySelector('[data-markdown-window-placeholder]')))
+    ).toBe(true)
+    expect(chunks.slice(1, -1).every(chunk => Boolean(chunk.textContent?.trim()))).toBe(true)
   })
 
   test('keeps message row containment during a plain text click', () => {

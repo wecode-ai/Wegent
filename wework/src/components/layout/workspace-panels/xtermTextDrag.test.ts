@@ -104,6 +104,25 @@ describe('xterm text drag', () => {
     expect(dataTransfer.getData('text/plain')).toBe('terminal output')
     expect(dataTransfer.getData(SELECTED_TEXT_DRAG_TYPE)).toBe('true')
 
+    selectedText = ''
+    terminal.buffer.active.getLine = () => ({
+      translateToString: () => 'automated selection',
+    })
+    terminal.select = vi.fn(() => {
+      selectedText = 'automated selection'
+    })
+    const automationContainer = container as HTMLElement & {
+      __weworkSelectTextForE2E?: (value: string) => string
+    }
+    expect(automationContainer.__weworkSelectTextForE2E?.('automated selection')).toBe(
+      'automated selection'
+    )
+    expect(selections.at(-1)).toEqual({
+      source: expect.stringMatching(/^terminal:/),
+      text: 'automated selection',
+      rect: { left: 0, top: 0, width: 150, height: 10 },
+    })
+
     controller.dispose()
     expect(selections.at(-1)).toEqual({
       source: expect.stringMatching(/^terminal:/),

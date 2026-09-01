@@ -42,6 +42,7 @@ import type {
   RuntimeWorkListResponse,
   User,
 } from '@/types/api'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import {
   getRuntimeChatSidebarTaskItems,
   getNextRuntimeSidebarTaskVisibleLimit,
@@ -94,7 +95,7 @@ interface MobileDrawerProps {
   onRemoveProject?: (projectId: number) => Promise<void>
   onSelectProject: (projectId: number) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
 }
 
 export function MobileDrawer({

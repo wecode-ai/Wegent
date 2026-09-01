@@ -1126,6 +1126,13 @@ def test_a_running_wiki_reports_the_run_rather_than_looking_idle(
     assert body["status"] == "running"
     assert body["generation_id"] == generation.id
     assert body["is_stale"] is False
+    assert body["progress"] == {
+        "stage": "generating",
+        "current_step": 0,
+        "total_steps": 0,
+        "pages_written": 0,
+        "pages_total": 0,
+    }
 
 
 def test_a_run_whose_worker_went_quiet_is_reported_as_stale(

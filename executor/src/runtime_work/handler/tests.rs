@@ -90,6 +90,40 @@ async fn runtime_capacity_rpc_reports_scheduler_truth() {
     assert_eq!(active_task_ids, HashSet::from(["active-1", "active-2"]));
 }
 
+#[tokio::test]
+async fn default_work_item_binding_uses_the_handler_store_path() {
+    let root = temp_runtime_work_index_path("default-work-item-store").with_extension("directory");
+    let database_path = root.join("tasks.sqlite");
+    let handler = RuntimeWorkRpcHandler {
+        task_store_path: Arc::new(database_path.clone()),
+        ..RuntimeWorkRpcHandler::new("device-1", "/bin/false")
+    };
+
+    handler.track_default_work_item_async(
+        "runtime-task-1".to_owned(),
+        "Executor-owned Issue".to_owned(),
+        "Created after runtime acceptance".to_owned(),
+    );
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if database_path.exists() {
+            let store = LocalTaskStore::open(&database_path).unwrap();
+            if let Ok(binding) = store.find_system_task_binding("device-1", "runtime-task-1") {
+                assert_eq!(binding.task_title.as_deref(), Some("Executor-owned Issue"));
+                break;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "executor-owned binding was not written to the handler store"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
@@ -2067,10 +2101,24 @@ fn claude_execution_persists_running_and_settled_state() {
 
 #[test]
 fn settled_task_projection_normalizes_every_terminal_outcome() {
-    for (status, thread_status, turn_status, expected) in [
-        ("active", "idle", "completed", "done"),
-        ("active", "failed", "failed", "failed"),
-        ("active", "cancelled", "cancelled", "cancelled"),
+    for (status, thread_status, turn_status, expected, expected_thread, expected_turn) in [
+        ("active", "idle", "completed", "done", "idle", "completed"),
+        (
+            "failed",
+            "active",
+            "inProgress",
+            "failed",
+            "failed",
+            "failed",
+        ),
+        (
+            "cancelled",
+            "active",
+            "inProgress",
+            "cancelled",
+            "idle",
+            "interrupted",
+        ),
     ] {
         let mut link = RuntimeTaskLink::new_pending_with_runtime(
             format!("task-{expected}"),
@@ -2088,6 +2136,8 @@ fn settled_task_projection_normalizes_every_terminal_outcome() {
 
         assert_eq!(link.status, expected);
         assert!(!link.running);
+        assert_eq!(link.thread_status, expected_thread);
+        assert_eq!(link.turn_status.as_deref(), Some(expected_turn));
         assert!(link.completed_at.is_some());
     }
 }
@@ -3280,6 +3330,7 @@ fn paginated_transcript_does_not_restore_a_presentation_from_a_newer_page() {
         &mut provider_messages,
         presentations,
         &page_messages,
+        &[],
         false,
         true,
     );
@@ -3318,6 +3369,7 @@ fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page(
         &mut provider_messages,
         presentations,
         &page_messages,
+        &[],
         true,
         true,
     );
@@ -3325,6 +3377,36 @@ fn paginated_transcript_restores_a_missing_presentation_inside_the_current_page(
     assert_eq!(provider_messages.len(), 3);
     assert_eq!(provider_messages[1]["content"], "Middle instruction");
     assert_eq!(provider_messages[1]["turnId"], "turn-last");
+}
+
+#[test]
+fn paginated_transcript_restores_a_presentation_for_an_empty_turn_on_the_current_page() {
+    let mut provider_messages = Vec::new();
+    let presentations = vec![json!({
+        "clientUserMessageId": "client-user-interrupted",
+        "content": "Instruction archived before the provider stored its user item",
+        "createdAt": 200,
+        "ensureVisible": true,
+        "references": [],
+        "turnId": "turn-interrupted"
+    })];
+
+    attach_user_message_presentations_for_page(
+        &mut provider_messages,
+        presentations,
+        &[],
+        &["turn-interrupted".to_owned()],
+        false,
+        true,
+    );
+
+    assert_eq!(provider_messages.len(), 1);
+    assert_eq!(provider_messages[0]["role"], "user");
+    assert_eq!(provider_messages[0]["turnId"], "turn-interrupted");
+    assert_eq!(
+        provider_messages[0]["content"],
+        "Instruction archived before the provider stored its user item"
+    );
 }
 
 #[test]
