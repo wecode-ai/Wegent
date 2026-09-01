@@ -73,6 +73,7 @@ import {
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  shouldStageDesktopComponentUpdates,
   type DesktopComponentUpdateController,
 } from './runtime/desktop-components.js'
 import {
@@ -1250,14 +1251,16 @@ function startDesktopRuntime(): Promise<void> {
     await loadPrimaryDshView()
     await componentUpdates?.confirmStartup()
     runtimePhase = 'ready'
-    void componentUpdates
-      ?.stageAvailableUpdate()
-      .then(staged => {
-        if (staged) console.log('[components] update staged for the next application restart')
-      })
-      .catch(error => {
-        console.error('[components] update check failed', error)
-      })
+    if (shouldStageDesktopComponentUpdates(process.env)) {
+      void componentUpdates
+        ?.stageAvailableUpdate()
+        .then(staged => {
+          if (staged) console.log('[components] update staged for the next application restart')
+        })
+        .catch(error => {
+          console.error('[components] update check failed', error)
+        })
+    }
   })()
     .catch(async error => {
       if (await componentUpdates?.rollbackStartup()) {

@@ -294,6 +294,40 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('hides the clear-data notice while the browser panel is inactive', async () => {
+    vi.useFakeTimers()
+    const clearData = createDeferred<number>()
+    embeddedBrowserMocks.clearEmbeddedBrowserData.mockReturnValueOnce(clearData.promise)
+    const view = render(<WorkspaceBrowserPanel active />)
+
+    try {
+      fireEvent.click(screen.getByTestId('workspace-browser-more-button'))
+      fireEvent.click(screen.getByTestId('workspace-browser-clear-data-item'))
+      fireEvent.click(screen.getByTestId('workspace-browser-clear-cache-item'))
+      expect(screen.getByTestId('transient-notice')).toHaveTextContent('开始清除浏览数据')
+
+      view.rerender(<WorkspaceBrowserPanel active={false} />)
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+      expect(embeddedBrowserMocks.clearEmbeddedBrowserData).toHaveBeenCalledWith([
+        'cache',
+        'storage',
+      ])
+
+      await act(async () => {
+        clearData.resolve(1)
+        await clearData.promise
+        await Promise.resolve()
+      })
+      expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   test('reports a failed browser data clear', async () => {
     embeddedBrowserMocks.clearEmbeddedBrowserData.mockRejectedValueOnce(new Error('failed'))
     render(<WorkspaceBrowserPanel active />)

@@ -353,6 +353,7 @@ export function WorkspaceBrowserTabPanel({
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const electronRuntime = isElectronRuntime()
+  const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
   const nativeBrowserOpeningRef = useRef(false)
@@ -2285,6 +2286,7 @@ export function WorkspaceBrowserTabPanel({
 
   return (
     <div
+      ref={browserPanelRef}
       data-testid="workspace-browser-panel"
       data-embedded-browser-label={label}
       data-browser-annotation-original-view={annotationOriginalView}
@@ -2754,6 +2756,8 @@ export function WorkspaceBrowserTabPanel({
         message={localFilePreviewToast?.message ?? null}
         tone="error"
         onClear={clearLocalFilePreviewToast}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {downloadPeek ? (
         <div
@@ -2835,6 +2839,8 @@ export function WorkspaceBrowserTabPanel({
         message={clearDataNotice?.message ?? null}
         tone={clearDataNotice?.tone}
         onClear={clearClearDataNotice}
+        horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {invalidTlsCertificate ? (
         <div
