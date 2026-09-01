@@ -10,6 +10,43 @@ from app.schemas.subscription import (
 )
 
 
+def test_code_wiki_callback_recovers_execution_link_from_generation():
+    from app.models.subscription import BackgroundExecution
+    from app.models.wiki import WikiGeneration
+    from app.services.knowledge.code_wiki.runner import BACKGROUND_EXECUTION_EXT_KEY
+    from app.services.subscription.task_completion_handler import (
+        SubscriptionTaskCompletionHandler,
+    )
+
+    handler = SubscriptionTaskCompletionHandler()
+    generation = SimpleNamespace(ext={BACKGROUND_EXECUTION_EXT_KEY: 71})
+    execution = SimpleNamespace(
+        id=71,
+        task_id=0,
+        status=BackgroundExecutionStatus.RUNNING.value,
+    )
+    empty_execution_query = MagicMock()
+    empty_execution_query.filter.return_value = empty_execution_query
+    empty_execution_query.order_by.return_value = empty_execution_query
+    empty_execution_query.first.return_value = None
+    generation_query = MagicMock()
+    generation_query.filter.return_value = generation_query
+    generation_query.order_by.return_value = generation_query
+    generation_query.first.return_value = generation
+    db = MagicMock()
+    db.query.side_effect = lambda model: (
+        empty_execution_query if model is BackgroundExecution else generation_query
+    )
+    db.get.return_value = execution
+
+    found = handler._find_execution_by_task_id(db, 99)
+
+    assert found is execution
+    assert execution.task_id == 99
+    db.get.assert_called_once_with(BackgroundExecution, 71)
+    db.commit.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_completed_managed_subscription_deletes_executor_immediately():
     """Managed subscription completions should delete the executor immediately."""

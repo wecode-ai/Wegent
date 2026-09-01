@@ -59,12 +59,15 @@ from app.services.subscription.helpers import (
 logger = logging.getLogger(__name__)
 
 
-def _reject_code_wiki_plan(subscription: Kind) -> None:
-    if (subscription.json or {}).get("_internal", {}).get("code_wiki_id"):
-        raise HTTPException(
-            status_code=409,
-            detail="Code Wiki automatic updates cannot be shared",
-        )
+def _reject_code_wiki_scheduled_update(subscription: Kind) -> None:
+    from app.services.knowledge.code_wiki.scheduled_update import (
+        reject_code_wiki_scheduled_update,
+    )
+
+    reject_code_wiki_scheduled_update(
+        subscription,
+        detail="Code Wiki automatic updates cannot be shared",
+    )
 
 
 class SubscriptionFollowService:
@@ -467,7 +470,7 @@ class SubscriptionFollowService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        _reject_code_wiki_plan(subscription)
+        _reject_code_wiki_scheduled_update(subscription)
 
         if subscription.user_id != owner_user_id:
             raise HTTPException(
@@ -581,7 +584,7 @@ class SubscriptionFollowService:
         if not subscription:
             raise HTTPException(status_code=404, detail="Subscription not found")
 
-        _reject_code_wiki_plan(subscription)
+        _reject_code_wiki_scheduled_update(subscription)
 
         if subscription.user_id != owner_user_id:
             raise HTTPException(

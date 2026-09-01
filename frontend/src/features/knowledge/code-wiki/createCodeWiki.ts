@@ -37,6 +37,7 @@ export async function createCodeWiki({
     execution_model_ref,
     resolved_name,
     resolved_description,
+    scheduled_update,
     ...knowledgeBaseData
   } = data
 
@@ -44,7 +45,7 @@ export async function createCodeWiki({
     throw new Error('Code Wiki creation requires a repository and execution model')
   }
 
-  return codeWikiApi.create({
+  const created = await codeWikiApi.create({
     ...knowledgeBaseData,
     name: name || resolved_name || '',
     description: description || resolved_description,
@@ -53,4 +54,8 @@ export async function createCodeWiki({
     source_url,
     execution_model_ref,
   })
+  if (scheduled_update) {
+    await codeWikiApi.configureAutomaticUpdate(created.id, scheduled_update)
+  }
+  return created
 }

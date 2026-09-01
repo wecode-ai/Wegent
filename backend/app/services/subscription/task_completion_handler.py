@@ -170,7 +170,7 @@ class SubscriptionTaskCompletionHandler:
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.FAILED,
-                ) and not self._is_code_wiki_plan(db, execution):
+                ) and not self._is_code_wiki_scheduled_update(db, execution):
                     await self._dispatch_notifications(
                         db, execution, event, result_summary
                     )
@@ -183,12 +183,15 @@ class SubscriptionTaskCompletionHandler:
             )
 
     @staticmethod
-    def _is_code_wiki_plan(db: Session, execution: BackgroundExecution) -> bool:
-        subscription = db.get(Kind, execution.subscription_id)
-        return bool(
-            subscription
-            and (subscription.json or {}).get("_internal", {}).get("code_wiki_id")
+    def _is_code_wiki_scheduled_update(
+        db: Session, execution: BackgroundExecution
+    ) -> bool:
+        from app.services.knowledge.code_wiki.scheduled_update import (
+            is_code_wiki_scheduled_update,
         )
+
+        subscription = db.get(Kind, execution.subscription_id)
+        return bool(subscription and is_code_wiki_scheduled_update(subscription))
 
     def _find_execution_by_task_id(
         self, db: Session, task_id: int
@@ -230,6 +233,42 @@ class SubscriptionTaskCompletionHandler:
             .order_by(BackgroundExecution.id.desc())
             .first()
         )
+
+        if execution is not None:
+            return execution
+
+        # Code Wiki's task service commits and dispatches before the launcher can
+        # bind task_id on BackgroundExecution. Recover that narrow crash window from
+        # the explicit execution id stored on the generation before dispatch.
+        from app.models.wiki import WikiGeneration
+        from app.services.knowledge.code_wiki.version_store import (
+            BACKGROUND_EXECUTION_EXT_KEY,
+        )
+
+        generation = (
+            db.query(WikiGeneration)
+            .filter(WikiGeneration.task_id == task_id)
+            .order_by(WikiGeneration.id.desc())
+            .first()
+        )
+        execution_id = (
+            (generation.ext or {}).get(BACKGROUND_EXECUTION_EXT_KEY)
+            if generation is not None
+            else None
+        )
+        if not isinstance(execution_id, int) or execution_id <= 0:
+            return None
+        execution = db.get(BackgroundExecution, execution_id)
+        if execution is None or execution.status not in {
+            BackgroundExecutionStatus.PENDING.value,
+            BackgroundExecutionStatus.RUNNING.value,
+        }:
+            return execution
+        if execution.task_id not in {0, task_id}:
+            return None
+        if execution.task_id == 0:
+            execution.task_id = task_id
+            db.commit()
 
         return execution
 

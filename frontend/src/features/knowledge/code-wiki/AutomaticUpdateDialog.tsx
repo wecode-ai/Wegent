@@ -70,6 +70,7 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
     try {
       const saved = await codeWikiApi.configureAutomaticUpdate(knowledgeBaseId, {
         enabled: plan.enabled,
+        cadence: plan.cadence,
         interval_days: plan.interval_days,
         weekday: plan.weekday,
         hour: plan.hour,
@@ -108,32 +109,47 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
             <div className="space-y-2">
               <Label>{t('codeWiki.automatic.cadence')}</Label>
               <Select
-                value={String(plan.interval_days)}
-                onValueChange={value =>
-                  setPlan(current => current && { ...current, interval_days: Number(value) })
-                }
+                value={plan.cadence}
+                onValueChange={value => {
+                  const cadence = value as CodeWikiAutomaticUpdate['cadence']
+                  const fixed = { daily: 1, weekly: 7, biweekly: 14, four_weeks: 28 }
+                  setPlan(
+                    current =>
+                      current && {
+                        ...current,
+                        cadence,
+                        interval_days:
+                          cadence === 'custom' ? current.interval_days : fixed[cadence],
+                      }
+                  )
+                }}
               >
                 <SelectTrigger data-testid="code-wiki-auto-cadence">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="7">{t('codeWiki.automatic.weekly')}</SelectItem>
-                  <SelectItem value="14">{t('codeWiki.automatic.biweekly')}</SelectItem>
-                  <SelectItem value="28">{t('codeWiki.automatic.monthly')}</SelectItem>
+                  <SelectItem value="daily">{t('codeWiki.automatic.daily')}</SelectItem>
+                  <SelectItem value="weekly">{t('codeWiki.automatic.weekly')}</SelectItem>
+                  <SelectItem value="biweekly">{t('codeWiki.automatic.biweekly')}</SelectItem>
+                  <SelectItem value="four_weeks">{t('codeWiki.automatic.four_weeks')}</SelectItem>
+                  <SelectItem value="custom">{t('codeWiki.automatic.custom')}</SelectItem>
                 </SelectContent>
               </Select>
-              <Input
-                type="number"
-                min={7}
-                max={365}
-                value={plan.interval_days}
-                onChange={event =>
-                  setPlan(
-                    current => current && { ...current, interval_days: Number(event.target.value) }
-                  )
-                }
-                aria-label={t('codeWiki.automatic.customDays')}
-              />
+              {plan.cadence === 'custom' && (
+                <Input
+                  type="number"
+                  min={2}
+                  max={365}
+                  value={plan.interval_days}
+                  onChange={event =>
+                    setPlan(
+                      current =>
+                        current && { ...current, interval_days: Number(event.target.value) }
+                    )
+                  }
+                  aria-label={t('codeWiki.automatic.customDays')}
+                />
+              )}
             </div>
             <details className="rounded-md border border-border p-3">
               <summary className="cursor-pointer text-sm font-medium">
@@ -151,26 +167,28 @@ export function AutomaticUpdateDialog({ knowledgeBaseId, open, onOpenChange, onS
               </div>
             </details>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>{t('codeWiki.automatic.weekday')}</Label>
-                <Select
-                  value={String(plan.weekday)}
-                  onValueChange={value =>
-                    setPlan(current => current && { ...current, weekday: Number(value) })
-                  }
-                >
-                  <SelectTrigger data-testid="code-wiki-auto-weekday">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[0, 1, 2, 3, 4, 5, 6].map(day => (
-                      <SelectItem key={day} value={String(day)}>
-                        {t(`codeWiki.automatic.weekdays.${day}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {['weekly', 'biweekly', 'four_weeks'].includes(plan.cadence) && (
+                <div className="space-y-2">
+                  <Label>{t('codeWiki.automatic.weekday')}</Label>
+                  <Select
+                    value={String(plan.weekday)}
+                    onValueChange={value =>
+                      setPlan(current => current && { ...current, weekday: Number(value) })
+                    }
+                  >
+                    <SelectTrigger data-testid="code-wiki-auto-weekday">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                        <SelectItem key={day} value={String(day)}>
+                          {t(`codeWiki.automatic.weekdays.${day}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="code-wiki-auto-time">{t('codeWiki.automatic.time')}</Label>
                 <Input

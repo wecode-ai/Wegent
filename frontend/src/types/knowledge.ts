@@ -445,10 +445,10 @@ export interface KnowledgeBaseCreate {
   execution_model_ref?: SummaryModelRef | null
   /** Only for `kb_type: 'code_wiki'` — leave unset to use the deployment default. */
   generation_strategy?: string
-  /** Initial Code Wiki behavior: immediate generation or wait for a periodic slot. */
-  generate_immediately?: boolean
-  automatic_update?: {
+  /** Optional future updates; the first generation always starts after creation. */
+  scheduled_update?: {
     enabled: boolean
+    cadence: 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
     interval_days: number
     weekday: number
     hour: number

@@ -6,10 +6,12 @@ import { codeWikiApi } from '@/apis/code-wiki'
 import { createCodeWiki } from '@/features/knowledge/code-wiki/createCodeWiki'
 
 jest.mock('@/apis/code-wiki', () => ({
-  codeWikiApi: { create: jest.fn() },
+  codeWikiApi: { create: jest.fn(), configureAutomaticUpdate: jest.fn() },
 }))
 
 describe('createCodeWiki', () => {
+  beforeEach(() => jest.clearAllMocks())
+
   it('forwards the complete form through the dedicated API without UI-only fields', async () => {
     jest.mocked(codeWikiApi.create).mockResolvedValue({
       id: 17,
@@ -69,5 +71,47 @@ describe('createCodeWiki', () => {
         },
       })
     ).rejects.toThrow('Code Wiki creation requires a repository and execution model')
+  })
+
+  it('configures optional future updates only after the wiki exists', async () => {
+    jest.mocked(codeWikiApi.create).mockResolvedValue({
+      id: 17,
+      name: 'Wegent',
+      project_name: 'wecode-ai/Wegent',
+      source_url: 'https://github.com/wecode-ai/Wegent.git',
+      last_published_commit: '',
+      document_count: 0,
+      created_at: '2026-08-11T00:00:00Z',
+      updated_at: '2026-08-11T00:00:00Z',
+    })
+    const schedule = {
+      enabled: true,
+      cadence: 'daily' as const,
+      interval_days: 1,
+      weekday: 0,
+      hour: 9,
+      minute: 0,
+      timezone: 'Asia/Shanghai',
+    }
+
+    await createCodeWiki({
+      namespace: 'default',
+      data: {
+        name: 'Wegent',
+        kb_type: 'code_wiki',
+        source_type: 'github',
+        source_url: 'https://github.com/wecode-ai/Wegent.git',
+        execution_model_ref: { name: 'model-a', namespace: 'default', type: 'public' },
+        scheduled_update: schedule,
+      },
+    })
+
+    expect(codeWikiApi.create).not.toHaveBeenCalledWith(
+      expect.objectContaining({ scheduled_update: expect.anything() })
+    )
+    expect(codeWikiApi.configureAutomaticUpdate).toHaveBeenCalledWith(17, schedule)
+    expect(jest.mocked(codeWikiApi.create).mock.invocationCallOrder[0]).toBeLessThan(
+      jest.mocked(codeWikiApi.configureAutomaticUpdate).mock.invocationCallOrder[0]
+    )
   })
 })

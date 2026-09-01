@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Project Code Wiki automatic updates onto the generic scheduler."""
+"""Project Code Wiki scheduled updates onto the generic subscription scheduler."""
 
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -14,7 +15,11 @@ from app.core.wiki_config import wiki_settings
 from app.models.kind import Kind
 from app.models.subscription import BackgroundExecution
 from app.models.user import User
-from app.schemas.knowledge import CodeWikiAutomaticUpdateRequest
+from app.schemas.knowledge import (
+    CodeWikiAutomaticUpdate,
+    CodeWikiAutomaticUpdateExecution,
+    CodeWikiAutomaticUpdateRequest,
+)
 from app.schemas.subscription import BackgroundExecutionStatus
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
@@ -33,49 +38,66 @@ from app.services.knowledge.code_wiki.source import (
 from app.services.subscription import subscription_service
 
 RUNNER_SPEC_KEY = "executionPrincipalUserId"
-INTERNAL_WIKI_KEY = "code_wiki_id"
+SUBSCRIPTION_SPEC_KEY = "scheduledUpdateSubscriptionId"
+CODE_WIKI_REF_KEY = "codeWikiRef"
 
 
-def plan_for(db: Session, knowledge_base_id: int) -> Kind | None:
-    plans = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Subscription",
-            Kind.name == f"code-wiki-{knowledge_base_id}",
-            Kind.is_active == True,
-        )
-        .all()
+def code_wiki_id(subscription: Kind) -> int | None:
+    """Return the explicitly referenced Code Wiki id, if this is its scheduler row."""
+    if subscription.kind != "Subscription":
+        return None
+    value = (
+        (subscription.json or {}).get("spec", {}).get(CODE_WIKI_REF_KEY, {}).get("id")
     )
-    return next(
-        (
-            plan
-            for plan in plans
-            if (plan.json or {}).get("_internal", {}).get(INTERNAL_WIKI_KEY)
-            == knowledge_base_id
-        ),
-        None,
+    return value if isinstance(value, int) and value > 0 else None
+
+
+def is_code_wiki_scheduled_update(subscription: Kind) -> bool:
+    return code_wiki_id(subscription) is not None
+
+
+def reject_code_wiki_scheduled_update(subscription: Kind, *, detail: str) -> None:
+    """Keep internal scheduler rows behind the Code Wiki management boundary."""
+    if is_code_wiki_scheduled_update(subscription):
+        raise HTTPException(status_code=409, detail=detail)
+
+
+def scheduled_update_for(db: Session, knowledge_base: Kind | int) -> Kind | None:
+    """Resolve a plan only through the authoritative id stored on the Code Wiki."""
+    if isinstance(knowledge_base, int):
+        knowledge_base = db.get(Kind, knowledge_base)
+    if knowledge_base is None:
+        return None
+    subscription_id = (
+        (knowledge_base.json or {}).get("spec", {}).get(SUBSCRIPTION_SPEC_KEY)
     )
+    if not isinstance(subscription_id, int) or subscription_id <= 0:
+        return None
+    subscription = db.get(Kind, subscription_id)
+    if (
+        subscription is None
+        or not subscription.is_active
+        or code_wiki_id(subscription) != knowledge_base.id
+    ):
+        return None
+    return subscription
 
 
-def is_code_wiki_plan(subscription: Kind) -> bool:
-    return bool((subscription.json or {}).get("_internal", {}).get(INTERNAL_WIKI_KEY))
-
-
-def next_time(
+def first_scheduled_time(
     data: CodeWikiAutomaticUpdateRequest, now: datetime | None = None
 ) -> datetime:
-    """Return the next future wall-clock occurrence as naive UTC."""
+    """Return the first allowed slot as naive UTC; creation day is never eligible."""
     try:
         local_tz = ZoneInfo(data.timezone)
     except Exception as exc:
         raise ValueError(f"Invalid IANA timezone: {data.timezone}") from exc
     current = (now or datetime.now(timezone.utc)).astimezone(local_tz)
-    candidate = current.replace(
-        hour=data.hour, minute=data.minute, second=0, microsecond=0
-    )
-    candidate += timedelta(days=(data.weekday - current.weekday()) % 7)
-    if candidate <= current:
-        candidate += timedelta(days=data.interval_days)
+    tomorrow = current.date() + timedelta(days=1)
+    candidate = datetime.combine(
+        tomorrow, datetime.min.time(), tzinfo=local_tz
+    ).replace(hour=data.hour, minute=data.minute)
+    if data.cadence in {"weekly", "biweekly", "four_weeks"}:
+        candidate += timedelta(days=(data.weekday - candidate.weekday()) % 7)
     return candidate.astimezone(timezone.utc).replace(tzinfo=None)
 
 
@@ -113,15 +135,30 @@ def validate_runner_for_source(
     return runner
 
 
-def configure_plan(
+def configure_scheduled_update(
     db: Session, *, knowledge_base: Kind, data: CodeWikiAutomaticUpdateRequest
 ) -> Kind:
+    """Create or update one scheduler row while serializing on its Code Wiki."""
+    knowledge_base = (
+        db.query(Kind)
+        .filter(Kind.id == knowledge_base.id, Kind.is_active == True)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if knowledge_base is None:
+        raise CodeWikiRunError("Code Wiki no longer exists")
+
     runner_id = data.execution_principal_user_id or knowledge_base.user_id
-    validate_runner(db, knowledge_base, runner_id)
-    plan = plan_for(db, knowledge_base.id)
-    previous_internal = dict((plan.json or {}).get("_internal", {})) if plan else {}
-    scheduled_at = next_time(data)
+    if data.enabled:
+        validate_runner(db, knowledge_base, runner_id)
+    subscription = scheduled_update_for(db, knowledge_base)
+    previous_internal = (
+        dict((subscription.json or {}).get("_internal", {})) if subscription else {}
+    )
+    scheduled_at = first_scheduled_time(data)
     schedule = {
+        "cadence": data.cadence,
         "interval_days": data.interval_days,
         "weekday": data.weekday,
         "hour": data.hour,
@@ -152,11 +189,10 @@ def configure_plan(
             "timeoutSeconds": 86400,
             "enabled": data.enabled,
             "executionTarget": {"type": "managed"},
-            "codeWikiRef": {"id": knowledge_base.id},
+            CODE_WIKI_REF_KEY: {"id": knowledge_base.id},
         },
         "status": {},
         "_internal": {
-            INTERNAL_WIKI_KEY: knowledge_base.id,
             "enabled": data.enabled,
             "trigger_type": "interval",
             "next_execution_time": scheduled_at.isoformat() if data.enabled else None,
@@ -169,8 +205,8 @@ def configure_plan(
             "schedule": schedule,
         },
     }
-    if plan is None:
-        plan = Kind(
+    if subscription is None:
+        subscription = Kind(
             user_id=knowledge_base.user_id,
             kind="Subscription",
             name=f"code-wiki-{knowledge_base.id}",
@@ -178,13 +214,15 @@ def configure_plan(
             json=json_value,
             is_active=True,
         )
-        db.add(plan)
+        db.add(subscription)
+        db.flush()
     else:
-        plan.json = json_value
-        flag_modified(plan, "json")
+        subscription.json = json_value
+        flag_modified(subscription, "json")
 
     kb_json = dict(knowledge_base.json or {})
     spec = dict(kb_json.get("spec") or {})
+    spec[SUBSCRIPTION_SPEC_KEY] = subscription.id
     if data.execution_principal_user_id is None:
         spec.pop(RUNNER_SPEC_KEY, None)
     else:
@@ -193,11 +231,53 @@ def configure_plan(
     knowledge_base.json = kb_json
     flag_modified(knowledge_base, "json")
     db.commit()
-    db.refresh(plan)
-    return plan
+    db.refresh(subscription)
+    return subscription
 
 
-def advance_plan(subscription: Kind, *, now: datetime | None = None) -> None:
+def read_scheduled_update(
+    db: Session, *, knowledge_base: Kind, can_configure: bool
+) -> CodeWikiAutomaticUpdate:
+    subscription = scheduled_update_for(db, knowledge_base)
+    runner_id = (knowledge_base.json or {}).get("spec", {}).get(RUNNER_SPEC_KEY)
+    if subscription is None:
+        return CodeWikiAutomaticUpdate(
+            can_configure=can_configure,
+            execution_principal_user_id=runner_id,
+        )
+    internal = (subscription.json or {}).get("_internal", {})
+    schedule = internal.get("schedule") or {}
+    rows = (
+        db.query(BackgroundExecution)
+        .filter(BackgroundExecution.subscription_id == subscription.id)
+        .order_by(BackgroundExecution.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    return CodeWikiAutomaticUpdate(
+        can_configure=can_configure,
+        configured=True,
+        enabled=bool(internal.get("enabled", False)),
+        next_execution_time=internal.get("next_execution_time"),
+        execution_principal_user_id=runner_id,
+        executions=[
+            CodeWikiAutomaticUpdateExecution(
+                id=row.id,
+                status=row.status,
+                error_message=row.error_message,
+                result_summary=row.result_summary,
+                task_id=row.task_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ],
+        **schedule,
+    )
+
+
+def advance_scheduled_update(
+    subscription: Kind, *, now: datetime | None = None
+) -> None:
     """Advance from the stored slot, preserving cadence and avoiding catch-up."""
     internal = (subscription.json or {}).get("_internal", {})
     schedule = internal.get("schedule") or {}
@@ -222,10 +302,16 @@ def advance_plan(subscription: Kind, *, now: datetime | None = None) -> None:
     flag_modified(subscription, "json")
 
 
-def execute_plan(db: Session, *, subscription_id: int, execution_id: int) -> None:
-    plan = db.get(Kind, subscription_id)
+def execute_scheduled_update(
+    db: Session, *, subscription_id: int, execution_id: int
+) -> None:
+    subscription = db.get(Kind, subscription_id)
     execution = db.get(BackgroundExecution, execution_id)
-    if plan is None or execution is None or not is_code_wiki_plan(plan):
+    if (
+        subscription is None
+        or execution is None
+        or not is_code_wiki_scheduled_update(subscription)
+    ):
         return
     manager = subscription_service.execution_manager
     manager.update_execution_status(
@@ -234,7 +320,7 @@ def execute_plan(db: Session, *, subscription_id: int, execution_id: int) -> Non
         status=BackgroundExecutionStatus.RUNNING,
         skip_notifications=True,
     )
-    knowledge_base = db.get(Kind, plan.json["_internal"][INTERNAL_WIKI_KEY])
+    knowledge_base = db.get(Kind, code_wiki_id(subscription))
     if knowledge_base is None or not knowledge_base.is_active:
         manager.update_execution_status(
             db,
@@ -262,7 +348,14 @@ def execute_plan(db: Session, *, subscription_id: int, execution_id: int) -> Non
             return
         runner = validate_runner(db, knowledge_base, int(runner_id))
         result = start_run(
-            db, knowledge_base=knowledge_base, user=runner, force_full=False
+            db,
+            knowledge_base=knowledge_base,
+            user=runner,
+            force_full=False,
+            background_execution_id=execution_id,
+            background_execution_timeout_seconds=int(
+                (subscription.json or {}).get("spec", {}).get("timeoutSeconds", 86400)
+            ),
         )
     except GenerationInFlight:
         manager.update_execution_status(
