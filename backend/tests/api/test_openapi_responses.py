@@ -95,6 +95,23 @@ def test_result_blocks_become_created_then_updated_streaming_chunks():
     assert known_blocks["image-1"]["image_attachment_ids"] == [51]
 
 
+def test_generation_options_reject_non_generation_openapi_model():
+    from app.api.endpoints.openapi_responses import (
+        _validate_generation_options_model,
+    )
+    from app.schemas.openapi_response import ResponseCreateInput
+
+    request_body = ResponseCreateInput(
+        model="default#test-team",
+        input="create a video",
+        wegent_options={"generation": {"duration": 5}},
+    )
+    execution_request = SimpleNamespace(model_config={"modelType": "llm"})
+
+    with pytest.raises(ValueError, match="only supported for image or video"):
+        _validate_generation_options_model(request_body, execution_request)
+
+
 @pytest.fixture
 def test_team(test_db: Session, test_user: User) -> Kind:
     """Create a test Team Kind."""
