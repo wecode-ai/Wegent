@@ -141,7 +141,11 @@ describe('prepareElectronNodeRuntime', () => {
           else reject(new Error(`Electron Node child exited with ${code}`))
         })
       })
+      const stderrClosed = new Promise<void>(resolve => {
+        child.stderr.once('close', resolve)
+      })
       child.stderr.destroy()
+      await stderrClosed
       child.stdin.end('warn')
 
       await expect(stdout).resolves.toBe('survived')
