@@ -1,3 +1,5 @@
+import { createRequestId } from '@/lib/request-id'
+
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
 const executorEventReconnectors = new Set<() => void>()
 const INITIAL_RECONNECT_DELAY_MS = 500
@@ -80,19 +82,64 @@ export async function requestDshExecutor<T>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<T> {
-  const response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
-    method: 'POST',
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ method, params }),
+  const requestId = createRequestId('wework-local')
+  const startedAt = Date.now()
+  console.debug('[Wework] Executor RPC request started', {
+    request_id: requestId,
+    method,
   })
-  const body = (await response.json()) as
-    | { ok: true; result: T }
-    | ({ ok?: false } & DshExecutorErrorBody)
+  let response: Response
+  try {
+    response = await fetch(`${EXECUTOR_BASE_PATH}/rpc`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'x-request-id': requestId,
+      },
+      body: JSON.stringify({ id: requestId, method, params }),
+    })
+  } catch (error) {
+    console.warn('[Wework] Executor RPC transport failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      error,
+    })
+    throw error
+  }
+  console.debug('[Wework] Executor RPC response received', {
+    request_id: requestId,
+    method,
+    elapsed_ms: Date.now() - startedAt,
+    status: response.status,
+  })
+  let body: { ok: true; result: T } | ({ ok?: false } & DshExecutorErrorBody)
+  try {
+    body = (await response.json()) as
+      | { ok: true; result: T }
+      | ({ ok?: false } & DshExecutorErrorBody)
+  } catch (error) {
+    console.warn('[Wework] Executor RPC response parsing failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      status: response.status,
+      error_type: error instanceof Error ? error.name : typeof error,
+    })
+    throw error
+  }
   if (!response.ok || body.ok !== true) {
-    throw transportError(response.status, body as DshExecutorErrorBody)
+    const error = transportError(response.status, body as DshExecutorErrorBody)
+    console.warn('[Wework] Executor RPC request failed', {
+      request_id: requestId,
+      method,
+      elapsed_ms: Date.now() - startedAt,
+      status: response.status,
+      code: error.code,
+      retryable: error.retryable,
+    })
+    throw error
   }
   return body.result
 }

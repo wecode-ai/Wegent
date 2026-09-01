@@ -54,7 +54,6 @@ const pendingStreamingNotifications = new Map<string, () => void>()
 export interface ConversationScrollSnapshot {
   distanceFromBottomPx: number
   pinnedToBottom: boolean
-  scrollTopPx?: number
 }
 
 export interface RuntimeConversationMetadata {

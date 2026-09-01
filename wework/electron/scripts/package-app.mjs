@@ -10,6 +10,9 @@ import { wrapWindowsScriptCommand } from '../../scripts/child-process-command.mj
 import identityModule from './build-identity.cjs'
 import releaseVersionModule from './release-version.cjs'
 
+// Electron-as-Node otherwise treats app.asar as a virtual directory during cleanup.
+process.noAsar = true
+
 const { resolveBuildIdentity } = identityModule
 const { resolveReleaseVersion } = releaseVersionModule
 const electronRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -17,6 +20,7 @@ const output = join(electronRoot, 'release')
 const staging = join(electronRoot, '.package-staging')
 const electronZipDir = process.env.WEWORK_ELECTRON_ZIP_DIR?.trim() || undefined
 const sharedResourcesRoot = join(electronRoot, '..', 'resources')
+const repositoryRoot = resolve(electronRoot, '..', '..')
 const sourcePackage = JSON.parse(await readFile(join(electronRoot, 'package.json'), 'utf8'))
 const releaseVersion = resolveReleaseVersion(sourcePackage.version)
 const identity = resolveBuildIdentity()
@@ -101,6 +105,7 @@ try {
       join(sharedResourcesRoot, 'licenses'),
       join(sharedResourcesRoot, 'icons'),
       join(electronRoot, 'resources', 'vnc'),
+      join(repositoryRoot, 'LICENSE'),
     ],
     icon,
     prune: false,

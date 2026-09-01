@@ -29,6 +29,23 @@ layers it needs:
    use only explicitly public Wework client adapters. Plugins in one Core DSH
    page share a JavaScript trust domain, so install only trusted plugins.
 
+## Core DSH model catalog
+
+Wework exposes its executable model catalog as Core DSH providers and
+synchronizes providers and local proxies when models are added, removed, or
+reconfigured. This synchronization owns only the catalog. It must not follow
+the model selected in the Wework composer: the composer selection is an
+execution parameter for the current Wework conversation, while
+`agent-default-model` is the deployment default used when Core DSH creates a
+new Agent. Neither selection may overwrite the other.
+
+Switching the current Wework model must not register model proxies again or
+mutate Core DSH settings. Catalog synchronization preserves an existing Core
+DSH default while that provider remains valid and selects the first catalog
+entry only after the previous default becomes unavailable. This avoids
+`settings/document-updated` and `llm/adapters-updated` events that reload every
+resident model directory and keeps the Wework surface stable.
+
 ## Extension points
 
 | Slot                           | Purpose                                  | Required metadata                 | Component props            |

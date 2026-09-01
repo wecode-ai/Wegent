@@ -8,6 +8,7 @@ import {
 import { recordComposerDiagnostic } from '@/components/chat/composer/composerDiagnostics'
 import {
   consumeWorkbenchComposerFocusRequest,
+  hasWorkbenchComposerFocusRequest,
   WORKBENCH_COMPOSER_FOCUS_EVENT,
   type WorkbenchComposerFocusDetail,
 } from '@/lib/workbenchComposerFocus'
@@ -40,15 +41,19 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     sourceValue: value,
     draft: value,
   }))
+  const draftRef = useRef(draftState.draft)
   const draft =
-    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftState.draft : value
-  const draftRef = useRef(draft)
+    draftState.scopeKey === scopeKey && draftState.sourceValue === value ? draftRef.current : value
   const appliedInsertionIdRef = useRef<number | null>(null)
   const flushTimeoutRef = useRef<number | null>(null)
   const flushFrameRef = useRef<number | null>(null)
   const composerRef = useRef<ChatInputHandle>(null)
   const focusConsumerIdRef = useRef(Symbol('workbench-composer-focus'))
   const committedValueRef = useRef(value)
+  const publishedDraftRevisionRef = useRef(0)
+  const publishedDraftsRef = useRef(
+    new Map<string | undefined, Array<{ revision: number; value: string }>>()
+  )
   const pendingChangeRef = useRef(onChange)
   const programmaticUpdateDepthRef = useRef(0)
   const draftEditVersionRef = useRef(0)
@@ -58,21 +63,30 @@ export const BufferedChatInput = memo(function BufferedChatInput({
 
   useLayoutEffect(() => {
     const focusComposer = () => {
-      composerRef.current?.focus()
+      const composer = composerRef.current
+      if (!composer) return false
+      const element = composer.element
+      const pane = element?.closest<HTMLElement>('[data-active-workbench-pane]')
+      if (pane?.dataset.activeWorkbenchPane !== 'true') return false
+      if (element?.closest('[hidden], [aria-hidden="true"]')) return false
+      composer.focus()
+      return true
     }
     const focusRequestedComposer = (event: Event) => {
       const detail = (event as CustomEvent<WorkbenchComposerFocusDetail>).detail
       if (props.disabled || !scopeKey || detail?.scopeKey !== scopeKey) return
-      if (!consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
-      focusComposer()
+      if (!hasWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)) return
+      if (!focusComposer()) return
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
     }
     window.addEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
     if (
       !props.disabled &&
       scopeKey &&
-      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
-    ) {
+      hasWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current) &&
       focusComposer()
+    ) {
+      consumeWorkbenchComposerFocusRequest(scopeKey, focusConsumerIdRef.current)
     }
     return () => {
       window.removeEventListener(WORKBENCH_COMPOSER_FOCUS_EVENT, focusRequestedComposer)
@@ -101,6 +115,17 @@ export const BufferedChatInput = memo(function BufferedChatInput({
     }
   }, [])
 
+  const publishDraft = useCallback(
+    (nextDraft: string) => {
+      publishedDraftRevisionRef.current += 1
+      const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+      publications.push({ revision: publishedDraftRevisionRef.current, value: nextDraft })
+      publishedDraftsRef.current.set(scopeKey, publications)
+      onChange(nextDraft)
+    },
+    [onChange, scopeKey]
+  )
+
   const flushDraft = useCallback(
     (nextDraft: string, reason: string) => {
       cancelPendingFlush()
@@ -109,9 +134,9 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         reason,
         draftLength: nextDraft.length,
       })
-      onChange(nextDraft)
+      publishDraft(nextDraft)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush, onChange, publishDraft]
   )
 
   const scheduleDraftFlush = useCallback(
@@ -124,23 +149,39 @@ export const BufferedChatInput = memo(function BufferedChatInput({
           reason,
           draftLength: nextDraft.length,
         })
-        onChange(nextDraft)
+        publishDraft(nextDraft)
       }, DRAFT_FLUSH_DELAY_MS)
     },
-    [cancelPendingFlush, onChange]
+    [cancelPendingFlush, onChange, publishDraft]
   )
 
   // Sync external value changes into composer and local state.
   useEffect(() => {
-    const shouldSetComposer = value !== draftRef.current
+    const publications = publishedDraftsRef.current.get(scopeKey) ?? []
+    const acknowledgedPublicationIndex = publications.findLastIndex(
+      publication => publication.value === value
+    )
+    const acknowledgesPublishedDraft = acknowledgedPublicationIndex >= 0
+    const shouldSetComposer = !acknowledgesPublishedDraft && value !== draftRef.current
     recordComposerDiagnostic('draft-external-sync', {
       sourceValueLength: value.length,
       draftLength: draftRef.current.length,
+      acknowledgesPublishedDraft,
+      acknowledgedPublicationRevision: acknowledgesPublishedDraft
+        ? publications[acknowledgedPublicationIndex]?.revision
+        : null,
       shouldSetComposer,
     })
-    draftRef.current = value
     committedValueRef.current = value
-    setDraftState({ scopeKey, sourceValue: value, draft: value })
+    if (acknowledgesPublishedDraft) {
+      publications.splice(0, acknowledgedPublicationIndex + 1)
+      if (publications.length === 0) publishedDraftsRef.current.delete(scopeKey)
+      setDraftState({ scopeKey, sourceValue: value, draft: draftRef.current })
+    } else {
+      publishedDraftsRef.current.delete(scopeKey)
+      draftRef.current = value
+      setDraftState({ scopeKey, sourceValue: value, draft: value })
+    }
     if (shouldSetComposer) {
       setComposerValue(value, value.length)
     }
@@ -228,7 +269,7 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: '', draft: '' })
         setComposerValue('', 0)
-        onChange('')
+        publishDraft('')
       }
       const restoreSubmittedDraft = () => {
         if (!submittedDraft.trim()) return
@@ -239,14 +280,14 @@ export const BufferedChatInput = memo(function BufferedChatInput({
         cancelPendingFlush()
         setDraftState({ scopeKey, sourceValue: submittedDraft, draft: submittedDraft })
         setComposerValue(submittedDraft, submittedDraft.length)
-        onChange(submittedDraft)
+        publishDraft(submittedDraft)
       }
       void Promise.resolve(submission).then(accepted => {
         if (accepted !== false) return
         restoreSubmittedDraft()
       }, restoreSubmittedDraft)
     },
-    [cancelPendingFlush, onChange, onSubmit, scopeKey, setComposerValue]
+    [cancelPendingFlush, onSubmit, publishDraft, scopeKey, setComposerValue]
   )
 
   return (

@@ -1082,7 +1082,7 @@ describe('App plugins route', () => {
     expect(workbenchProviderMocks.mounts).toHaveBeenCalledWith(true)
   })
 
-  test('closes the idle maintenance gate when the active app changes after startup timeout', async () => {
+  test('does not bypass startup readiness after ten seconds or an active app change', async () => {
     vi.useFakeTimers()
     workbenchProviderMocks.autoReady = false
     window.history.pushState({}, '', '/')
@@ -1097,9 +1097,9 @@ describe('App plugins route', () => {
     expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
-      vi.advanceTimersByTime(6000)
+      vi.advanceTimersByTime(10_000)
     })
-    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(true)
+    expect(idleTaskCoordinatorMocks.active).toHaveBeenLastCalledWith(false)
 
     await act(async () => {
       window.history.pushState({}, '', '/todo')

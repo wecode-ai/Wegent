@@ -1,6 +1,7 @@
 import { CircleCheck, Loader2, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
   DeviceInfo,
@@ -26,7 +27,7 @@ interface WorktreesSettingsPageProps {
     Pick<DeviceInfo, 'device_id' | 'name' | 'status' | 'device_type' | 'runtime_features'>
   >
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
   onLeaveSettings?: () => void
 }
 

@@ -29,11 +29,31 @@ describe('runtime task system notifications', () => {
     await sendSystemNotification({
       title: 'Task completed',
       body: 'The local task has finished.',
+      address: {
+        deviceId: 'device-1',
+        taskId: 'task-1',
+      },
     })
 
     expect(invokeDesktopHostMock).toHaveBeenCalledWith('notification.show', {
       title: 'Task completed',
       body: 'The local task has finished.',
+      taskAddressId: 'device-1:task-1',
+    })
+  })
+
+  test('keeps notifications without a task target non-clickable', async () => {
+    runtime.electron = true
+    invokeDesktopHostMock.mockResolvedValue(undefined)
+
+    await sendSystemNotification({
+      title: 'Assigned',
+      body: 'A project task was assigned.',
+    })
+
+    expect(invokeDesktopHostMock).toHaveBeenCalledWith('notification.show', {
+      title: 'Assigned',
+      body: 'A project task was assigned.',
     })
   })
 

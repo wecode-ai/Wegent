@@ -23,6 +23,19 @@ Wework 的 DSH 扩展分为四层，插件应只依赖实际需要的层：
    依赖这个 host 包，只能使用 Wework 明确公开的 client adapter；同一 Core DSH
    页面中的插件共享 JavaScript 信任域，因此只应安装可信插件。
 
+## Core DSH 模型目录
+
+Wework 会把当前可执行的模型目录暴露为 Core DSH provider，并在目录新增、删除或
+模型配置变化时同步 provider 与本地代理。该同步只管理模型目录，不跟随 Wework
+输入区的当前模型选择：输入区选择是当前 Wework 会话的执行参数，而
+`agent-default-model` 是 Core DSH 创建新 Agent 时使用的部署默认值，两者不能互相
+覆盖。
+
+只切换 Wework 当前模型时，不得重新注册模型代理，也不得写入 Core DSH settings。
+Core DSH 中仍有效的现有默认模型应在目录同步后保留；只有该默认模型已经不可用时，
+才选择目录中的第一个模型。这样可以避免 `settings/document-updated` 和
+`llm/adapters-updated` 事件让所有常驻模型目录重载，并保持 Wework 工作台界面稳定。
+
 ## 扩展点
 
 | Slot                           | 用途                         | 必要元数据                        | 组件 props                |

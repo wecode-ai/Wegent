@@ -245,7 +245,15 @@ describe('ArchivedConversationsSettingsPage', () => {
 
     await userEvent.click(screen.getByTestId('archived-view-now-button'))
     await waitFor(() => expect(onOpenRuntimeTask).toHaveBeenCalled())
-    expect(onRefreshWorkLists).toHaveBeenCalled()
+    expect(onRefreshWorkLists).toHaveBeenCalledWith({
+      unarchivedTasks: [
+        {
+          deviceId: 'device-1',
+          workspacePath: '/Users/crystal/dev/git/weekly-report',
+          taskId: 'codex-1',
+        },
+      ],
+    })
     expect(onLeaveSettings).toHaveBeenCalled()
   })
 

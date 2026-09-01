@@ -38,6 +38,7 @@ async def start_project_device_session(
     session_type: ProjectSessionType,
     client_origin: Optional[str] = None,
     task_id: Optional[int] = None,
+    allow_app_device: bool = True,
 ) -> ProjectDeviceSessionResponse:
     """Start an interactive local device session for a workspace project."""
     query = db.query(Project).filter(
@@ -80,6 +81,7 @@ async def start_project_device_session(
             session_type=session_type,
             path=path,
             create_if_missing=create_if_missing,
+            allow_app_device=allow_app_device,
         )
     except DeviceSessionNotFoundError as exc:
         raise HTTPException(

@@ -42,6 +42,24 @@ Markdown 预览和源码视图都必须拥有独立的纵向滚动区域。软�
 
 保存仍由 Rust executor 通过 `workspace_write_text_file` 实现，因为写入需要沿用任务工作区的并发修改检查和原子替换语义。IPC 载荷携带文件内容、文件名和读取时得到的 `revision`。executor 在写入前重新读取磁盘文件并比对 SHA-256 revision；如果文件已被外部修改，保存会失败，前端必须阻止覆盖并提示用户重新加载。写入必须限制在同一工作区根目录内，并通过同目录临时文件原子替换目标文件。通过远端设备打开的文件仍然只能预览。
 
+## 预览耗时诊断
+
+桌面应用会把单次文件链接点击和后续预览操作关联到同一个 `traceId`，并将诊断事件写入 Electron 日志目录下的 `file-preview.log`。日志采用 2 MiB 上限并保留两个轮转文件，只记录文件扩展名、路径长度、文件大小、分块数量、阶段和耗时，不记录完整路径、文件内容或凭据。
+
+排查“点击后右侧面板迟迟不出现”时，按同一 `traceId` 检查以下阶段：
+
+1. `message_link_click` 到 `filesystem_stat_end`：在打开右侧面板前判断目标是文件还是目录。
+2. `open_file_request_queued` 到 `open_file_request_effect`：文件请求从工作台状态进入文件面板。
+3. `parent_tree_start` 到 `parent_tree_end`：读取父目录并确认目标条目。
+4. `file_chunk_start` 到 `file_chunk_end`：读取一个二进制分块。
+5. `base64_decode_end` 和 `file_constructed`：在 renderer 中解码分块、复制字节并构造浏览器 `File`。
+6. `binary_preview_state_queued` 到 `binary_preview_committed`：React 接收预览状态并提交二进制预览。
+7. `file_viewer_react_commit`：记录 Flyfish Viewer 的 React commit 耗时和查看器类型。
+
+每个关键阶段后还会安排一个零延迟定时器，并通过 `renderer_queue_probe.lagMs` 测量 renderer 事件队列延迟；达到 50 ms 时记录 `blocked: true`。如果前一阶段已经结束，但该探针明显延后，说明同步 JavaScript、布局、绘制或其它 renderer 长任务正在阻塞队列。`preview_loading_clear_skipped` 表示当前请求已被后续文件请求替换，应按请求竞态排查，而不是把它解释为单次读取未结束。
+
+当读取经过 executor App IPC 时，`executor.log` 会为对应请求记录 `command_key`、处理耗时、响应字节数和 `queue_wait_ms`。`app IPC request finished` 很快但 `app IPC response queued.queue_wait_ms` 很大，表示响应写入队列存在背压；executor 已快速入队但前端的 `file_chunk_end` 明显延后，则继续检查 IPC 传输和 renderer 消息消费。
+
 ## 预览状态生命周期
 
 文件面板应按工作区目标的 `deviceId`、`path`、`source`、`taskId` 和 `workspaceSource` 判断工作区是否变化。任务流式更新或后台轮询可能创建字段相同的新目标对象；这种引用变化不得清空目录树、重新读取文件或卸载当前预览。只有目标字段实际变化、用户选择其他文件或主动刷新时才重新加载对应数据。

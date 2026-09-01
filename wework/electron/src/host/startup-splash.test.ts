@@ -4,15 +4,26 @@ import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupSplash,
   resolveStartupSplashTheme,
+  startupSplashBlocksMainWindowActivation,
+  type StartupSplashSnapshot,
   type StartupSplashTheme,
   type StartupSplashWindow,
 } from './startup-splash.js'
 
 class FakeSplashWindow implements StartupSplashWindow {
-  private readonly listeners = new Map<string, () => void>()
+  private readonly closeListeners: Array<(event: { preventDefault: () => void }) => void> = []
+  private readonly closedListeners: Array<() => void> = []
   private destroyed = false
   private visible = false
 
+  readonly close = vi.fn(() => {
+    const event = { preventDefault: vi.fn() }
+    this.closeListeners.forEach(listener => listener(event))
+    if (event.preventDefault.mock.calls.length > 0) return
+    this.destroyed = true
+    this.visible = false
+    this.closedListeners.forEach(listener => listener())
+  })
   readonly isDestroyed = vi.fn(() => this.destroyed)
   readonly isVisible = vi.fn(() => this.visible)
   readonly show = vi.fn(() => {
@@ -26,12 +37,22 @@ class FakeSplashWindow implements StartupSplashWindow {
     isDestroyed: vi.fn(() => false),
   }
 
-  once(event: 'closed' | 'ready-to-show', listener: () => void): void {
-    this.listeners.set(event, listener)
+  on(event: 'close', listener: (event: { preventDefault: () => void }) => void): void {
+    if (event === 'close') this.closeListeners.push(listener)
   }
 
-  ready(): void {
-    this.listeners.get('ready-to-show')?.()
+  once(event: 'closed', listener: () => void): void {
+    if (event === 'closed') this.closedListeners.push(listener)
+  }
+
+  requestNativeClose(): boolean {
+    const event = { preventDefault: vi.fn() }
+    this.closeListeners.forEach(listener => listener(event))
+    if (event.preventDefault.mock.calls.length > 0) return false
+    this.destroyed = true
+    this.visible = false
+    this.closedListeners.forEach(listener => listener())
+    return true
   }
 }
 
@@ -45,11 +66,7 @@ function createFixture(theme: StartupSplashTheme = 'light') {
     now: () => timestamp++,
     writePng,
   })
-  const show = async () => {
-    const shown = splash.show()
-    target.ready()
-    return shown
-  }
+  const show = () => splash.show()
   return { show, splash, target, writePng }
 }
 
@@ -57,17 +74,18 @@ describe('StartupSplash', () => {
   test('ships a visible loading animation that reports readiness after two frames', async () => {
     const electronRoot =
       basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
-    const shellAsset = (name: string) => readFile(join(electronRoot, 'src', 'shell', name), 'utf8')
     const splashAsset = (name: string) =>
       readFile(join(electronRoot, 'src', 'shell', 'startup-splash', name), 'utf8')
 
     const [html, styles, script] = await Promise.all([
-      shellAsset('index.html'),
+      splashAsset('index.html'),
       splashAsset('styles.css'),
       splashAsset('splash.js'),
     ])
 
     expect(html).toContain('class="workbench-scene"')
+    expect(html).toContain('class="ambient-workflow"')
+    expect(html).toContain('stage-corner-top-left')
     expect(html).toContain('id="morph-primary"')
     expect(html).toContain('class="stage-indicator"')
     expect(html).toContain('class="robot"')
@@ -77,6 +95,8 @@ describe('StartupSplash', () => {
     expect(html).toContain('aria-valuemax="3"')
     expect(styles).toContain('@keyframes robot-bob')
     expect(styles).toContain('@keyframes human-bob')
+    expect(styles).toContain('@keyframes splash-enter')
+    expect(styles).toContain('@keyframes ambient-line-arrive')
     expect(html).toContain('document.documentElement.dataset.theme = theme')
     expect(styles).toContain(":root[data-theme='dark']")
     expect(styles).toContain('@media (prefers-reduced-motion: reduce)')
@@ -84,6 +104,9 @@ describe('StartupSplash', () => {
     expect(script).toContain('requestAnimationFrame(animateMorph)')
     expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
     expect(script).toContain("stageIndicator.setAttribute('aria-valuenow'")
+    expect(script).toContain('启动时间比预期稍长')
+    expect(script).toContain('仍在加载项目和会话，请稍候…')
+    expect(script).toContain('}, 10_000)')
     expect(script).toMatch(
       /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
     )
@@ -103,8 +126,8 @@ describe('StartupSplash', () => {
       theme: 'light',
       events: [
         { name: 'created', timestamp: 100 },
-        { name: 'shown', timestamp: 101 },
-        { name: 'animation-ready', timestamp: 102 },
+        { name: 'animation-ready', timestamp: 101 },
+        { name: 'shown', timestamp: 102 },
       ],
       window: {
         exists: true,
@@ -130,6 +153,25 @@ describe('StartupSplash', () => {
     expect(resolveStartupSplashTheme(undefined, true)).toBe('dark')
   })
 
+  test('blocks main-window activation until the startup splash closes', () => {
+    const snapshot = (state: StartupSplashSnapshot['state']): StartupSplashSnapshot => ({
+      state,
+      theme: 'light',
+      events: [],
+      window: {
+        exists: true,
+        destroyed: state === 'closed',
+        visible: state === 'visible',
+      },
+    })
+
+    expect(startupSplashBlocksMainWindowActivation(null)).toBe(false)
+    expect(startupSplashBlocksMainWindowActivation(snapshot('idle'))).toBe(true)
+    expect(startupSplashBlocksMainWindowActivation(snapshot('loading'))).toBe(true)
+    expect(startupSplashBlocksMainWindowActivation(snapshot('visible'))).toBe(true)
+    expect(startupSplashBlocksMainWindowActivation(snapshot('closed'))).toBe(false)
+  })
+
   test('does not capture or write files during a production close', async () => {
     const { show, splash, target, writePng } = createFixture()
     await show()
@@ -138,13 +180,29 @@ describe('StartupSplash', () => {
 
     expect(target.webContents.capturePage).not.toHaveBeenCalled()
     expect(writePng).not.toHaveBeenCalled()
+    expect(target.close).toHaveBeenCalledOnce()
     expect(snapshot.state).toBe('closed')
     expect(snapshot.events.at(-1)).toEqual({ name: 'closed', timestamp: 103 })
     expect(snapshot.window).toEqual({
       exists: true,
-      destroyed: false,
-      visible: true,
+      destroyed: true,
+      visible: false,
     })
+  })
+
+  test('prevents native close requests until renderer startup readiness closes it', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+
+    expect(target.requestNativeClose()).toBe(false)
+    expect(splash.snapshot().state).toBe('visible')
+    expect(target.isDestroyed()).toBe(false)
+
+    await splash.close()
+
+    expect(target.close).toHaveBeenCalledOnce()
+    expect(splash.snapshot().state).toBe('closed')
+    expect(target.isDestroyed()).toBe(true)
   })
 
   test('captures and persists the rendered splash before closing when requested by E2E', async () => {
@@ -160,6 +218,7 @@ describe('StartupSplash', () => {
       Buffer.from('splash-png')
     )
     expect(writePng).toHaveBeenCalledOnce()
+    expect(target.close).toHaveBeenCalledOnce()
   })
 
   test('shares one close operation across concurrent callers', async () => {
@@ -191,7 +250,6 @@ describe('StartupSplash', () => {
 
     const firstPromise = splash.show()
     const secondPromise = splash.show()
-    target.ready()
     const [first, second] = await Promise.all([firstPromise, secondPromise])
 
     expect(target.show).toHaveBeenCalledOnce()

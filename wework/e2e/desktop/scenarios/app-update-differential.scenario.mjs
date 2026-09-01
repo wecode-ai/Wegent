@@ -63,6 +63,7 @@ export async function createDesktopScenario({
   await cp(oldBlockmap, join(updaterCache, 'current.blockmap'))
 
   let origin = ''
+  let rejectManifest = true
   const requests = []
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', origin)
@@ -71,6 +72,14 @@ export async function createDesktopScenario({
     requests.push({ method: request.method ?? 'GET', path, range })
 
     if (path === '/latest-mac.yml') {
+      if (rejectManifest) {
+        response.statusCode = 503
+        response.setHeader('content-type', 'text/html')
+        response.end(
+          '<!doctype html><style>body{color:red}</style><body>SGErrorDomain EOF https://internal.example/update</body>'
+        )
+        return
+      }
       const manifest = [
         `version: ${targetVersion}`,
         'files:',
@@ -146,6 +155,26 @@ export async function createDesktopScenario({
       }
       await control.command('click', '[data-testid="settings-button"]')
       await control.command('click', '[data-testid="check-app-update-button"]')
+      await control.command('waitFor', '[data-testid="app-update-error-details-button"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const compactError = await control.command('getText', '[data-testid="app-update-status"]')
+      assert.match(compactError, /网络不可用|Network unavailable/)
+      assert.doesNotMatch(compactError, /<!doctype|<style|internal\.example/)
+
+      await control.command('click', '[data-testid="app-update-error-details-button"]')
+      await control.command('waitFor', '[data-testid="app-update-error-dialog"]', {
+        timeoutMs: uiTimeoutMs,
+      })
+      const errorDetails = await control.command(
+        'getText',
+        '[data-testid="app-update-error-dialog"]'
+      )
+      assert.match(errorDetails, /APP_UPDATE_NETWORK_UNAVAILABLE/)
+      assert.doesNotMatch(errorDetails, /<!doctype|<style|internal\.example/)
+
+      rejectManifest = false
+      await control.command('click', '[data-testid="app-update-error-retry"]')
       await waitFor(async () => {
         const label = await control.command('getText', '[data-testid="check-app-update-button"]')
         return label.includes(targetVersion)

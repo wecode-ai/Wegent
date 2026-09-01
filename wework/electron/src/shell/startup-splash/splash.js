@@ -44,6 +44,7 @@ const currentPaths = stages[0].paths.map(path => [...path])
 const velocities = stages[0].paths.map(path => path.map(() => 0))
 let stageIndex = prefersReducedMotion ? stages.length - 1 : 0
 let previousTime = performance.now()
+let slowStartup = false
 
 function pathData(points) {
   let data = `M${points[0]} ${points[1]}`
@@ -63,7 +64,13 @@ function updateCopy(index, animate) {
   const stage = stages[index]
   document.documentElement.lang = isChinese ? 'zh-CN' : 'en'
   document.body.dataset.stage = String(index)
-  titleElement.textContent = isChinese ? '我们正在准备工作台' : "We're preparing your workbench"
+  titleElement.textContent = slowStartup
+    ? isChinese
+      ? '启动时间比预期稍长'
+      : 'Startup is taking longer than expected'
+    : isChinese
+      ? '我们正在准备工作台'
+      : "We're preparing your workbench"
   splashRoot.setAttribute('aria-label', isChinese ? 'Wework 正在启动' : 'Wework is starting')
   stageIndicator.setAttribute(
     'aria-label',
@@ -72,7 +79,13 @@ function updateCopy(index, animate) {
   stageIndicator.setAttribute('aria-valuenow', String(index + 1))
 
   const replaceStatus = () => {
-    statusElement.textContent = isChinese ? stage.zh : stage.en
+    statusElement.textContent = slowStartup
+      ? isChinese
+        ? '仍在加载项目和会话，请稍候…'
+        : 'Still loading your projects and conversations…'
+      : isChinese
+        ? stage.zh
+        : stage.en
     statusElement.classList.remove('is-changing')
   }
 
@@ -120,9 +133,15 @@ if (prefersReducedMotion) {
   requestAnimationFrame(animateMorph)
   window.setInterval(() => {
     stageIndex = (stageIndex + 1) % stages.length
-    updateCopy(stageIndex, true)
+    if (!slowStartup) updateCopy(stageIndex, true)
   }, 1150)
 }
+
+window.setTimeout(() => {
+  slowStartup = true
+  document.body.dataset.slowStartup = 'true'
+  updateCopy(stageIndex, true)
+}, 10_000)
 
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
