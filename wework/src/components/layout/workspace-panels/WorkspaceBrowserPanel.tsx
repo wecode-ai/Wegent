@@ -42,6 +42,7 @@ import {
   listenEmbeddedBrowserLocalFilePreview,
   listenEmbeddedBrowserPageStateChanges,
   isEmbeddedBrowserLabelTransferred,
+  listenEmbeddedBrowserAgentCursor,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
@@ -59,6 +60,7 @@ import {
   stopEmbeddedBrowserAnnotation,
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserAnnotationRequest,
+  type EmbeddedBrowserAgentCursorEvent,
   type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
   type EmbeddedBrowserDownloadEvent,
@@ -197,6 +199,7 @@ export interface WorkspaceBrowserPanelProps {
   onFaviconChange?: (faviconUrl: string | null) => void
   onLoadingChange?: (isLoading: boolean) => void
   onTitleChange?: (title: string | null) => void
+  onAgentActiveChange?: (agentActive: boolean) => void
 }
 
 export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
@@ -204,6 +207,7 @@ export const WorkspaceBrowserPanel = WorkspaceBrowserTabPanel
 type BrowserStatus = 'idle' | 'loading' | 'ready' | 'error'
 type BrowserDownload = EmbeddedBrowserDownloadEvent
 type BrowserAgentState = EmbeddedBrowserAgentStateEvent
+type BrowserAgentCursor = EmbeddedBrowserAgentCursorEvent
 type BrowserOpenDiagnosticStage =
   | 'request_consumed'
   | 'host_ready'
@@ -261,7 +265,7 @@ function formatDownloadBytes(bytes: number | null) {
 }
 
 function shouldShowAgentState(state: BrowserAgentState | null) {
-  return Boolean(state && state.status !== 'idle')
+  return Boolean(state && ['paused', 'needs_user', 'error'].includes(state.status))
 }
 
 function getElementBounds(element: HTMLElement): EmbeddedBrowserBounds | null {
@@ -350,6 +354,7 @@ export function WorkspaceBrowserTabPanel({
   onFaviconChange,
   onLoadingChange,
   onTitleChange,
+  onAgentActiveChange,
 }: WorkspaceBrowserPanelProps) {
   const { t } = useTranslation('common')
   const electronRuntime = isElectronRuntime()
@@ -439,6 +444,7 @@ export function WorkspaceBrowserTabPanel({
   } | null>(null)
   const [clearingDataKind, setClearingDataKind] = useState<EmbeddedBrowserDataKind | null>(null)
   const [agentState, setAgentState] = useState<BrowserAgentState | null>(null)
+  const [agentCursor, setAgentCursor] = useState<BrowserAgentCursor | null>(null)
   const [invalidTlsCertificate, setInvalidTlsCertificate] =
     useState<EmbeddedBrowserInvalidTlsCertificateEvent | null>(null)
   const deviceFitScaleRef = useRef(1)
@@ -615,6 +621,42 @@ export function WorkspaceBrowserTabPanel({
   }, [])
 
   useEffect(() => {
+    const listener = listenEmbeddedBrowserAgentCursor(event => {
+      if (event.label !== currentLabelRef.current) return
+      setAgentCursor(event)
+    })
+    if (!listener) return undefined
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void listener
+      .then(nextUnlisten => {
+        if (disposed) {
+          nextUnlisten()
+          return
+        }
+        unlisten = nextUnlisten
+      })
+      .catch(error => {
+        console.error('Failed to listen for embedded browser agent cursor:', error)
+      })
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    onAgentActiveChange?.(agentState?.status === 'running' || Boolean(agentCursor?.visible))
+  }, [agentCursor?.visible, agentState?.status, onAgentActiveChange])
+
+  useEffect(
+    () => () => {
+      onAgentActiveChange?.(false)
+    },
+    [onAgentActiveChange]
+  )
+
+  useEffect(() => {
     const listener = listenEmbeddedBrowserInvalidTlsCertificates(certificate => {
       if (!activeRef.current || certificate.nativeLabel !== nativeLabelRef.current) return
       setInvalidTlsCertificate(certificate)
@@ -703,6 +745,7 @@ export function WorkspaceBrowserTabPanel({
       setClearDataNotice(null)
       setClearingDataKind(null)
       setAgentState(null)
+      setAgentCursor(null)
       onTitleChange?.(null)
       onFaviconChange?.(null)
     })
@@ -2573,9 +2616,7 @@ export function WorkspaceBrowserTabPanel({
           data-testid="workspace-browser-agent-status"
           className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 text-xs text-text-secondary"
         >
-          {agentState?.status === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
-          ) : agentState?.status === 'paused' ? (
+          {agentState?.status === 'paused' ? (
             <Pause className="h-3.5 w-3.5 shrink-0 text-text-muted" />
           ) : (
             <CircleAlert className="h-3.5 w-3.5 shrink-0 text-amber-600" />
@@ -2617,17 +2658,7 @@ export function WorkspaceBrowserTabPanel({
               <Play className="h-3.5 w-3.5" />
               {t('workbench.browser_agent_resume')}
             </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="workspace-browser-agent-pause-button"
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
-              onClick={() => setAgentControlPaused(true)}
-            >
-              <Pause className="h-3.5 w-3.5" />
-              {t('workbench.browser_agent_take_control')}
-            </button>
-          )}
+          ) : null}
         </div>
       ) : null}
       {(!annotationMode || internalDesktopPage) && downloadsOpen ? (
@@ -2893,6 +2924,13 @@ export function WorkspaceBrowserTabPanel({
             {electronRuntime ? (
               <ElectronEmbeddedBrowserView
                 active={active}
+                cursor={agentCursor}
+                cursorScale={
+                  deviceToolbar.isEnabled
+                    ? (deviceVisualRect ? deviceVisualRect.width / deviceToolbar.width : 1) *
+                      zoomPercentToScaleFactor(zoomPercent)
+                    : zoomPercentToScaleFactor(zoomPercent)
+                }
                 interactionBlocked={embeddedBrowserOccluded || Boolean(navigationError)}
                 label={label}
                 visualRect={deviceVisualRect}

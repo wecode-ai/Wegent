@@ -26,6 +26,7 @@ export const HOST_CAPABILITIES = [
   'browser.historyRemove',
   'browser.historySearch',
   'browser.navigate',
+  'browser.notifyAgentCursorArrived',
   'browser.open',
   'browser.pageState',
   'browser.pauseDownload',

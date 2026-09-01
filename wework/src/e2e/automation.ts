@@ -1447,6 +1447,20 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           label: command.value,
         })
       )
+    case 'setEmbeddedBrowserAgentControlPaused': {
+      const input = JSON.parse(command.value ?? '{}') as {
+        label?: string
+        paused?: boolean
+      }
+      if (!input.label?.trim()) {
+        throw new Error('setEmbeddedBrowserAgentControlPaused requires label')
+      }
+      await invokeDesktopHost('browser.setAgentControlPaused', {
+        label: input.label,
+        paused: input.paused ?? false,
+      })
+      return ''
+    }
     case 'verifyEmbeddedBrowserDetachedInspector':
       return JSON.stringify(
         await invokeDesktopHost('e2e.verifyEmbeddedBrowserDetachedInspector', {
