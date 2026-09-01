@@ -267,6 +267,11 @@ async def cleanup_orphan_pods(
     }
 
     ek_service = _executor_job_mod.executor_kinds_service
+    result["stale_warmpools"] = await _cleanup_stale_warmpool_crs(
+        ek_service,
+        dry_run=dry_run,
+    )
+
     old_pods = await ek_service.get_old_pods_async(older_than_hours)
     result["total_scanned"] = len(old_pods)
 
@@ -301,6 +306,32 @@ async def cleanup_orphan_pods(
         f"+++ [executor_job] Orphan pod cleanup complete scanned={result['total_scanned']} deleted={len(result['deleted'])} skipped={len(result['skipped'])} failed={len(result['failed'])}"
     )
     return result
+
+
+async def _cleanup_stale_warmpool_crs(ek_service, *, dry_run: bool) -> Dict[str, Any]:
+    """Reclaim SandboxWarmPool CRs left behind by executor template upgrades.
+
+    Each template upgrade creates a new SandboxWarmPool CR and the old ones are
+    never deleted, so the operator keeps their standby pods alive indefinitely.
+    Deleting a stale CR releases only its unbound standby pods; task-bound pods
+    keep their task-id labels and stay under the regular orphan pod cleanup.
+    Failures never block orphan pod cleanup.
+    """
+    from wecode.config.orphan_pod_config import ORPHAN_WARMPOOL_CR_GRACE_PERIOD_DAYS
+
+    cleanup = getattr(ek_service, "cleanup_stale_warmpools_async", None)
+    if cleanup is None:
+        return {"status": "skipped", "reason": "unsupported"}
+    try:
+        result = await cleanup(
+            grace_period_days=ORPHAN_WARMPOOL_CR_GRACE_PERIOD_DAYS,
+            dry_run=dry_run,
+        )
+        logger.info(f"+++ [executor_job] Stale warmpool CR cleanup result={result}")
+        return result
+    except Exception as exc:
+        logger.warning(f"+++ [executor_job] Stale warmpool CR cleanup failed: {exc}")
+        return {"status": "failed", "error": str(exc)}
 
 
 def _pod_is_abnormal(pod_info: Dict[str, Any]) -> bool:
