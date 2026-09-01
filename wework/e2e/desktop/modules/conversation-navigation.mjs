@@ -88,6 +88,17 @@ async function waitForActiveTaskIdle(control) {
   throw new Error('The active task did not become idle before sending the next prompt')
 }
 
+async function waitForLastElementAbove(control, selector, top, description) {
+  const startedAt = Date.now()
+  let element
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    element = (await getElementMetrics(control, selector)).at(-1)
+    if (element && element.bottom <= top + 2) return element
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description}: ${JSON.stringify(element)}`)
+}
+
 async function sendPrompt(control, selector, prompt) {
   await waitForActiveTaskIdle(control)
   await control.command('fill', selector, { value: prompt })
@@ -699,37 +710,19 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     text: GUIDANCE_SCROLL_MESSAGE,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('expandProcessingSummaries', 'body')
-  const assistantProcessTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
-  await control.command('waitFor', assistantProcessTextSelector, {
-    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('markElementWithText', assistantProcessTextSelector, {
-    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
-    value: 'guidance-scroll-pre-tool-assistant',
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  const assistantTranscriptText = await control.command(
-    'getText',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${assistantProcessTextSelector}`
-  )
-  assert.equal(
-    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
-    1,
-    'The final text from before guidance was duplicated after the guidance message'
-  )
-
-  const { element: guidanceMessage, scroller } = await waitForElementInsideScroller(
+  const guidanceMessageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
+  const { element: visibleGuidanceMessage, scroller } = await waitForElementInsideScroller(
     control,
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`,
+    guidanceMessageSelector,
     scrollerSelector,
-    'The newly applied guidance message did not become visible'
+    'The newly applied guidance message did not become visible',
+    DEFAULT_STEP_TIMEOUT_MS
   )
   assert.ok(
-    guidanceMessage.top >= scroller.top - 2 && guidanceMessage.bottom <= scroller.bottom + 2,
+    visibleGuidanceMessage.top >= scroller.top - 2 &&
+      visibleGuidanceMessage.bottom <= scroller.bottom + 2,
     `The newly applied guidance message was outside the viewport: ${JSON.stringify({
-      guidanceMessage,
+      guidanceMessage: visibleGuidanceMessage,
       scroller,
     })}`
   )
@@ -740,6 +733,12 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     )
   ).at(-1)
   assert.ok(composerMetrics, 'The conversation composer was not rendered after guidance')
+  const guidanceMessage = await waitForLastElementAbove(
+    control,
+    guidanceMessageSelector,
+    composerMetrics.top,
+    'The newly applied guidance message did not settle above the composer'
+  )
   assert.ok(
     guidanceMessage.bottom <= composerMetrics.top + 2,
     `The newly applied guidance message rendered below the composer: ${JSON.stringify({
@@ -748,6 +747,24 @@ async function verifyForegroundGuidanceScroll({ composerSelector, control, retur
     })}`
   )
   await captureVerificationScreenshot(control, 'guidance-scroll-01-message-visible.png')
+
+  await control.command('expandProcessingSummaries', 'body')
+  const assistantTranscriptTextSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="assistant-message-content"], ${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] [data-testid="process-text-block"]`
+  await control.command('waitFor', assistantTranscriptTextSelector, {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('markElementWithText', assistantTranscriptTextSelector, {
+    text: GUIDANCE_SCROLL_PRE_TOOL_TEXT,
+    value: 'guidance-scroll-pre-tool-assistant',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const assistantTranscriptText = await control.command('getText', assistantTranscriptTextSelector)
+  assert.equal(
+    countTextOccurrences(assistantTranscriptText, GUIDANCE_SCROLL_PRE_TOOL_TEXT),
+    1,
+    'The final text from before guidance was duplicated after the guidance message'
+  )
 
   control.releaseGuidanceScrollCompletion()
   await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -828,6 +845,25 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
   await captureVerificationScreenshot(control, 'turn-navigation-02-assistant-only-active.png')
 }
 
+export async function waitForComposerFocus(control, timeoutMs, failureMessage) {
+  const focusStartedAt = Date.now()
+  let activeElementTestId = ''
+  while (Date.now() - focusStartedAt < timeoutMs) {
+    activeElementTestId = await control.command('getActiveElementTestId', 'body')
+    if (activeElementTestId === 'chat-message-input') return
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
+    control.command('getComposerFocusSnapshot', 'body'),
+    control.command('getWorkbenchDebugSnapshot', 'body'),
+    control.command('getComposerDiagnosticsSnapshot', 'body'),
+  ])
+  throw new Error(
+    `${failureMessage}; activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
+      `workbench=${workbenchSnapshot}; composerDiagnostics=${composerDiagnostics}`
+  )
+}
+
 async function reopenCurrentTurnNavigationTask(
   control,
   composerSelector,
@@ -856,26 +892,11 @@ async function reopenCurrentTurnNavigationTask(
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     }
   )
-  const focusStartedAt = Date.now()
-  let activeElementTestId = ''
-  while (Date.now() - focusStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    activeElementTestId = await control.command('getActiveElementTestId', 'body')
-    if (activeElementTestId === 'chat-message-input') break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  if (activeElementTestId !== 'chat-message-input') {
-    const [focusSnapshot, workbenchSnapshot, composerDiagnostics] = await Promise.all([
-      control.command('getComposerFocusSnapshot', 'body'),
-      control.command('getWorkbenchDebugSnapshot', 'body'),
-      control.command('getComposerDiagnosticsSnapshot', 'body'),
-    ])
-    throw new Error(
-      `Opening a conversation from the sidebar did not transfer keyboard focus to the composer; ` +
-        `activeElementTestId=${activeElementTestId}; focus=${focusSnapshot}; ` +
-        `workbench=${workbenchSnapshot}; ` +
-        `composerDiagnostics=${composerDiagnostics}`
-    )
-  }
+  await waitForComposerFocus(
+    control,
+    DEFAULT_STEP_TIMEOUT_MS,
+    'Opening a conversation from the sidebar did not transfer keyboard focus to the composer'
+  )
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     const expectedMessageCount = expectedConversationTurnCount * 2
     let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))

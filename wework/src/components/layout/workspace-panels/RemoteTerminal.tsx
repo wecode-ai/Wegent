@@ -13,10 +13,12 @@ import {
   observeTerminalTheme,
 } from '@/lib/xterm-theme'
 import { appendRuntimeTerminalContext } from '@/lib/runtime-terminal-context'
+import { focusTerminalUnlessComposerFocusRequested } from '@/lib/workbenchComposerFocus'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { createXtermWebLinksAddon } from './xtermLinks'
 import { installXtermInputFallback, type XtermInputFallbackController } from './xtermInputFallback'
 import { installXtermSelectionGuard } from './xtermSelectionGuard'
+import { installXtermTextDrag } from './xtermTextDrag'
 import {
   installXtermRenderRecovery,
   logXtermRenderState,
@@ -217,6 +219,7 @@ export function RemoteTerminal({
     terminal.loadAddon(webLinksAddon)
     terminal.open(container)
     const selectionGuard = installXtermSelectionGuard({ container, terminal })
+    const textDrag = installXtermTextDrag({ container, terminal })
     inputFallback = installXtermInputFallback({
       terminal,
       writeData: data => {
@@ -292,6 +295,7 @@ export function RemoteTerminal({
         dataDisposable.dispose()
         titleDisposable.dispose()
         selectionGuard.dispose()
+        textDrag.dispose()
         inputFallback.dispose()
         unsubscribeOutput()
         unsubscribeExit()
@@ -340,7 +344,7 @@ export function RemoteTerminal({
           terminal,
           terminalKind: 'remote',
         })
-        terminal.textarea?.focus({ preventScroll: true })
+        focusTerminalUnlessComposerFocusRequested(terminal.textarea)
       } catch (error) {
         console.error('Failed to activate remote terminal:', error)
         return

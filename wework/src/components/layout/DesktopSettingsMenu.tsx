@@ -1,4 +1,14 @@
-import { ChevronDown, Download, Gauge, Info, Loader2, LogIn, LogOut, Settings } from 'lucide-react'
+import {
+  ChevronDown,
+  Download,
+  Gauge,
+  Info,
+  Loader2,
+  LogIn,
+  LogOut,
+  Settings,
+  TriangleAlert,
+} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -15,22 +25,17 @@ import {
 } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import {
+  calculateAppUpdateDownloadPercent,
+  formatAppUpdateVersion,
+} from '@/features/app-update/app-update-format'
+import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
+import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
-
-function formatVersionTemplate(template: string, version: string): string {
-  return template.replace('{{version}}', version)
-}
-
-function calculateDownloadPercent(
-  downloadedBytes: number,
-  totalBytes: number | null
-): number | null {
-  if (!totalBytes || totalBytes <= 0) return null
-  return Math.min(100, Math.round((downloadedBytes / totalBytes) * 100))
-}
 
 function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
   return (
@@ -76,11 +81,13 @@ export function DesktopSettingsMenu({
   const [wegentQuotaLoading, setWegentQuotaLoading] = useState(false)
   const [codexQuotaError, setCodexQuotaError] = useState<string | null>(null)
   const [wegentQuotaError, setWegentQuotaError] = useState<string | null>(null)
+  const [selectedUpdateError, setSelectedUpdateError] = useState<AppUpdateError | null>(null)
   const appUpdate = useOptionalAppUpdate()
   const availableUpdate = appUpdate?.availableUpdate ?? null
   const updateStatus = appUpdate?.status ?? 'idle'
   const downloadProgress = appUpdate?.downloadProgress ?? null
   const updateError = appUpdate?.error ?? null
+  const updateErrorSummary = updateError ? formatAppUpdateErrorSummary(updateError, t) : null
   const checkNow = appUpdate?.checkNow
   const installUpdate = appUpdate?.installUpdate
 
@@ -174,7 +181,7 @@ export function DesktopSettingsMenu({
   }
 
   const updateButtonLabel = availableUpdate
-    ? formatVersionTemplate(
+    ? formatAppUpdateVersion(
         t('workbench.app_update_install', {
           defaultValue: '更新到 {{version}}',
           version: availableUpdate.version,
@@ -182,15 +189,19 @@ export function DesktopSettingsMenu({
         availableUpdate.version
       )
     : t('workbench.app_update_check', { defaultValue: '检查更新' })
-  const isUpdateBusy = updateStatus === 'checking' || updateStatus === 'installing'
+  const isUpdateBusy =
+    updateStatus === 'checking' || updateStatus === 'downloading' || updateStatus === 'installing'
   const downloadPercent = downloadProgress
-    ? calculateDownloadPercent(downloadProgress.downloadedBytes, downloadProgress.totalBytes)
+    ? calculateAppUpdateDownloadPercent(
+        downloadProgress.downloadedBytes,
+        downloadProgress.totalBytes
+      )
     : null
   const updateMessage =
-    updateStatus === 'installing'
+    updateStatus === 'downloading' || updateStatus === 'installing'
       ? null
       : availableUpdate
-        ? formatVersionTemplate(
+        ? formatAppUpdateVersion(
             t('workbench.app_update_available', {
               defaultValue: '发现新版本 {{version}}',
               version: availableUpdate.version,
@@ -203,7 +214,7 @@ export function DesktopSettingsMenu({
             })
           : null
   const downloadMessage =
-    updateStatus === 'installing'
+    updateStatus === 'downloading'
       ? downloadPercent === null
         ? t('workbench.app_update_downloading', { defaultValue: '正在下载更新' })
         : t('workbench.app_update_downloading_progress', {
@@ -239,7 +250,7 @@ export function DesktopSettingsMenu({
       <SettingsMenuItem
         testId="check-app-update-button"
         icon={
-          updateStatus === 'installing' && downloadPercent !== null ? (
+          updateStatus === 'downloading' && downloadPercent !== null ? (
             <UpdateDownloadProgressIcon progress={downloadPercent} />
           ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
@@ -270,14 +281,31 @@ export function DesktopSettingsMenu({
           <span>{downloadMessage}</span>
         </div>
       ) : null}
-      {updateMessage || updateError ? (
+      {updateMessage || updateErrorSummary ? (
         <div
           data-testid="app-update-status"
+          role={updateErrorSummary ? 'status' : undefined}
           className="pb-2 pl-8 pr-3 text-xs font-medium leading-[18px] text-text-secondary"
         >
-          <span className={updateError ? 'text-red-400' : undefined}>
-            {updateError ?? updateMessage}
-          </span>
+          {updateError && updateErrorSummary ? (
+            <div className="flex items-start gap-2">
+              <TriangleAlert
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-orange-600 dark:text-orange-400"
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">{updateErrorSummary}</span>
+              <button
+                type="button"
+                data-testid="app-update-error-details-button"
+                onClick={() => setSelectedUpdateError(updateError)}
+                className="shrink-0 rounded-sm text-blue-600 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 dark:text-blue-300"
+              >
+                {t('workbench.app_update_error_details', '查看错误详情')}
+              </button>
+            </div>
+          ) : (
+            updateMessage
+          )}
         </div>
       ) : null}
       <SettingsMenuItem
@@ -388,6 +416,18 @@ export function DesktopSettingsMenu({
           icon={<LogOut className="h-4 w-4 shrink-0 text-text-secondary" />}
           label={t('workbench.logout', '退出登录')}
           onClick={onLogout}
+        />
+      ) : null}
+      {selectedUpdateError ? (
+        <AppUpdateErrorDetailsDialog
+          key={`${selectedUpdateError.code}:${selectedUpdateError.occurredAt}`}
+          open
+          error={selectedUpdateError}
+          onClose={() => setSelectedUpdateError(null)}
+          onRetry={async () => {
+            setSelectedUpdateError(null)
+            await handleUpdateClick()
+          }}
         />
       ) : null}
     </div>

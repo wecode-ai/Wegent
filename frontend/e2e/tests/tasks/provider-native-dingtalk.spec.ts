@@ -59,6 +59,40 @@ test.describe('Provider-native DingTalk and multi-provider access', () => {
     await deleteProviderNativeResources(request, resources)
   })
 
+  test('knowledge picker uses mobile, tablet, and desktop navigation at its responsive breakpoints', async ({
+    page,
+  }) => {
+    const knowledge = new ProviderNativeKnowledgePage(page)
+    const viewports = [
+      { width: 375, height: 812, container: 'context-selector-drawer', compact: true },
+      { width: 768, height: 1024, container: 'context-selector-popover', compact: true },
+      { width: 1024, height: 768, container: 'context-selector-popover', compact: false },
+    ] as const
+
+    for (const viewport of viewports) {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height })
+      await knowledge.openPicker()
+      const container = page.getByTestId(viewport.container)
+      await expect(container).toBeVisible()
+      await expect(container).toHaveAttribute('data-state', 'open')
+
+      await page.getByTestId('knowledge-picker-dingtalk-parent').click()
+      const compactDingTalkOption = page.getByTestId(
+        'knowledge-picker-responsive-dingtalk-wikispace'
+      )
+      const desktopDingTalkOption = page.getByTestId('knowledge-picker-dingtalk-wikispace')
+      if (viewport.compact) {
+        await expect(compactDingTalkOption).toBeVisible()
+        await expect(desktopDingTalkOption).toBeHidden()
+      } else {
+        await expect(compactDingTalkOption).toBeHidden()
+        await expect(desktopDingTalkOption).toBeVisible()
+      }
+
+      await knowledge.closePicker()
+    }
+  })
+
   test('E2E-A2-005 reads one exact DingTalk document', async ({ page, request }) => {
     const prompt = makePrompt('005', '输出唯一断言标记。')
     await scenario(request, prompt, [

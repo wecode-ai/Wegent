@@ -16,6 +16,7 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   consumeRuntimeTaskLifecycleBlock,
+  runtimeTaskLifecycleTransitionChanged,
   type RuntimeTaskLifecycleSnapshot,
   useRuntimeTaskLifecycle,
   useRuntimeTaskLifecycleStore,
@@ -24,7 +25,10 @@ import {
   resolveAutomaticModel,
   selectedModelExecutionFields,
 } from '@/features/workbench/runtimeModelSelection'
-import { findRuntimeTask } from '@/features/workbench/workbenchRuntimeHelpers'
+import {
+  findRuntimeTask,
+  getRuntimeTaskRouteKey,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
 import { persistAttachmentReferences } from '@/lib/attachments'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
@@ -167,6 +171,8 @@ interface PendingRuntimeGoalState {
 const runtimePaneGoalSeeds = new Map<string, PendingRuntimeGoalState>()
 const DEFAULT_RUNTIME_TRANSCRIPT_PAGE_SIZE = 50
 const MAX_CACHED_RUNTIME_PANE_GOALS = 3
+export const RUNTIME_RETRY_CONTINUATION_PROMPT =
+  'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
 const EMPTY_ATTACHMENT_STATE = {
   attachments: [],
   uploadingFiles: new Map(),
@@ -192,7 +198,6 @@ export function useWorkbenchPaneSession({
     editLastUserMessage,
     cancelRuntimePaneTask,
     sendCurrentInput,
-    retryFailedMessage: retryRuntimeFailedMessage,
     refreshWorkLists,
   } = useWorkbenchPaneContext()
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -359,8 +364,6 @@ export function useWorkbenchPaneSession({
   } | null>(null)
   const messageActionFrameRef = useRef<number | null>(null)
   const retryInFlightRef = useRef(false)
-  const lastSubmittedRetryMessageRef = useRef<WorkbenchMessage | null>(null)
-  const retrySourceBySubtaskIdRef = useRef(new Map<string, WorkbenchMessage>())
   const currentRuntimeTaskLoadTarget = useMemo(
     () => (currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null),
     [currentRuntimeTask]
@@ -447,6 +450,13 @@ export function useWorkbenchPaneSession({
         lifecycle: taskLifecycle,
       }),
     [currentRuntimeTask, messages, taskLifecycle]
+  )
+  const readCurrentPaneBusy = useCallback(
+    () =>
+      currentRuntimeTask
+        ? (lifecycleStore.getTask(currentRuntimeTask)?.derived.isBusy ?? paneStatus.isBusy)
+        : paneStatus.isBusy,
+    [currentRuntimeTask, lifecycleStore, paneStatus.isBusy]
   )
   const activeAssistantMessage = paneStatus.activeAssistantMessage
   const goal = useMemo(() => {
@@ -555,26 +565,13 @@ export function useWorkbenchPaneSession({
       setTaskPlan(metadata.taskPlan)
       setGoalContinuation(metadata.goalContinuation)
       setThreadGoal(metadata.goal)
-      if (metadata.goal) {
-        clearRuntimePaneGoalSeed(address)
-        setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, address) ? null : current
-        )
-      }
     }
     syncConversationState()
-    return subscribeRuntimeConversation(address, action => {
+    return subscribeRuntimeConversation(address, () => {
       syncConversationState()
       setQueuedMessagesState(
         getRuntimeConversationQueuedMessagesByKey(runtimeConversationKey(address))
       )
-      if (!action) return
-      if (action.type === 'assistant_error' && action.subtaskId) {
-        const retrySource = lastSubmittedRetryMessageRef.current
-        if (retrySource) {
-          retrySourceBySubtaskIdRef.current.set(action.subtaskId, retrySource)
-        }
-      }
     })
   }, [runtimeTaskLoadTarget])
 
@@ -584,8 +581,6 @@ export function useWorkbenchPaneSession({
 
   useEffect(() => {
     setAnsweredRequestUserInputIds(new Set())
-    lastSubmittedRetryMessageRef.current = null
-    retrySourceBySubtaskIdRef.current.clear()
   }, [runtimeTaskLoadTarget?.key])
 
   useEffect(() => {
@@ -622,7 +617,11 @@ export function useWorkbenchPaneSession({
       .then(response => {
         if (!cancelled) {
           const loadedGoal = response.accepted ? response.goal : null
-          const resolvedGoal = loadedGoal ?? seededGoal?.goal ?? null
+          const resolvedGoal = resolveHydratedRuntimeGoal(
+            runtimeTaskLoadTarget.address,
+            loadedGoal,
+            seededGoal?.goal ?? null
+          )
           if (import.meta.env.VITE_WEWORK_RUNTIME_DEBUG === '1') {
             console.info('[Wework] Runtime goal hydration resolved', {
               address: runtimeAddressDebug(runtimeTaskLoadTarget.address),
@@ -1077,18 +1076,17 @@ export function useWorkbenchPaneSession({
     ): Promise<boolean> => {
       if (!currentRuntimeTask) return false
 
-      const retryMessage = createRuntimeUserMessage(message.content, message.attachments, {
+      const userMessage = createRuntimeUserMessage(message.content, message.attachments, {
         id: message.id,
         createdAt: message.createdAt,
         runtimeGoalRequest: message.runtimeGoalRequest,
         codeComments: message.codeComments,
       })
-      lastSubmittedRetryMessageRef.current = retryMessage
       const appendedLocalMessage = options.appendLocalMessage !== false
       if (appendedLocalMessage) {
         const visibleMessage =
           message.displayContent === undefined
-            ? retryMessage
+            ? userMessage
             : createRuntimeUserMessage(message.displayContent, message.attachments, {
                 id: message.id,
                 createdAt: message.createdAt,
@@ -1136,7 +1134,7 @@ export function useWorkbenchPaneSession({
         if (!appendedLocalMessage) {
           const visibleMessage =
             message.displayContent === undefined
-              ? retryMessage
+              ? userMessage
               : createRuntimeUserMessage(message.displayContent, message.attachments, {
                   id: message.id,
                   createdAt: message.createdAt,
@@ -1266,44 +1264,32 @@ export function useWorkbenchPaneSession({
       setError(null)
       try {
         const currentMessages = messagesRef.current
-        const failedMessageIndex = currentMessages.findIndex(
-          currentMessage => currentMessage.id === message.id
+        const failedMessage = currentMessages.find(
+          currentMessage =>
+            currentMessage.id === message.id &&
+            currentMessage.role === 'assistant' &&
+            currentMessage.status === 'failed'
         )
-        const associatedRetrySource = message.subtaskId
-          ? retrySourceBySubtaskIdRef.current.get(message.subtaskId)
-          : undefined
-        const retrySource = associatedRetrySource ?? lastSubmittedRetryMessageRef.current
-        const failedCreatedAt = Date.parse(message.createdAt)
-        const retrySourceCreatedAt = retrySource ? Date.parse(retrySource.createdAt) : Number.NaN
-        const retrySourcePredatesFailure =
-          Number.isNaN(failedCreatedAt) ||
-          Number.isNaN(retrySourceCreatedAt) ||
-          retrySourceCreatedAt <= failedCreatedAt
-        const retryUserMessageOverride =
-          associatedRetrySource ??
-          (failedMessageIndex >= 0 && retrySourcePredatesFailure ? retrySource : null)
+        if (!failedMessage) {
+          setError('未找到可重试的失败消息')
+          return false
+        }
+
+        const continuationMessage: RuntimePaneQueuedMessage = {
+          id: `runtime-retry-continuation-${Date.now()}`,
+          content: RUNTIME_RETRY_CONTINUATION_PROMPT,
+          displayContent: i18n.t('workbench.retry_continue_message', '继续'),
+          status: 'queued',
+          createdAt: new Date().toISOString(),
+          ...getRuntimeModelFields(),
+        }
         debugRuntimePaneMessageFlow('retry-failed-message', {
           address: runtimeAddressDebug(currentRuntimeTask),
           failedMessageId: message.id,
-          failedMessageIndex,
-          retrySource: textMetrics(retrySource?.content),
-          associatedRetrySource: Boolean(associatedRetrySource),
-          retrySourcePredatesFailure,
-          usingRetrySourceOverride: Boolean(retryUserMessageOverride),
+          failedTurnId: failedMessage.turnId ?? failedMessage.subtaskId ?? null,
+          continuationMessageId: continuationMessage.id,
         })
-        const sent = await retryRuntimeFailedMessage(
-          message.id,
-          currentMessages,
-          retryUserMessageOverride ?? undefined
-        )
-        if (sent) {
-          setMessages(
-            removeRuntimeConversationTurn(currentRuntimeTask, {
-              turnId: message.turnId ?? message.subtaskId,
-            })
-          )
-        }
-        return sent
+        return await sendRuntimeMessage(continuationMessage)
       } catch (error) {
         console.error('[Wework] Runtime failed message retry failed', {
           address: runtimeAddressDebug(currentRuntimeTask),
@@ -1316,7 +1302,7 @@ export function useWorkbenchPaneSession({
         retryInFlightRef.current = false
       }
     },
-    [currentRuntimeTask, retryRuntimeFailedMessage, setError]
+    [currentRuntimeTask, getRuntimeModelFields, sendRuntimeMessage, setError]
   )
 
   const sendRequestUserInputResponse = useCallback(
@@ -1539,6 +1525,9 @@ export function useWorkbenchPaneSession({
       )
 
       try {
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         let sendError: string | null = null
         const sent = await sendRuntimeMessage(queuedMessage, {
           appendLocalMessage: false,
@@ -1562,15 +1551,26 @@ export function useWorkbenchPaneSession({
           return
         }
         if (isRuntimeTaskBusyError(sendError)) {
-          const lifecycle = currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycle)
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          const lifecycleAlreadyChanged = runtimeTaskLifecycleTransitionChanged(
+            lifecycleBeforeSend,
+            lifecycleAfterSend
+          )
+          if (lifecycleAlreadyChanged) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           console.info('[Wework] Queued runtime message remains queued while executor is busy', {
             id: queuedMessage.id,
             deviceId: currentRuntimeTask?.deviceId ?? null,
             taskId: currentRuntimeTask?.taskId ?? null,
-            executionPhase: lifecycle?.execution.phase ?? null,
-            turnPhase: lifecycle?.turn.phase ?? null,
-            executorSnapshotRunning: lifecycle?.task?.running ?? null,
+            executionPhase: lifecycleBeforeSend?.execution.phase ?? null,
+            turnPhase: lifecycleBeforeSend?.turn.phase ?? null,
+            executorSnapshotRunning: lifecycleBeforeSend?.task?.running ?? null,
+            lifecycleAlreadyChanged,
           })
         } else {
           queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
@@ -1672,7 +1672,7 @@ export function useWorkbenchPaneSession({
   }, [runtimeTaskLoadTarget])
 
   const sendQueuedMessageAsGuidance = useCallback(
-    async (queuedMessage: RuntimePaneQueuedMessage) => {
+    async (queuedMessage: RuntimePaneQueuedMessage, forceActiveTurn = false) => {
       const id = queuedMessage.id
       queuedMessageBusyBlockSnapshotsRef.current.delete(id)
       if (!currentRuntimeTask) {
@@ -1690,7 +1690,7 @@ export function useWorkbenchPaneSession({
       if (queuedMessage.status === 'sending') return
 
       setError(null)
-      if (!paneStatus.isBusy) {
+      if (!readCurrentPaneBusy() && !forceActiveTurn) {
         setQueuedMessages(messages =>
           messages.map(message =>
             message.id === id
@@ -1815,7 +1815,7 @@ export function useWorkbenchPaneSession({
     },
     [
       currentRuntimeTask,
-      paneStatus.isBusy,
+      readCurrentPaneBusy,
       sendRuntimeMessage,
       sendRuntimePaneGuidance,
       setError,
@@ -1829,6 +1829,7 @@ export function useWorkbenchPaneSession({
         const submittedInput = (inputOverride ?? input).trim()
         const currentAttachments = attachmentState.attachments
         const hasCodeComments = codeCommentContexts.length > 0
+        const paneIsBusy = readCurrentPaneBusy()
         debugComposerEvent('pane-send-called', {
           hasSubmittedValue: inputOverride !== undefined,
           submittedValue: textMetrics(inputOverride),
@@ -1841,7 +1842,7 @@ export function useWorkbenchPaneSession({
           guideWhenBusy: options.guideWhenBusy === true,
           interruptWhenBusy: options.interruptWhenBusy === true,
           hasCurrentRuntimeTask: Boolean(currentRuntimeTask),
-          paneBusy: paneStatus.isBusy,
+          paneBusy: paneIsBusy,
         })
 
         if (goalDraftActive) {
@@ -1871,7 +1872,7 @@ export function useWorkbenchPaneSession({
             }
 
             resetAttachments()
-            if (paneStatus.isBusy && options.guideWhenBusy) {
+            if (paneIsBusy && options.guideWhenBusy) {
               const response = await setRuntimeGoal({
                 address: currentRuntimeTask,
                 objective: submittedInput,
@@ -1887,7 +1888,7 @@ export function useWorkbenchPaneSession({
               lifecycleStore.goalStatusReceived(currentRuntimeTask, response.goal.status)
               setGoalDraftActive(false)
               setQueuedMessages(messages => [...messages, baseMessage])
-              await sendQueuedMessageAsGuidance(baseMessage)
+              await sendQueuedMessageAsGuidance(baseMessage, true)
               return true
             }
 
@@ -1895,7 +1896,7 @@ export function useWorkbenchPaneSession({
               ...baseMessage,
               initialGoal,
             }
-            if (paneStatus.isBusy) {
+            if (paneIsBusy) {
               setInput('')
               setRuntimeConversationGoal(currentRuntimeTask, draftGoal)
               lifecycleStore.goalStatusReceived(currentRuntimeTask, draftGoal.status)
@@ -2008,7 +2009,7 @@ export function useWorkbenchPaneSession({
             setError('当前对话还没有可压缩的 Codex 线程')
             return false
           }
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             setError('当前回复进行中，完成后再压缩上下文')
             return false
           }
@@ -2168,7 +2169,7 @@ export function useWorkbenchPaneSession({
             ...getRuntimeModelFields(),
           }
 
-          if (paneStatus.isBusy) {
+          if (paneIsBusy) {
             resetAttachments()
             setCodeCommentContexts([])
             if (options.interruptWhenBusy) {
@@ -2187,6 +2188,9 @@ export function useWorkbenchPaneSession({
           }
 
           let sendError: string | null = null
+          const lifecycleBeforeSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
           const sent = await sendRuntimeMessage(queuedMessage, {
             onError: nextError => {
               sendError = nextError
@@ -2197,10 +2201,14 @@ export function useWorkbenchPaneSession({
             resetAttachments()
             clearCodeCommentsAfterCommit('send_success', codeCommentContexts)
           } else if (isRuntimeTaskBusyError(sendError)) {
-            queuedMessageBusyBlockSnapshotsRef.current.set(
-              queuedMessage.id,
-              currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-            )
+            const lifecycleAfterSend = currentRuntimeTask
+              ? lifecycleStore.getTask(currentRuntimeTask)
+              : null
+            if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+              queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+            } else {
+              queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+            }
             setQueuedMessages(messages => [...messages, queuedMessage])
             setInput('')
             resetAttachments()
@@ -2222,7 +2230,7 @@ export function useWorkbenchPaneSession({
         }
 
         resetAttachments()
-        if (paneStatus.isBusy) {
+        if (paneIsBusy) {
           if (options.interruptWhenBusy) {
             const sent = await interruptAndSendQueuedMessage(queuedMessage)
             if (!sent) {
@@ -2235,12 +2243,15 @@ export function useWorkbenchPaneSession({
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
           if (options.guideWhenBusy) {
-            await sendQueuedMessageAsGuidance(queuedMessage)
+            await sendQueuedMessageAsGuidance(queuedMessage, true)
           }
           return true
         }
 
         let sendError: string | null = null
+        const lifecycleBeforeSend = currentRuntimeTask
+          ? lifecycleStore.getTask(currentRuntimeTask)
+          : null
         const sent = await sendRuntimeMessage(queuedMessage, {
           onError: nextError => {
             sendError = nextError
@@ -2250,10 +2261,14 @@ export function useWorkbenchPaneSession({
           setInput('')
           setCodeCommentContexts([])
         } else if (isRuntimeTaskBusyError(sendError)) {
-          queuedMessageBusyBlockSnapshotsRef.current.set(
-            queuedMessage.id,
-            currentRuntimeTask ? lifecycleStore.getTask(currentRuntimeTask) : null
-          )
+          const lifecycleAfterSend = currentRuntimeTask
+            ? lifecycleStore.getTask(currentRuntimeTask)
+            : null
+          if (runtimeTaskLifecycleTransitionChanged(lifecycleBeforeSend, lifecycleAfterSend)) {
+            queuedMessageBusyBlockSnapshotsRef.current.delete(queuedMessage.id)
+          } else {
+            queuedMessageBusyBlockSnapshotsRef.current.set(queuedMessage.id, lifecycleBeforeSend)
+          }
           setQueuedMessages(messages => [...messages, queuedMessage])
           setInput('')
         } else {
@@ -2279,8 +2294,8 @@ export function useWorkbenchPaneSession({
         lifecycleStore,
         loadRuntimeTranscriptForPane,
         pendingGoalState,
-        paneStatus.isBusy,
         queuedMessages.length,
+        readCurrentPaneBusy,
         resetAttachments,
         restoreInputAfterFailure,
         sendCurrentInput,
@@ -2989,13 +3004,30 @@ function isInterruptedGuidance(message: RuntimePaneQueuedMessage): boolean {
 
 function runtimeTaskLoadTargetFromAddress(address: RuntimeTaskAddress): RuntimeTaskLoadTarget {
   return {
-    key: runtimeTranscriptPaneKey(address),
+    key: runtimeTaskLoadAddressKey(address),
     identityKey: runtimeTranscriptPaneIdentityKey(address),
     address,
   }
 }
 
 const runtimeTranscriptPaneKey = runtimeConversationKey
+
+function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
+  const runtimeHandleThreadId =
+    typeof address.runtimeHandle?.threadId === 'string'
+      ? address.runtimeHandle.threadId.trim()
+      : typeof address.runtimeHandle?.thread_id === 'string'
+        ? address.runtimeHandle.thread_id.trim()
+        : ''
+
+  return JSON.stringify({
+    route: getRuntimeTaskRouteKey(address),
+    runtime: address.runtime ?? null,
+    threadId: address.threadId?.trim() || runtimeHandleThreadId || null,
+    workspaceKind: address.workspaceKind ?? null,
+    worktreeId: address.worktreeId ?? null,
+  })
+}
 
 function runtimeTranscriptPaneIdentityKey(address: RuntimeTaskAddress): string {
   return `${address.deviceId}:${address.taskId}`
@@ -3042,6 +3074,27 @@ function getRuntimePaneGoalSeed(address: RuntimeTaskAddress): PendingRuntimeGoal
 
 function clearRuntimePaneGoalSeed(address: RuntimeTaskAddress) {
   runtimePaneGoalSeeds.delete(runtimeTranscriptPaneIdentityKey(address))
+}
+
+function resolveHydratedRuntimeGoal(
+  address: RuntimeTaskAddress,
+  loadedGoal: RuntimeGoal | null,
+  seededGoal: RuntimeGoal | null
+): RuntimeGoal | null {
+  if (loadedGoal) return loadedGoal
+
+  const hasQueuedGoal = getRuntimeConversationQueuedMessagesByKey(
+    runtimeConversationKey(address)
+  ).some(
+    message =>
+      Boolean(message.initialGoal) && (message.status === 'queued' || message.status === 'sending')
+  )
+  if (hasQueuedGoal) {
+    const optimisticGoal = getRuntimeConversationMetadata(address).goal
+    if (optimisticGoal) return optimisticGoal
+  }
+
+  return seededGoal
 }
 
 function runtimeAddressDebug(address: RuntimeTaskAddress): Record<string, unknown> {

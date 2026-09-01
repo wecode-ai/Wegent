@@ -10,13 +10,15 @@ Wework 的内置浏览器用于在桌面工作台右侧面板中展示可交互�
 
 内置浏览器由三层组成：
 
-- Wework Electron 原生层创建嵌入式 WebView，并通过命令更新位置、导航地址和显示状态。
-- Wework React 工作台负责把浏览器面板挂载到右侧 workspace pane，并维护面板、任务和批注状态。
+- Wework Electron 主进程管理嵌入页面的导航、页面状态、截图和逻辑 label；React renderer 创建并定位对应的 `<webview>` 宿主。
+- Wework React 工作台负责把浏览器面板挂载到右侧 workspace pane，并维护面板、任务、浮层和批注状态。
 - `executor/src/browser_mcp` 暴露给 Codex 的浏览器 MCP 工具，并通过 Wework bridge 操作当前任务绑定的 Electron browser view。
 
 Executor 启动 Codex 时会注入 browser MCP server 配置。模型调用浏览器工具时，MCP server 读取当前 bridge identity，向 Wework 进程内的 loopback bridge 发送受控请求。bridge 再在主线程调度 Electron browser view 的导航、页面检查、DOM 动作、等待和截图。
 
 每个 Wework 进程启动时都会绑定独立的随机本地桥接端口，并把 bridge identity 原子写入当前 Executor home 的 `runtime/embedded-browser-bridge.json`。identity 包含 schema 版本、进程 PID、loopback 地址、认证 token 和启动时间。文件目录权限应限制为当前用户可读写，token 不得写入日志。MCP server 每次请求前读取最新 identity，并只接受 loopback 地址，避免同时运行的多个 Wework 实例把浏览器请求发送到错误窗口。
+
+Electron 启动 bridge 后必须把 runtime 文件路径传给托管 Executor。Executor 生成 Codex browser MCP 配置时只传递该文件路径，不得把当前 bridge URL 或 token 固化到配置中；否则 Electron 使用随机端口或 bridge 重启后，MCP 会继续连接过期地址，并绕过 runtime identity 的刷新机制。
 
 bridge 请求必须携带认证 token。`open` 和 `navigate` 只允许安全的网页 scheme；不要允许 `file:`、`javascript:` 或其它可以读取本机文件或执行任意脚本的地址进入 Agent 导航路径。
 
@@ -163,7 +165,9 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 ## 主界面浮层与地址栏同步
 
-嵌入式浏览器是独立的原生 WebView，不能通过主 React WebView 的 `z-index` 覆盖。当主界面的 dialog、menu、listbox 或系统级浮层与浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见；浮层移除或不再相交后再恢复显示。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
+Electron 的嵌入页面必须由 React renderer 挂载 `<webview>`，并放在共享的浏览器宿主根节点中。主界面的 dialog、menu 和 listbox 通过 portal 与系统级 `z-index` 正常覆盖该宿主；不要为应用标签页或智能工作台重新引入 `BrowserView`、`WebContentsView` 等主进程子视图，否则它们会脱离 renderer 的层叠上下文并遮住顶部标签菜单。
+
+仍使用独立原生 WebView 的桌面实现不能依赖 React `z-index`。当主界面浮层与这类浏览器区域相交时，浏览器面板必须把原生 WebView 设为不可见，并在浮层移除或不再相交后恢复。自定义浮层无法通过语义 role 或共享层级类识别时，应添加 `data-embedded-browser-occlusion`，不要在各业务组件中重复调用原生显示命令。
 
 页面状态轮询维护的是浏览器真实 URL，地址栏维护的是用户输入草稿。地址栏聚焦期间，轮询可以更新页面 URL、标题和图标，但不得覆盖输入草稿；失焦时再恢复真实 URL。新增导航或页面状态同步路径时必须保留这条边界。
 
@@ -172,6 +176,7 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 - 内置浏览器子 WebView 只在 debug 构建中启用 DevTools；release 构建通过显式 build cfg 禁用。macOS debug 构建会在 Inspector frontend 首次显示前保存子 WebView frame、执行 detach 并原样恢复 frame，因此 F12 只能打开独立窗口，不能停靠、改变浏览器尺寸或覆盖工作台。主 WebView 的 Inspector 仍只通过 Developer Commands 显式打开。
 - 浏览器 WebView 使用固定的独立数据存储标识和应用数据目录，不能与 Wework 主界面的登录存储混用。浏览器设置中的清理操作只作用于这个数据存储。
 - Electron 中的 Wegent 智能体应用标签页也使用原生子 WebView，而不是跨源 iframe。所有应用标签共享同一个固定数据存储标识，因此同一来源的完整网站存储（包括全部 `localStorage` key、Cookie 和 IndexedDB）会在标签关闭、重新打开和应用重启后继续可用；标签 label 只标识 WebView 生命周期，不划分存储。macOS 14 及以上由 `data_store_identifier` 选择持久化 `WKWebsiteDataStore`，`data_directory` 主要服务其它平台。不要在 Wework 主界面逐 key 镜像或恢复页面存储。
+- Electron 智能工作台复用同一个 renderer-owned `<webview>` 承载链路，并使用稳定的 `smart-app:<installationId>` logical label。renderer 拥有可视宿主；主进程继续管理 Harness runtime 和嵌入式浏览器控制面，但不再创建可视 `WebContentsView`。组件重挂载时必须原子替换旧 guest，并让延迟关闭携带 expected native label，避免旧组件关闭新实例。
 - 浏览器 WebView 使用 Chromium 兼容 User-Agent，避免网站把缺少浏览器产品标识的 Chromium User-Agent 识别为不受支持的客户端。
 - 弹窗、OAuth、SSO 和支付流程可能通过 `window.open` 或新窗口导航触发。实现应把它们路由到受控浏览器窗口或明确交给外部系统处理，不能让 Agent 不可见地操作隐藏页面。
 - 下载处理器从应用偏好读取下载目录和“下载前询问”开关；取消系统保存对话框必须取消本次下载。
@@ -187,15 +192,30 @@ Agent 面向模型暴露的是浏览器动作工具，而不是底层 Chromium A
 
 ## 批注流程
 
-右侧浏览器地址栏旁提供批注图标。进入批注模式后：
+右侧浏览器地址栏旁提供批注图标。批注实现分为三层：
 
-- 鼠标移动到页面元素上时，只高亮当前 DOM 元素。
-- 点击元素弹出评论输入框。
-- 在评论输入框按 Enter 会发布批注并回到 Wework 主输入框附件区。
-- 发送后，会话区显示评论附件样式，主输入框附件会被清理。
-- 发送给模型的内容包含隐藏的 `<workspace_comment_context>`，用于说明批注对应的可视网页区域；UI 不展示原始隐藏上下文。
+- Electron `browser-annotation-controller` 按浏览器 logical label 持有批注、草稿、原网页预览和运行时 revision，是唯一状态真值。
+- 独立 preload 在页面 ShadowRoot 中处理元素命中、高亮、编号标记、锚点重绑定和设计样式，避免批注节点污染宿主页面观察器。
+- 独立透明 overlay window 渲染紧凑的评论或设计编辑卡。React 浏览器面板只负责批注模式工具栏、数量和提交到主输入框。
+
+进入批注模式后：
+
+- 鼠标移动只高亮当前 DOM 元素；点击后创建包含 selector、DOM 路径、文本和几何信息的稳定锚点，并打开编辑卡。
+- 评论卡支持新增、保存、取消和删除。已保存批注在网页上显示编号标记，点击标记可重新编辑。
+- 设计卡读取目标元素的计算样式，可调整文字、外观和布局属性。设计变更由 preload 应用，页面节点替换后通过锚点重新绑定。
+- 按住“原网页”按钮会用同一条 render/sync 链暂时隐藏全部设计变更并恢复被替换的文本；松开后恢复批注设计。
+- 同 URL 重新加载保留批注并重绑定锚点；真实跨 URL 导航退出批注模式并清除草稿，避免旧页面状态泄漏。
+- 发布后的批注进入 Wework 主输入框附件区。发送给模型的运行时 DTO 只包含元素上下文、评论和设计变更，不包含截图、创建时间等 UI 私有字段。
 
 批注用于网页可视区域评论，不等同于代码选择评论。`browser_annotation` 项应被模型理解为对当前可见网页元素的评论。
+
+批注回归拆成三个可独立运行的 checkpoint：
+
+- `browser-annotation-core`：选择元素、创建评论、编号标记、编辑、删除和退出。
+- `browser-annotation-anchors`：DOM 重排、同 URL reload 和目标节点替换后的锚点恢复。
+- `browser-annotation-design`：计算样式基线、设计应用、原网页预览和设计重绑定。
+
+`browser-annotation` 是以上三个 checkpoint 的组合入口，必须展开并逐个执行，不能只运行通用桌面流程后报告成功。
 
 ## 开发检查
 
@@ -210,6 +230,7 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --filter wework e2e:desktop:embedded-browser
 pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+pnpm --filter wework e2e:desktop -- --segment browser-annotation
 ```
 
 `e2e:desktop:embedded-browser` 必须在任务 A 创建后切换到任务 B，再使用任务 A 的专属 label 执行第一次 bridge `open`、`waitFor` 和 `inspect`，验证非活跃任务能在工具超时前完成后台导航且不会接管任务 B 的浏览器。切回任务 A 后还要验证同一页面状态可见。仅验证第二次打开、活跃任务打开或手工先展开浏览器面板，不能覆盖首次打开和非活跃任务路由竞态。

@@ -35,6 +35,7 @@ These values are written only when the Terminal session is created. Existing Ter
 - `WEWORK_DEV_PORT`: the current Vite/ Electron dev server port.
 - `WEWORK_DEV_WORKTREE`: the current worktree root path.
 - `WEWORK_DEV_BRANCH`: the current Git branch, or empty when running on a detached HEAD.
+- `WEWORK_APP_IDENTIFIER`: the current Electron application identity. It defaults to a value derived from the worktree path and isolates the single-instance lock, application data, and macOS menu bar icon position. Override it only when an application identity must intentionally be reused.
 
 The script also exports these values as `VITE_WEWORK_*` so the frontend can display them at runtime.
 

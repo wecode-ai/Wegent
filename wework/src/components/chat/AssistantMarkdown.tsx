@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
@@ -26,6 +35,7 @@ import { requestEmbeddedBrowserOpen } from '@/lib/embedded-browser'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { WorkspaceFileOpenOptions } from '@/types/workspace-files'
 import type { TurnFileChangesSummary } from '@/types/api'
+import { Tooltip } from '@/components/ui/tooltip'
 import { useAttachmentDownload } from './AttachmentDownloadContext'
 
 const ASSISTANT_MARKDOWN_LINK_CLASS = [
@@ -42,7 +52,7 @@ const WEWORK_MARKDOWN_FILE_LINK_HOST = 'wework.local'
 const WEWORK_MARKDOWN_FILE_LINK_PATH = '/markdown-file'
 const WEWORK_MARKDOWN_FILE_LINK_PREFIX = `https://${WEWORK_MARKDOWN_FILE_LINK_HOST}${WEWORK_MARKDOWN_FILE_LINK_PATH}?path=`
 const MARKDOWN_LINK_PATTERN = /(!?)\[([^\]\n]+)\]\(([^)\n]+)\)/g
-const MARKDOWN_WINDOW_ROOT_MARGIN = '800px 0px'
+const MARKDOWN_WINDOW_ROOT_MARGIN = '1600px 0px'
 const DIAGRAM_LANGUAGES = new Set(['mermaid', 'mmd', 'plantuml', 'puml'])
 const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingmermaid', 'mermaid'],
@@ -50,6 +60,7 @@ const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingplantuml', 'plantuml'],
   ['weworkstreamingpuml', 'puml'],
 ])
+const MarkdownStreamingContext = createContext(false)
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -106,6 +117,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const streamdownMode =
+    variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
@@ -116,7 +129,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
-      const windowed = chunks.length > 1
+      const windowed = windowMarkdown
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
   }, [displayContent, windowMarkdown])
@@ -187,7 +200,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
+        <MarkdownCode {...props} compact={variant === 'process'} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -232,7 +245,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, isStreaming, openFile, variant]
+    [headingClasses, openFile, variant]
   )
 
   return (
@@ -254,34 +267,39 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             content={part.content}
             eager={index === 0 || index === contentParts.length - 1}
           >
+            <MarkdownStreamingContext.Provider
+              value={isStreaming && index === contentParts.length - 1}
+            >
+              <Streamdown
+                mode={streamdownMode}
+                isAnimating={false}
+                controls={false}
+                linkSafety={{ enabled: false }}
+                lineNumbers={false}
+                urlTransform={url => url}
+                components={components}
+              >
+                {prepareAssistantMarkdownContent(
+                  part.content,
+                  isStreaming && index === contentParts.length - 1
+                )}
+              </Streamdown>
+            </MarkdownStreamingContext.Provider>
+          </WindowedMarkdownChunk>
+        ) : (
+          <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
             <Streamdown
-              mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
-              isAnimating={isStreaming && index === contentParts.length - 1}
+              mode={streamdownMode}
+              isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
               lineNumbers={false}
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(
-                part.content,
-                isStreaming && index === contentParts.length - 1
-              )}
+              {prepareAssistantMarkdownContent(part.content, isStreaming)}
             </Streamdown>
-          </WindowedMarkdownChunk>
-        ) : (
-          <Streamdown
-            key={`markdown-${index}`}
-            mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={isStreaming}
-            controls={false}
-            linkSafety={{ enabled: false }}
-            lineNumbers={false}
-            urlTransform={url => url}
-            components={components}
-          >
-            {prepareAssistantMarkdownContent(part.content, isStreaming)}
-          </Streamdown>
+          </MarkdownStreamingContext.Provider>
         )
       )}
     </div>
@@ -304,7 +322,7 @@ function WindowedMarkdownChunk({
   const [retainedHeight, setRetainedHeight] = useState<number | null>(null)
 
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return
+    if (eager || typeof IntersectionObserver === 'undefined') return
     const chunk = chunkRef.current
     if (!chunk) return
 
@@ -322,19 +340,27 @@ function WindowedMarkdownChunk({
     )
     observer.observe(chunk)
     return () => observer.disconnect()
-  }, [])
+  }, [eager])
+
+  const reservedHeight = retainedHeight ?? estimateMarkdownChunkHeight(content)
 
   return (
     <div
       ref={chunkRef}
       data-markdown-window-chunk
-      style={
-        nearViewport
-          ? undefined
-          : { minHeight: retainedHeight ?? estimateMarkdownChunkHeight(content) }
-      }
+      style={nearViewport ? undefined : { minHeight: reservedHeight }}
     >
-      {nearViewport ? children : null}
+      {nearViewport ? (
+        children
+      ) : (
+        <div
+          data-markdown-window-placeholder
+          className="overflow-hidden whitespace-pre-wrap leading-6"
+          style={{ maxHeight: reservedHeight }}
+        >
+          {content}
+        </div>
+      )}
     </div>
   )
 }
@@ -347,17 +373,10 @@ function estimateMarkdownChunkHeight(content: string): number {
 type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
-  isStreaming?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({
-  className,
-  children,
-  node,
-  compact = false,
-  isStreaming = false,
-  ...props
-}: MarkdownCodeProps) {
+function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+  const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =
@@ -604,41 +623,42 @@ function AssistantMarkdownLink({
     const tooltip = formatMarkdownFileTooltip(target)
     const openOptions = getMarkdownFileOpenOptions(target)
     return (
-      <button
-        type="button"
-        className={`${ASSISTANT_MARKDOWN_LINK_CLASS} group/file-link relative`}
-        data-testid="assistant-markdown-link"
-        onClick={() => {
-          if (isHtmlFilePath(filePath)) {
-            if (requestEmbeddedBrowserOpen(filePath)) return
-          }
-          if (openOptions) {
-            onOpenFile?.(filePath, openOptions)
-            return
-          }
-          onOpenFile?.(filePath)
-        }}
-        aria-label={tooltip}
+      <Tooltip
+        label={tooltip}
+        align="start"
+        testId="assistant-markdown-link-tooltip"
+        className="min-w-0 max-w-full !shrink align-baseline"
       >
-        {icon}
-        <span
-          className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
-          data-testid="assistant-markdown-link-label"
+        <button
+          type="button"
+          className={ASSISTANT_MARKDOWN_LINK_CLASS}
+          data-testid="assistant-markdown-link"
+          onClick={() => {
+            if (isHtmlFilePath(filePath)) {
+              if (requestEmbeddedBrowserOpen(filePath)) return
+            }
+            if (openOptions) {
+              onOpenFile?.(filePath, openOptions)
+              return
+            }
+            onOpenFile?.(filePath)
+          }}
+          aria-label={tooltip}
         >
-          {children}
-        </span>
-        {lineLabel ? (
-          <span className="shrink-0" data-testid="assistant-markdown-link-line">
-            ({lineLabel})
+          {icon}
+          <span
+            className="min-w-0 whitespace-normal [overflow-wrap:anywhere]"
+            data-testid="assistant-markdown-link-label"
+          >
+            {children}
           </span>
-        ) : null}
-        <span
-          data-testid="assistant-markdown-link-tooltip"
-          className="pointer-events-none absolute bottom-full left-0 z-30 mb-1 hidden w-max max-w-[min(36rem,calc(100vw-3rem))] whitespace-normal break-all rounded-xl border border-border bg-popover px-3 py-2 text-left text-sm font-normal leading-5 text-text-primary shadow-lg group-hover/file-link:block group-focus-visible/file-link:block"
-        >
-          {tooltip}
-        </span>
-      </button>
+          {lineLabel ? (
+            <span className="shrink-0" data-testid="assistant-markdown-link-line">
+              ({lineLabel})
+            </span>
+          ) : null}
+        </button>
+      </Tooltip>
     )
   }
 

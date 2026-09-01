@@ -7,7 +7,7 @@ import {
   connectLocalExecutorToBackend,
   copyLocalExecutorDebugInfo,
   disconnectLocalExecutorFromBackend,
-  ensureLocalExecutorStarted,
+  ensureLocalExecutorAvailable,
   readLocalExecutorLog,
 } from '@/desktop/localExecutor'
 import { LocalRuntimeInitializer } from './LocalRuntimeInitializer'
@@ -24,14 +24,14 @@ vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: vi.fn(),
   copyLocalExecutorDebugInfo: vi.fn(),
   disconnectLocalExecutorFromBackend: vi.fn(),
-  ensureLocalExecutorStarted: vi.fn(),
+  ensureLocalExecutorAvailable: vi.fn(),
   readLocalExecutorLog: vi.fn(),
 }))
 
 const copyDebugMock = vi.mocked(copyLocalExecutorDebugInfo)
 const connectMock = vi.mocked(connectLocalExecutorToBackend)
 const disconnectMock = vi.mocked(disconnectLocalExecutorFromBackend)
-const ensureMock = vi.mocked(ensureLocalExecutorStarted)
+const ensureMock = vi.mocked(ensureLocalExecutorAvailable)
 const readLogMock = vi.mocked(readLocalExecutorLog)
 const SLOW_STARTUP_WARNING_MS = 10000
 
@@ -100,6 +100,7 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
+          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -113,6 +114,7 @@ describe('LocalRuntimeInitializer', () => {
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
         runtimeAuthToken: 'runtime-task-token',
+        deviceType: 'app',
       })
     )
     expect(ensureMock.mock.invocationCallOrder[0]).toBeLessThan(
@@ -140,6 +142,7 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'https://backend.example.com',
           isConnected: true,
           token: 'token-a',
+          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -155,6 +158,7 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
+          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -170,6 +174,7 @@ describe('LocalRuntimeInitializer', () => {
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
         runtimeAuthToken: 'runtime-task-token',
+        deviceType: 'app',
       })
     )
   })
@@ -183,6 +188,7 @@ describe('LocalRuntimeInitializer', () => {
         initialCloudConnection={{
           isConnected: false,
           token: null,
+          registrationDeviceType: 'app',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -208,6 +214,7 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
+          registrationDeviceType: 'remote',
         }}
       >
         <div data-testid="main-app">Main app</div>
@@ -234,6 +241,7 @@ describe('LocalRuntimeInitializer', () => {
           socketBaseUrl: 'wss://socket.example.com',
           isConnected: true,
           token: 'token-a',
+          registrationDeviceType: 'remote',
         }}
       >
         <div data-testid="main-app">Main app</div>

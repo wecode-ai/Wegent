@@ -1,6 +1,5 @@
 import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual'
+import { defaultRangeExtractor } from '@tanstack/react-virtual'
 import type { VirtualItem } from '@tanstack/react-virtual'
 import type {
   CSSProperties,
@@ -89,6 +88,8 @@ import {
   getConversationVirtualMeasurements,
 } from '@/features/workbench/runtimeConversationCache'
 import { getRuntimeMessageActiveThinking } from '@/features/workbench/runtimeThinking'
+import { SelectionActionsPopover } from './SelectionActionsPopover'
+import { useBottomOriginVirtualizer } from './useBottomOriginVirtualizer'
 
 interface MessageListProps {
   messages: WorkbenchMessage[]
@@ -135,8 +136,8 @@ interface MessageListProps {
   hiddenRequestUserInputIds?: ReadonlySet<string>
   onAddSelectionToConversation?: (text: string) => void
   onAskSelectionInSidebar?: (text: string) => void
-  onVirtualLayoutChange?: () => void
   virtualAnchorToEnd?: boolean
+  bottomOrigin?: boolean
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -229,11 +230,10 @@ export const MessageList = memo(function MessageList({
   hiddenRequestUserInputIds,
   onAddSelectionToConversation,
   onAskSelectionInSidebar,
-  onVirtualLayoutChange,
   virtualAnchorToEnd = true,
+  bottomOrigin = false,
   renderGapAfterMessage,
 }: MessageListProps) {
-  const { t } = useTranslation('common')
   const listRef = useRef<HTMLDivElement>(null)
   const layoutWidthUpdateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previousVisibleMessageIdsRef = useRef<string[]>([])
@@ -270,7 +270,7 @@ export const MessageList = memo(function MessageList({
   const listLayoutClass = className
     ? 'mx-auto flex min-w-0 flex-col gap-4 pb-2 pt-8'
     : 'mx-auto flex w-full min-w-0 max-w-3xl flex-col gap-4 px-6 pb-2 pt-8'
-  const virtualMessages = isDesktopRuntime() && Boolean(scrollElementRef)
+  const virtualMessages = isDesktopRuntime() && scrollElementRef !== undefined
   const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
   const forcedVirtualMessageIndex = useMemo(
     () =>
@@ -283,14 +283,20 @@ export const MessageList = memo(function MessageList({
     () => visibleMessages.findLastIndex(message => message.status === 'streaming'),
     [visibleMessages]
   )
+  const bottomOriginAppendOnlyItemKeys = useMemo(
+    () =>
+      new Set(
+        visibleMessages.filter(message => message.status === 'streaming').map(message => message.id)
+      ),
+    [visibleMessages]
+  )
   const initialMeasurementsCache = useMemo(
     () => getVirtualMeasurementSnapshot(virtualMeasurementKey, visibleMessages),
     [virtualMeasurementKey, visibleMessages]
   )
-  const initialVirtualOffset = useMemo(() => {
-    const viewportHeight = scrollElementRef?.current?.clientHeight ?? 0
+  const initialVirtualContentHeight = useMemo(() => {
     const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
-    const contentHeight =
+    return (
       MESSAGE_LIST_PADDING_TOP_PX +
       MESSAGE_LIST_PADDING_BOTTOM_PX +
       visibleMessages.reduce((total, message, index) => {
@@ -299,25 +305,13 @@ export const MessageList = memo(function MessageList({
         const gap = index < visibleMessages.length - 1 ? MESSAGE_LIST_GAP_PX : 0
         return total + size + gap
       }, 0)
-    return Math.max(0, contentHeight - viewportHeight - initialDistanceFromBottomPx)
-  }, [
-    initialDistanceFromBottomPx,
-    initialMeasurementsCache,
-    messageIntrinsicHeights,
-    scrollElementRef,
-    visibleMessages,
-  ])
-  // TanStack Virtual owns mutable measurement callbacks that React Compiler must not memoize.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const messageVirtualizer = useVirtualizer({
+    )
+  }, [initialMeasurementsCache, messageIntrinsicHeights, visibleMessages])
+  const messageVirtualizer = useBottomOriginVirtualizer({
+    bottomOrigin,
+    bottomOriginAppendOnlyItemKeys,
     count: visibleMessages.length,
     enabled: virtualMessages,
-    getScrollElement: () => scrollElementRef?.current ?? null,
-    initialRect: {
-      width: scrollElementRef?.current?.clientWidth ?? 0,
-      height: scrollElementRef?.current?.clientHeight ?? 0,
-    },
-    initialOffset: initialVirtualOffset,
     getItemKey: index => visibleMessages[index]?.id ?? index,
     estimateSize: index => {
       const message = visibleMessages[index]
@@ -328,6 +322,7 @@ export const MessageList = memo(function MessageList({
     paddingEnd: MESSAGE_LIST_PADDING_BOTTOM_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: virtualAnchorToEnd ? 'end' : 'start',
+    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
     rangeExtractor: range => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
@@ -339,15 +334,15 @@ export const MessageList = memo(function MessageList({
       return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
     },
     initialMeasurementsCache,
+    initialContentHeightPx: initialVirtualContentHeight,
+    initialDistanceFromBottomPx,
+    positionKey: conversationKey,
+    scrollElementRef,
+    shouldAdjustScrollPositionOnItemSizeChange: bottomOrigin
+      ? undefined
+      : preserveScrollPositionOutsideVirtualizer,
   })
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
-    preserveScrollPositionOutsideVirtualizer
   const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
-
-  useLayoutEffect(() => {
-    if (!virtualMessages) return
-    onVirtualLayoutChange?.()
-  }, [onVirtualLayoutChange, virtualMessages, virtualTotalSize])
 
   useLayoutEffect(() => {
     const previousIds = previousVisibleMessageIdsRef.current
@@ -559,34 +554,13 @@ export const MessageList = memo(function MessageList({
           : undefined
       }
     >
-      {textSelection &&
-        textSelection.conversationKey === conversationKey &&
-        createPortal(
-          <div
-            data-testid="message-selection-actions"
-            className="fixed z-critical flex -translate-x-1/2 -translate-y-full items-center gap-1 rounded-lg border border-border bg-base p-1 shadow-lg"
-            style={{ left: textSelection.left, top: textSelection.top }}
-            onPointerDown={event => event.preventDefault()}
-          >
-            <button
-              type="button"
-              data-testid="add-selection-to-conversation-button"
-              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => applySelectionAction(onAddSelectionToConversation!)}
-            >
-              {t('workbench.add_selection_to_conversation')}
-            </button>
-            <button
-              type="button"
-              data-testid="ask-selection-in-sidebar-button"
-              className="h-8 rounded-md px-2.5 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-              onClick={() => applySelectionAction(onAskSelectionInSidebar!)}
-            >
-              {t('workbench.ask_selection_in_sidebar')}
-            </button>
-          </div>,
-          document.body
-        )}
+      {textSelection && textSelection.conversationKey === conversationKey && (
+        <SelectionActionsPopover
+          position={{ left: textSelection.left, top: textSelection.top }}
+          onAddToConversation={() => applySelectionAction(onAddSelectionToConversation!)}
+          onAskInSidebar={() => applySelectionAction(onAskSelectionInSidebar!)}
+        />
+      )}
       {(virtualMessages
         ? messageVirtualizer.getVirtualItems().map(virtualRow => ({
             index: virtualRow.index,
@@ -754,6 +728,7 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
   const changed = [
     previous.messages !== next.messages ? 'messages' : null,
     previous.scrollElementRef !== next.scrollElementRef ? 'scrollElementRef' : null,
+    previous.bottomOrigin !== next.bottomOrigin ? 'bottomOrigin' : null,
     previous.initialDistanceFromBottomPx !== next.initialDistanceFromBottomPx
       ? 'initialDistanceFromBottomPx'
       : null,
@@ -806,7 +781,6 @@ function areMessageListPropsEqual(previous: MessageListProps, next: MessageListP
     previous.onAskSelectionInSidebar !== next.onAskSelectionInSidebar
       ? 'onAskSelectionInSidebar'
       : null,
-    previous.onVirtualLayoutChange !== next.onVirtualLayoutChange ? 'onVirtualLayoutChange' : null,
     previous.virtualAnchorToEnd !== next.virtualAnchorToEnd ? 'virtualAnchorToEnd' : null,
     previous.renderGapAfterMessage !== next.renderGapAfterMessage ? 'renderGapAfterMessage' : null,
   ].filter((key): key is string => key !== null)
@@ -1919,7 +1893,8 @@ function shouldHideFailedAssistantContent(message: WorkbenchMessage) {
 
 function getDisplayProcessingBlocks(
   blocks: ProcessingBlock[] | undefined,
-  settleForCancelledTurn = false
+  settleForCancelledTurn = false,
+  finalContent = ''
 ): ProcessingBlock[] {
   if (!blocks?.length) return []
 
@@ -1933,7 +1908,8 @@ function getDisplayProcessingBlocks(
       if (block.type === 'thinking') return false
       if (block.type !== 'text') return true
 
-      return Boolean(block.content.trim())
+      const content = block.content.trim()
+      return Boolean(content) && content !== finalContent.trim()
     })
 }
 
@@ -2007,8 +1983,8 @@ export function AssistantMessage({
   const hiddenErrorContent =
     message.status === 'failed' && shouldHideContent ? message.content.trim() : undefined
   const displayBlocks = useMemo(
-    () => getDisplayProcessingBlocks(message.blocks, isCancelled),
-    [isCancelled, message.blocks]
+    () => getDisplayProcessingBlocks(message.blocks, isCancelled, visibleContent),
+    [isCancelled, message.blocks, visibleContent]
   )
   const fileEditDurationsBySourceBlock = useMemo(
     () => getFileEditDurationsBySourceBlock(displayBlocks),
@@ -2251,9 +2227,6 @@ export function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && (
-            <AssistantThinkingIndicator content={activeThinkingContent} />
-          )}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -2537,7 +2510,8 @@ function shouldShowAssistantThinkingIndicator({
 }): boolean {
   return (
     isStreaming &&
-    (!hasProcessingDisplayBlock || hasVisibleContent || hasTrailingCompletedProcessText)
+    !hasVisibleContent &&
+    (!hasProcessingDisplayBlock || hasTrailingCompletedProcessText)
   )
 }
 

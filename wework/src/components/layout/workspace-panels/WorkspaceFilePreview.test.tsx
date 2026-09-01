@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
@@ -11,6 +11,7 @@ const codeViewMocks = vi.hoisted(() => ({
 }))
 const appearanceMocks = vi.hoisted(() => ({
   resolvedMode: 'light' as 'dark' | 'light',
+  codeFontSize: 12,
 }))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
@@ -22,7 +23,11 @@ vi.mock('@/components/chat/AssistantMarkdown', () => ({
 }))
 
 vi.mock('@pierre/diffs/react', () => ({
-  CodeView: (props: { options: Record<string, unknown> }) => {
+  CodeView: (props: {
+    options: Record<string, unknown>
+    selectedLines?: unknown
+    style?: Record<string, string>
+  }) => {
     codeViewMocks.render(props)
     return <div data-testid="code-view" />
   },
@@ -60,7 +65,11 @@ vi.mock('@file-viewer/preset-engineering', () => ({ default: {} }))
 vi.mock('@file-viewer/preset-office', () => ({ default: {} }))
 vi.mock('@file-viewer/preset-lite', () => ({ default: {} }))
 vi.mock('@/features/appearance', () => ({
-  useOptionalAppearance: () => ({ resolvedMode: appearanceMocks.resolvedMode }),
+  defaultAppearance: { codeFontSize: 12 },
+  useOptionalAppearance: () => ({
+    resolvedMode: appearanceMocks.resolvedMode,
+    appearance: { codeFontSize: appearanceMocks.codeFontSize },
+  }),
 }))
 
 beforeEach(() => {
@@ -68,6 +77,7 @@ beforeEach(() => {
   fileViewerMocks.render.mockClear()
   codeViewMocks.render.mockClear()
   appearanceMocks.resolvedMode = 'light'
+  appearanceMocks.codeFontSize = 12
 })
 
 const markdownFile = {
@@ -119,6 +129,47 @@ test('shows Markdown source without a duplicate sticky file header', () => {
       }),
     })
   )
+})
+
+test('drags selected preview lines as plain text', () => {
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.ts',
+        name: 'index.ts',
+        content: 'const first = 1\nconst second = 2\nconst third = 3',
+        editable: true,
+        revision: 'revision-selection',
+        truncated: false,
+        size: 48,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  const props = codeViewMocks.render.mock.lastCall?.[0] as {
+    onSelectedLinesChange: (selection: {
+      id: string
+      range: { start: number; end: number }
+    }) => void
+  }
+  act(() => {
+    props.onSelectedLinesChange({
+      id: '/workspace/project/index.ts',
+      range: { start: 1, end: 2 },
+    })
+  })
+
+  const preview = screen.getByTestId('workspace-file-preview')
+  expect(preview).toHaveAttribute('draggable', 'true')
+  const setData = vi.fn()
+  const dataTransfer = { setData, effectAllowed: 'none' } as unknown as DataTransfer
+  fireEvent.dragStart(preview, { dataTransfer })
+
+  expect(setData).toHaveBeenCalledWith('text/plain', 'const first = 1\nconst second = 2')
+  expect(dataTransfer.effectAllowed).toBe('copy')
 })
 
 test('uses the application dark theme for code and binary previews', () => {
@@ -265,6 +316,127 @@ test('keeps the code view mounted while switching between text files', () => {
       ],
     })
   )
+})
+
+test('keeps CodeView configuration stable across unrelated parent rerenders', () => {
+  const file = {
+    path: '/workspace/project/index.ts',
+    name: 'index.ts',
+    content: 'export const stable = true',
+    editable: true,
+    revision: 'revision-stable',
+    truncated: false,
+    size: 26,
+  }
+  const { rerender } = render(
+    <WorkspaceFilePreview
+      file={file}
+      loading={false}
+      targetLineStart={1}
+      targetLineEnd={1}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  const firstProps = codeViewMocks.render.mock.lastCall?.[0] as {
+    items: unknown
+    onSelectedLinesChange: unknown
+    options: unknown
+    selectedLines: unknown
+  }
+
+  rerender(
+    <WorkspaceFilePreview
+      file={file}
+      loading
+      targetLineStart={1}
+      targetLineEnd={1}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  const nextProps = codeViewMocks.render.mock.lastCall?.[0] as typeof firstProps
+
+  expect(nextProps.items).toBe(firstProps.items)
+  expect(nextProps.onSelectedLinesChange).toBe(firstProps.onSelectedLinesChange)
+  expect(nextProps.options).toBe(firstProps.options)
+  expect(nextProps.selectedLines).toBe(firstProps.selectedLines)
+})
+
+test('keeps code view metrics aligned with the configured font size', () => {
+  appearanceMocks.codeFontSize = 13
+
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/index.ts',
+        name: 'index.ts',
+        content: 'export const value = true',
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: 25,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  const expectedLineHeight = Math.round(13 * 1.8)
+  expect(codeViewMocks.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      options: expect.objectContaining({
+        itemMetrics: { lineHeight: expectedLineHeight },
+        layout: { paddingTop: 0, paddingBottom: expectedLineHeight, gap: 0 },
+        unsafeCSS: expect.stringContaining('--wework-workspace-code-line-height'),
+      }),
+      style: expect.objectContaining({
+        '--wework-workspace-code-line-height': `${expectedLineHeight}px`,
+      }),
+    })
+  )
+})
+
+test('copies the complete file after selecting all lines with the keyboard shortcut', () => {
+  const content = Array.from({ length: 200 }, (_, index) => `第 ${index + 1} 行`).join('\n')
+
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/project/demo.sh',
+        name: 'demo.sh',
+        content,
+        editable: true,
+        revision: 'revision-1',
+        truncated: false,
+        size: content.length,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+
+  fireEvent.keyDown(screen.getByTestId('workspace-file-preview'), {
+    key: 'a',
+    ctrlKey: true,
+  })
+
+  expect(codeViewMocks.render).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      selectedLines: {
+        id: '/workspace/project/demo.sh',
+        range: { start: 1, end: 200 },
+      },
+    })
+  )
+  expect(screen.queryByTestId('workspace-file-comment-input')).not.toBeInTheDocument()
+
+  const clipboardData = { setData: vi.fn() }
+  fireEvent.copy(screen.getByTestId('workspace-file-preview'), { clipboardData })
+
+  expect(clipboardData.setData).toHaveBeenCalledWith('text/plain', content)
 })
 
 test('keeps the current text preview visible while the next file is loading', () => {

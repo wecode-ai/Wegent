@@ -9,7 +9,10 @@ use super::payload::{
 use super::result_text::{
     action_text_result, combined_text_result, inspect_text_result, inspect_text_result_with_options,
 };
-use super::{bridge_payload_is_read_only, bridge_value_is_error, execute_tool, handle_request};
+use super::{
+    bridge_payload_is_read_only, bridge_value_is_error, execute_tool, handle_request,
+    BrowserMcpRequestContext,
+};
 
 #[tokio::test]
 async fn exposes_expected_browser_tools() {
@@ -344,6 +347,7 @@ async fn evaluate_tool_rejects_click_without_calling_bridge() {
         &reqwest::Client::new(),
         "browser_evaluate",
         &json!({ "expression": "document.querySelector('#su').click()" }),
+        &BrowserMcpRequestContext::new(None, "browser-test-session".to_owned()),
         1,
         Instant::now(),
     )

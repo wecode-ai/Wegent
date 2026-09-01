@@ -172,6 +172,19 @@ describe('HostPipeServer', () => {
     await vi.waitFor(() => expect(protocolError).toHaveBeenCalledOnce())
   })
 
+  test('converts a broken response pipe into a protocol error', async () => {
+    const server = new HostPipeServer(new HostCapabilityRouter())
+    const childToHost = new PassThrough()
+    const hostToChild = new PassThrough()
+    const protocolError = vi.fn()
+    server.on('protocolError', protocolError)
+    server.attachStreams(childToHost, hostToChild)
+
+    const error = Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    expect(() => hostToChild.emit('error', error)).not.toThrow()
+    expect(protocolError).toHaveBeenCalledWith(error)
+  })
+
   test('uses inherited file descriptors with a real child process', async () => {
     const router = new HostCapabilityRouter()
     router.grant('@wegent/dsh-app-wework', ['app.getVersion'])

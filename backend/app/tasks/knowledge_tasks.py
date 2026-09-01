@@ -26,8 +26,45 @@ from app.services.knowledge.processing_errors import (
     build_processing_error,
     map_indexing_exception,
 )
+from shared.telemetry.decorators import trace_sync
 
 logger = logging.getLogger(__name__)
+
+
+def _delete_late_index_if_document_was_deleted(
+    *,
+    db,
+    document_id: int,
+    knowledge_base_id: str,
+    user_id: int,
+) -> bool:
+    """Compensate a RAG write that completed after its document was deleted."""
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.knowledge.indexing import get_kb_index_info
+    from app.services.rag.gateway_factory import get_delete_gateway
+    from app.services.rag.runtime_resolver import RagRuntimeResolver
+
+    exists = (
+        db.query(KnowledgeDocument.id)
+        .filter(KnowledgeDocument.id == document_id)
+        .first()
+    )
+    if exists is not None:
+        return False
+
+    kb_info = get_kb_index_info(
+        db=db,
+        knowledge_base_id=int(knowledge_base_id),
+        current_user_id=user_id,
+    )
+    delete_spec = RagRuntimeResolver().build_delete_runtime_spec(
+        db=db,
+        knowledge_base_id=int(knowledge_base_id),
+        document_ref=str(document_id),
+        index_owner_user_id=kb_info.index_owner_user_id,
+    )
+    asyncio.run(get_delete_gateway().delete_document_index(delete_spec, db=db))
+    return True
 
 
 def _build_stale_processing_error(
@@ -89,6 +126,66 @@ def _enqueue_document_summary_task(
             f"document {document_id}: {exc}",
             exc_info=True,
         )
+
+
+@celery_app.task(
+    bind=True,
+    name="app.tasks.knowledge_tasks.import_external_document",
+)
+@trace_sync(
+    span_name="knowledge.import_external_document",
+    tracer_name="knowledge.tasks",
+    extract_attributes=lambda self, document_id, expected_generation: {
+        "knowledge.document_id": document_id,
+        "knowledge.expected_generation": expected_generation,
+    },
+)
+def import_external_document_task(self, document_id: int, expected_generation: int):
+    """
+    Celery task for importing one external provider document.
+
+    Claims the queued generation once, fetches the external document body,
+    creates the attachment, and reuses the regular indexing pipeline.
+    Duplicate or older messages are skipped before contacting the provider.
+    Failures are recorded on the document as a structured processing error
+    instead of deleting the placeholder.
+
+    Args:
+        document_id: Placeholder KnowledgeDocument ID with external identity
+        expected_generation: Generation captured when this message was enqueued
+    """
+    from app.models.knowledge import KnowledgeDocument
+    from app.models.user import User
+    from app.services.knowledge.external_document_import import (
+        run_external_document_import,
+    )
+    from app.services.knowledge.index_state_machine import (
+        begin_external_import_attempt,
+    )
+
+    with SessionLocal() as db:
+        attempt = begin_external_import_attempt(db, document_id, expected_generation)
+        if not attempt.should_execute:
+            logger.info(
+                "[Celery External Import] Skipping document %s: %s",
+                document_id,
+                attempt.reason,
+            )
+            return
+        document = (
+            db.query(KnowledgeDocument)
+            .filter(KnowledgeDocument.id == document_id)
+            .first()
+        )
+        if document is None:
+            # Deleted between the claim and this read; nothing to revive.
+            logger.info(
+                "[Celery External Import] Document %s no longer exists; skipping",
+                document_id,
+            )
+            return
+        user = db.query(User).filter(User.id == document.user_id).first()
+        run_external_document_import(db, document, user, generation=attempt.generation)
 
 
 @celery_app.task(
@@ -308,10 +405,18 @@ def index_document_task(
                 )
 
             if not finalized:
+                with SessionLocal() as cleanup_db:
+                    deleted = _delete_late_index_if_document_was_deleted(
+                        db=cleanup_db,
+                        document_id=document_id,
+                        knowledge_base_id=knowledge_base_id,
+                        user_id=user_id,
+                    )
                 logger.info(
                     f"[Celery RAG Indexing] Task completed but finalization was skipped: "
                     f"task_id={task_id}, document_id={document_id}, "
-                    f"index_generation={index_generation}, reason=stale_or_already_finalized"
+                    f"index_generation={index_generation}, "
+                    f"reason=stale_or_already_finalized, deleted_late_index={deleted}"
                 )
                 return {
                     "status": "skipped",

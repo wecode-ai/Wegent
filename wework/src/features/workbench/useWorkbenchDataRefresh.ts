@@ -670,6 +670,12 @@ export function useWorkbenchDataRefresh({
 
   const refreshWorkLists: RefreshWorkLists = useCallback(
     async options => {
+      if (options?.unarchivedTasks?.length) {
+        const unarchivedTaskKeys = new Set(options.unarchivedTasks.map(getRuntimeTaskRouteKey))
+        archivedRuntimeTaskAddressesRef.current = archivedRuntimeTaskAddressesRef.current.filter(
+          address => !unarchivedTaskKeys.has(getRuntimeTaskRouteKey(address))
+        )
+      }
       const refreshRevision = ++workListRefreshRevisionRef.current
       const [devicesResult, runtimeWorkResult] = await Promise.all([
         executorClient.commands.listDevices().catch(error => {

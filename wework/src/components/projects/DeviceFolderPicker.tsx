@@ -1,5 +1,5 @@
 import { Check, ChevronLeft, Folder, FolderPlus, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import type { DeviceInfo } from '@/types/api'
@@ -59,6 +59,11 @@ export function DeviceFolderPicker({
   const [folderName, setFolderName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const pathInputEditedRef = useRef(false)
+
+  useEffect(() => {
+    pathInputEditedRef.current = false
+  }, [device.device_id, initialPath])
 
   useEffect(() => {
     if (pickerDisabled) return
@@ -68,14 +73,14 @@ export function DeviceFolderPicker({
       try {
         const resolved = initialPath || (await onGetDeviceHomeDirectory(device.device_id))
         const nextPath = normalizePath(resolved) || '/'
-        if (!cancelled) {
+        if (!cancelled && !pathInputEditedRef.current) {
           setCurrentPath(nextPath)
           setPathInput(nextPath)
           setSelectedPath(nextPath)
           setDirectoryQuery('')
         }
       } catch (loadError) {
-        if (!cancelled) {
+        if (!cancelled && !pathInputEditedRef.current) {
           setCurrentPath('')
           setPathInput('')
           setSelectedPath('')
@@ -140,6 +145,7 @@ export function DeviceFolderPicker({
   )
 
   const browsePath = (path: string) => {
+    pathInputEditedRef.current = true
     const normalized = normalizePath(path) || '/'
     setCurrentPath(normalized)
     setPathInput(normalized)
@@ -182,11 +188,16 @@ export function DeviceFolderPicker({
     setError(null)
 
     if (mode === 'select') {
+      const normalizedInput = normalizePath(pathInput)
+      const path =
+        normalizedInput && normalizedInput !== currentPath
+          ? normalizedInput
+          : selectedPath || currentPath
       setSubmitting(true)
       try {
         await onConfirm({
           deviceId: device.device_id,
-          path: selectedPath || currentPath,
+          path,
           action: mode,
         })
       } catch (confirmError) {
@@ -273,7 +284,9 @@ export function DeviceFolderPicker({
             value={pathInput}
             disabled={pickerDisabled || submitting}
             onChange={event => {
+              pathInputEditedRef.current = true
               setPathInput(event.target.value)
+              setSelectedPath('')
               setError(null)
             }}
             onBlur={confirmPathInput}

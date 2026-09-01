@@ -120,7 +120,7 @@ describe('IssueComposer', () => {
     })
   })
 
-  it('creates a lightweight issue without requiring a local execution project', async () => {
+  it('creates a lightweight personal task without requiring a local execution project', async () => {
     const onCreate = vi.fn()
     renderWithProjectChat(
       <IssueComposer
@@ -140,8 +140,13 @@ describe('IssueComposer', () => {
       'aria-selected',
       'true'
     )
-    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要推进什么？')
-    expect(screen.getByText('描述目标、问题或交付，创建后会进入当前项目空间。')).toBeVisible()
+    expect(screen.getByTestId('workspace-issue-heading')).toHaveTextContent('要记录什么？')
+    expect(screen.getByText('先记录到我的任务，准备好后再推进或开始执行。')).toBeVisible()
+    expect(screen.getByTestId('workspace-create-issue-tab')).toHaveTextContent('添加任务')
+    expect(screen.getByTestId('workspace-create-task-tab')).toHaveTextContent('创建并执行')
+    expect(screen.getByTestId('workspace-issue-creation-mode-description')).toHaveTextContent(
+      '先加入看板，稍后再补充负责人或启动执行。'
+    )
     expect(screen.queryByText('描述要推进的事情，创建后自动进入所选看板。')).not.toBeInTheDocument()
     const expandButton = screen.getByTestId('workspace-issue-expand')
     expect(screen.getByTestId('workspace-issue-composer-input-shell')).toContainElement(
@@ -166,6 +171,28 @@ describe('IssueComposer', () => {
       files: [],
       createTask: false,
     })
+  })
+
+  it('fills a lightweight issue from a template without submitting it automatically', async () => {
+    const onCreate = vi.fn()
+    renderWithProjectChat(
+      <IssueComposer
+        projects={[productProject]}
+        initialBoardKey="backend:22"
+        localProjects={[]}
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+
+    expect(screen.getByTestId('workspace-create-issue-tab')).toHaveTextContent('创建 Issue')
+    expect(screen.getByTestId('workspace-issue-templates')).toBeVisible()
+    await userEvent.click(screen.getByTestId('workspace-issue-template-bug'))
+
+    expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('问题现象：')
+    expect(screen.getByTestId('workspace-issue-input')).toHaveTextContent('复现步骤：')
+    expect(screen.queryByTestId('workspace-issue-templates')).not.toBeInTheDocument()
+    expect(onCreate).not.toHaveBeenCalled()
   })
 
   it('switches to the full task composer without losing the issue content', async () => {
@@ -770,7 +797,7 @@ describe('IssueComposer', () => {
       />
     )
 
-    expect(screen.getByRole('dialog', { name: '新建 Issue' })).toHaveAttribute('aria-modal', 'true')
+    expect(screen.getByRole('dialog', { name: '新建任务' })).toHaveAttribute('aria-modal', 'true')
     fireEvent.click(screen.getByTestId('workspace-issue-composer-panel'))
     expect(onCancel).not.toHaveBeenCalled()
 

@@ -1,5 +1,7 @@
 import type { ModelOptions, UnifiedModel } from '@/types/api'
 
+export type ModelSelectorCloseReason = 'dismiss' | 'selection'
+
 export interface ModelSelectorProps {
   models: UnifiedModel[]
   selectedModel: UnifiedModel | null
@@ -10,7 +12,7 @@ export interface ModelSelectorProps {
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
-  onOpenChange?: (open: boolean) => void
+  onOpenChange?: (open: boolean, closeReason?: ModelSelectorCloseReason) => void
   openSignal?: number
   menuPlacement?: 'above' | 'below'
   buttonClassName?: string

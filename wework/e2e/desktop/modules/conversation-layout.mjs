@@ -528,11 +528,11 @@ async function waitForTopMetrics(control, selector, description, timeoutMs = 3_0
   let metrics
   while (Date.now() - startedAt < timeoutMs) {
     metrics = await getSingleElementMetrics(control, selector, description)
-    if (metrics.scrollTop <= 2) return metrics
+    if (distanceFromTop(metrics) <= 2) return metrics
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   throw new Error(
-    `${description} remained ${metrics.scrollTop}px from the top after ${timeoutMs}ms`
+    `${description} remained ${distanceFromTop(metrics)}px from the top after ${timeoutMs}ms`
   )
 }
 
@@ -545,6 +545,17 @@ async function waitForElementWidth(control, selector, predicate, description, ti
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
   throw new Error(`${description} remained ${metrics.width}px wide after ${timeoutMs}ms`)
+}
+
+async function waitForElementTop(control, selector, predicate, description, timeoutMs = 1_500) {
+  const startedAt = Date.now()
+  let metrics
+  while (Date.now() - startedAt < timeoutMs) {
+    metrics = await getSingleElementMetrics(control, selector, description)
+    if (predicate(metrics.top)) return metrics
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  throw new Error(`${description} remained at ${metrics.top}px after ${timeoutMs}ms`)
 }
 
 async function waitForProcessingBlock(
@@ -665,7 +676,17 @@ async function verifyViewImageProcessingBlock(control) {
 }
 
 function distanceFromBottom(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, -metrics.scrollTop)
+  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function distanceFromTop(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
+  }
+  return Math.max(0, metrics.scrollTop)
 }
 
 async function openBottomWorkspaceTerminal(control, description) {
@@ -990,9 +1011,11 @@ export {
   waitForElementInsideScroller,
   waitForTopMetrics,
   waitForElementWidth,
+  waitForElementTop,
   waitForProcessingBlock,
   verifyViewImageProcessingBlock,
   distanceFromBottom,
+  distanceFromTop,
   openBottomWorkspaceTerminal,
   closeBottomWorkspacePanel,
   processGroup,

@@ -8,6 +8,7 @@ import { createPluginApi } from '@/api/plugins'
 import { useLocalExecutorCloudConnectionStatus } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { notifyLocalPluginSkillsChanged } from '@/features/plugins/pluginTrial'
+import { scheduleIdleTask } from '@/features/idle-tasks/idleTaskScheduler'
 import { track } from '@/telemetry/client'
 import { createSocketClient } from '@wegent/chat-core'
 import { runCurrentDevicePluginAutoUpdate } from './pluginAutoUpdate'
@@ -65,6 +66,7 @@ export function PluginAutoUpdateCoordinator() {
     let running = false
     let pending = false
     let connectedTriggerSeen = false
+    let cancelScheduledUpdate: (() => void) | null = null
 
     const runUpdatePass = async () => {
       const result = await runCurrentDevicePluginAutoUpdate({
@@ -107,7 +109,11 @@ export function PluginAutoUpdateCoordinator() {
     const requestUpdatePass = () => {
       if (disposed) return
       pending = true
-      void drainUpdateRequests()
+      cancelScheduledUpdate?.()
+      cancelScheduledUpdate = scheduleIdleTask('plugins.auto-update', async () => {
+        cancelScheduledUpdate = null
+        await drainUpdateRequests()
+      })
     }
     const handleConnect = () => {
       connectedTriggerSeen = true
@@ -131,6 +137,7 @@ export function PluginAutoUpdateCoordinator() {
 
     return () => {
       disposed = true
+      cancelScheduledUpdate?.()
       socketClient.socket.off('connect', handleConnect)
       socketClient.socket.off(PLUGIN_RELEASE_AVAILABLE_EVENT, handleReleaseAvailable)
       socketClient.dispose()

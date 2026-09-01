@@ -36,7 +36,7 @@ vi.mock('@/api/http', () => ({
 vi.mock('@/desktop/localExecutor', () => ({
   connectLocalExecutorToBackend: mocks.connect,
   disconnectLocalExecutorFromBackend: mocks.disconnect,
-  ensureLocalExecutorStarted: mocks.ensure,
+  ensureLocalExecutorAvailable: mocks.ensure,
   requestLocalExecutor: mocks.request,
 }))
 
@@ -120,6 +120,8 @@ describe('LocalExecutorCloudBridge', () => {
     const view = render(
       <>
         <LocalExecutorCloudBridge
+          preferencesLoaded
+          remoteControlEnabled={false}
           apiBaseUrl="https://backend.example.com/api"
           backendUrl="https://backend.example.com"
           socketBaseUrl="wss://socket.example.com"
@@ -140,6 +142,8 @@ describe('LocalExecutorCloudBridge', () => {
     view.rerender(
       <>
         <LocalExecutorCloudBridge
+          preferencesLoaded
+          remoteControlEnabled={false}
           apiBaseUrl="https://offline.example.com/api"
           backendUrl="https://offline.example.com"
           socketBaseUrl="wss://offline.example.com"
@@ -161,6 +165,8 @@ describe('LocalExecutorCloudBridge', () => {
     render(
       <>
         <LocalExecutorCloudBridge
+          preferencesLoaded
+          remoteControlEnabled={false}
           apiBaseUrl="https://backend.example.com/api"
           backendUrl="https://backend.example.com"
           socketBaseUrl="wss://socket.example.com"
@@ -192,6 +198,8 @@ describe('LocalExecutorCloudBridge', () => {
     const view = render(
       <>
         <LocalExecutorCloudBridge
+          preferencesLoaded
+          remoteControlEnabled={false}
           apiBaseUrl="https://backend.example.com/api"
           backendUrl="https://backend.example.com"
           socketBaseUrl="wss://socket.example.com"
@@ -219,6 +227,8 @@ describe('LocalExecutorCloudBridge', () => {
   test('updates backend connection whenever the cloud target changes', async () => {
     const view = render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
         socketBaseUrl="wss://socket.example.com"
@@ -233,11 +243,14 @@ describe('LocalExecutorCloudBridge', () => {
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
         runtimeAuthToken: 'runtime-task-token',
+        deviceType: 'app',
       })
     })
 
     view.rerender(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://next.example.com/api"
         backendUrl="https://next.example.com"
         socketBaseUrl="wss://next-socket.example.com"
@@ -251,7 +264,149 @@ describe('LocalExecutorCloudBridge', () => {
       socketBaseUrl: 'wss://next-socket.example.com',
       authToken: 'token-b',
       runtimeAuthToken: 'runtime-task-token',
+      deviceType: 'app',
     })
+  })
+
+  test('reconfigures the same backend connection when remote control changes', async () => {
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1))
+    expect(mocks.connect).toHaveBeenLastCalledWith(expect.objectContaining({ deviceType: 'app' }))
+
+    view.rerender(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(2))
+    expect(mocks.connect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ deviceType: 'remote' })
+    )
+    expect(mocks.disconnect).not.toHaveBeenCalled()
+  })
+
+  test('ignores stale registration work during a rapid remote-control toggle', async () => {
+    const appToken = deferred<{
+      auth_token: string
+      token_type: string
+      expires_in: number
+    }>()
+    const remoteToken = deferred<{
+      auth_token: string
+      token_type: string
+      expires_in: number
+    }>()
+    mocks.runtimeTokenPost
+      .mockReturnValueOnce(appToken.promise)
+      .mockReturnValueOnce(remoteToken.promise)
+
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await waitFor(() => expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(1))
+    view.rerender(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+    await waitFor(() => expect(mocks.runtimeTokenPost).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      appToken.resolve({
+        auth_token: 'stale-app-token',
+        token_type: 'bearer',
+        expires_in: 86400,
+      })
+      await appToken.promise
+    })
+    expect(mocks.connect).not.toHaveBeenCalled()
+
+    await act(async () => {
+      remoteToken.resolve({
+        auth_token: 'current-remote-token',
+        token_type: 'bearer',
+        expires_in: 86400,
+      })
+      await remoteToken.promise
+    })
+    await waitFor(() =>
+      expect(mocks.connect).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runtimeAuthToken: 'current-remote-token',
+          deviceType: 'remote',
+        })
+      )
+    )
+    expect(mocks.connect).toHaveBeenCalledTimes(1)
+  })
+
+  test('waits for preferences before registering the executor', async () => {
+    const view = render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded={false}
+        remoteControlEnabled
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await flushAsyncEffects()
+    expect(mocks.runtimeTokenPost).not.toHaveBeenCalled()
+    expect(mocks.connect).not.toHaveBeenCalled()
+    expect(mocks.disconnect).not.toHaveBeenCalled()
+
+    view.rerender(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled
+        apiBaseUrl="https://backend.example.com/api"
+        backendUrl="https://backend.example.com"
+        socketBaseUrl="wss://socket.example.com"
+        isConnected
+        token="token-a"
+      />
+    )
+
+    await waitFor(() =>
+      expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({ deviceType: 'remote' }))
+    )
+    expect(mocks.connect).toHaveBeenCalledTimes(1)
   })
 
   test('does not update backend connection when runtime token issuing fails', async () => {
@@ -259,6 +414,8 @@ describe('LocalExecutorCloudBridge', () => {
 
     render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
         socketBaseUrl="wss://socket.example.com"
@@ -290,6 +447,8 @@ describe('LocalExecutorCloudBridge', () => {
 
     const view = render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
         socketBaseUrl="wss://socket.example.com"
@@ -306,6 +465,7 @@ describe('LocalExecutorCloudBridge', () => {
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
         runtimeAuthToken: 'runtime-task-token-1',
+        deviceType: 'app',
       })
 
       await act(async () => {
@@ -319,6 +479,7 @@ describe('LocalExecutorCloudBridge', () => {
         socketBaseUrl: 'wss://socket.example.com',
         authToken: 'token-a',
         runtimeAuthToken: 'runtime-task-token-2',
+        deviceType: 'app',
       })
     } finally {
       view.unmount()
@@ -336,6 +497,8 @@ describe('LocalExecutorCloudBridge', () => {
 
     const view = render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend.example.com/api"
         backendUrl="https://backend.example.com"
         socketBaseUrl="wss://socket.example.com"
@@ -350,6 +513,8 @@ describe('LocalExecutorCloudBridge', () => {
 
       view.rerender(
         <LocalExecutorCloudBridge
+          preferencesLoaded
+          remoteControlEnabled={false}
           apiBaseUrl="https://next.example.com/api"
           backendUrl="https://next.example.com"
           socketBaseUrl="wss://next-socket.example.com"
@@ -372,6 +537,7 @@ describe('LocalExecutorCloudBridge', () => {
         socketBaseUrl: 'wss://next-socket.example.com',
         authToken: 'token-b',
         runtimeAuthToken: 'runtime-task-token',
+        deviceType: 'app',
       })
     } finally {
       view.unmount()
@@ -396,6 +562,8 @@ describe('LocalExecutorCloudBridge', () => {
 
     const view = render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend-a.example.com/api"
         backendUrl="https://backend-a.example.com"
         socketBaseUrl="wss://socket-a.example.com"
@@ -408,6 +576,8 @@ describe('LocalExecutorCloudBridge', () => {
 
     view.rerender(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://backend-b.example.com/api"
         backendUrl="https://backend-b.example.com"
         socketBaseUrl="wss://socket-b.example.com"
@@ -445,6 +615,7 @@ describe('LocalExecutorCloudBridge', () => {
         socketBaseUrl: 'wss://socket-b.example.com',
         authToken: 'token-b',
         runtimeAuthToken: 'runtime-task-token-b',
+        deviceType: 'app',
       })
     })
   })
@@ -452,6 +623,8 @@ describe('LocalExecutorCloudBridge', () => {
   test('passes only a short-lived scoped token and syncs connected apps', async () => {
     render(
       <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
         apiBaseUrl="https://cloud.example.test/api"
         backendUrl="https://cloud.example.test"
         socketBaseUrl="wss://socket.example.test"
@@ -487,7 +660,14 @@ describe('LocalExecutorCloudBridge', () => {
   })
 
   test('disconnects the executor and clears connector state when cloud is unavailable', async () => {
-    render(<LocalExecutorCloudBridge isConnected={false} token={null} />)
+    render(
+      <LocalExecutorCloudBridge
+        preferencesLoaded
+        remoteControlEnabled={false}
+        isConnected={false}
+        token={null}
+      />
+    )
 
     await waitFor(() => {
       expect(mocks.disconnect).toHaveBeenCalledTimes(1)

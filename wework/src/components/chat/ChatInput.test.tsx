@@ -10,6 +10,8 @@ import type {
   UnifiedModel,
 } from '@/types/api'
 import type { GuidanceWorkbenchMessage, QueuedWorkbenchMessage } from '@/types/workbench'
+import { WORKSPACE_PATH_DRAG_TYPE } from '@/lib/workspace-path-transfer'
+import { SELECTED_TEXT_DRAG_TYPE } from '@/lib/selected-text-drag'
 
 vi.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({
@@ -670,6 +672,7 @@ describe('ChatInput', () => {
       config: { ui: { family: 'local' } },
     }
     const setSelectedModel = vi.fn()
+    const onModelSelectorOpenChange = vi.fn()
 
     render(
       <ChatInput
@@ -683,6 +686,7 @@ describe('ChatInput', () => {
           activeModel,
           selectedModel: activeModel,
           setSelectedModel,
+          onModelSelectorOpenChange,
         })}
       />
     )
@@ -694,13 +698,18 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-switch-warning-dialog')).toHaveTextContent(
       'Switching to Second Model may change how the existing context is understood.'
     )
-    expect(screen.getByTestId('model-selector-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('model-switch-warning-dialog-overlay').parentElement).toBe(
+      document.body
+    )
+    expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onModelSelectorOpenChange).toHaveBeenLastCalledWith(false, 'selection')
 
     await userEvent.click(screen.getByTestId('model-switch-warning-cancel-button'))
 
     expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
     expect(setSelectedModel).not.toHaveBeenCalled()
+    expect(onModelSelectorOpenChange).toHaveBeenLastCalledWith(false, 'dismiss')
 
     await userEvent.click(screen.getByTestId('model-selector-button'))
     await userEvent.hover(screen.getByTestId('model-control-menu-model'))
@@ -1084,6 +1093,7 @@ describe('ChatInput', () => {
     await userEvent.click(screen.getByTestId('send-message-button'))
 
     expect(screen.getByTestId('paused-queue-send-dialog')).toBeInTheDocument()
+    expect(screen.getByTestId('paused-queue-send-dialog-overlay').parentElement).toBe(document.body)
     expect(onSubmit).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByTestId('paused-queue-send-preserve-button'))
@@ -1442,6 +1452,39 @@ describe('ChatInput', () => {
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
   })
 
+  test('shows pasted images immediately without a numeric upload badge', () => {
+    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+
+    render(
+      <ChatInput
+        value=""
+        onChange={vi.fn()}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+        projectChat={projectChatControls({
+          uploadingFiles: new Map([
+            [
+              'clipboard.png:5:0:0',
+              {
+                file: image,
+                progress: 0,
+                previewUrl: 'blob:clipboard-preview',
+              },
+            ],
+          ]),
+        })}
+      />
+    )
+
+    expect(screen.getByTestId('pending-image-attachment-preview')).toHaveAttribute(
+      'src',
+      'blob:clipboard-preview'
+    )
+    expect(screen.queryByTestId('uploading-attachment-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
+
   test('uploads pasted documents for a remote desktop workspace', async () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)
     const documentFile = new File(['document'], 'requirements.pdf', {
@@ -1526,6 +1569,71 @@ describe('ChatInput', () => {
     })
 
     await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([imageFile]))
+  })
+
+  test('adds workspace files dragged from the right sidebar as path references', async () => {
+    const onChange = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    fireEvent.drop(screen.getByTestId('chat-message-input'), {
+      dataTransfer: {
+        types: [WORKSPACE_PATH_DRAG_TYPE],
+        files: [],
+        getData: (type: string) =>
+          type === WORKSPACE_PATH_DRAG_TYPE
+            ? JSON.stringify([
+                {
+                  path: '/workspace/project/docs/requirements.md',
+                  isDirectory: false,
+                },
+              ])
+            : '',
+      },
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-path-chip-requirements-md')).toHaveAttribute(
+        'data-composer-path',
+        '/workspace/project/docs/requirements.md'
+      )
+    )
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('requirements.md'))
+  })
+
+  test('accepts selected workspace text dragged into the desktop composer', () => {
+    const onChange = vi.fn()
+
+    render(
+      <ChatInput
+        value=""
+        onChange={onChange}
+        onSubmit={vi.fn()}
+        disabled={false}
+        variant="desktop"
+      />
+    )
+
+    const composer = screen.getByTestId('project-chat-composer-form')
+    const dataTransfer = {
+      types: [SELECTED_TEXT_DRAG_TYPE, 'text/plain'],
+      dropEffect: 'none',
+      getData: (type: string) =>
+        type === 'text/plain' ? 'export const selectedTextDrag = true' : 'true',
+    }
+    fireEvent.dragOver(composer, { dataTransfer })
+    expect(dataTransfer.dropEffect).toBe('copy')
+    fireEvent.drop(composer, { dataTransfer })
+
+    expect(onChange).toHaveBeenCalledWith('export const selectedTextDrag = true')
   })
 
   test('highlights the desktop composer while files are dragged over it', () => {
@@ -1744,7 +1852,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-menu').parentElement).toHaveClass(
       'fixed',
       'z-system-popover',
-      'w-64'
+      'w-[224px]'
     )
     expect(screen.getByTestId('model-selector-menu').parentElement?.parentElement).toBe(
       document.body
@@ -1768,7 +1876,7 @@ describe('ChatInput', () => {
       'data-enter-animation',
       'submenu'
     )
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '280px' })
     const modelOption = screen.getByTestId('model-option-overseas-gpt-5.5')
     expect(modelOption).toHaveTextContent('海外:gpt-5.5')
     expect(modelOption).not.toHaveTextContent('High')
@@ -1840,7 +1948,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-speed-fast')).toBeInTheDocument()
     expect(screen.getByTestId('model-control-speed-fast')).toHaveTextContent('快速')
     expect(screen.getByTestId('model-control-speed-fast')).not.toHaveTextContent('⚡')
-    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ left: '256px' })
+    expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({ width: '233px' })
 
     const speedMenuItem = screen.getByTestId('model-control-menu-speed')
     const resetRow = screen.getByTestId('model-reset-default-row')
@@ -1908,7 +2016,7 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-control-menu-speed')).not.toHaveTextContent('⚡')
   })
 
-  test('shows an empty state when no desktop models are available', async () => {
+  test('offers model setup actions when no desktop models are available', async () => {
     render(
       <ChatInput
         value=""
@@ -1923,10 +2031,12 @@ describe('ChatInput', () => {
     expect(screen.getByTestId('model-selector-button')).toHaveTextContent('No models available')
     await userEvent.click(screen.getByTestId('model-selector-button'))
     expect(screen.queryByTestId('model-selector-submenu')).not.toBeInTheDocument()
-    expect(screen.getByTestId('model-control-menu-model')).toHaveTextContent('No models available')
-    await userEvent.hover(screen.getByTestId('model-control-menu-model'))
-
-    expect(screen.getByTestId('model-selector-submenu')).toHaveTextContent('No models available')
+    expect(screen.getByTestId('model-selector-empty-state')).toHaveTextContent(
+      'Add a custom model, or sign in to Wegent to sync cloud models.'
+    )
+    expect(screen.getByTestId('model-selector-add-custom-model')).toBeInTheDocument()
+    expect(screen.getByTestId('model-selector-login-cloud')).toBeInTheDocument()
+    expect(screen.queryByTestId('model-control-menu-model')).not.toBeInTheDocument()
   })
 
   test('closes the desktop model menu only from its trigger, outside click, or Escape', async () => {
@@ -2751,7 +2861,7 @@ describe('ChatInput', () => {
     expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
   })
 
-  test('keeps the desktop model submenu inside the viewport near the bottom edge', async () => {
+  test('constrains the desktop model submenu to the available viewport height', async () => {
     const originalInnerHeight = window.innerHeight
     Object.defineProperty(window, 'innerHeight', {
       configurable: true,
@@ -2835,9 +2945,9 @@ describe('ChatInput', () => {
       await userEvent.hover(screen.getByTestId('model-control-menu-model'))
 
       await waitFor(() => {
-        expect(screen.getByTestId('model-selector-submenu')).toHaveStyle({
-          top: '20px',
-        })
+        expect(screen.getByTestId('model-selector-submenu').style.maxHeight).toBe(
+          'min(var(--radix-popover-content-available-height), calc(100vh - 16px))'
+        )
       })
     } finally {
       Object.defineProperty(window, 'innerHeight', {
@@ -3571,9 +3681,11 @@ describe('ChatInput', () => {
 
     expect(screen.getByTestId('attachment-badge')).toHaveClass(
       'h-[72px]',
+      'max-w-[min(420px,100%)]',
       'rounded-[20px]',
       'bg-muted'
     )
+    expect(screen.getByTestId('attachment-badge')).not.toHaveClass('sm:max-w-[420px]')
     expect(screen.getByTestId('attachment-text-preview')).toHaveTextContent(
       '{ "event_type": "http_exchange", "id": "e9972aac" }'
     )

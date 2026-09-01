@@ -181,6 +181,7 @@ class RuntimeForkWorkspaceTransfer:
 class RuntimeWorkspaceListing:
     """Executor workspace listing plus local task summaries."""
 
+    reporting_device_id: str
     local_tasks: list[LocalTaskSummary]
     order_index: int = 0
     label: Optional[str] = None
@@ -397,7 +398,7 @@ async def list_runtime_work(
             workspaceSource=workspace_listing.workspace_source,
             remoteHostId=workspace_listing.remote_host_id,
             mapped=True,
-            available=True,
+            available=_device_status(device) in {"online", "busy"},
             tasks=tasks,
         )
         if workspace.workspace_kind == "chat":
@@ -2553,30 +2554,6 @@ async def _runtime_task_workspace_path(
     return _workspace_path_for_runtime_task(result, address.local_task_id)
 
 
-async def replay_runtime_task_statuses(
-    *,
-    user_id: int,
-    device_id: str,
-    task_ids: list[str],
-) -> dict[str, Any]:
-    """Replay selected Runtime task states through the existing event stream."""
-
-    try:
-        result = await runtime_rpc_service.call(
-            user_id=user_id,
-            device_id=device_id,
-            method="runtime.tasks.status.replay",
-            payload={"taskIds": task_ids},
-        )
-    except RuntimeRpcError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to replay Runtime task status: {exc}",
-        ) from exc
-    _raise_runtime_rpc_failure(result)
-    return result
-
-
 def _workspace_path_for_runtime_task(
     result: dict[str, Any],
     local_task_id: str,
@@ -2952,7 +2929,13 @@ async def _list_online_runtime_workspaces(
                 result.__class__.__name__,
             )
             continue
-        grouped.update(result)
+        for key, listing in result.items():
+            existing = grouped.get(key)
+            if existing is None or _runtime_workspace_listing_rank(
+                key,
+                listing,
+            ) >= _runtime_workspace_listing_rank(key, existing):
+                grouped[key] = listing
 
     logger.info(
         "[RuntimeWork] Listed runtime workspaces: user_id=%s online_devices=%s workspace_count=%s task_count=%s elapsed_ms=%s",
@@ -2996,6 +2979,13 @@ async def _list_runtime_workspaces_for_device(
     grouped: dict[tuple[str, str], RuntimeWorkspaceListing] = {}
     for order_index, workspace in enumerate(_iter_runtime_workspaces(result)):
         workspace_path = normalize_workspace_path(workspace["workspacePath"])
+        workspace_source = _runtime_workspace_source(workspace)
+        remote_host_id = _runtime_workspace_remote_host_id(workspace)
+        owner_device_id = _runtime_workspace_owner_device_id(
+            reporting_device_id=device_id,
+            workspace_source=workspace_source,
+            remote_host_id=remote_host_id,
+        )
         tasks = [
             LocalTaskSummary.model_validate(
                 {
@@ -3030,12 +3020,13 @@ async def _list_runtime_workspaces_for_device(
                 device_id,
                 runtime_v2_tasks,
             )
-        grouped[(device_id, workspace_path)] = RuntimeWorkspaceListing(
+        grouped[(owner_device_id, workspace_path)] = RuntimeWorkspaceListing(
+            reporting_device_id=device_id,
             local_tasks=tasks,
             order_index=order_index,
             label=_runtime_workspace_label(workspace),
-            workspace_source=_runtime_workspace_source(workspace),
-            remote_host_id=_runtime_workspace_remote_host_id(workspace),
+            workspace_source=workspace_source,
+            remote_host_id=remote_host_id,
         )
 
     logger.info(
@@ -3047,6 +3038,25 @@ async def _list_runtime_workspaces_for_device(
         int((time.perf_counter() - started_at) * 1000),
     )
     return grouped
+
+
+def _runtime_workspace_owner_device_id(
+    *,
+    reporting_device_id: str,
+    workspace_source: Optional[str],
+    remote_host_id: Optional[str],
+) -> str:
+    if workspace_source == "remote" and remote_host_id:
+        return remote_host_id
+    return reporting_device_id
+
+
+def _runtime_workspace_listing_rank(
+    key: tuple[str, str],
+    listing: RuntimeWorkspaceListing,
+) -> int:
+    owner_device_id, _ = key
+    return int(listing.reporting_device_id == owner_device_id)
 
 
 def _archived_list_payload(

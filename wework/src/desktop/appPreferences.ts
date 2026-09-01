@@ -45,6 +45,7 @@ export interface AppPreferences {
   browserDownloadDirectory: string | null
   browserAskBeforeDownload: boolean
   appshotsPlaySound: boolean
+  computerUseEnabled?: boolean
   popoutWindowShortcut: string | null
   popoutWindowProjectlessDefaultEnabled: boolean
   friendlyTaskTitlesEnabled: boolean
@@ -52,6 +53,7 @@ export interface AppPreferences {
   changeRequestStatusEnabled: boolean
   quickPhrases: QuickPhrase[]
   localHarnesses: LocalHarnessPreference[]
+  remoteControlEnabled: boolean
   cloudConnection: Record<string, unknown> | null
 }
 
@@ -131,6 +133,7 @@ export interface AppPreferencesPatch {
   browserDownloadDirectory?: string | null
   browserAskBeforeDownload?: boolean
   appshotsPlaySound?: boolean
+  computerUseEnabled?: boolean
   popoutWindowShortcut?: string | null
   popoutWindowProjectlessDefaultEnabled?: boolean
   friendlyTaskTitlesEnabled?: boolean
@@ -138,6 +141,7 @@ export interface AppPreferencesPatch {
   changeRequestStatusEnabled?: boolean
   quickPhrases?: QuickPhrase[]
   localHarnesses?: LocalHarnessPreference[]
+  remoteControlEnabled?: boolean
   cloudConnection?: Record<string, unknown> | null
 }
 
@@ -194,6 +198,7 @@ export const defaultAppPreferences: AppPreferences = {
   browserDownloadDirectory: null,
   browserAskBeforeDownload: false,
   appshotsPlaySound: true,
+  computerUseEnabled: false,
   popoutWindowShortcut: 'Alt+Shift+Space',
   popoutWindowProjectlessDefaultEnabled: false,
   friendlyTaskTitlesEnabled: false,
@@ -201,6 +206,7 @@ export const defaultAppPreferences: AppPreferences = {
   changeRequestStatusEnabled: true,
   quickPhrases: defaultQuickPhrases,
   localHarnesses: defaultLocalHarnessPreferences,
+  remoteControlEnabled: false,
   cloudConnection: null,
 }
 
@@ -372,6 +378,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
       typeof record.appshotsPlaySound === 'boolean'
         ? record.appshotsPlaySound
         : defaultAppPreferences.appshotsPlaySound,
+    computerUseEnabled:
+      typeof record.computerUseEnabled === 'boolean'
+        ? record.computerUseEnabled
+        : defaultAppPreferences.computerUseEnabled,
     popoutWindowShortcut:
       typeof record.popoutWindowShortcut === 'string' && record.popoutWindowShortcut.trim()
         ? record.popoutWindowShortcut.trim()
@@ -397,6 +407,10 @@ function mergeAppPreferences(value: unknown): AppPreferences {
           .filter(item => !isExpiredQuickPhraseStash(item))
       : defaultAppPreferences.quickPhrases,
     localHarnesses: normalizeLocalHarnessPreferences(record.localHarnesses),
+    remoteControlEnabled:
+      typeof record.remoteControlEnabled === 'boolean'
+        ? record.remoteControlEnabled
+        : defaultAppPreferences.remoteControlEnabled,
     cloudConnection:
       record.cloudConnection &&
       typeof record.cloudConnection === 'object' &&

@@ -1,5 +1,6 @@
 import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
 import type { RuntimePaneTranscript } from '@/types/workbench'
+import type { RuntimeTaskLifecycleSnapshot } from './types'
 import {
   runtimeMessagesToWorkbenchMessages,
   runtimeTranscriptTurnsToConversationTurns,
@@ -117,7 +118,9 @@ export function shouldReplaceRuntimeTaskProjection(
 
   if (currentCompleted !== candidateCompleted) {
     if (candidateCompleted) return true
-    return isRuntimeTaskConfirmedActive(candidate)
+    if (!isRuntimeTaskConfirmedActive(candidate)) return false
+    const candidateTime = runtimeTaskProjectionTime(candidate)
+    return candidateTime === 0 || candidateTime > runtimeTaskTimestamp(current.completedAt)
   }
 
   if (current.optimistic === true && candidate.optimistic !== true) {
@@ -138,6 +141,43 @@ export function shouldReplaceRuntimeTaskProjection(
 
 export function isRuntimeTaskAuthoritativeCompletion(task: RuntimeTaskSummary): boolean {
   return task.running === false && task.completedAt != null
+}
+
+export type RuntimeTaskTrackingExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'archived'
+
+export function runtimeTaskTrackingExecutionStatus(
+  lifecycle: RuntimeTaskLifecycleSnapshot
+): RuntimeTaskTrackingExecutionStatus | null {
+  if (lifecycle.derived.isQueued) return 'queued'
+  if (lifecycle.turn.active) return 'running'
+  if (lifecycle.turn.outcome) return lifecycle.turn.outcome
+  if (lifecycle.derived.isRunning) return 'running'
+
+  const task = lifecycle.task
+  if (!task) return null
+  const status = task.status?.trim().toLowerCase()
+  const turnStatus = task.turnStatus?.trim().toLowerCase()
+  if (status === 'archived') return 'archived'
+  if (status === 'failed' || status === 'error' || turnStatus === 'failed') return 'failed'
+  if (
+    status === 'cancelled' ||
+    status === 'canceled' ||
+    turnStatus === 'cancelled' ||
+    turnStatus === 'canceled' ||
+    turnStatus === 'interrupted'
+  ) {
+    return 'cancelled'
+  }
+  if (status === 'queued') return 'queued'
+  if (task.running === true) return 'running'
+  if (isRuntimeTaskAuthoritativeCompletion(task)) return 'succeeded'
+  return null
 }
 
 export function isRuntimeTaskConfirmedActive(task: RuntimeTaskSummary): boolean {

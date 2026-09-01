@@ -7,14 +7,19 @@ core_segments=(
   workspace-tabs
   cloud-space-mention
   priority-filter
+  external-content-import
   automation-lifecycle
   project-automation
   project-assignment-notification
   offline-local-project-space
+  cloud-context-resilience
   core-dsh-plugin-management
   project-ai-settings
   model-routing
   permission-modes
+  computer-use
+  task-status-sync
+  task-board-association
   core-task-flow
   task-attachments
   window-lifecycle
@@ -45,12 +50,18 @@ core_segments=(
   harness-apps
   embedded-browser
   browser-toolbar-actions
+  browser-annotation-core
+  browser-annotation-anchors
+  browser-annotation-design
 )
 plugin_segments=(
   core-dsh-ui-plugin-composition
   plugin-lifecycle
   skill-mention-rendering
   sites-plugin-auto-install
+)
+formal_release_segments=(
+  app-update-differential
 )
 cloud_worktree_segments=(
   cloud-worktree-capability
@@ -108,23 +119,23 @@ cloud_shards=(
 # prebuilt application.
 # shellcheck disable=SC2054 # Each element is one comma-joined shard.
 core_shards=(
-  harness-apps
+  harness-apps,browser-annotation-design
   supervisor-lifecycle,remote-device-onboarding
   temporary-chat,local-file-preview
-  goal-lifecycle,embedded-browser,permission-modes,tray-lifecycle
-  conversation-state,project-ai-settings,offline-local-project-space,cloud-space-mention
+  goal-lifecycle,embedded-browser,browser-annotation-core,permission-modes,tray-lifecycle
+  conversation-state,project-ai-settings,offline-local-project-space,cloud-context-resilience,cloud-space-mention
   claude-runtime,workspace-tabs,task-attachments
-  core-task-flow,change-request-status,context-compaction
-  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions
+  task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
+  window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
   project-automation
   resilience
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
-  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage
+  runtime-task-queue,release-package-startup,component-update,native-window-startup,renderer-storage,external-content-import
   local-harness,running-conversation-history,native-window-chrome
   codex-notification-isolation,core-dsh-plugin-management,executor-stream-recovery
-  model-routing
+  model-routing,computer-use
 )
 
 validate_core_shards() {
@@ -208,7 +219,10 @@ validate_cloud_shards
 validate_registered_checkpoint_coverage() {
   declare -A covered=()
   local segment
-  for segment in "${core_segments[@]}" "${cloud_segments[@]}"; do
+  for segment in \
+    "${core_segments[@]}" \
+    "${cloud_segments[@]}" \
+    "${formal_release_segments[@]}"; do
     covered["$segment"]=true
   done
 
@@ -218,7 +232,7 @@ validate_registered_checkpoint_coverage() {
   repository_root="$(cd "$script_dir/../.." && pwd)"
   local registered
   while IFS= read -r registered; do
-    [[ "$registered" == "cloud-git-worktree" ]] && continue
+    [[ "$registered" == "cloud-git-worktree" || "$registered" == "browser-annotation" ]] && continue
     if [[ -z "${covered[$registered]+set}" ]]; then
       printf 'Registered desktop checkpoint missing from CI catalogs: %s\n' "$registered" >&2
       return 1
@@ -285,9 +299,18 @@ classify_wework_path() {
       return
       ;;
 
+    # External content import crosses the settings UI and local Executor IPC.
+    wework/src/api/local/codexPlugins.ts | \
+      wework/src/components/settings/ExternalContentImportDialog.tsx | \
+      wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
+      select_target "core:external-content-import"
+      return
+      ;;
+
     # DSH UI composition verifies that Wework starts empty and gains each
     # application, route, settings page, and navigation item from plugins.
     wework/dsh/app-wework/* | \
+      wework/dsh/examples/ui-extension-demo/* | \
       wework/dsh/ui-*/* | \
       wework/src/features/dsh-runtime/*)
       select_target "plugins:core-dsh-ui-plugin-composition"
@@ -385,6 +408,24 @@ classify_wework_path() {
       select_target "core:automation-lifecycle"
       return
       ;;
+    wework/src/api/deliveries* | \
+      wework/src/api/local/localDelivery* | \
+      wework/src/components/layout/useWorkbenchCloudProjectContext* | \
+      wework/src/features/todo/CloudTodoWorkspace* | \
+      wework/src/features/todo/TaskBoardAssociationDialog* | \
+      wework/src/features/todo/WorkItemComposerGuide*)
+      select_target "core:task-status-sync"
+      select_target "core:task-board-association"
+      if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
+        select_target "core:cloud-context-resilience"
+      fi
+      return
+      ;;
+    wework/src/features/workbench/projectTaskTracking* | \
+      wework/src/features/workbench/workbenchContextTypes*)
+      select_target "core:task-status-sync"
+      return
+      ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
       select_target "core:priority-filter"
@@ -420,6 +461,7 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
+        select_target "core:task-status-sync"
       fi
       return
       ;;
@@ -467,6 +509,17 @@ classify_wework_path() {
       wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
       wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
       select_target "core:temporary-chat"
+      if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:cloud-context-resilience"
+        select_target "core:task-board-association"
+      fi
+      return
+      ;;
+
+    # Cloud project-space lookup must not block the local composer.
+    wework/src/features/todo/projectSpaceSelection* | \
+      wework/e2e/desktop/scenarios/cloud-context-resilience.scenario.mjs)
+      select_target "core:cloud-context-resilience"
       return
       ;;
 
@@ -483,19 +536,39 @@ classify_wework_path() {
       return
       ;;
 
-    # The embedded browser has a dedicated agent scenario checkpoint.
+    # The embedded browser has dedicated agent, toolbar, and annotation checkpoints.
     wework/electron/src/host/browser-runtime/* | \
+      wework/electron/src/host/browser-annotation* | \
+      wework/electron/src/browser-annotation* | \
       wework/src/lib/embedded-browser* | \
+      wework/src/lib/browser-annotation* | \
       wework/src/lib/browser-url* | \
       wework/src/lib/browser-device-toolbar* | \
       wework/src/components/layout/workspace-panels/WorkspaceBrowserPanel* | \
       wework/src/components/layout/workspace-panels/BrowserDeviceToolbar* | \
+      wework/src/components/layout/workspace-panels/browser-annotation/* | \
+      wework/src/pages/BrowserAnnotationOverlayPage* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
       wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs | \
+      wework/e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
       select_target "core:browser-toolbar-actions"
+      select_target "core:browser-annotation-core"
+      select_target "core:browser-annotation-anchors"
+      select_target "core:browser-annotation-design"
       macos_inspector_e2e=true
+      return
+      ;;
+
+    # Computer use spans the settings UI, Electron-native CUA bridge, and Codex MCP routing.
+    wework/electron/src/host/computer-use-service* | \
+      wework/src/components/settings/ComputerUseSettingsPage* | \
+      wework/src/desktop/computerUse* | \
+      wework/src/features/computer-use/* | \
+      wework/e2e/desktop/scenarios/computer-use.scenario.mjs | \
+      executor/src/computer_use_mcp.rs)
+      select_target "core:computer-use"
       return
       ;;
 
@@ -594,6 +667,11 @@ classify_path() {
   local path="$1"
 
   case "$path" in
+    executor/src/local/app_ipc.rs | \
+      executor/src/local/codex_home.rs | \
+      executor/tests/local_app_ipc_contract.rs)
+      select_target "core:external-content-import"
+      ;;
     backend/app/api/endpoints/runtime_work.py | \
       backend/app/api/ws/device_namespace.py | \
       backend/app/api/ws/wework_runtime_namespace.py | \

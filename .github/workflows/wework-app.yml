@@ -16,7 +16,7 @@ on:
         type: string
         required: false
       publish_release:
-        description: "Create the formal GitHub Release"
+        description: "Publish the automatically selected full or component update"
         type: boolean
         required: false
         default: false
@@ -34,11 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_sha: ${{ steps.version-files.outputs.release_sha }}
-      release_tag: ${{ steps.version.outputs.release_tag }}
-      version: ${{ steps.version.outputs.value }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      version: ${{ steps.plan.outputs.value }}
       channel: ${{ steps.version.outputs.channel }}
-      prerelease: ${{ steps.version.outputs.prerelease }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
       publish_release: ${{ steps.version.outputs.publish_release }}
+      release_kind: ${{ steps.plan.outputs.kind }}
 
     steps:
       - name: Create release app token
@@ -63,17 +64,52 @@ jobs:
           PUBLISH_RELEASE: ${{ github.event.inputs.publish_release == 'true' }}
         run: node wework/scripts/resolve-release-version.mjs
 
+      - name: Resolve current channel state
+        id: current-channel
+        if: steps.version.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/current-components.json"
+          if gh release download wework-updater \
+            --pattern "components-${RELEASE_CHANNEL}-macos-arm64.json" \
+            --output "$manifest" \
+            --clobber >/dev/null 2>&1; then
+            node - "$manifest" "$GITHUB_OUTPUT" <<'NODE'
+          const { appendFileSync, readFileSync } = require('node:fs')
+          const [manifestPath, outputPath] = process.argv.slice(2)
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+          appendFileSync(outputPath, `app_version=${manifest.appVersion || ''}\n`)
+          appendFileSync(outputPath, `source_ref=${manifest.sourceSha || ''}\n`)
+          NODE
+          fi
+
+      - name: Select full or component update
+        id: plan
+        env:
+          CANDIDATE_PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          CANDIDATE_TAG: ${{ steps.version.outputs.release_tag }}
+          CANDIDATE_VERSION: ${{ steps.version.outputs.value }}
+          CURRENT_APP_VERSION: ${{ steps.current-channel.outputs.app_version }}
+          CURRENT_SOURCE_REF: ${{ steps.current-channel.outputs.source_ref }}
+          PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
+          RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+        run: node wework/scripts/plan-desktop-release.mjs
+
       - name: Commit Wework version files
         id: version-files
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           PUBLISH_RELEASE: ${{ steps.version.outputs.publish_release }}
-          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_KIND: ${{ steps.plan.outputs.kind }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.value }}
         run: |
           set -euo pipefail
           node wework/scripts/sync-desktop-release-version.mjs "$RELEASE_VERSION"
 
-          if [[ "$PUBLISH_RELEASE" != "true" ]]; then
+          if [[ "$PUBLISH_RELEASE" != "true" || "$RELEASE_KIND" != "full" ]]; then
             git checkout -- wework/package.json wework/electron/package.json
             echo "release_sha=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
             exit 0
@@ -91,25 +127,29 @@ jobs:
 
       - name: Resolve previous Wework release
         id: previous-release
-        if: steps.version.outputs.publish_release == 'true'
+        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind == 'full'
         env:
-          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
         run: echo "tag=$(node wework/scripts/resolve-previous-release-tag.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Create or update draft release
-        if: steps.version.outputs.publish_release == 'true'
+        if: steps.version.outputs.publish_release == 'true' && steps.plan.outputs.kind != 'none'
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          PREVIOUS_TAG: ${{ steps.previous-release.outputs.tag }}
+          PREVIOUS_TAG: ${{ steps.plan.outputs.kind == 'component' && steps.plan.outputs.base_tag || steps.previous-release.outputs.tag }}
           RELEASE_SHA: ${{ steps.version-files.outputs.release_sha }}
-          RELEASE_TAG: ${{ steps.version.outputs.release_tag }}
-          RELEASE_VERSION: ${{ steps.version.outputs.value }}
+          RELEASE_TAG: ${{ steps.plan.outputs.release_tag }}
+          RELEASE_VERSION: ${{ steps.plan.outputs.value }}
           RELEASE_CHANNEL: ${{ steps.version.outputs.channel }}
+          RELEASE_KIND: ${{ steps.plan.outputs.kind }}
         run: |
           set -euo pipefail
           title="Wework $RELEASE_VERSION"
+          if [[ "$RELEASE_KIND" == "component" ]]; then
+            title="$title Runtime ${RELEASE_SHA:0:12}"
+          fi
           [[ "$RELEASE_CHANNEL" == "beta" ]] && title="$title Beta"
           notes="$(mktemp)"
           node wework/scripts/generate-release-notes.mjs > "$notes"
@@ -129,6 +169,7 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     needs: prepare-release
+    if: needs.prepare-release.outputs.release_kind != 'none'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -267,8 +308,10 @@ jobs:
           VITE_WEWORK_RUNTIME_MODE: local-first
           WEWORK_CODEX_TARGET: ${{ matrix.codex_target }}
           WEWORK_DWS_TARGET: ${{ matrix.cargo_target }}
+          WEWORK_CUSTOM_MACOS_NOTARIZATION: ${{ matrix.platform == 'macos' && 'true' || '' }}
           WEWORK_RELEASE_ARCH: ${{ matrix.arch }}
           WEWORK_RELEASE_PLATFORM: ${{ matrix.platform }}
+          WEWORK_SOURCE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
         run: pnpm --filter wework build:release
@@ -290,6 +333,15 @@ jobs:
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
           WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
         run: pnpm --filter wework e2e:desktop -- --segment component-update
+
+      - name: Verify formal release differential app update
+        if: matrix.platform == 'macos' && matrix.arch == 'arm64'
+        env:
+          CODEX_BIN: ${{ github.workspace }}/wework/resources/binaries/codex/${{ matrix.codex_target }}/vendor/${{ matrix.codex_target }}/bin/codex
+          WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/MacOS/WeWork
+          WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release-installer/mac-arm64/WeWork.app/Contents/Resources/bin/wegent-executor
+          WEWORK_E2E_REQUIRE_RELEASE_PACKAGE: "1"
+        run: pnpm --filter wework e2e:desktop -- --segment app-update-differential
 
       - name: Prepare installer and legacy bridge assets
         shell: bash
@@ -316,7 +368,7 @@ jobs:
       - prepare-release
       - build
     runs-on: ubuntu-latest
-    if: needs.prepare-release.outputs.publish_release == 'true'
+    if: needs.prepare-release.outputs.publish_release == 'true' && needs.prepare-release.outputs.release_kind != 'none'
 
     steps:
       - name: Create release app token
@@ -356,25 +408,49 @@ jobs:
             "$RELEASE_CHANNEL" \
             "$GITHUB_REPOSITORY" \
             "$RELEASE_TAG" \
-            "$notes"
+            "$notes" \
+            "${{ needs.prepare-release.outputs.release_sha }}"
 
       - name: Upload formal release assets
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          RELEASE_KIND: ${{ needs.prepare-release.outputs.release_kind }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
           set -euo pipefail
           find release-assets -maxdepth 1 -type f \
-            ! -name 'WeworkComponent_*.tar.gz' \
             ! -name 'components-*.json' \
+            ! -name 'WeworkComponent_coreDsh_*.tar.gz' \
+            ! -name 'WeworkComponent_codex_*.tar.gz' \
+            ! -name 'WeworkComponent_dws_*.tar.gz' \
             -print0 |
             xargs -0 gh release upload "$RELEASE_TAG" --clobber
-          gh release upload "$RELEASE_TAG" release-manifests/* --clobber
+          if [[ "$RELEASE_KIND" == "full" ]]; then
+            gh release upload "$RELEASE_TAG" release-manifests/* --clobber
+          else
+            gh release upload "$RELEASE_TAG" release-manifests/components-*.json --clobber
+          fi
+
+      - name: Publish version release
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
+          gh api \
+            --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            --field draft=false \
+            --field prerelease="$PRERELEASE" \
+            --raw-field make_latest=false >/dev/null
 
       - name: Publish rolling update channels
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
           RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
+          RELEASE_KIND: ${{ needs.prepare-release.outputs.release_kind }}
           RELEASE_SHA: ${{ needs.prepare-release.outputs.release_sha }}
           RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
         run: |
@@ -382,10 +458,14 @@ jobs:
           if ! gh release view wework-updater >/dev/null 2>&1; then
             gh release create wework-updater \
               --target "$RELEASE_SHA" \
-              --title "Wework updater manifests" \
-              --notes "Rolling Electron and legacy Tauri update-channel manifests." \
+              --title "Wework shared dependencies and updater manifests" \
+              --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests." \
               --prerelease
           fi
+          gh release edit wework-updater \
+            --target "$RELEASE_SHA" \
+            --title "Wework shared dependencies and updater manifests" \
+            --notes "Content-addressed shared dependencies plus rolling Electron, component, and legacy Tauri update manifests."
 
           existing_component_assets="$RUNNER_TEMP/existing-component-assets.txt"
           gh release view wework-updater \
@@ -400,7 +480,10 @@ jobs:
             gh release upload wework-updater "$component_asset"
             echo "$component_name" >> "$existing_component_assets"
           done < <(find release-assets -maxdepth 1 -type f \
-            -name 'WeworkComponent_*.tar.gz' -print | sort)
+            \( -name 'WeworkComponent_coreDsh_*.tar.gz' \
+            -o -name 'WeworkComponent_codex_*.tar.gz' \
+            -o -name 'WeworkComponent_dws_*.tar.gz' \) \
+            -print | sort)
 
           publish_channel() {
             local channel="$1"
@@ -417,6 +500,23 @@ jobs:
               current_version="$(node -e \
                 "console.log(JSON.parse(require('node:fs').readFileSync(process.argv[1], 'utf8')).version)" \
                 "$current_manifest")"
+              if [[ "$RELEASE_KIND" == "component" ]]; then
+                if [[ "$current_version" != "$RELEASE_VERSION" ]]; then
+                  if [[ "$channel" == "$RELEASE_CHANNEL" ]]; then
+                    echo "::error::The ${channel} channel advanced from ${RELEASE_VERSION} to ${current_version} while component assets were building."
+                    return 1
+                  fi
+                  echo "Keeping ${channel} component manifests at newer app version ${current_version}."
+                  return
+                fi
+                gh release upload wework-updater \
+                  "release-manifests/components-${channel}-macos-arm64.json" \
+                  "release-manifests/components-${channel}-macos-x64.json" \
+                  "release-manifests/components-${channel}-windows-x64.json" \
+                  "release-manifests/components-${channel}-linux-x64.json" \
+                  --clobber
+                return
+              fi
               if ! node wework/scripts/update-channel-manifests.mjs \
                 is-newer "$RELEASE_VERSION" "$current_version"; then
                 if node wework/scripts/update-channel-manifests.mjs \
@@ -431,6 +531,9 @@ jobs:
                 fi
                 echo "Repairing incomplete ${channel} updater assets at ${current_version}."
               fi
+            elif [[ "$RELEASE_KIND" == "component" ]]; then
+              echo "::error::Cannot publish components without an existing ${channel} app release."
+              return 1
             fi
 
             gh release upload wework-updater \
@@ -451,20 +554,15 @@ jobs:
             publish_channel beta
           fi
 
-      - name: Publish formal release
+      - name: Promote stable release to latest
+        if: needs.prepare-release.outputs.channel == 'stable'
         env:
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
-          PRERELEASE: ${{ needs.prepare-release.outputs.prerelease }}
-          RELEASE_CHANNEL: ${{ needs.prepare-release.outputs.channel }}
           RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
         run: |
           set -euo pipefail
           release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq .databaseId)"
-          make_latest=true
-          [[ "$RELEASE_CHANNEL" == "beta" ]] && make_latest=false
           gh api \
             --method PATCH \
             "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
-            --field draft=false \
-            --field prerelease="$PRERELEASE" \
-            --raw-field make_latest="$make_latest" >/dev/null
+            --raw-field make_latest=true >/dev/null

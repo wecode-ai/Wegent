@@ -285,6 +285,9 @@ function localProtocolPatch(model) {
 }
 
 function localModelSwitchCommand() {
+  if (process.platform === 'win32') {
+    return `Set-Content -LiteralPath '${LOCAL_MODEL_SWITCH_ARTIFACT}' -Value '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' -NoNewline`
+  }
   return `printf '%s' '${LOCAL_MODEL_SWITCH_ARTIFACT_CONTENT}' > '${LOCAL_MODEL_SWITCH_ARTIFACT}'`
 }
 
@@ -388,7 +391,7 @@ function json(response, statusCode, value) {
 
 function cors(response) {
   response.setHeader('Access-Control-Allow-Origin', '*')
-  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+  response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID')
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
 }
 

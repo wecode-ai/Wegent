@@ -10,13 +10,15 @@ Wework's embedded browser displays an interactive web page inside the desktop wo
 
 The embedded browser has three layers:
 
-- The Wework Electron main process creates the embedded WebView and updates its bounds, navigation URL, and visibility through commands.
-- The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, and annotation state.
+- The Wework Electron main process owns embedded-page navigation, page state, screenshots, and logical labels; the React renderer creates and positions the matching `<webview>` host.
+- The Wework React workbench mounts the browser panel into the right workspace pane and owns panel, task, overlay, and annotation state.
 - `executor/src/browser_mcp` exposes browser MCP tools to Codex and uses the Wework bridge to operate the Electron browser view bound to the current task.
 
 When Executor launches Codex, it injects the browser MCP server configuration. Browser tool calls from the model read the current bridge identity and send controlled requests to the Wework process's loopback bridge. The bridge then schedules Electron browser view navigation, page inspection, DOM actions, waits, and screenshots on the main thread.
 
 Each Wework process binds an independent random local bridge port and atomically writes the bridge identity to `runtime/embedded-browser-bridge.json` under the active Executor home. The identity contains a schema version, process PID, loopback address, authentication token, and start time. Directory and file permissions should be restricted to the current user, and the token must not be logged. The MCP server reads the latest identity before each request and accepts only loopback addresses, so multiple Wework instances do not route browser requests to the wrong window.
+
+After starting the bridge, Electron must pass the runtime file path to the managed Executor. When the Executor builds the Codex browser MCP configuration, it must pass only that file path and must not pin the current bridge URL or token in the configuration. Otherwise, a random Electron port or a restarted bridge leaves the MCP server connected to stale coordinates and bypasses runtime identity refresh.
 
 Bridge requests must include the authentication token. `open` and `navigate` allow only safe web schemes; do not allow `file:`, `javascript:`, or other URLs that could read local files or execute arbitrary script through the Agent navigation path.
 
@@ -163,7 +165,9 @@ Close requests triggered by task switching or component unmounting must include 
 
 ## Main-interface overlays and address synchronization
 
-The embedded browser is a separate native WebView, so the main React WebView cannot cover it with `z-index`. When a dialog, menu, listbox, or system-level overlay intersects the browser bounds, the browser panel must make the native WebView invisible and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
+Electron embedded pages must be mounted as renderer-owned `<webview>` elements under the shared browser host root. Main-interface dialogs, menus, and listboxes then cover that host through portals and the system-level `z-index`. Do not reintroduce main-process child views such as `BrowserView` or `WebContentsView` for application tabs or Smart apps, because those surfaces leave the renderer stacking context and cover top-tab menus.
+
+Desktop implementations that still use a separate native WebView cannot rely on React `z-index`. When a main-interface overlay intersects such a browser region, the browser panel must hide the native WebView and restore it after the overlay is removed or no longer intersects. Add `data-embedded-browser-occlusion` when a custom overlay cannot be identified through a semantic role or shared layer class; do not duplicate native visibility calls across feature components.
 
 Page-state polling owns the browser's actual URL, while the address field owns the user's editing draft. While the address field is focused, polling may update page URL state, title, and favicon, but it must not overwrite the draft. Restore the actual URL after focus leaves the field. New navigation and page-state synchronization paths must preserve this boundary.
 
@@ -172,6 +176,7 @@ Page-state polling owns the browser's actual URL, while the address field owns t
 - Built-in-browser child WebViews enable DevTools only in debug builds; an explicit build cfg disables it in release builds. On macOS debug builds, Wework saves the child-WebView frame before the Inspector frontend first appears, detaches the Inspector, and restores the frame exactly. F12 therefore opens only a separate window and cannot dock, resize the browser, or cover the workbench. The main-WebView Inspector remains available only through Developer Commands.
 - Browser WebViews use a fixed isolated data-store identifier and app data directory. They must not share Wework's main-interface sign-in storage, and the browser settings clear action only targets this store.
 - Wegent Agent application tabs in Electron also use native child WebViews instead of cross-origin iframes. All application tabs share the same fixed data-store identifier, so the complete website storage for an origin, including every `localStorage` key, cookies, and IndexedDB, remains available after closing and reopening a tab or restarting the application. A tab label identifies only the WebView lifecycle; it does not partition storage. On macOS 14 and later, `data_store_identifier` selects the persistent `WKWebsiteDataStore`, while `data_directory` primarily serves other platforms. Do not mirror or restore page storage key by key in the Wework main interface.
+- Electron Smart apps reuse the same renderer-owned `<webview>` hosting path and use a stable `smart-app:<installationId>` logical label. The renderer owns the visible host; the main process retains Harness runtime and embedded-browser control-plane responsibilities but no longer creates a visible `WebContentsView`. A component remount must atomically replace the old guest, and delayed closes must carry the expected native label so a stale component cannot close the replacement.
 - Browser WebViews use a Chromium-compatible User-Agent so websites do not treat a Chromium User-Agent without a browser product identifier as an unsupported client.
 - Popups, OAuth, SSO, and payment flows may use `window.open` or new-window navigation. Implementations should route them to a controlled browser window or explicitly hand them to the system; the Agent must not operate invisible hidden pages.
 - The download handler reads the download directory and ask-before-download preference. Cancelling the system save dialog must cancel that download.
@@ -187,15 +192,30 @@ Product distributions may provide an implementation for `@extensions/cloud-deskt
 
 ## Annotation Flow
 
-The browser address bar includes an annotation icon. In annotation mode:
+The browser address bar includes an annotation icon. The implementation has three layers:
 
-- Hovering the page highlights only the current DOM element.
-- Clicking an element opens a comment editor.
-- Pressing Enter in the editor publishes the annotation into the Wework main composer attachment area.
-- After sending, the conversation displays the comment attachment style and clears the composer attachment.
-- The model receives hidden `<workspace_comment_context>` content that describes the annotated visible web page region; the UI does not display that raw hidden context.
+- The Electron `browser-annotation-controller` owns annotations, drafts, original-view preview state, and runtime revisions per browser logical label. It is the only state source of truth.
+- A dedicated preload uses a page-local ShadowRoot for target hit testing, highlighting, numbered markers, anchor rebinding, and design styles so annotation internals do not pollute page observers.
+- A separate transparent overlay window renders the compact comment or design editor. The React browser panel owns only the annotation toolbar, count, and transfer into the main composer.
+
+In annotation mode:
+
+- Hover highlights only the current DOM element. Clicking creates a stable anchor containing selector, DOM path, text, and geometry context, then opens the editor.
+- The comment editor supports add, save, cancel, and delete. Saved annotations render numbered page markers that reopen the editor.
+- The design editor starts from the target's computed styles and can change text, appearance, and layout properties. The preload applies those changes and rebinds them after target-node replacement.
+- Holding Original View uses the same render/sync path to suppress every design change and restore replaced text. Releasing it reapplies the annotation design.
+- A same-URL reload preserves annotations and rebinds anchors. A real cross-URL navigation exits annotation mode and clears the draft so stale page state cannot leak.
+- Published annotations enter the Wework main composer attachment area. The runtime DTO sent to the model contains element context, comment, and design changes but omits screenshots, timestamps, and other UI-private fields.
 
 Annotations are comments on the visible web page, not code selection comments. `browser_annotation` items should be interpreted by the model as comments on current visible page elements.
+
+Annotation regression coverage is split into independently runnable checkpoints:
+
+- `browser-annotation-core`: target selection, comment creation, numbered marker, editing, deletion, and exit.
+- `browser-annotation-anchors`: anchor recovery after DOM movement, same-URL reload, and target-node replacement.
+- `browser-annotation-design`: computed-style baseline, design application, Original View, and design rebinding.
+
+`browser-annotation` is the composite entry for all three checkpoints. It must expand and execute every member instead of reporting success after only the generic desktop flow.
 
 ## Development Checks
 
@@ -210,6 +230,7 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --filter wework e2e:desktop:embedded-browser
 pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+pnpm --filter wework e2e:desktop -- --segment browser-annotation
 ```
 
 `e2e:desktop:embedded-browser` must create task A, switch to task B, and then use task A's specific label for the first bridge `open`, `waitFor`, and `inspect`. It verifies that the inactive task completes background navigation before the tool timeout without taking over task B's browser, and that the same page state is visible after switching back to task A. A test that covers only a second open, an active-task open, or a manually exposed browser panel does not exercise the first-open and inactive-task routing races.
