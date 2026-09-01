@@ -769,7 +769,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             {"task_id": int, "subtask_id": int} or {"error": "..."}
             For pipeline:confirm action: {"task_id": int, "current_stage": int, ...}
         """
-        logger.info("[WS] chat:send received sid=%s", sid)
+        logger.info(f"[WS] chat:send received sid={sid} data={data}")
 
         # Check token expiry before processing
         if await self._check_token_expiry(sid):

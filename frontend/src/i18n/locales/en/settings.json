@@ -271,7 +271,7 @@
       },
       "prompt_protection": {
         "label": "Prompt protection",
-        "description": "Best-effort request screening using one extra call to the currently selected model. Enabling it adds latency and model cost; it is not a security boundary."
+        "description": "When enabled, the system checks each user request before answering. It rejects requests that clearly fall outside the agent's purpose or try to extract its system prompt or default knowledge. Each check makes one extra call to the selected model, which may add waiting time and cost; if the check fails, the request continues."
       },
       "execution": {
         "bind_mode_description": "Controls which entry points and task types can use this agent.",
