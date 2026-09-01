@@ -11,6 +11,9 @@ from types import ModuleType, SimpleNamespace
 from kubernetes.client.rest import ApiException
 
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
+from executor_manager.wecode.executors.k8s.git_warmpool import (
+    runtime_ineligibility_reason as git_warmpool_runtime_ineligibility_reason,
+)
 from executor_manager.wecode.executors.k8s.k8s_executor import (
     K8S_NAMESPACE,
     K8sExecutor,
@@ -878,6 +881,179 @@ def test_create_instance_claims_warmpool_for_safe_https_git_task(mocker):
         workload_type="executor",
     )
     direct_create.assert_not_called()
+
+
+def test_git_warmpool_runtime_capabilities_require_proxy_secret_and_image():
+    image = "registry/executor:1.0.214"
+    git_url = "https://github.com/wecode-ai/Wegent.git"
+    pod = build_warm_pool_pod_config(executor_image=image)
+    template = {
+        "spec": {
+            "podTemplate": {
+                "spec": pod["spec"],
+            }
+        }
+    }
+
+    assert (
+        git_warmpool_runtime_ineligibility_reason(
+            git_url, template, image, is_template=True
+        )
+        is None
+    )
+    assert (
+        git_warmpool_runtime_ineligibility_reason(
+            git_url, pod, image, is_template=False
+        )
+        is None
+    )
+
+    missing_proxy = json.loads(json.dumps(pod))
+    missing_proxy["spec"]["containers"][0]["env"] = [
+        item
+        for item in missing_proxy["spec"]["containers"][0]["env"]
+        if item.get("name") != "REPO_PROXY_CONFIG"
+    ]
+    assert (
+        git_warmpool_runtime_ineligibility_reason(
+            git_url, missing_proxy, image, is_template=False
+        )
+        == "git_warmpool_missing_repo_proxy"
+    )
+
+    missing_secret = json.loads(json.dumps(pod))
+    missing_secret["spec"]["volumes"] = [
+        volume
+        for volume in missing_secret["spec"]["volumes"]
+        if volume.get("name") != "wegent-executor-secret"
+    ]
+    assert (
+        git_warmpool_runtime_ineligibility_reason(
+            git_url, missing_secret, image, is_template=False
+        )
+        == "git_warmpool_missing_crypto_secret"
+    )
+    assert (
+        git_warmpool_runtime_ineligibility_reason(
+            git_url, pod, "registry/executor:1.0.215", is_template=False
+        )
+        == "git_warmpool_image_mismatch"
+    )
+
+
+def test_create_git_executor_discards_incompatible_claimed_warmpool_pod(mocker):
+    executor = object.__new__(K8sExecutor)
+    image = "registry/executor:1.0.214"
+    task = {
+        "task_id": 123,
+        "type": "online",
+        "executor_image": image,
+        "git_url": "https://github.com/wecode-ai/Wegent.git",
+    }
+    compatible_pod = build_warm_pool_pod_config(executor_image=image)
+    template = {
+        "spec": {
+            "podTemplate": {
+                "spec": compatible_pod["spec"],
+            }
+        }
+    }
+    incompatible_pod = json.loads(json.dumps(compatible_pod))
+    incompatible_pod["spec"]["containers"][0]["env"] = [
+        item
+        for item in incompatible_pod["spec"]["containers"][0]["env"]
+        if item.get("name") != "REPO_PROXY_CONFIG"
+    ]
+    mocker.patch(
+        "executor_manager.wecode.executors.k8s.k8s_executor._get_api_client",
+        return_value=object(),
+    )
+    warm_pool_client = mocker.MagicMock()
+    warm_pool_client.get_sandbox_template.return_value = template
+    warm_pool_client.get_sandbox_claim.side_effect = [
+        None,
+        {"metadata": {"name": "executor-1"}},
+    ]
+    warm_pool_client.core_api.read_namespaced_pod.return_value = incompatible_pod
+    mocker.patch(
+        "executor_manager.wecode.executors.warmpool.WarmPoolClient",
+        return_value=warm_pool_client,
+    )
+    mocker.patch.object(
+        executor,
+        "_wait_for_warmpool_sandbox_ready",
+        return_value={"pod_name": "warm-pod-1", "pod_ip": "10.0.0.8"},
+    )
+
+    result = executor._create_pod_from_warmpool(
+        task=task,
+        executor_name="executor-1",
+        user_name="test_user",
+        task_id="123",
+        subtask_id="456",
+        template_name="wegent-executor-standard-1.0.214",
+        workload_type="executor",
+    )
+
+    assert result == {
+        "status": "fallback",
+        "fallback_reason": "git_warmpool_missing_repo_proxy",
+    }
+    warm_pool_client.create_sandbox_claim.assert_called_once()
+    warm_pool_client.delete_sandbox_claim.assert_called_once_with("executor-1")
+    warm_pool_client.patch_pod_metadata.assert_not_called()
+
+
+def test_create_instance_falls_back_to_direct_pod_for_incompatible_git_warmpool(
+    mocker,
+):
+    executor = object.__new__(K8sExecutor)
+    module = "executor_manager.wecode.executors.k8s.k8s_executor"
+    image = "registry/executor:1.0.214"
+    mocker.patch(f"{module}.WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.EXECUTOR_GIT_WARMPOOL_ENABLED", True)
+    mocker.patch(f"{module}.WARMPOOL_TEMPLATE_NAME", "wegent-sandbox-1.0.214")
+    mocker.patch(f"{module}.EXECUTOR_DEFAULT_MAGE", image)
+    mocker.patch.object(
+        executor,
+        "_create_pod_from_warmpool",
+        return_value={
+            "status": "fallback",
+            "fallback_reason": "git_warmpool_missing_repo_proxy",
+        },
+    )
+    direct_pod = {"metadata": {"name": "executor-1"}}
+    build = mocker.patch(f"{module}.build_pod_configuration", return_value=direct_pod)
+    submit = mocker.patch.object(
+        executor,
+        "_submit_kubernetes_pod",
+        return_value={"status": "success"},
+    )
+    task = {
+        "task_id": 123,
+        "type": "online",
+        "git_url": "https://github.com/wecode-ai/Wegent.git",
+        "git_auth_transport": "encrypted_request_token",
+        "user": {
+            "name": "test_user",
+            "git_domain": "github.com",
+            "git_token": "iOuoSwc/HrF6ZhttvtSNeQ==",
+        },
+    }
+
+    executor.create_instance(
+        task=task,
+        task_info={
+            "task_id": "123",
+            "subtask_id": "456",
+            "user_name": "test_user",
+        },
+        executor_name="executor-1",
+    )
+
+    build.assert_called_once()
+    submit.assert_called_once_with(direct_pod, K8S_NAMESPACE, "executor-1", "123")
 
 
 def test_executor_warmpool_rejects_task_specific_pod_shapes(mocker):

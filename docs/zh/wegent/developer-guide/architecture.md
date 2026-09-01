@@ -359,13 +359,20 @@ WARMPOOL_TEMPLATE_NAME: ""           # Sandbox 与标准 Executor 共用的模�
 EXECUTOR_WARMPOOL_ENABLED: true       # 是否允许标准 Executor 使用共享预热池
 EXECUTOR_NON_GIT_WARMPOOL_ENABLED: false # 是否允许非 Git Executor 使用共享预热池
 EXECUTOR_GIT_WARMPOOL_ENABLED: false  # 是否允许安全的 HTTPS Git 任务使用共享预热池
+WEGENT_GIT_CLONE_TIMEOUT_SECONDS: 600 # Git clone 总超时，取值范围 1-3600 秒
+WEGENT_GIT_HTTP_LOW_SPEED_LIMIT: 1024 # Git HTTP 最低传输速率（字节/秒）
+WEGENT_GIT_HTTP_LOW_SPEED_TIME_SECONDS: 60 # 低速持续多久后由 Git 中止
 ```
 
 #### Kubernetes Executor 预热池
 
 Kubernetes 部署中的标准 `online` 任务与交互式 Sandbox 共用 `WARMPOOL_TEMPLATE_NAME` 指向的同一个 `SandboxTemplate` 和 `SandboxWarmPool`，不再创建独立的 Executor 池。非 Git 任务只有在 `EXECUTOR_WARMPOOL_ENABLED=true` 且显式开启 `EXECUTOR_NON_GIT_WARMPOOL_ENABLED=true` 时才使用共享池；新开关默认关闭，因此未配置时仍直建 Pod。Git 任务不依赖非 Git 开关，但必须同时开启标准 Executor 总开关和 `EXECUTOR_GIT_WARMPOOL_ENABLED`，并满足：仓库使用 HTTPS、请求携带与仓库域名精确匹配的加密 Token、凭据传输方式为 `encrypted_request_token`。SSH、HTTP、`git_worktree`、缺少 Token、仍依赖用户 Secret、自定义 Executor 镜像或 `base_image` 的任务继续直建 Pod。用户配置过 Git 账号本身不代表当前任务是 Git 任务。
 
-预热 Pod 启动时只包含静态运行时配置，不预置 task ID、认证 Token、Git Token、技能身份或任务心跳 ID。Executor Manager 领取 Pod 后只写入非敏感任务标签；加密 Git Token 随首次 `/v1/responses` 请求传入，由 Executor 解密后写入任务私有的 AskPass 文件，并通过任务进程环境提供给 Git、`gh` 和 `glab`。Token 不进入 clone URL、进程 argv、Pod 标签、annotation 或 Redis binding。`WARMPOOL_ENABLED` 是共享池总开关，Git 开关默认关闭。上线前必须先将共享池模板升级到包含动态任务心跳和任务级 Git 认证能力、且与 `EXECUTOR_IMAGE` 一致的镜像，并同时验证 Sandbox、非 Git Executor 与 HTTPS Git Executor。
+预热 Pod 启动时只包含静态运行时配置，不预置 task ID、认证 Token、Git Token、技能身份或任务心跳 ID。Executor Manager 领取 Pod 后只写入非敏感任务标签；加密 Git Token 随首次 `/v1/responses` 请求传入，由 Executor 解密后写入任务私有的 AskPass 文件，并通过任务进程环境提供给 Git、`gh` 和 `glab`。Token 不进入 clone URL、进程 argv、Pod 标签、annotation 或 Redis binding。`WARMPOOL_ENABLED` 是共享池总开关，Git 开关默认关闭；只有部署显式设置 `EXECUTOR_GIT_WARMPOOL_ENABLED=true` 时才会启用。上线前必须先将共享池模板升级到包含动态任务心跳和任务级 Git 认证能力、且与 `EXECUTOR_IMAGE` 一致的镜像，并同时验证 Sandbox、非 Git Executor 与 HTTPS Git Executor。
+
+Git 任务领取前，Executor Manager 会校验 `SandboxTemplate` 的镜像、GitHub 域名代理配置以及 `/etc/wegent-executor-secret` 对应的 AES Secret 挂载；领取后会再次校验实际 Pod，防止同名模板更新后仍领取到旧 standby Pod。任一检查缺失或无法完成时，该 Claim 会被丢弃，任务改为创建 direct Pod，不会向不兼容的预热 Pod 下发 Git 凭据。
+
+Executor 执行 `git clone` 时禁用交互式凭据提示，并同时使用总超时和 Git HTTP low-speed 限制。总超时后会终止 Git 所在的整个进程组、清理本次 clone 的半成品目录，并向任务返回终态错误；已有工作区也必须通过本地 `HEAD` 校验，避免把中断 clone 留下的 `.git` 目录误判为可用仓库。该流程不会自动重试。
 
 预热 Executor 的删除必须以 `SandboxClaim` 为所有权边界：显式删除、按 task ID 删除和孤儿资源清理都会优先删除 Claim，由控制器级联清理 Sandbox、Service 和 Pod。非 Git Executor 领取后会在 Claim 和 Pod 上标记 `pool-profile=executor-standard`、task ID 和 `pool-state=bound`；孤儿扫描只处理这类已领取 Pod，明确排除未领取的共享池容量和交互式 Sandbox，并可通过 Claim 标签清理 Pod 已丢失的遗留绑定。删除成功后同时移除任务心跳、RunningTaskTracker 状态和 Redis executor binding。
 
