@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupSplash,
@@ -70,6 +71,31 @@ function createFixture(theme: StartupSplashTheme = 'light') {
   return { show, splash, target, writePng }
 }
 
+class FakeSplashElement {
+  readonly classList = {
+    add: vi.fn(),
+    remove: vi.fn(),
+    toggle: vi.fn(),
+  }
+  readonly dataset: Record<string, string> = {}
+  readonly listeners = new Map<string, () => void>()
+  disabled = false
+  hidden = true
+  textContent = ''
+
+  addEventListener(event: string, listener: () => void): void {
+    this.listeners.set(event, listener)
+  }
+
+  click(): void {
+    this.listeners.get('click')?.()
+  }
+
+  focus(): void {}
+
+  setAttribute(): void {}
+}
+
 describe('StartupSplash', () => {
   test('ships a visible loading animation that reports readiness after two frames', async () => {
     const electronRoot =
@@ -118,6 +144,64 @@ describe('StartupSplash', () => {
     expect(script).toMatch(
       /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
     )
+  })
+
+  test('invokes recoverWorkbench after confirming workbench recovery', async () => {
+    const electronRoot =
+      basename(process.cwd()) === 'electron' ? process.cwd() : join(process.cwd(), 'electron')
+    const script = await readFile(
+      join(electronRoot, 'src', 'shell', 'startup-splash', 'splash.js'),
+      'utf8'
+    )
+    const elements = new Map<string, FakeSplashElement>()
+    const element = (selector: string) => {
+      const existing = elements.get(selector)
+      if (existing) return existing
+      const created = new FakeSplashElement()
+      elements.set(selector, created)
+      return created
+    }
+    const recoverWorkbench = vi.fn(async () => undefined)
+    const windowListeners = new Map<string, () => void>()
+    const documentElement = element('documentElement')
+
+    runInNewContext(script, {
+      document: {
+        activeElement: null,
+        body: element('body'),
+        documentElement,
+        querySelector: (selector: string) => element(selector),
+        querySelectorAll: () => [
+          new FakeSplashElement(),
+          new FakeSplashElement(),
+          new FakeSplashElement(),
+        ],
+      },
+      HTMLElement: FakeSplashElement,
+      navigator: { language: 'en-US' },
+      performance: { now: () => 0 },
+      requestAnimationFrame: vi.fn(),
+      window: {
+        addEventListener: (event: string, listener: () => void) => {
+          windowListeners.set(event, listener)
+        },
+        matchMedia: () => ({ matches: true }),
+        requestAnimationFrame: vi.fn(),
+        setInterval: vi.fn(),
+        setTimeout: vi.fn(),
+        weworkStartupRecovery: {
+          recoverWorkbench,
+          resetAppState: vi.fn(),
+          retry: vi.fn(),
+        },
+      },
+    })
+
+    element('#startup-recover').click()
+    element('#startup-confirmation-submit').click()
+    await Promise.resolve()
+
+    expect(recoverWorkbench).toHaveBeenCalledOnce()
   })
 
   test('shows the branded animation in the main startup window and records its timeline', async () => {

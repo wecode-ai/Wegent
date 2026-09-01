@@ -1,5 +1,9 @@
 :root {
   color-scheme: light;
+  --text-code-sm: 11px;
+  --text-xs: 12px;
+  --text-base: 14px;
+  --text-lg: 16px;
   font-family:
     ui-sans-serif,
     -apple-system,
@@ -457,7 +461,7 @@ body[data-stage='2'] .monitor-status {
 
 .splash h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 500;
   letter-spacing: -0.015em;
 }
@@ -465,7 +469,7 @@ body[data-stage='2'] .monitor-status {
 .splash p {
   margin: 4px 0 0;
   color: rgb(23 23 23 / 62%);
-  font-size: 12px;
+  font-size: var(--text-xs);
   line-height: 16px;
   transition:
     opacity 140ms ease,
@@ -529,7 +533,7 @@ body[data-stage='2'] .monitor-status {
   border: 1px solid rgb(23 23 23 / 12%);
   border-radius: 8px;
   background: #fff;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .startup-button-primary {
@@ -548,7 +552,7 @@ body[data-stage='2'] .monitor-status {
   padding: 5px 2px;
   color: #1677c8;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--text-xs);
 }
 
 .startup-button:focus-visible,
@@ -566,7 +570,7 @@ body[data-stage='2'] .monitor-status {
 .startup-action-error {
   margin: 7px 0 0;
   color: #b91c1c;
-  font-size: 11px;
+  font-size: var(--text-code-sm);
 }
 
 .startup-confirmation {
@@ -576,7 +580,7 @@ body[data-stage='2'] .monitor-status {
 
 .startup-confirmation h2 {
   margin: 4px 0 0;
-  font-size: 14px;
+  font-size: var(--text-base);
   font-weight: 600;
 }
 

@@ -203,7 +203,9 @@ recoverButton.addEventListener('click', () => showConfirmation('recover'))
 resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
 confirmationCancel.addEventListener('click', hideConfirmation)
 confirmationSubmit.addEventListener('click', () => {
-  if (pendingResetMode) void runRecoveryAction(pendingResetMode)
+  if (!pendingResetMode) return
+  const action = pendingResetMode === 'recover' ? 'recoverWorkbench' : pendingResetMode
+  void runRecoveryAction(action)
 })
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !confirmationElement.hidden) {
