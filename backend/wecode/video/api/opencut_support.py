@@ -7,7 +7,7 @@
 import math
 import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import HTTPException
 
@@ -24,6 +24,7 @@ ALLOWED_MEDIA_HOST_SUFFIXES = {
     "weibo.com",
     "weibocdn.com",
 }
+WEGENT_ATTACHMENT_PATH = "/api/attachments/download/shared"
 
 
 def as_record(value: Any) -> dict[str, Any]:
@@ -52,7 +53,23 @@ def db_to_scale(volume_db: float) -> float:
     return max(0.0, min(4.0, math.pow(10, volume_db / 20)))
 
 
-def allowed_media_url(value: str) -> str:
+def _is_wegent_attachment_url(value: str, backend_public_url: str) -> bool:
+    parsed = urlsplit(value)
+    backend = urlsplit(backend_public_url.strip().rstrip("/"))
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.scheme == backend.scheme
+        and parsed.netloc.lower() == backend.netloc.lower()
+        and not parsed.username
+        and not parsed.password
+        and parsed.path == WEGENT_ATTACHMENT_PATH
+        and bool(parse_qs(parsed.query).get("token"))
+    )
+
+
+def allowed_media_url(value: str, backend_public_url: str = "") -> str:
+    if backend_public_url and _is_wegent_attachment_url(value, backend_public_url):
+        return value
     parsed = urlsplit(value)
     host = (parsed.hostname or "").lower()
     if (
@@ -229,8 +246,8 @@ def validate_converted_media_tracks(
         )
 
 
-def _track_identity(item: dict[str, Any]) -> set[str]:
-    identities = set()
+def _track_identity(item: dict[str, Any]) -> list[str]:
+    identities: list[str] = []
     for key in (
         "clip_id",
         "media_id",
@@ -242,7 +259,9 @@ def _track_identity(item: dict[str, Any]) -> set[str]:
         "storycut_element_id",
     ):
         if value := str(item.get(key) or "").strip():
-            identities.add(f"{key}:{value}")
+            identity = f"{key}:{value}"
+            if identity not in identities:
+                identities.append(identity)
     for key in ("source_path", "path"):
         if value := str(item.get(key) or "").strip():
             parsed = urlsplit(value)
@@ -251,7 +270,9 @@ def _track_identity(item: dict[str, Any]) -> set[str]:
                 if parsed.scheme and parsed.netloc
                 else value.split("?", 1)[0]
             )
-            identities.add(f"source:{source}")
+            identity = f"source:{source}"
+            if identity not in identities:
+                identities.append(identity)
     return identities
 
 

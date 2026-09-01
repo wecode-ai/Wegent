@@ -67,9 +67,17 @@ interface ScriptPanelProps {
   scriptId: number
   onClose: () => void
   children?: ReactNode
+  readOnly?: boolean
+  shareToken?: string
 }
 
-export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
+export function ScriptPanel({
+  scriptId,
+  onClose,
+  children,
+  readOnly = false,
+  shareToken,
+}: ScriptPanelProps) {
   const { t } = useTranslation('video')
   const { theme } = useTheme()
   const { toast } = useToast()
@@ -84,7 +92,7 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
   const loadScript = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await scriptApi.getScript(scriptId)
+      const response = await scriptApi.getScript(scriptId, { shareToken })
       const draftContent = response.draft_content ?? ''
       setScript(response)
       setContent(draftContent)
@@ -96,7 +104,7 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
     } finally {
       setLoading(false)
     }
-  }, [scriptId])
+  }, [scriptId, shareToken])
 
   useEffect(() => {
     void loadScript()
@@ -137,7 +145,7 @@ export function ScriptPanel({ scriptId, onClose, children }: ScriptPanelProps) {
   }
 
   const hasChanges = content !== savedContent
-  const canEdit = Boolean(script && script.is_draft !== false)
+  const canEdit = !readOnly && Boolean(script && script.is_draft !== false)
   const updatedAt = script?.update_time ? new Date(script.update_time) : null
   const validUpdatedAt = updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt : null
 

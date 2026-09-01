@@ -14,6 +14,8 @@ interface MaterialVideoPanelProps {
   sessionId?: string
   taskUuid?: string
   onContinue?: (buttonName?: string) => void
+  autoOpenOpenCut?: boolean
+  onOpenCutClose?: () => void
 }
 
 export function MaterialVideoPanel({
@@ -21,6 +23,8 @@ export function MaterialVideoPanel({
   sessionId,
   taskUuid,
   onContinue,
+  autoOpenOpenCut,
+  onOpenCutClose,
 }: MaterialVideoPanelProps) {
   const { t } = useTranslation('video')
 
@@ -44,5 +48,12 @@ export function MaterialVideoPanel({
     )
   }
 
-  return <MaterialTimelinePanel sessionId={sessionId} onContinue={onContinue} />
+  return (
+    <MaterialTimelinePanel
+      sessionId={sessionId}
+      onContinue={onContinue}
+      autoOpenOpenCut={autoOpenOpenCut}
+      onOpenCutClose={onOpenCutClose}
+    />
+  )
 }

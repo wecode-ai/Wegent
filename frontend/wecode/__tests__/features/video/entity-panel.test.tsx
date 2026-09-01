@@ -55,13 +55,47 @@ describe('EntityPanel', () => {
     render(<EntityPanel taskId={27} />)
 
     expect(await screen.findByTestId('entity-panel')).toBeInTheDocument()
-    expect(mockListEntities).toHaveBeenCalledWith(27)
+    expect(mockListEntities).toHaveBeenCalledWith(27, { shareToken: undefined })
     expect(screen.getByTestId('entity-image-101')).toHaveAttribute(
       'src',
       `/api/aigc-video/media/image?image_url=${encodeURIComponent(imageUrl)}`
     )
     expect(screen.getAllByText('星际观察员')).toHaveLength(2)
     expect(screen.getByText('站在深空观测站中的年轻观察员')).toBeInTheDocument()
+  })
+
+  test('uses share-token APIs and hides refresh in read-only mode', async () => {
+    const imageUrl = 'https://wx1.sinaimg.cn/large/shared-character.jpg'
+    mockListEntities.mockResolvedValue({
+      characters: [
+        {
+          id: 401,
+          entity_id: 'shared-character',
+          entity_name: '共享角色',
+          entity_type: 1,
+          description: '共享角色描述',
+          image_pid: 'shared-pid',
+          image_url: imageUrl,
+          generation_status: 2,
+        },
+      ],
+      scenes: [],
+      props: [],
+    })
+
+    render(<EntityPanel taskId={24} readOnly shareToken="shared-token" />)
+
+    expect(await screen.findByTestId('entity-panel')).toBeInTheDocument()
+    expect(mockListEntities).toHaveBeenCalledWith(24, { shareToken: 'shared-token' })
+    expect(screen.queryByTestId('entity-refresh')).not.toBeInTheDocument()
+    const query = new URLSearchParams({
+      image_url: imageUrl,
+      share_token: 'shared-token',
+    })
+    expect(screen.getByTestId('entity-image-401')).toHaveAttribute(
+      'src',
+      `/api/aigc-video/media/image?${query}`
+    )
   })
 
   test('switches images from the thumbnail list and continues the async-card flow', async () => {
@@ -102,5 +136,31 @@ describe('EntityPanel', () => {
 
     fireEvent.click(screen.getByTestId('entity-continue'))
     expect(onContinue).toHaveBeenCalledWith('开始生成分镜')
+  })
+
+  test('centers a generating thumbnail without combining translate and spin transforms', async () => {
+    mockListEntities.mockResolvedValue({
+      characters: [
+        {
+          id: 501,
+          entity_id: 'generating-character',
+          entity_name: '生成中角色',
+          entity_type: 1,
+          description: null,
+          image_pid: '',
+          image_url: '',
+          generation_status: 1,
+        },
+      ],
+      scenes: [],
+      props: [],
+    })
+
+    render(<EntityPanel taskId={27} />)
+
+    const loading = await screen.findByTestId('entity-thumbnail-loading-501')
+    expect(loading).toHaveClass('absolute', 'inset-0', 'items-center', 'justify-center')
+    expect(loading.firstElementChild).toHaveClass('animate-spin')
+    expect(loading.firstElementChild).not.toHaveClass('-translate-x-1/2', '-translate-y-1/2')
   })
 })

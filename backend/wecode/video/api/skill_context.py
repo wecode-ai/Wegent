@@ -4,8 +4,11 @@
 
 """Build video Skill context from chat generation settings and attachments."""
 
+from datetime import timedelta
 from typing import Any, Optional
 
+from app.core.config import settings
+from app.services.attachment.public_link import build_public_attachment_download_url
 from app.services.execution.skill_generation import (
     build_skill_generation_context,
     register_skill_generation_context_enricher,
@@ -17,6 +20,7 @@ AIGC_VIDEO_SKILL_NAMES = {
     "material-to-video-unified-async",
     "prompts-to-movie-stepped",
 }
+LOCAL_IMAGE_URL_EXPIRES = timedelta(days=7)
 
 
 def build_attachment_media_content(attachments: list[Any]) -> list[dict[str, str]]:
@@ -39,6 +43,26 @@ def build_attachment_media_content(attachments: list[Any]) -> list[dict[str, str
         if not media_id and media_type == "video":
             metadata = type_data.get("video_metadata") or {}
             media_id = metadata.get("media_id") if isinstance(metadata, dict) else None
+        if not media_id and media_type == "image":
+            attachment_id = getattr(attachment, "id", None)
+            if isinstance(attachment_id, int):
+                file_id = f"wegent-attachment-{attachment_id}"
+                key = (media_type, file_id)
+                if key not in seen:
+                    seen.add(key)
+                    content.append(
+                        {
+                            "type": "input_image",
+                            "file_id": file_id,
+                            "image_source": "wegent_attachment_url",
+                            "image_url": build_public_attachment_download_url(
+                                attachment_id,
+                                LOCAL_IMAGE_URL_EXPIRES,
+                                settings.WEGENT_BACKEND_PUBLIC_URL,
+                            ),
+                        }
+                    )
+            continue
         if not media_id:
             continue
 
