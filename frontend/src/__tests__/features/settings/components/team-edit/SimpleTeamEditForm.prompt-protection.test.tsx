@@ -95,7 +95,8 @@ describe('SimpleTeamEditForm prompt protection', () => {
       />
     )
 
-    const toggle = screen.getByTestId('prompt-protection-enabled-switch')
+    const toggle = screen.getByRole('switch', { name: 'Prompt protection' })
+    expect(toggle).toHaveAttribute('data-testid', 'prompt-protection-enabled-switch')
     expect(toggle).not.toBeChecked()
     const hitTarget = toggle.parentElement
     expect(hitTarget?.tagName).toBe('LABEL')

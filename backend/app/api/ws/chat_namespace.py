@@ -197,6 +197,42 @@ async def _finalize_failed_ai_trigger(
     )
 
 
+async def _finalize_blocked_ai_trigger(
+    *,
+    task_id: int,
+    assistant_subtask_id: int,
+) -> None:
+    """Finish a blocked turn, falling back to a terminal failure."""
+    try:
+        await finalize_prompt_protection_block(
+            task_id=task_id,
+            subtask_id=assistant_subtask_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "[WS] Failed to finalize prompt-protection block: "
+            "task_id=%s, subtask_id=%s, error_type=%s",
+            task_id,
+            assistant_subtask_id,
+            type(exc).__name__,
+        )
+        try:
+            await _finalize_failed_ai_trigger(
+                task_id=task_id,
+                assistant_subtask_id=assistant_subtask_id,
+                error_message=BLOCKED_MESSAGE,
+                error_code=BLOCKED_ERROR_CODE,
+            )
+        except Exception as fallback_exc:
+            logger.error(
+                "[WS] Failed to persist prompt-protection fallback: "
+                "task_id=%s, subtask_id=%s, error_type=%s",
+                task_id,
+                assistant_subtask_id,
+                type(fallback_exc).__name__,
+            )
+
+
 def _web_prompt_protection_entrypoint(
     device_id: Optional[str],
 ) -> Optional[PromptProtectionEntrypoint]:
@@ -1151,9 +1187,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                             ).model_dump(),
                             room=task_room,
                         )
-                        await finalize_prompt_protection_block(
+                        await _finalize_blocked_ai_trigger(
                             task_id=task.id,
-                            subtask_id=assistant_subtask.id,
+                            assistant_subtask_id=assistant_subtask.id,
                         )
                     except Exception as e:
                         logger.exception(

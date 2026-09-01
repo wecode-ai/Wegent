@@ -2977,6 +2977,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             icon=icon,
             requires_workspace=requires_workspace,
             quick_phrases=quick_phrases,
+            prompt_protection_enabled=bool(spec.get("promptProtectionEnabled", False)),
         )
 
         return self.create_with_user(

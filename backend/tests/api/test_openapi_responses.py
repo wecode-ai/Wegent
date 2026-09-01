@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
@@ -571,6 +572,79 @@ class TestOpenAPIResponsesCreate:
         mock_finalize.assert_awaited_once_with(subtask_id=654, task_id=101)
         mock_supports_streaming.assert_not_called()
         mock_dispatch.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prompt_protection_unexpected_error_finalizes_non_streaming_turn(
+        self,
+        test_user: User,
+        test_team: Kind,
+    ) -> None:
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        db = MagicMock()
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "Chat"}],
+            model_config={"model_id": "selected-model"},
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.chat.trigger.unified.enforce_prompt_protection",
+                new=AsyncMock(side_effect=RuntimeError("unexpected guard error")),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._get_inherited_knowledge_base_refs",
+                return_value=[],
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._persist_terminal_failure",
+                new=AsyncMock(),
+            ) as persist_failure,
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ) as dispatch,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_non_streaming_response_unified(
+                    db=db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="current user text",
+                    ),
+                    input_text="current user text",
+                    tool_settings={},
+                    background=False,
+                )
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail == "Prompt protection failed"
+        persist_failure.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            error_message="Prompt protection failed",
+        )
+        db.close.assert_called_once()
+        dispatch.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_prompt_protection_streams_only_response_failed_before_registration(

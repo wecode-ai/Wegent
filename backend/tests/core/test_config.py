@@ -64,6 +64,16 @@ class TestSettings:
         assert s.ALGORITHM == "HS256"
         assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 10080  # 7 days
 
+    @pytest.mark.parametrize("timeout", [0, -0.1])
+    def test_prompt_protection_timeout_must_be_positive(self, timeout: float) -> None:
+        with pytest.raises(ValidationError):
+            build_settings(PROMPT_PROTECTION_TIMEOUT_SECONDS=timeout)
+
+    def test_prompt_protection_timeout_accepts_positive_float(self) -> None:
+        s = build_settings(PROMPT_PROTECTION_TIMEOUT_SECONDS=0.5)
+
+        assert s.PROMPT_PROTECTION_TIMEOUT_SECONDS == 0.5
+
     def test_settings_from_env_variables(self, monkeypatch):
         """Test loading settings from environment variables"""
         monkeypatch.setenv("PROJECT_NAME", "Test Project")

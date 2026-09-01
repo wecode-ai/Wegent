@@ -1013,7 +1013,7 @@ test.describe('Agent conversation regression', () => {
             role: 'worker',
           },
         ],
-        workflow: options.promptProtectionEnabled ? { mode: 'solo' } : undefined,
+        workflow: { mode: 'solo' },
         prompt_protection_enabled: options.promptProtectionEnabled ?? false,
         bind_mode: options.bindMode,
         namespace: 'default',

@@ -416,6 +416,7 @@ export default function SimpleTeamEditForm({
             >
               <Switch
                 id="simple-prompt-protection-enabled"
+                aria-label={t('settings:team.simple.prompt_protection.label')}
                 checked={promptProtectionEnabled}
                 onCheckedChange={setPromptProtectionEnabled}
                 data-testid="prompt-protection-enabled-switch"

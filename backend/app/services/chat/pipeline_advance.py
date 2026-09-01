@@ -26,7 +26,6 @@ from app.services.chat.storage import TaskCreationParams, create_chat_task
 from app.services.chat.storage.db import PipelineAutoAdvanceIntent
 from app.services.chat.trigger import trigger_ai_response_unified
 from app.services.context import context_service
-from app.services.prompt_protection import PromptProtectionEntrypoint
 from app.stores.tasks import task_store
 
 logger = logging.getLogger(__name__)
@@ -397,9 +396,7 @@ def _trigger_next_stage(
                 user_subtask_id=user_subtask_id,
                 auth_token=auth_token,
                 previous_bot_id=previous_bot_id,
-                prompt_protection_entrypoint=(
-                    PromptProtectionEntrypoint.WEB_USER_MESSAGE
-                ),
+                prompt_protection_entrypoint=None,
             )
         except Exception:
             logger.exception(

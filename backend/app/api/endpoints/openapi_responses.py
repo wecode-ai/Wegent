@@ -663,6 +663,21 @@ async def _create_non_streaming_response_unified(
             model=request_body.model,
             previous_response_id=request_body.previous_response_id,
         )
+    except Exception as exc:
+        logger.error(
+            "Prompt protection failed unexpectedly: error_type=%s",
+            type(exc).__name__,
+        )
+        _close_db()
+        await _persist_terminal_failure(
+            subtask_id=assistant_subtask_id,
+            task_id=task_kind_id,
+            error_message="Prompt protection failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Prompt protection failed",
+        ) from exc
 
     # Helper: execute and collect content using SSEResultEmitter
     async def _execute_and_collect() -> tuple[str, Optional[Any]]:

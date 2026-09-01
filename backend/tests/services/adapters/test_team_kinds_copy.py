@@ -223,6 +223,7 @@ class TestCopyTeamNonSolo:
             "spec": {
                 **team.json["spec"],
                 "quick_phrases": ["Start here"],
+                "promptProtectionEnabled": True,
             },
         }
         test_db.commit()
@@ -236,6 +237,7 @@ class TestCopyTeamNonSolo:
         assert result["name"] == "Copy of source-team"
         assert result["displayName"] == "Published agent"
         assert result["quick_phrases"] == ["Start here"]
+        assert result["prompt_protection_enabled"] is True
 
     def test_copy_non_solo_team_does_not_clone_bots(self, test_db: Session):
         """Non-solo copy: bot count stays the same (no new bots created)."""

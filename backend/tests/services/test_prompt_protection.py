@@ -399,9 +399,11 @@ def test_openapi_responses_prompt_protection_uses_explicit_entrypoint(shell_type
 
 
 @pytest.mark.asyncio
-async def test_pipeline_next_stage_marks_internal_handoff_with_previous_bot_id(
-    monkeypatch,
-):
+@pytest.mark.parametrize("previous_bot_id", [101, None])
+async def test_pipeline_next_stage_does_not_protect_internal_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    previous_bot_id: int | None,
+) -> None:
     from app.services.chat import pipeline_advance
 
     trigger_kwargs = {}
@@ -429,15 +431,45 @@ async def test_pipeline_next_stage_marks_internal_handoff_with_previous_bot_id(
         task_room="task:22",
         user_subtask_id=32,
         auth_token="token",
-        previous_bot_id=101,
+        previous_bot_id=previous_bot_id,
     )
     assert len(scheduled) == 1
     await scheduled[0]
 
-    assert trigger_kwargs["previous_bot_id"] == 101
-    assert (
-        trigger_kwargs["prompt_protection_entrypoint"]
-        is PromptProtectionEntrypoint.WEB_USER_MESSAGE
+    assert trigger_kwargs["previous_bot_id"] == previous_bot_id
+    assert trigger_kwargs["prompt_protection_entrypoint"] is None
+
+
+@pytest.mark.asyncio
+async def test_blocked_turn_falls_back_to_failed_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ws import chat_namespace
+
+    finalize_block = AsyncMock(side_effect=RuntimeError("persistence failed"))
+    finalize_failure = AsyncMock()
+    monkeypatch.setattr(
+        chat_namespace,
+        "finalize_prompt_protection_block",
+        finalize_block,
+    )
+    monkeypatch.setattr(
+        chat_namespace,
+        "_finalize_failed_ai_trigger",
+        finalize_failure,
+    )
+
+    await chat_namespace._finalize_blocked_ai_trigger(
+        task_id=22,
+        assistant_subtask_id=33,
+    )
+
+    finalize_block.assert_awaited_once_with(task_id=22, subtask_id=33)
+    finalize_failure.assert_awaited_once_with(
+        task_id=22,
+        assistant_subtask_id=33,
+        error_message="该请求无法处理，请调整问题后再试。",
+        error_code="PROMPT_PROTECTION_BLOCKED",
     )
 
 
