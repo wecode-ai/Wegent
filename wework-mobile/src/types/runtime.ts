@@ -42,6 +42,20 @@ export interface DeviceInfo {
   status: DeviceStatus
   device_type?: string | null
   capabilities?: string[] | null
+  runtime_features?: RuntimeFeatureSet | null
+}
+
+export interface RuntimeFeatureSet {
+  schemaVersion: number
+  runtimeHistory?: RuntimeHistoryCapability | null
+}
+
+export interface RuntimeHistoryCapability {
+  schemaVersions: number[]
+  defaultTurnPageSize: number
+  maxTurnPageSize: number
+  defaultItemPageSize: number
+  maxPageBytes: number
 }
 
 export interface DeviceListResponse {
@@ -129,6 +143,59 @@ export interface RuntimeTranscriptResponse {
   messages: RuntimeTranscriptMessage[]
   hasMoreBefore?: boolean
   beforeCursor?: string | null
+}
+
+export interface RuntimeHistoryTurn {
+  id: string
+  items: RuntimeHistoryTurnItem[]
+  messageIndex?: number | null
+  status?: string
+  runtimeStatus?: string | null
+  completedAt?: string | number | null
+  error?: string | null
+  errorType?: string | null
+  stoppedNotice?: boolean | null
+  fileChanges?: RuntimeFileChangesSummary | null
+  itemsView?: 'notLoaded' | 'summary' | 'full'
+  itemCount?: number
+}
+
+export type RuntimeHistoryTurnItem =
+  | {
+      id: string
+      type: 'user_message'
+      message: RuntimeTranscriptMessage
+    }
+  | {
+      id: string
+      type: 'assistant_text'
+      content: string
+      createdAt?: string | number | null
+    }
+  | {
+      id: string
+      type: 'block'
+      block: RuntimeChatBlock
+    }
+
+export interface RuntimeHistoryTurnsResponse {
+  schemaVersion: 2
+  taskId: string
+  workspacePath: string
+  runtime: string
+  running?: boolean
+  turns: RuntimeHistoryTurn[]
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+}
+
+export interface RuntimeHistoryItemsResponse {
+  schemaVersion: 2
+  taskId: string
+  turnId: string
+  items: RuntimeHistoryTurnItem[]
+  hasMore: boolean
+  nextCursor?: string | null
 }
 
 export interface RuntimeCreateRequest {

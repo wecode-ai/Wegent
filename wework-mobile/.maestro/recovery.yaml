@@ -1,0 +1,53 @@
+appId: com.wecode.wegent
+name: Mobile stream recovery and canonical convergence
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/open-project-chat.yaml
+- runFlow: subflows/select-runtime-model.yaml
+- tapOn:
+    id: new-chat-input
+- setClipboard: ${E2E_RECONNECT_PROMPT}
+- pasteText
+- tapOn:
+    id: new-chat-send
+- extendedWaitUntil:
+    visible:
+      id: assistant-streaming-indicator
+    timeout: 30000
+- runScript: scripts/signal-reconnect-streaming.js
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 30000
+- tapOn:
+    id: conversation-search
+- setClipboard: WEWORK_DESKTOP_E2E_RECONNECT
+- pasteText
+- hideKeyboard
+- tapOn:
+    id: conversation-.*
+- extendedWaitUntil:
+    visible: '.*${E2E_RECONNECT_COMPLETION}.*'
+    timeout: 120000
+- assertNotVisible:
+    id: assistant-streaming-indicator
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 30000
+- tapOn:
+    id: conversation-search
+- setClipboard: WEWORK_DESKTOP_E2E_RECONNECT
+- pasteText
+- hideKeyboard
+- tapOn:
+    id: conversation-.*
+- extendedWaitUntil:
+    visible: '.*${E2E_RECONNECT_COMPLETION}.*'
+    timeout: 30000

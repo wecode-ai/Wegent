@@ -69,6 +69,8 @@ import type {
   RuntimeSettings,
   RuntimeSendRequest,
   RuntimeSendResponse,
+  RuntimeHistoryItemsRequest,
+  RuntimeHistoryTurnsRequest,
   RuntimeTranscriptRequest,
   RuntimeTranscriptResponse,
   RuntimeWorkspaceOpenRequest,
@@ -565,6 +567,16 @@ function localDeviceFromStatus(status: LocalExecutorStatus): DeviceInfo {
     is_default: true,
     device_type: 'local' as const,
     runtime_instance_id: status.runtimeInstanceId ?? null,
+    runtime_features: {
+      schemaVersion: 2,
+      runtimeHistory: {
+        schemaVersions: [1, 2],
+        defaultTurnPageSize: 5,
+        maxTurnPageSize: 20,
+        defaultItemPageSize: 20,
+        maxPageBytes: 393216,
+      },
+    },
     capabilities: ['runtime-work', 'device-commands'],
     slot_used: 0,
     slot_max: 5,
@@ -2543,6 +2555,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     getRuntimeTranscript(data: RuntimeTranscriptRequest): Promise<RuntimeTranscriptResponse> {
       return requestWithLocalDevice('runtime.tasks.transcript', data)
+    },
+    listRuntimeHistoryTurns(data: RuntimeHistoryTurnsRequest) {
+      return requestWithLocalDevice('runtime.tasks.turns.list', data)
+    },
+    listRuntimeHistoryItems(data: RuntimeHistoryItemsRequest) {
+      return requestWithLocalDevice('runtime.tasks.items.list', data)
     },
     searchRuntimeWork(data: RuntimeWorkSearchRequest): Promise<RuntimeWorkSearchResponse> {
       return requestWithLocalDevice('runtime.tasks.search', data)

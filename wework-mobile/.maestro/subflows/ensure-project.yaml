@@ -1,0 +1,49 @@
+appId: com.wecode.wegent
+---
+- runFlow:
+    when:
+      notVisible:
+        id: project-${E2E_PROJECT_NAME}
+    commands:
+      - tapOn:
+          id: drawer-actions
+      - tapOn:
+          id: drawer-new-project
+      - assertVisible:
+          id: project-dialog
+      - tapOn:
+          id: project-name
+      - inputText: ${E2E_PROJECT_NAME}
+      - assertVisible:
+          id: project-name
+          text: ${E2E_PROJECT_NAME}
+      - tapOn:
+          id: project-workspace-path
+      - inputText: ${E2E_WORKSPACE_PATH}
+      - assertVisible:
+          id: project-workspace-path
+          text: ${E2E_WORKSPACE_PATH}
+      - tapOn:
+          id: project-create-submit
+      - extendedWaitUntil:
+          notVisible:
+            id: project-dialog
+          timeout: 30000
+      - extendedWaitUntil:
+          visible:
+            id: project-${E2E_PROJECT_NAME}
+          timeout: 30000
+- tapOn:
+    id: project-${E2E_PROJECT_NAME}
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible:
+        id: workspace-new-${E2E_DEVICE_ID}-${E2E_WORKSPACE_PATH}
+    commands:
+      - tapOn:
+          id: project-${E2E_PROJECT_NAME}
+- extendedWaitUntil:
+    visible:
+      id: workspace-new-${E2E_DEVICE_ID}-${E2E_WORKSPACE_PATH}
+    timeout: 30000

@@ -27,6 +27,10 @@ from app.schemas.runtime_work import (
     RuntimeGlobalIMNotificationUpdateRequest,
     RuntimeGuidanceRequest,
     RuntimeGuidanceResponse,
+    RuntimeHistoryItemsRequest,
+    RuntimeHistoryItemsResponse,
+    RuntimeHistoryTurnsRequest,
+    RuntimeHistoryTurnsResponse,
     RuntimeIMNotificationPresenceResponse,
     RuntimeIMNotificationPresenceUpdateRequest,
     RuntimeIMNotificationSettingsResponse,
@@ -345,6 +349,44 @@ async def get_runtime_transcript_endpoint(
         db=db,
         user_id=current_user.id,
         address=address,
+    )
+
+
+@router.post(
+    "/history/turns",
+    response_model=RuntimeHistoryTurnsResponse,
+    response_model_by_alias=True,
+)
+async def list_runtime_history_turns_endpoint(
+    request: RuntimeHistoryTurnsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read a lightweight page of Runtime conversation turns."""
+
+    return await runtime_work_service.list_runtime_history_turns(
+        db=db,
+        user_id=current_user.id,
+        request=request,
+    )
+
+
+@router.post(
+    "/history/items",
+    response_model=RuntimeHistoryItemsResponse,
+    response_model_by_alias=True,
+)
+async def list_runtime_history_items_endpoint(
+    request: RuntimeHistoryItemsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Read a byte-bounded page of canonical items for one Runtime turn."""
+
+    return await runtime_work_service.list_runtime_history_items(
+        db=db,
+        user_id=current_user.id,
+        request=request,
     )
 
 

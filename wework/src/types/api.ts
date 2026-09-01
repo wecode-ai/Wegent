@@ -684,6 +684,50 @@ export interface RuntimeTranscriptRequest extends RuntimeTaskAddress {
   includeFullContent?: boolean
 }
 
+export interface RuntimeHistoryTurnsRequest extends RuntimeTaskAddress {
+  limit?: number
+  beforeCursor?: string | null
+  afterCursor?: string | null
+  refresh?: boolean
+}
+
+export interface RuntimeHistoryTurnsResponse {
+  schemaVersion: 2
+  taskId: string
+  workspacePath: string
+  runtime: RuntimeName
+  running?: boolean
+  contextUsage?: RuntimeContextUsage | null
+  turns: RuntimeHistoryTurn[]
+  turnNavigation?: RuntimeTurnNavigationItem[]
+  rangeStart?: number | null
+  rangeEnd?: number | null
+  hasMoreBefore?: boolean
+  beforeCursor?: string | null
+  hasMoreAfter?: boolean
+  afterCursor?: string | null
+}
+
+export interface RuntimeHistoryTurn extends RuntimeTranscriptTurn {
+  itemsView?: 'notLoaded' | 'summary' | 'full'
+  itemCount?: number
+}
+
+export interface RuntimeHistoryItemsRequest extends RuntimeTaskAddress {
+  turnId: string
+  cursor?: string | null
+  limit?: number
+}
+
+export interface RuntimeHistoryItemsResponse {
+  schemaVersion: 2
+  taskId: string
+  turnId: string
+  items: RuntimeTranscriptTurnItem[]
+  hasMore: boolean
+  nextCursor?: string | null
+}
+
 export interface RuntimeSendRequest {
   address: RuntimeTaskAddress
   message: string
@@ -1072,7 +1116,16 @@ export interface RuntimeWorktreeCapability {
 
 export interface RuntimeFeatureSet {
   schemaVersion: number
+  runtimeHistory?: RuntimeHistoryCapability | null
   worktrees?: RuntimeWorktreeCapability | null
+}
+
+export interface RuntimeHistoryCapability {
+  schemaVersions: number[]
+  defaultTurnPageSize: number
+  maxTurnPageSize: number
+  defaultItemPageSize: number
+  maxPageBytes: number
 }
 
 export interface RuntimeWorktreeCapabilitiesRequest {

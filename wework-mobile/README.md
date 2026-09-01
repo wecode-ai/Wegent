@@ -15,7 +15,7 @@ flowchart LR
   C -->|create / send + model selection| R
   C -->|task + device scope| S[Runtime stream client]
   R -->|/runtime-work/* and /models/unified| B[Wegent Backend]
-  S <-->|Socket.IO /wework-runtime · runtime:event| B
+  S <-->|Socket.IO events · paged Runtime history V2 RPC| B
   B <-->|authenticated Runtime RPC| E[Cloud executor]
   S -->|scoped response.* events| C
 ```

@@ -1,0 +1,81 @@
+appId: com.wecode.wegent
+name: Mobile composer modes apps and attachments
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/open-project-chat.yaml
+- tapOn:
+    id: new-chat-input
+- inputText: composer controls
+- tapOn:
+    id: new-chat-attachment
+- assertVisible:
+    id: composer-context-menu
+- assertVisible:
+    id: composer-menu-file
+- assertVisible:
+    id: composer-menu-camera
+- assertVisible:
+    id: composer-menu-photos
+- waitForAnimationToEnd
+- tapOn:
+    id: composer-menu-plan
+- assertVisible:
+    id: composer-plan-selection
+- tapOn:
+    id: composer-plan-remove
+- tapOn:
+    id: new-chat-attachment
+- tapOn:
+    id: composer-menu-goal
+- assertVisible:
+    id: composer-goal-selection
+- tapOn:
+    id: composer-goal-remove
+- tapOn:
+    id: new-chat-attachment
+- swipe:
+    start: 50%,45%
+    end: 50%,25%
+    duration: 500
+- waitForAnimationToEnd
+- tapOn:
+    id: composer-menu-plugin-desktop-e2e-auto-update-1
+- assertVisible:
+    id: composer-selected-app-desktop-e2e-auto-update-1
+- tapOn:
+    id: composer-selected-app-desktop-e2e-auto-update-1
+- setPermissions:
+    permissions:
+      all: allow
+- addMedia:
+    - ../assets/icon.png
+- tapOn:
+    id: new-chat-attachment
+- tapOn:
+    id: composer-menu-photos
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - waitForAnimationToEnd
+      - runScript: scripts/wait-for-native-transition.js
+      - tapOn:
+          point: 16%,25%
+      - waitForAnimationToEnd
+      - tapOn:
+          point: 90%,12%
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn:
+          point: 16%,25%
+      - tapOn:
+          text: Add
+- extendedWaitUntil:
+    visible:
+      id: composer-attachment-remove-.*
+    timeout: 30000
+- pressKey: Home

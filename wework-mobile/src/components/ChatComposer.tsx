@@ -3,8 +3,17 @@ import * as DocumentPicker from 'expo-document-picker'
 import type { GlassColorScheme } from 'expo-glass-effect'
 import * as ImagePicker from 'expo-image-picker'
 import { useRef, useState, type ReactNode } from 'react'
-import { Alert, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native'
-import { ActivityIndicator, Text, useTheme } from 'react-native-paper'
+import {
+  Alert,
+  Image,
+  Keyboard,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native'
+import { ActivityIndicator, IconButton, Text, useTheme } from 'react-native-paper'
 
 import { composerLogoUrl, composerMessage } from '@/domain/composerApps'
 import { chatComposerPresentation } from '@/domain/chatComposerPresentation'
@@ -175,7 +184,13 @@ export function ChatComposer({
     }
   }
 
+  const prepareNativePicker = () => {
+    inputRef.current?.blur()
+    Keyboard.dismiss()
+  }
+
   const pickDocument = async () => {
+    prepareNativePicker()
     const result = await DocumentPicker.getDocumentAsync({
       copyToCacheDirectory: true,
       multiple: true,
@@ -193,6 +208,7 @@ export function ChatComposer({
   }
 
   const takePhoto = async () => {
+    prepareNativePicker()
     const permission = await ImagePicker.requestCameraPermissionsAsync()
     if (!permission.granted) {
       Alert.alert('无法打开相机', '请在系统设置中允许 Wegent 使用相机。')
@@ -209,6 +225,7 @@ export function ChatComposer({
   }
 
   const pickPhoto = async () => {
+    prepareNativePicker()
     const result = await ImagePicker.launchImageLibraryAsync({
       allowsMultipleSelection: true,
       mediaTypes: ['images'],
@@ -348,16 +365,17 @@ export function ChatComposer({
                   <Text numberOfLines={1} style={styles.attachmentName} variant="labelMedium">
                     {attachment.filename}
                   </Text>
-                  <Pressable
+                  <IconButton
                     accessibilityLabel={`移除 ${attachment.filename}`}
-                    hitSlop={6}
+                    icon="close"
+                    iconColor={theme.colors.onSurfaceVariant}
                     onPress={() =>
                       setAttachments(current => current.filter(item => item.id !== attachment.id))
                     }
+                    size={16}
+                    style={styles.attachmentRemove}
                     testID={`composer-attachment-remove-${attachment.id}`}
-                  >
-                    <Ionicons color={theme.colors.onSurfaceVariant} name="close" size={16} />
-                  </Pressable>
+                  />
                 </View>
               ))}
               {uploading ? (
@@ -608,6 +626,7 @@ const styles = StyleSheet.create({
   attachmentPreview: { width: 30, height: 30, borderRadius: 9 },
   fileIcon: { width: 30, alignItems: 'center', justifyContent: 'center' },
   attachmentName: { minWidth: 0, flexShrink: 1 },
+  attachmentRemove: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   selectedApps: { paddingHorizontal: 12, paddingTop: 8 },
   selectedAppRow: {
     alignSelf: 'flex-start',

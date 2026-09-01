@@ -46,6 +46,8 @@ import type {
   RuntimeRollbackRequest,
   RuntimeFileChangesRevertRequest,
   RuntimeGlobalIMNotificationUpdateRequest,
+  RuntimeHistoryItemsRequest,
+  RuntimeHistoryTurnsRequest,
   RuntimeIMNotificationPresenceUpdateRequest,
   RuntimeLocalProjectUpsertRequest,
   RuntimeSendRequest,
@@ -857,6 +859,12 @@ export function createHybridWorkbenchServices(
         })
         throw error
       }
+    },
+    listRuntimeHistoryTurns(data: RuntimeHistoryTurnsRequest) {
+      return routeByAddress(data).listRuntimeHistoryTurns(data)
+    },
+    listRuntimeHistoryItems(data: RuntimeHistoryItemsRequest) {
+      return routeByAddress(data).listRuntimeHistoryItems(data)
     },
     async searchRuntimeWork(data: RuntimeWorkSearchRequest) {
       if (data.source === 'cloud') {

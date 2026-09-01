@@ -19,6 +19,7 @@ import {
   type RuntimeSendTransition,
 } from '@/domain/runtimeTaskLifecycle'
 import { createConversationWorkspace } from '@/domain/runtimeConversationWorkspace'
+import { runtimeHistoryV2Capability } from '@/domain/runtimeHistory'
 import { allWorkspaces, flattenConversations, runtimeWorkContainsTask } from '@/domain/work'
 import type { RuntimeSessionConfig } from '@/services/backendConfig'
 import { RuntimeApi } from '@/services/runtimeApi'
@@ -68,6 +69,8 @@ export interface MobileRuntimeState {
   sending: boolean
   running: boolean
   stopping: boolean
+  hasMoreHistory: boolean
+  loadingOlderHistory: boolean
   error: string | null
   refresh: () => Promise<void>
   openConversation: (item: ConversationItem) => Promise<void>
@@ -78,6 +81,7 @@ export interface MobileRuntimeState {
   selectPermissionMode: (mode: RuntimePermissionMode) => void
   send: (message: string, options?: NewConversationOptions) => Promise<boolean>
   stop: () => Promise<boolean>
+  loadOlderHistory: () => Promise<void>
   uploadAttachment: (asset: RuntimeUploadAsset) => Promise<RuntimeAttachment>
   loadComposerApps: () => Promise<RuntimeComposerApp[]>
   createProject: (input: { deviceId: string; workspacePath: string; name: string }) => Promise<void>
@@ -100,6 +104,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     () => new Map()
   )
   const [devices, setDevices] = useState<DeviceInfo[]>([])
+  const devicesRef = useRef<DeviceInfo[]>([])
   const [messages, dispatchMessages] = useReducer(chatReducer, [])
   const [currentAddress, setCurrentAddress] = useState<RuntimeTaskAddress | null>(null)
   const [currentTitle, setCurrentTitle] = useState('新会话')
@@ -115,6 +120,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [stoppingTaskKey, setStoppingTaskKey] = useState<string | null>(null)
+  const [historyBeforeCursor, setHistoryBeforeCursor] = useState<string | null>(null)
+  const [hasMoreHistory, setHasMoreHistory] = useState(false)
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const unsubscribeRef = useRef<(() => void) | null>(null)
   const currentAddressRef = useRef<RuntimeTaskAddress | null>(null)
@@ -167,6 +175,13 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     return nextWork
   }, [api, lifecycle, publishTaskLifecycle])
 
+  const reloadDevices = useCallback(async () => {
+    const response = await api.listDevices()
+    devicesRef.current = response.items
+    setDevices(response.items)
+    return response
+  }, [api])
+
   const workInvalidator = useMemo(
     () =>
       new RuntimeWorkInvalidator(async () => {
@@ -182,7 +197,11 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
   const reloadTranscript = useCallback(
     async (address: RuntimeTaskAddress) => {
       const observation = lifecycle.transcriptRequested(address)
-      const transcript = await stream.getTranscript(address)
+      const transcript = await stream.getTranscript(address, {
+        historyCapability: runtimeHistoryV2Capability(
+          devicesRef.current.find(device => device.device_id === address.deviceId)
+        ),
+      })
       if (
         typeof transcript.running === 'boolean' &&
         lifecycle.transcriptReceived(observation, transcript.running)
@@ -190,12 +209,45 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
         publishTaskLifecycle()
       }
       if (transcript.running === false) clearStoppingTask(address)
-      if (currentAddressRef.current?.taskId !== address.taskId) return
+      if (
+        currentAddressRef.current?.deviceId !== address.deviceId ||
+        currentAddressRef.current.taskId !== address.taskId
+      )
+        return
       dispatchMessages({ type: 'replace', messages: transcript.messages })
+      setHasMoreHistory(Boolean(transcript.hasMoreBefore && transcript.beforeCursor))
+      setHistoryBeforeCursor(transcript.beforeCursor ?? null)
       if (transcript.title) setCurrentTitle(transcript.title)
     },
     [clearStoppingTask, lifecycle, publishTaskLifecycle, stream]
   )
+
+  const loadOlderHistory = useCallback(async () => {
+    const address = currentAddressRef.current
+    const beforeCursor = historyBeforeCursor
+    if (!address || !beforeCursor || loadingOlderHistory) return
+    setLoadingOlderHistory(true)
+    try {
+      const transcript = await stream.getTranscript(address, {
+        beforeCursor,
+        historyCapability: runtimeHistoryV2Capability(
+          devicesRef.current.find(device => device.device_id === address.deviceId)
+        ),
+      })
+      if (
+        currentAddressRef.current?.deviceId !== address.deviceId ||
+        currentAddressRef.current.taskId !== address.taskId
+      )
+        return
+      dispatchMessages({ type: 'prepend', messages: transcript.messages })
+      setHasMoreHistory(Boolean(transcript.hasMoreBefore && transcript.beforeCursor))
+      setHistoryBeforeCursor(transcript.beforeCursor ?? null)
+    } catch (cause) {
+      setError(messageFrom(cause))
+    } finally {
+      setLoadingOlderHistory(false)
+    }
+  }, [historyBeforeCursor, loadingOlderHistory, stream])
 
   const subscribe = useCallback(
     (address: RuntimeTaskAddress) => {
@@ -208,10 +260,13 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
             event,
           })
         },
-        () => void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
+        () =>
+          void reloadDevices()
+            .then(() => reloadTranscript(address))
+            .catch(cause => setError(messageFrom(cause)))
       )
     },
-    [reloadTranscript, stream]
+    [reloadDevices, reloadTranscript, stream]
   )
 
   const refresh = useCallback(async () => {
@@ -220,10 +275,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     try {
       const [, deviceResponse, modelResponse] = await Promise.all([
         reloadWork(),
-        api.listDevices(),
+        reloadDevices(),
         api.listModels(),
       ])
-      setDevices(deviceResponse.items)
       setModels(modelResponse.data)
       setSelectedModel(current => {
         const next =
@@ -247,7 +301,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     } finally {
       setLoading(false)
     }
-  }, [api, reloadWork])
+  }, [api, reloadDevices, reloadWork])
 
   useEffect(() => {
     setTaskRunningByKey(lifecycle.snapshot())
@@ -255,20 +309,26 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
 
   useEffect(
     () =>
-      stream.subscribeLifecycle((address, event) => {
-        const taskKnown = runtimeWorkContainsTask(workRef.current, address)
-        if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
-          publishTaskLifecycle()
-        }
-        if (shouldReloadRuntimeWork(event.name, taskKnown)) invalidateWork()
-        if (isTerminalRuntimeEvent(event.name)) {
-          const current = currentAddressRef.current
-          if (current && runtimeTaskKey(current) === runtimeTaskKey(address)) {
-            void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
+      stream.subscribeLifecycle(
+        (address, event) => {
+          const taskKnown = runtimeWorkContainsTask(workRef.current, address)
+          if (isRunningRuntimeEvent(event.name) && lifecycle.executorStarted(address)) {
+            publishTaskLifecycle()
           }
+          if (shouldReloadRuntimeWork(event.name, taskKnown)) invalidateWork()
+          if (isTerminalRuntimeEvent(event.name)) {
+            const current = currentAddressRef.current
+            if (current && runtimeTaskKey(current) === runtimeTaskKey(address)) {
+              void reloadTranscript(address).catch(cause => setError(messageFrom(cause)))
+            }
+          }
+        },
+        () => {
+          void reloadDevices().catch(cause => setError(messageFrom(cause)))
+          invalidateWork()
         }
-      }, invalidateWork),
-    [invalidateWork, lifecycle, publishTaskLifecycle, reloadTranscript, stream]
+      ),
+    [invalidateWork, lifecycle, publishTaskLifecycle, reloadDevices, reloadTranscript, stream]
   )
 
   useEffect(() => {
@@ -318,6 +378,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
       currentAddressRef.current = item.address
       setCurrentAddress(item.address)
       setCurrentTitle(item.title)
+      setHasMoreHistory(false)
+      setHistoryBeforeCursor(null)
       setSelectedDeviceId(item.address.deviceId)
       const workspace = allWorkspaces(work).find(
         candidate =>
@@ -343,6 +405,9 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     currentAddressRef.current = null
     setCurrentAddress(null)
     setCurrentTitle(workspace?.label || '新会话')
+    setHasMoreHistory(false)
+    setHistoryBeforeCursor(null)
+    setLoadingOlderHistory(false)
     setSelectedWorkspace(workspace ?? null)
     if (workspace) setSelectedDeviceId(workspace.deviceId)
     dispatchMessages({ type: 'replace', messages: [] })
@@ -589,6 +654,8 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     sending,
     running: currentTaskRunning,
     stopping: currentTaskStopping,
+    hasMoreHistory,
+    loadingOlderHistory,
     error,
     refresh,
     openConversation,
@@ -602,6 +669,7 @@ export function useMobileRuntime(config: RuntimeSessionConfig): MobileRuntimeSta
     selectPermissionMode,
     send,
     stop,
+    loadOlderHistory,
     uploadAttachment,
     loadComposerApps,
     createProject,

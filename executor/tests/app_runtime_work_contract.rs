@@ -417,6 +417,80 @@ async fn app_runtime_pages_codex_thread_transcript_from_provider() {
 }
 
 #[tokio::test]
+async fn app_runtime_history_v2_loads_turn_metadata_before_turn_items() {
+    let _lock = env_lock().await;
+    let _home = EnvGuard::set(
+        "WEGENT_EXECUTOR_HOME",
+        &temp_path("wegent-app-runtime-history-v2-home", "dir")
+            .display()
+            .to_string(),
+    );
+    let _codex_home = set_temp_codex_home("wegent-app-runtime-history-v2-codex-home");
+    let log_path = temp_path("wegent-app-runtime-history-v2-log", "jsonl");
+    let fake_codex = write_fake_paginated_codex(&log_path);
+    let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
+
+    let turns = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.turns.list",
+            "payload": {
+                "taskId": "thread-1",
+                "runtime": "codex",
+                "workspacePath": "/tmp/project",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "limit": 5
+            }
+        }))
+        .await
+        .expect("history turn metadata should load");
+
+    assert_eq!(turns["schemaVersion"], 2);
+    assert_eq!(turns["turns"].as_array().map(Vec::len), Some(1));
+    assert_eq!(turns["turns"][0]["id"], "turn-new");
+    assert_eq!(turns["turns"][0]["items"], json!([]));
+    assert_eq!(turns["turns"][0]["itemsView"], "notLoaded");
+    assert_eq!(turns["beforeCursor"], "older-turns");
+
+    let metadata_calls = read_json_lines(&log_path);
+    assert_eq!(
+        metadata_calls
+            .iter()
+            .filter(|call| call["method"] == "thread/items/list")
+            .count(),
+        0
+    );
+    assert!(metadata_calls.iter().any(|call| {
+        call["method"] == "thread/turns/list"
+            && call["params"]["limit"] == 5
+            && call["params"]["itemsView"] == "notLoaded"
+    }));
+
+    let items = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.items.list",
+            "payload": {
+                "taskId": "thread-1",
+                "runtime": "codex",
+                "runtimeHandle": {"threadId": "thread-1"},
+                "turnId": "turn-new",
+                "limit": 20
+            }
+        }))
+        .await
+        .expect("history turn items should load");
+
+    assert_eq!(items["schemaVersion"], 2);
+    assert_eq!(items["items"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        read_json_lines(&log_path)
+            .iter()
+            .filter(|call| call["method"] == "thread/items/list")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn app_runtime_loads_full_codex_transcript_across_opaque_pages() {
     let _lock = env_lock().await;
     let _home = EnvGuard::set(

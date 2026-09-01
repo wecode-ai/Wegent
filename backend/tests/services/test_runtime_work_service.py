@@ -1420,6 +1420,102 @@ async def test_runtime_transcript_dispatches_pagination_payload(
 
 
 @pytest.mark.asyncio
+async def test_runtime_history_dispatches_turn_and_item_pages(
+    test_db,
+    test_user,
+    monkeypatch,
+):
+    from app.schemas.runtime_work import (
+        RuntimeHistoryItemsRequest,
+        RuntimeHistoryTurnsRequest,
+    )
+    from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.device_service,
+        "get_device_by_device_id",
+        lambda db, user_id, device_id: object(),
+    )
+    rpc = AsyncMock(
+        side_effect=[
+            {
+                "schemaVersion": 2,
+                "taskId": "codex-1",
+                "workspacePath": "/repo/Wegent",
+                "runtime": "codex",
+                "turns": [{"id": "turn-1", "items": []}],
+                "hasMoreBefore": True,
+                "beforeCursor": "turn-page-2",
+            },
+            {
+                "schemaVersion": 2,
+                "taskId": "codex-1",
+                "turnId": "turn-1",
+                "items": [{"id": "item-1", "type": "assistant_text"}],
+                "hasMore": False,
+                "nextCursor": None,
+            },
+        ]
+    )
+    monkeypatch.setattr(runtime_work_service.runtime_rpc_service, "call", rpc)
+
+    turns = await runtime_work_service.list_runtime_history_turns(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeHistoryTurnsRequest(
+            deviceId="device-1",
+            taskId="codex-1",
+            workspacePath="/repo/Wegent",
+            limit=5,
+            beforeCursor="turn-page-1",
+        ),
+    )
+    items = await runtime_work_service.list_runtime_history_items(
+        db=test_db,
+        user_id=test_user.id,
+        request=RuntimeHistoryItemsRequest(
+            deviceId="device-1",
+            taskId="codex-1",
+            workspacePath="/repo/Wegent",
+            turnId="turn-1",
+            cursor="item-page-1",
+            limit=20,
+        ),
+    )
+
+    assert turns.before_cursor == "turn-page-2"
+    assert items.turn_id == "turn-1"
+    assert rpc.await_args_list[0].kwargs == {
+        "user_id": test_user.id,
+        "device_id": "device-1",
+        "method": "runtime.tasks.turns.list",
+        "payload": {
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+            "limit": 5,
+            "beforeCursor": "turn-page-1",
+            "refresh": False,
+        },
+        "timeout_seconds": 30,
+    }
+    assert rpc.await_args_list[1].kwargs == {
+        "user_id": test_user.id,
+        "device_id": "device-1",
+        "method": "runtime.tasks.items.list",
+        "payload": {
+            "deviceId": "device-1",
+            "workspacePath": "/repo/Wegent",
+            "taskId": "codex-1",
+            "turnId": "turn-1",
+            "cursor": "item-page-1",
+            "limit": 20,
+        },
+        "timeout_seconds": 30,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("device_status", "expected_http_status"),
     [

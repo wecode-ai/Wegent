@@ -38,6 +38,8 @@ import {
   projectTaskAddresses,
   writeLastProjectId,
 } from './workbenchRuntimeHelpers'
+import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { loadRuntimeHistoryV2, runtimeHistoryV2Capability } from './runtimeHistoryProtocol'
 import type { WorkbenchServices } from './workbenchServices'
 import type {
   ArchiveRuntimeTaskOptions,
@@ -142,14 +144,21 @@ export function useWorkbenchRuntimeTasks({
       options: RuntimePaneTranscriptLoadOptions = {}
     ): Promise<RuntimePaneTranscript> => {
       const transcriptRequest: RuntimeTranscriptRequest = { ...address, ...options }
-      const transcriptKey = runtimeTranscriptRequestKey(address, options)
+      const historyCapability =
+        options.includeFullContent === true
+          ? null
+          : runtimeHistoryV2Capability(findWorkbenchDevice(state.devices, address.deviceId))
+      const transcriptKey = runtimeTranscriptRequestKey(address, options, historyCapability ? 2 : 1)
       const inFlightTranscript = runtimeTranscriptRequests.get(transcriptKey)
       if (inFlightTranscript) {
         return inFlightTranscript
       }
 
-      const request = executorClient.runtime
-        .getRuntimeTranscript(transcriptRequest)
+      const request = (
+        historyCapability
+          ? loadRuntimeHistoryV2(executorClient.runtime, address, historyCapability, options)
+          : executorClient.runtime.getRuntimeTranscript(transcriptRequest)
+      )
         .then(transcript => {
           if (!Array.isArray(transcript.turns)) {
             console.error('[Wework] Runtime pane transcript response missing canonical turns', {
@@ -170,7 +179,7 @@ export function useWorkbenchRuntimeTasks({
       runtimeTranscriptRequests.set(transcriptKey, request)
       return request
     },
-    [executorClient]
+    [executorClient, state.devices]
   )
 
   const subscribeRuntimeTaskStream = useCallback(
@@ -599,10 +608,12 @@ function isRuntimeTaskWorktree(
 
 function runtimeTranscriptRequestKey(
   address: RuntimeTaskAddress,
-  options: RuntimePaneTranscriptLoadOptions
+  options: RuntimePaneTranscriptLoadOptions,
+  protocolVersion: 1 | 2
 ): string {
   return JSON.stringify({
     address: getRuntimeTaskRouteKey(address),
+    protocolVersion,
     limit: options.limit ?? null,
     beforeCursor: options.beforeCursor ?? null,
     afterCursor: options.afterCursor ?? null,

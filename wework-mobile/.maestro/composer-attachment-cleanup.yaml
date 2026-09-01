@@ -1,0 +1,18 @@
+appId: com.wecode.wegent
+name: Mobile composer attachment upload and removal
+tags:
+  - mobile-e2e
+---
+- launchApp:
+    stopApp: false
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible:
+      id: composer-attachment-remove-.*
+    timeout: 30000
+- runScript: scripts/wait-for-native-transition.js
+- tapOn:
+    id: composer-attachment-remove-.*
+    point: 20%,50%
+- assertNotVisible:
+    id: composer-attachment-remove-.*

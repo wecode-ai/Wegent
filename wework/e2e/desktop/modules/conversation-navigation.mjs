@@ -71,10 +71,13 @@ import {
 
 import { captureVerificationScreenshot, waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
-const ACTIVE_TRANSCRIPT_SELECTOR =
-  '[data-workspace-tab-content][aria-hidden="false"] ' +
-  `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
-  '[data-testid="desktop-chat-scroll-content"]'
+function activeTranscriptSelector() {
+  return (
+    '[data-workspace-tab-content][aria-hidden="false"] ' +
+    `${ACTIVE_WORKBENCH_SELECTOR}[data-active-workbench-pane="true"] ` +
+    '[data-testid="desktop-chat-scroll-content"]'
+  )
+}
 
 async function waitForActiveTaskIdle(control) {
   const startedAt = Date.now()
@@ -150,7 +153,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: userText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   assert.equal(
     countTextOccurrences(transcriptText, userText),
     1,
@@ -162,7 +165,7 @@ async function assertConversationMessageState(control, { assistantText, userText
     text: assistantText,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const completedTranscriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const completedTranscriptText = await control.command('getText', activeTranscriptSelector())
   const userIndex = completedTranscriptText.indexOf(userText)
   const assistantIndex = completedTranscriptText.indexOf(assistantText)
   assert.ok(userIndex >= 0, `The completed conversation lost "${userText}"`)
@@ -174,7 +177,7 @@ async function assertConversationMessageState(control, { assistantText, userText
 }
 
 async function assertConversationTextOccurrences(control, expectedOccurrences) {
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   for (const [text, expectedCount] of Object.entries(expectedOccurrences)) {
     assert.equal(
       countTextOccurrences(transcriptText, text),
@@ -188,7 +191,7 @@ async function assertConversationTextOccurrences(control, expectedOccurrences) {
 }
 
 async function assertConversationTextNotDuplicated(control, texts) {
-  const transcriptText = await control.command('getText', ACTIVE_TRANSCRIPT_SELECTOR)
+  const transcriptText = await control.command('getText', activeTranscriptSelector())
   for (const text of texts) {
     const occurrenceCount = countTextOccurrences(transcriptText, text)
     assert.ok(
@@ -819,7 +822,7 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 
   const assistantText = await control.command(
     'scrollIntoViewAsUser',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"] p`,
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
     { text: targetResponseText }
   )
   const turnMatch = assistantText.match(/Virtualized navigation response (\d+)\.\d+/)
@@ -833,8 +836,9 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
   )
   const virtualizedOutPrompt = `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_1`
+  const virtualizedOutPromptPattern = new RegExp(`${virtualizedOutPrompt}(?!\\d)`)
   assert.ok(
-    !mountedUserMessages.includes(virtualizedOutPrompt),
+    !virtualizedOutPromptPattern.test(mountedUserMessages),
     'The oldest user row remained mounted, so the turn navigation fixture was not virtualized'
   )
 
@@ -1026,7 +1030,13 @@ async function reopenCurrentTurnNavigationTask(
   if (expectedTurnCount > E2E_TRANSCRIPT_PAGE_SIZE) {
     const expectedMessageCount = expectedConversationTurnCount * 2
     let paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
-    if (paginatedSnapshot.pane?.messageSummary.total !== expectedMessageCount) {
+    while (paginatedSnapshot.pane?.messageSummary.total < expectedMessageCount) {
+      const previousMessageCount = paginatedSnapshot.pane?.messageSummary.total ?? 0
+      assert.equal(
+        paginatedSnapshot.pane?.transcript.hasMoreBefore,
+        true,
+        'The transcript ended before all historical messages were loaded'
+      )
       await control.command('waitFor', '[data-testid="load-older-runtime-transcript-button"]', {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
@@ -1036,12 +1046,16 @@ async function reopenCurrentTurnNavigationTask(
         paginatedSnapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
         if (
           paginatedSnapshot.pane?.transcript.loadingMoreBefore === false &&
-          paginatedSnapshot.pane?.messageSummary.total === expectedMessageCount
+          paginatedSnapshot.pane?.messageSummary.total > previousMessageCount
         ) {
           break
         }
         await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
       }
+      assert.ok(
+        paginatedSnapshot.pane?.messageSummary.total > previousMessageCount,
+        'Loading the next transcript page made no progress'
+      )
     }
     assert.equal(
       paginatedSnapshot?.pane?.messageSummary.total,

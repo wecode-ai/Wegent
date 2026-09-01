@@ -50,7 +50,7 @@ describe('RuntimeStream', () => {
         params: {
           deviceId: 'device-1',
           taskId: 'task-1',
-          limit: 50,
+          limit: 20,
         },
       })
       acknowledge({
@@ -68,6 +68,120 @@ describe('RuntimeStream', () => {
     await expect(
       stream.getTranscript({ deviceId: 'device-1', taskId: 'task-1' })
     ).resolves.toMatchObject({ taskId: 'task-1', messages: [{ content: 'pwd' }] })
+  })
+
+  it('loads V2 turn metadata and item pages for capable runtimes', async () => {
+    emit
+      .mockImplementationOnce((name, payload, acknowledge) => {
+        expect(name).toBe('runtime:request')
+        expect(payload).toMatchObject({
+          method: 'runtime.tasks.turns.list',
+          params: {
+            deviceId: 'device-1',
+            taskId: 'task-1',
+            limit: 5,
+          },
+        })
+        acknowledge({
+          ok: true,
+          result: {
+            schemaVersion: 2,
+            taskId: 'task-1',
+            workspacePath: '/work',
+            runtime: 'codex',
+            turns: [{ id: 'turn-1', items: [], itemsView: 'notLoaded' }],
+            hasMoreBefore: true,
+            beforeCursor: 'turn-page-1',
+          },
+        })
+      })
+      .mockImplementationOnce((name, payload, acknowledge) => {
+        expect(name).toBe('runtime:request')
+        expect(payload).toMatchObject({
+          method: 'runtime.tasks.items.list',
+          params: {
+            deviceId: 'device-1',
+            taskId: 'task-1',
+            turnId: 'turn-1',
+            cursor: null,
+            limit: 20,
+          },
+        })
+        acknowledge({
+          ok: true,
+          result: {
+            schemaVersion: 2,
+            taskId: 'task-1',
+            turnId: 'turn-1',
+            items: [
+              {
+                id: 'user-1',
+                type: 'user_message',
+                message: { id: 'user-1', role: 'user', content: 'pwd' },
+              },
+              {
+                id: 'assistant-1',
+                type: 'assistant_text',
+                content: '/work',
+              },
+            ],
+            hasMore: false,
+            nextCursor: null,
+          },
+        })
+      })
+    const stream = new RuntimeStream(config)
+
+    await expect(
+      stream.getTranscript(
+        { deviceId: 'device-1', taskId: 'task-1' },
+        {
+          historyCapability: {
+            schemaVersions: [1, 2],
+            defaultTurnPageSize: 5,
+            maxTurnPageSize: 20,
+            defaultItemPageSize: 20,
+            maxPageBytes: 393216,
+          },
+        }
+      )
+    ).resolves.toMatchObject({
+      beforeCursor: 'turn-page-1',
+      hasMoreBefore: true,
+      messages: [
+        { id: 'user-1', content: 'pwd' },
+        { id: 'assistant-turn-1', content: '/work' },
+      ],
+    })
+  })
+
+  it('passes the V1 before cursor when a new client reads an older runtime', async () => {
+    emit.mockImplementation((_name, payload, acknowledge) => {
+      expect(payload).toMatchObject({
+        method: 'runtime.tasks.transcript',
+        params: {
+          limit: 20,
+          beforeCursor: 'offset:20',
+        },
+      })
+      acknowledge({
+        ok: true,
+        result: {
+          taskId: 'task-1',
+          workspacePath: '/work',
+          runtime: 'codex',
+          messages: [],
+          hasMoreBefore: false,
+          beforeCursor: null,
+        },
+      })
+    })
+    const stream = new RuntimeStream(config)
+
+    await stream.getTranscript(
+      { deviceId: 'device-1', taskId: 'task-1' },
+      { beforeCursor: 'offset:20' }
+    )
   })
 
   it('decompresses large transcript acknowledgements', async () => {

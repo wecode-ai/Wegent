@@ -1,0 +1,37 @@
+appId: com.wecode.wegent
+name: Mobile authorization and credential lifecycle
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 30000
+- tapOn:
+    id: drawer-actions
+- tapOn:
+    id: drawer-settings
+- assertVisible:
+    id: settings-dialog
+- tapOn:
+    id: disconnect-backend
+- extendedWaitUntil:
+    visible:
+      id: authorization-card
+    timeout: 30000
+- tapOn:
+    id: authorization-server-change
+- tapOn:
+    id: backend-address
+- eraseText
+- inputText: 127.0.0.1:1
+- hideKeyboard
+- tapOn:
+    id: authorize-login
+- extendedWaitUntil:
+    visible:
+      id: authorization-error
+    timeout: 30000

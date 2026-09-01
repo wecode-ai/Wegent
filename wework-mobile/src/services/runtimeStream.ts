@@ -3,14 +3,25 @@ import { gunzipSync, strFromU8 } from 'fflate'
 import { io, type Socket } from 'socket.io-client'
 
 import type { RuntimeStreamEvent } from '@/domain/chatReducer'
-import type { RuntimeTaskAddress, RuntimeTranscriptResponse } from '@/types/runtime'
+import { runtimeHistoryTurnsToMessages } from '@/domain/runtimeHistory'
+import type {
+  RuntimeHistoryCapability,
+  RuntimeHistoryItemsResponse,
+  RuntimeHistoryTurn,
+  RuntimeHistoryTurnItem,
+  RuntimeHistoryTurnsResponse,
+  RuntimeTaskAddress,
+  RuntimeTranscriptResponse,
+} from '@/types/runtime'
 import type { RuntimeSessionConfig } from './backendConfig'
 
 const RUNTIME_NAMESPACE = '/wework-runtime'
 const RUNTIME_EVENT = 'runtime:event'
 const REQUEST_EVENT = 'runtime:request'
 const TRANSCRIPT_TIMEOUT_MS = 15_000
-const TRANSCRIPT_PAGE_SIZE = 50
+const LEGACY_TRANSCRIPT_PAGE_SIZE = 20
+const DEFAULT_HISTORY_TURN_PAGE_SIZE = 5
+const DEFAULT_HISTORY_ITEM_PAGE_SIZE = 20
 const COMPRESSED_ENCODING = 'gzip+base64+json'
 
 type Listener = (event: RuntimeStreamEvent) => void
@@ -84,13 +95,96 @@ export class RuntimeStream {
     }
   }
 
-  getTranscript(address: RuntimeTaskAddress): Promise<RuntimeTranscriptResponse> {
+  getTranscript(
+    address: RuntimeTaskAddress,
+    options: {
+      beforeCursor?: string | null
+      historyCapability?: RuntimeHistoryCapability | null
+    } = {}
+  ): Promise<RuntimeTranscriptResponse> {
+    if (options.historyCapability) {
+      return this.getHistoryV2(address, options.historyCapability, options.beforeCursor)
+    }
     return this.request(
       'runtime.tasks.transcript',
-      { ...address, limit: TRANSCRIPT_PAGE_SIZE },
+      {
+        ...address,
+        limit: LEGACY_TRANSCRIPT_PAGE_SIZE,
+        ...(options.beforeCursor && { beforeCursor: options.beforeCursor }),
+      },
       address.deviceId,
       TRANSCRIPT_TIMEOUT_MS
     )
+  }
+
+  private async getHistoryV2(
+    address: RuntimeTaskAddress,
+    capability: RuntimeHistoryCapability,
+    beforeCursor?: string | null
+  ): Promise<RuntimeTranscriptResponse> {
+    const turnPage = await this.request<RuntimeHistoryTurnsResponse>(
+      'runtime.tasks.turns.list',
+      {
+        ...address,
+        limit: Math.min(
+          capability.defaultTurnPageSize ?? DEFAULT_HISTORY_TURN_PAGE_SIZE,
+          capability.maxTurnPageSize
+        ),
+        ...(beforeCursor && { beforeCursor }),
+      },
+      address.deviceId,
+      TRANSCRIPT_TIMEOUT_MS
+    )
+    const turns = await Promise.all(
+      turnPage.turns.map(turn =>
+        this.hydrateHistoryTurn(
+          address,
+          turn,
+          capability.defaultItemPageSize ?? DEFAULT_HISTORY_ITEM_PAGE_SIZE
+        )
+      )
+    )
+    return {
+      taskId: turnPage.taskId,
+      workspacePath: turnPage.workspacePath,
+      runtime: turnPage.runtime,
+      running: turnPage.running,
+      messages: runtimeHistoryTurnsToMessages(turns),
+      hasMoreBefore: turnPage.hasMoreBefore,
+      beforeCursor: turnPage.beforeCursor,
+    }
+  }
+
+  private async hydrateHistoryTurn(
+    address: RuntimeTaskAddress,
+    turn: RuntimeHistoryTurn,
+    itemPageSize: number
+  ): Promise<RuntimeHistoryTurn> {
+    let cursor: string | null = null
+    const seenCursors = new Set<string>()
+    let items: RuntimeHistoryTurnItem[] = []
+    do {
+      if (cursor && !seenCursors.add(cursor)) {
+        throw new Error(`runtime.tasks.items.list 返回了重复游标: ${turn.id}`)
+      }
+      const page: RuntimeHistoryItemsResponse = await this.request<RuntimeHistoryItemsResponse>(
+        'runtime.tasks.items.list',
+        {
+          ...address,
+          turnId: turn.id,
+          cursor,
+          limit: itemPageSize,
+        },
+        address.deviceId,
+        TRANSCRIPT_TIMEOUT_MS
+      )
+      items = mergeHistoryItems(items, page.items)
+      cursor = page.hasMore ? (page.nextCursor ?? null) : null
+      if (page.hasMore && !cursor) {
+        throw new Error(`runtime.tasks.items.list 缺少下一页游标: ${turn.id}`)
+      }
+    } while (cursor)
+    return { ...turn, items, itemsView: 'full' }
   }
 
   dispose(): void {
@@ -191,4 +285,24 @@ function idValue(value: unknown): string | undefined {
   if (typeof value === 'string') return value
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   return undefined
+}
+
+function mergeHistoryItems(
+  current: RuntimeHistoryTurnItem[],
+  incoming: RuntimeHistoryTurnItem[]
+): RuntimeHistoryTurnItem[] {
+  const merged = [...current]
+  for (const item of incoming) {
+    const index = merged.findIndex(existing => existing.id === item.id)
+    if (index < 0) {
+      merged.push(item)
+      continue
+    }
+    const existing = merged[index]
+    merged[index] =
+      existing.type === 'block' && item.type === 'block'
+        ? { ...item, block: { ...existing.block, ...item.block } }
+        : item
+  }
+  return merged
 }

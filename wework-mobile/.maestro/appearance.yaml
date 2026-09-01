@@ -1,0 +1,33 @@
+appId: com.wecode.wegent
+name: Mobile system appearance parity
+tags:
+  - mobile-e2e
+---
+- setDarkMode: disabled
+- runFlow: subflows/login.yaml
+- assertVisible:
+    id: conversation-list
+- setDarkMode: enabled
+- stopApp
+- launchApp
+- extendedWaitUntil:
+    visible:
+      id: conversation-list
+    timeout: 30000
+- tapOn:
+    id: drawer-new-conversation
+- assertVisible:
+    id: new-chat-input
+- tapOn:
+    id: open-drawer
+- assertVisible:
+    id: conversation-list
+- setDarkMode: disabled
+- tapOn:
+    id: drawer-new-conversation
+- assertVisible:
+    id: new-chat-input
+- tapOn:
+    id: open-drawer
+- assertVisible:
+    id: conversation-list

@@ -1,0 +1,64 @@
+appId: com.wecode.wegent
+name: Mobile real runtime create continue and cancel
+tags:
+  - mobile-e2e
+---
+- runFlow: subflows/login.yaml
+- runFlow: subflows/open-project-chat.yaml
+- runFlow: subflows/select-runtime-model.yaml
+- tapOn:
+    id: new-chat-input
+- setClipboard: ${E2E_CLOUD_PROMPT}
+- pasteText
+- tapOn:
+    id: new-chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_CLOUD_COMPLETION}.*'
+    timeout: 120000
+- tapOn:
+    id: more-actions
+- assertVisible:
+    id: settings-dialog
+- tapOn:
+    id: close-settings
+- assertVisible:
+    id: tool-group-toggle-.*
+- tapOn:
+    id: tool-group-toggle-.*
+- assertVisible:
+    id: tool-group-details-.*
+- assertVisible:
+    id: file-changes-toggle
+- tapOn:
+    id: file-changes-toggle
+- assertVisible:
+    id: file-changes-list
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_FOLLOW_UP_PROMPT}
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible: '.*${E2E_FOLLOW_UP_COMPLETION}.*'
+    timeout: 120000
+- tapOn:
+    id: chat-input
+- setClipboard: ${E2E_CANCEL_PROMPT}
+- pasteText
+- tapOn:
+    id: chat-send
+- extendedWaitUntil:
+    visible:
+      id: chat-stop
+    timeout: 30000
+- tapOn:
+    id: chat-stop
+- extendedWaitUntil:
+    notVisible:
+      id: chat-stop
+    timeout: 30000
+- tapOn:
+    id: new-conversation
+- assertVisible:
+    id: new-chat-input

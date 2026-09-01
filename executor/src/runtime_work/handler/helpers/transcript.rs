@@ -299,6 +299,14 @@ fn transcript_canonical_turns(
     turns
 }
 
+pub(super) fn canonical_codex_transcript_turns(messages: &[Value]) -> Vec<Value> {
+    transcript_canonical_turns(messages, TranscriptTurnItemSource::CodexItems)
+}
+
+pub(super) fn canonical_cached_transcript_turns(messages: &[Value]) -> Vec<Value> {
+    transcript_canonical_turns(messages, TranscriptTurnItemSource::CachedMessages)
+}
+
 fn append_runtime_message_items(items: &mut Vec<Value>, message: &Value) {
     if let (Some(item_id), Some(content)) = (
         string_field(message, "id"),

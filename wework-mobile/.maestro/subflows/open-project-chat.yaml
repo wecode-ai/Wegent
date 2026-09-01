@@ -1,0 +1,13 @@
+appId: com.wecode.wegent
+---
+- runFlow: ensure-project.yaml
+- tapOn:
+    id: workspace-new-${E2E_DEVICE_ID}-${E2E_WORKSPACE_PATH}
+- extendedWaitUntil:
+    visible:
+      id: new-chat-input
+    timeout: 30000
+- assertVisible:
+    id: new-chat-device
+- assertVisible:
+    id: new-chat-project

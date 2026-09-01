@@ -2,6 +2,7 @@ dist/
 .expo/
 .expo-shared/
 artifacts/
+test-results/
 
 # Local native builds and signing outputs
 *.apk

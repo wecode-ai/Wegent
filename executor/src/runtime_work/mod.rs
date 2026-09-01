@@ -43,6 +43,13 @@ pub(crate) fn runtime_features() -> serde_json::Value {
                 "worktree": true
             }
         },
+        "runtimeHistory": {
+            "schemaVersions": [1, 2],
+            "defaultTurnPageSize": 5,
+            "maxTurnPageSize": 20,
+            "defaultItemPageSize": 20,
+            "maxPageBytes": 393216
+        },
         "worktrees": worktrees::WorktreeManager::capabilities_from_env(),
     })
 }

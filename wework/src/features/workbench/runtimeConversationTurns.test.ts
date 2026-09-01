@@ -3,6 +3,7 @@ import {
   appendAcceptedRuntimeConversationUser,
   appendRuntimeConversationGuidance,
   mergeRuntimeConversationTurns,
+  mergeRuntimeConversationTurnsBefore,
   projectRuntimeConversationTurns,
   reduceRuntimeConversationTurns,
 } from './runtimeConversationTurns'
@@ -447,6 +448,30 @@ describe('runtimeConversationTurns', () => {
     expect(merged).toHaveLength(1)
     expect(projectRuntimeConversationTurns(merged).map(message => message.content)).toEqual([
       content,
+    ])
+  })
+
+  test('keeps an older cursor page before locally loaded turns without timestamp sorting', () => {
+    const older: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-1',
+        items: [],
+        status: 'done',
+        completedAt: 200,
+      },
+    ]
+    const current: RuntimeConversationTurn[] = [
+      {
+        id: 'turn-2',
+        items: [],
+        status: 'done',
+        completedAt: 100,
+      },
+    ]
+
+    expect(mergeRuntimeConversationTurnsBefore(current, older).map(turn => turn.id)).toEqual([
+      'turn-1',
+      'turn-2',
     ])
   })
 

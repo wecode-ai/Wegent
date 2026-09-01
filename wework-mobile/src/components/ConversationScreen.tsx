@@ -59,8 +59,10 @@ interface ConversationScreenProps {
   devices: DeviceInfo[]
   entryRevision: number
   gitRef: string | null
+  hasMoreHistory: boolean
   isNew: boolean
   loading: boolean
+  loadingOlderHistory: boolean
   messages: ChatMessage[]
   model: UnifiedModel | null
   modelOptions: ModelOptions
@@ -74,6 +76,7 @@ interface ConversationScreenProps {
   workspaces: ConversationWorkspaceChoice[]
   onBack: () => void
   onLoadApps: () => Promise<RuntimeComposerApp[]>
+  onLoadOlderHistory: () => Promise<void>
   onMore: () => void
   onNewConversation: () => void
   onOpenAdvancedModel: () => void
@@ -244,8 +247,11 @@ export function ConversationScreen(props: ConversationScreenProps) {
           bottomInset={messageBottomInset}
           conversationId={conversationKey}
           entryRevision={props.entryRevision}
+          hasMoreHistory={props.hasMoreHistory}
           loading={props.loading}
+          loadingOlderHistory={props.loadingOlderHistory}
           messages={props.messages}
+          onLoadOlderHistory={props.onLoadOlderHistory}
           topInset={messageTopInset}
         />
       )}
@@ -550,6 +556,7 @@ function ChoiceSheet({
           accessibilityRole="button"
           onPress={dismiss}
           style={styles.sheetDismissLayer}
+          testID={`${testIDPrefix}-backdrop`}
         />
         <Animated.View
           accessibilityViewIsModal
@@ -560,6 +567,7 @@ function ChoiceSheet({
               transform: [{ translateY: reduceMotion ? 0 : sheetTranslateY }],
             },
           ]}
+          testID={`${testIDPrefix}-sheet`}
         >
           <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle} variant="titleLarge">

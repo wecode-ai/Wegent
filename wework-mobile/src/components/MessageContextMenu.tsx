@@ -37,16 +37,16 @@ export function MessageContextMenu({ anchor, onCopy, onDismiss }: MessageContext
 
   return (
     <Portal>
-      <Pressable
-        accessibilityLabel="关闭消息菜单"
-        accessibilityRole="button"
-        onPress={onDismiss}
-        style={styles.backdrop}
-        testID="message-menu-backdrop"
-      >
+      <View style={styles.overlay}>
         <Pressable
+          accessibilityLabel="关闭消息菜单"
+          accessibilityRole="button"
+          onPress={onDismiss}
+          style={styles.backdrop}
+          testID="message-menu-backdrop"
+        />
+        <View
           accessibilityViewIsModal
-          onPress={event => event.stopPropagation()}
           style={[styles.positioner, { left, top }]}
           testID="message-context-menu"
         >
@@ -75,13 +75,14 @@ export function MessageContextMenu({ anchor, onCopy, onDismiss }: MessageContext
               </Text>
             </Pressable>
           </LiquidGlassSurface>
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Portal>
   )
 }
 
 const styles = StyleSheet.create({
+  overlay: { position: 'absolute', inset: 0 },
   backdrop: { position: 'absolute', inset: 0 },
   positioner: { position: 'absolute', width: MENU_WIDTH },
   glass: { padding: 4, borderRadius: 18, overflow: 'hidden' },
