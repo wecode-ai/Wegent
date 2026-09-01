@@ -346,10 +346,15 @@ export function DeviceSelectorTab({
     // selection only on the first mount, where it may be an explicit launch
     // choice made by the device page before this selector mounted.
     if (returningFromTask || !selectedDeviceId) {
-      setSelectedDeviceId(getAccountDefaultDeviceId(defaultExecutionTarget))
+      const defaultDeviceId = getAccountDefaultDeviceId(defaultExecutionTarget)
+      const availableDefaultDeviceId = devices.some(device => device.device_id === defaultDeviceId)
+        ? defaultDeviceId
+        : null
+      setSelectedDeviceId(availableDefaultDeviceId)
     }
   }, [
     defaultExecutionTarget,
+    devices,
     hasExplicitDeviceParam,
     isExistingTask,
     isLoading,

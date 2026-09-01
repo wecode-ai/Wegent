@@ -21,6 +21,26 @@ async function waitForClosedStartupSplash(control) {
   )
 }
 
+async function waitForStartupLogs(resultDir) {
+  const logPath = join(resultDir, 'app.log')
+  const deadline = Date.now() + SPLASH_CLOSE_TIMEOUT_MS
+  let appLog = ''
+
+  do {
+    appLog = await readFile(logPath, 'utf8')
+    if (
+      appLog.includes("source: 'task-list'") &&
+      appLog.includes("step: 'renderer-startup-ready'") &&
+      appLog.includes("step: 'startup-splash-close'")
+    ) {
+      return appLog
+    }
+    await delay(SPLASH_CLOSE_POLL_INTERVAL_MS)
+  } while (Date.now() < deadline)
+
+  assert.fail(`The Electron startup log did not contain the required stages:\n${appLog}`)
+}
+
 export async function createDesktopScenario({ resultDir }) {
   return {
     async verify(control) {
@@ -40,6 +60,15 @@ export async function createDesktopScenario({ resultDir }) {
         image.subarray(1, 4).toString('ascii'),
         'PNG',
         'The Electron startup splash evidence was not a PNG'
+      )
+      const appLog = await waitForStartupLogs(resultDir)
+      const startupReady = appLog.indexOf("step: 'renderer-startup-ready'")
+      const taskListReady = appLog.indexOf("source: 'task-list'", startupReady)
+      const splashClosed = appLog.indexOf("step: 'startup-splash-close'")
+      assert.ok(taskListReady >= 0, 'The renderer did not log task-list readiness')
+      assert.ok(
+        startupReady <= taskListReady && taskListReady < splashClosed,
+        'The startup stages were logged out of order'
       )
     },
 

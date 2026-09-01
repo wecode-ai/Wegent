@@ -36,7 +36,7 @@ export function teamUsesModeSpecCategory(team: Team | null | undefined, category
 
 export function teamHidesVideoParam(
   team: Team | null | undefined,
-  param: 'duration' | 'model' | 'ratio' | 'resolution'
+  param: 'duration' | 'generation_mode' | 'model' | 'ratio' | 'resolution'
 ): boolean {
   return team?.mode_spec?.hiddenVideoParams?.includes(param) === true
 }

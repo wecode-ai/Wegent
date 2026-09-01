@@ -3881,16 +3881,56 @@ describe('MessageList', () => {
     expect(fetchAttachmentBlob).toHaveBeenCalledWith(43)
   })
 
-  test('renders assistant markdown local image paths as file URLs', async () => {
+  test.each([
+    {
+      source: '/tmp/result.png',
+      title: 'Absolute path result',
+    },
+    {
+      source: 'file:///tmp/result.png',
+      title: 'File URL result',
+    },
+  ])(
+    'renders a titled assistant markdown local image from $source through an Electron blob preview',
+    async ({ source, title }) => {
+      runtimeMock.electron = true
+      URL.createObjectURL = vi.fn(() => 'blob:assistant-local-image')
+      URL.revokeObjectURL = vi.fn()
+
+      render(
+        <MessageList
+          messages={[
+            {
+              id: 'assistant-local-image',
+              role: 'assistant',
+              content: `生成结果：\n\n![local result](${source} "${title}")`,
+              status: 'done',
+              createdAt: '2026-05-25T15:08:00.000+08:00',
+            },
+          ]}
+        />
+      )
+
+      expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
+        'src',
+        'blob:assistant-local-image'
+      )
+      expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+      expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    }
+  )
+
+  test('renders an error when an assistant markdown local image cannot be read', async () => {
     runtimeMock.electron = true
+    electronLocalFileMock.read.mockRejectedValueOnce(new Error('file unavailable'))
 
     render(
       <MessageList
         messages={[
           {
-            id: 'assistant-local-image',
+            id: 'assistant-missing-local-image',
             role: 'assistant',
-            content: '生成结果：\n\n![local result](/Users/yunpeng7/Pictures/result.png)',
+            content: '生成结果：\n\n![temporary result](/tmp/result.png)',
             status: 'done',
             createdAt: '2026-05-25T15:08:00.000+08:00',
           },
@@ -3898,11 +3938,11 @@ describe('MessageList', () => {
       />
     )
 
-    expect(await screen.findByTestId('assistant-markdown-image')).toHaveAttribute(
-      'src',
-      'file:///Users/yunpeng7/Pictures/result.png'
+    expect(await screen.findByTestId('assistant-markdown-image-error')).toHaveTextContent(
+      'temporary result'
     )
-    expect(screen.getByTestId('assistant-markdown-image')).toHaveAttribute('alt', 'local result')
+    expect(electronLocalFileMock.read).toHaveBeenCalledWith('/tmp/result.png')
+    expect(screen.queryByTestId('assistant-markdown-image')).not.toBeInTheDocument()
   })
 
   test('opens an enlarged preview from a user message image attachment', async () => {

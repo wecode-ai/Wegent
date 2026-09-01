@@ -135,6 +135,61 @@
           <span class="stage-dot"></span>
           <span class="stage-dot"></span>
         </div>
+        <div id="startup-recovery" class="startup-recovery" hidden>
+          <div class="startup-actions">
+            <button
+              id="startup-retry"
+              data-testid="startup-retry-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            >
+              Retry
+            </button>
+            <button
+              id="startup-recover"
+              data-testid="startup-recover-button"
+              class="startup-button startup-button-primary"
+              type="button"
+            >
+              Recover workbench
+            </button>
+            <button
+              id="startup-reset-open"
+              data-testid="startup-reset-options-button"
+              class="startup-link-button"
+              type="button"
+            >
+              More reset options
+            </button>
+          </div>
+          <p id="startup-action-error" class="startup-action-error" role="alert" hidden></p>
+        </div>
+        <div
+          id="startup-confirmation"
+          class="startup-confirmation"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="startup-confirmation-title"
+          aria-describedby="startup-confirmation-description"
+          hidden
+        >
+          <h2 id="startup-confirmation-title"></h2>
+          <p id="startup-confirmation-description"></p>
+          <div class="startup-confirmation-actions">
+            <button
+              id="startup-confirmation-cancel"
+              data-testid="startup-confirmation-cancel-button"
+              class="startup-button startup-button-secondary"
+              type="button"
+            ></button>
+            <button
+              id="startup-confirmation-submit"
+              data-testid="startup-confirmation-submit-button"
+              class="startup-button startup-button-danger"
+              type="button"
+            ></button>
+          </div>
+        </div>
       </main>
     </div>
     <script src="./splash.js"></script>

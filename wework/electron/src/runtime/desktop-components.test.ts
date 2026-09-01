@@ -4,7 +4,10 @@ import type {
   ComponentUpdateManager,
   ComponentUpdateManagerOptions,
 } from './component-update-manager.js'
-import { prepareDesktopComponents } from './desktop-components.js'
+import {
+  prepareDesktopComponents,
+  shouldStageDesktopComponentUpdates,
+} from './desktop-components.js'
 
 const options: ComponentUpdateManagerOptions = {
   resourcesRoot: '/resources',
@@ -51,5 +54,19 @@ describe('prepareDesktopComponents', () => {
     ).resolves.toEqual({ manager, paths })
     expect(createManager).toHaveBeenCalledWith(options)
     expect(manager.prepareStartup).toHaveBeenCalledOnce()
+  })
+})
+
+describe('shouldStageDesktopComponentUpdates', () => {
+  test('stages updates by default', () => {
+    expect(shouldStageDesktopComponentUpdates({})).toBe(true)
+  })
+
+  test('skips updates when desktop E2E disables them', () => {
+    expect(
+      shouldStageDesktopComponentUpdates({
+        WEWORK_E2E_DISABLE_COMPONENT_UPDATES: '1',
+      })
+    ).toBe(false)
   })
 })

@@ -51,6 +51,7 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
+import { tmpdir } from 'node:os'
 
 import {
   ANTHROPIC_EMPTY_COMPLETION_TEXT,
@@ -124,6 +125,9 @@ import {
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
   LATER_TOOL_BLOCK_ID,
+  LOCAL_MARKDOWN_IMAGE_ALT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -746,6 +750,7 @@ class DesktopE2EServer {
         'vision_sidecar',
         'multimodal_vision',
         'view_image',
+        'local_markdown_image',
         'tool_block_order',
         'official_plugin',
         'automation',
@@ -2030,6 +2035,21 @@ class DesktopE2EServer {
 
     if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'local_markdown_image') {
+      this.recordScenarioRequest('local_markdown_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
+        'The real Codex request did not contain the local Markdown image prompt'
+      )
+      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
+        responseCompleted(responseId),
+      ])
       return
     }
 
