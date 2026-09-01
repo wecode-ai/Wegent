@@ -113,6 +113,10 @@ def _set_runtime_proxy(model_config: dict[str, Any], proxy_url: str) -> None:
     model_config["runtime_config"] = runtime_config
 
 
+def _uses_backend_cloud_model_gateway(model_config: dict[str, Any]) -> bool:
+    return model_config.get("wework_model_kind") == "cloud"
+
+
 async def _enforce_remote_runtime_proxy(
     *,
     user_id: int,
@@ -132,15 +136,22 @@ async def _enforce_remote_runtime_proxy(
         return payload
 
     proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    cloud_model_config_count = 0
     for model_config in model_configs:
-        _set_runtime_proxy(model_config, proxy_url)
+        if _uses_backend_cloud_model_gateway(model_config):
+            cloud_model_config_count += 1
+            _set_runtime_proxy(model_config, "")
+        else:
+            _set_runtime_proxy(model_config, proxy_url)
     logger.info(
         "[RuntimeRpcService] Applied account proxy policy: "
-        "user_id=%s method=%s configured=%s model_config_count=%s",
+        "user_id=%s method=%s configured=%s model_config_count=%s "
+        "cloud_model_config_count=%s",
         user_id,
         method,
         bool(proxy_url),
         len(model_configs),
+        cloud_model_config_count,
     )
     return next_payload
 

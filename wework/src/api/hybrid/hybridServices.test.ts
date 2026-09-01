@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
   }
   const captureRuntimeIpcOptions = vi.fn()
   const captureAutomationIpcOptions = vi.fn()
+  const captureRuntimeChatStreamDeps = vi.fn()
   const localListArchivedConversations = vi.fn()
   const cloudListArchivedConversations = vi.fn()
   const localArchiveAllConversations = vi.fn()
@@ -195,6 +196,7 @@ const mocks = vi.hoisted(() => {
     localAutomationApi,
     captureRuntimeIpcOptions,
     captureAutomationIpcOptions,
+    captureRuntimeChatStreamDeps,
     localListArchivedConversations,
     cloudListArchivedConversations,
     localArchiveAllConversations,
@@ -327,9 +329,12 @@ vi.mock('@/api/backend/runtimeIpc', () => ({
 }))
 
 vi.mock('@/api/runtime/runtimeChatStream', () => ({
-  createRuntimeChatStream: () => ({
-    subscribe: mocks.cloudRuntimeChatStreamSubscribe,
-  }),
+  createRuntimeChatStream: (deps: unknown) => {
+    mocks.captureRuntimeChatStreamDeps(deps)
+    return {
+      subscribe: mocks.cloudRuntimeChatStreamSubscribe,
+    }
+  },
 }))
 
 const codexModel = {
@@ -1541,6 +1546,50 @@ describe('createHybridWorkbenchServices', () => {
       expect.objectContaining({ deviceId: 'cloud-device' }),
       'cloud-device'
     )
+  })
+
+  it('projects cloud runtime stream socket ids to the logical device id', async () => {
+    mocks.cloudListDevices.mockResolvedValue([
+      {
+        id: 1,
+        device_id: 'cloud-device',
+        socket_device_id: 'socket-device',
+        name: 'Cloud Executor',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ])
+    const services = createServices()
+    await services.cloudBackgroundApi?.listDevices?.()
+    const streamDeps = mocks.captureRuntimeChatStreamDeps.mock.calls.at(-1)?.[0] as {
+      subscribe: (
+        handler: (event: { event: string; payload: Record<string, unknown> }) => void
+      ) => Promise<() => void>
+    }
+    const handler = vi.fn()
+
+    await streamDeps.subscribe(handler)
+    const relayHandler = mocks.cloudRuntimeIpcSubscribe.mock.calls.at(-1)?.[0]
+    relayHandler({
+      event: 'response.output_text.delta',
+      payload: {
+        deviceId: 'socket-device',
+        taskId: 'runtime-task',
+        data: { delta: 'hello' },
+      },
+    })
+
+    expect(handler).toHaveBeenCalledWith({
+      event: 'response.output_text.delta',
+      payload: {
+        deviceId: 'cloud-device',
+        device_id: 'cloud-device',
+        taskId: 'runtime-task',
+        data: { delta: 'hello' },
+      },
+    })
   })
 
   it('returns local archives without waiting for cloud and merges cloud archives later', async () => {
