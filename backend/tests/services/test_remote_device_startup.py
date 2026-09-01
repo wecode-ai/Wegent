@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Contracts for stable Remote Docker device identity and storage."""
+"""Contracts for stable remote device identity and startup commands."""
+
+import subprocess
 
 from app.core.config import settings
 from app.services.device.remote_device_startup import (
@@ -46,3 +48,37 @@ def test_remote_docker_command_binds_device_identity_to_stable_home(monkeypatch)
     assert (
         "WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED" not in first.commands[1].command
     )
+
+
+def test_remote_process_command_is_linux_bash_startup(monkeypatch):
+    monkeypatch.delenv("REMOTE_DEVICE_BACKEND_URL", raising=False)
+    monkeypatch.delenv("REMOTE_DEVICE_DOCKER_IMAGE", raising=False)
+    monkeypatch.setenv(
+        "REMOTE_DEVICE_EXECUTOR_INSTALL_URL",
+        "https://downloads.example.com/local_executor_install.sh",
+    )
+    monkeypatch.setattr(settings, "WEGENT_BACKEND_PUBLIC_URL", "")
+    monkeypatch.setattr(settings, "WEGENT_SOCKET_URL", "")
+    provider = DefaultRemoteDeviceCommandProvider()
+
+    result = provider.build(_context())
+
+    process_command = next(
+        command.command for command in result.commands if command.kind == "process"
+    )
+    syntax_check = subprocess.run(
+        ["bash", "-n"],
+        input=process_command,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert syntax_check.returncode == 0, syntax_check.stderr
+    assert process_command.startswith("#!/usr/bin/env bash\nset -euo pipefail")
+    assert 'if [ "$(uname -s)" != "Linux" ]; then' in process_command
+    assert "currently supports Linux only" in process_command
+    assert "https://downloads.example.com/local_executor_install.sh" in process_command
+    assert 'nohup "$EXECUTOR_BIN"' in process_command
+    assert 'printf "%s\\n" "$EXECUTOR_PID" >"$PID_FILE"' in process_command
+    assert 'echo "PID file: $PID_FILE"' in process_command
+    assert "docker run" not in process_command

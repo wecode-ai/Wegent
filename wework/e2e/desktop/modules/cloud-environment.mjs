@@ -47,6 +47,26 @@ const CLOUD_PUBLIC_MODEL_OPTIONS = {
   weworkCloudModelUpstreamApiFormat: 'openai-responses',
 }
 
+function processIsAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if (error?.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function stopGeneratedRemoteExecutor(pid) {
+  if (!processIsAlive(pid)) return
+  process.kill(pid, 'SIGTERM')
+  const startedAt = Date.now()
+  while (processIsAlive(pid) && Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  if (processIsAlive(pid)) process.kill(pid, 'SIGKILL')
+}
+
 async function waitForRedisReady(redis, logPath, fromOffset) {
   let spawnError = null
   const captureSpawnError = error => {
@@ -228,7 +248,7 @@ class RealCloudEnvironment {
     this.modelServerUrl = modelServerUrl
     this.scenarioConfigToml = scenarioConfigToml
     this.workspacePath = workspacePath
-    this.generatedRemoteExecutors = []
+    this.generatedRemoteExecutorPids = []
     this.pluginAutoUpdateFixtures = []
   }
 
@@ -871,11 +891,13 @@ class RealCloudEnvironment {
     }
   }
 
-  async startGeneratedRemoteDevice({ deviceId, deviceName, authToken }) {
+  async startGeneratedRemoteDevice({ deviceId, deviceName, authToken, startupScript }) {
     assert.ok(this.executorBinary, 'Remote executor binary is not ready')
+    assert.equal(process.platform, 'linux', 'The generated remote device script is Linux-only')
     const home = join(resultDir, `generated-remote-device-${deviceId}`)
     const codexHome = join(home, 'codex')
     const logPath = join(resultDir, `generated-remote-device-${deviceId}.log`)
+    const pidFile = join(home, 'executor.pid')
     await writeCodexConfig(codexHome, this.modelServerUrl)
     const env = this.executorEnv({
       deviceId,
@@ -887,17 +909,31 @@ class RealCloudEnvironment {
       authToken,
     })
     delete env.WEGENT_APP_IPC_DEVICE_ID
-    const executor = spawn(this.executorBinary, [], {
+    env.WEGENT_EXECUTOR_BIN = this.executorBinary
+    env.WEGENT_EXECUTOR_PID_FILE = pidFile
+    const shell = spawn('bash', [], {
       cwd: weworkDir,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      detached: process.platform !== 'win32',
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
-    this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(shell.stdout, logPath),
+      appendProcessOutput(shell.stderr, logPath),
+      new Promise((resolvePromise, reject) => {
+        shell.once('error', reject)
+        shell.once('exit', code => {
+          if (code === 0) {
+            resolvePromise()
+            return
+          }
+          reject(new Error(`Generated remote device startup script exited with ${code}`))
+        })
+        shell.stdin.end(startupScript)
+      }),
     ])
+    const executorPid = Number.parseInt((await readFile(pidFile, 'utf8')).trim(), 10)
+    assert.ok(Number.isSafeInteger(executorPid), 'Startup script did not write a valid PID file')
+    this.generatedRemoteExecutorPids.push(executorPid)
     await this.waitForDevice(deviceId, logPath)
   }
 
@@ -1204,7 +1240,7 @@ class RealCloudEnvironment {
     }
     await stopProcessGroup(this.remoteExecutor)
     await stopProcessGroup(this.remoteDockerExecutor)
-    await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
+    await Promise.all(this.generatedRemoteExecutorPids.map(stopGeneratedRemoteExecutor))
     await stopProcess(this.backend)
     await this.pluginObjectStorage?.stop()
     await stopProcess(this.redis)

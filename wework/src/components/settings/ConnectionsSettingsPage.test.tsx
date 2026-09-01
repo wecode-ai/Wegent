@@ -1955,6 +1955,55 @@ describe('ConnectionsSettingsPage', () => {
     )
   })
 
+  test('switches to and copies the Linux remote device startup script', async () => {
+    const dockerCommand =
+      'docker run -d -e DEVICE_TYPE=remote ghcr.io/wecode-ai/wegent-device:latest'
+    const processCommand = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'export DEVICE_TYPE=remote',
+      'nohup "$EXECUTOR_BIN" >>"$LOG_DIR/executor.log" 2>&1 &',
+    ].join('\n')
+    api.getAllDevices.mockResolvedValue([cloudDevice()])
+    api.createDockerRemoteDeviceCommand.mockResolvedValue({
+      device_id: 'remote-device',
+      name: 'Linux Remote Device',
+      image: 'ghcr.io/wecode-ai/wegent-device:latest',
+      env: { DEVICE_TYPE: 'remote' },
+      command: dockerCommand,
+      commands: [
+        {
+          kind: 'docker',
+          label: 'Docker',
+          command: dockerCommand,
+        },
+        {
+          kind: 'process',
+          label: 'Process',
+          command: processCommand,
+        },
+      ],
+    })
+
+    render(<ConnectionsSettingsPage onBack={vi.fn()} />)
+
+    await userEvent.click(await screen.findByTestId('connection-add-device-button'))
+    expect(screen.getByText('远程设备')).toBeInTheDocument()
+    expect(screen.getByText(/Docker 命令或 Linux 启动脚本/)).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('add-remote-docker-button'))
+
+    expect(await screen.findByTestId('remote-device-startup-tab-process')).toHaveTextContent(
+      '脚本启动'
+    )
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('docker run')
+    await userEvent.click(screen.getByTestId('remote-device-startup-tab-process'))
+
+    expect(screen.getByTestId('remote-docker-command')).toHaveTextContent('#!/usr/bin/env bash')
+    expect(screen.getByText(/适用于 Linux 主机/)).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('copy-remote-docker-command'))
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(processCommand)
+  })
+
   test('refreshes the device list and closes the dialog when the generated remote device connects', async () => {
     api.getAllDevices
       .mockResolvedValueOnce([cloudDevice()])

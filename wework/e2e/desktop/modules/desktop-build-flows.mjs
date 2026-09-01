@@ -530,7 +530,7 @@ async function verifyCloudVisionFlows(control, composerSelector) {
   })
 }
 
-export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
+export async function verifyRemoteDeviceStartupFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/settings/connections?addDevice=1' })
   await control.command('waitFor', '[data-testid="add-cloud-device-dialog"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -557,14 +557,13 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     backendUrl: cloudEnvironment.backendUrl,
     socketUrl: cloudEnvironment.socketUrl,
   })
-  let runnableCommandSnapshot = commandSnapshot
   if (remoteDeviceE2EExtension.supportsStatusRecovery) {
     await control.command('waitFor', '[data-testid="remote-docker-connection-status"]', {
       text: '连接失败',
       timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
     })
     await control.command('clickWhenEnabled', '[data-testid="add-remote-docker-button"]')
-    runnableCommandSnapshot = await waitForSnapshot(
+    await waitForSnapshot(
       control,
       snapshot =>
         snapshot.text.includes(remoteDeviceE2EExtension.commandMarker) &&
@@ -574,6 +573,31 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
       '[data-testid="remote-docker-command"]'
     )
   }
+  await control.command('click', '[data-testid="remote-device-startup-tab-process"]')
+  await control.command('waitFor', '[data-testid="remote-docker-command"]', {
+    text: '#!/usr/bin/env bash',
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  const processCommandSnapshot = JSON.parse(
+    await control.command('snapshot', '[data-testid="remote-docker-command"]')
+  )
+  assert.ok(
+    processCommandSnapshot.text.includes('currently supports Linux only'),
+    'The process startup option did not include the Linux platform guard'
+  )
+  assert.ok(
+    processCommandSnapshot.text.includes('local_executor_install.sh'),
+    'The process startup option did not include the Executor installer'
+  )
+  assert.ok(
+    processCommandSnapshot.text.includes('nohup "$EXECUTOR_BIN"'),
+    'The process startup option did not start the Executor in the background'
+  )
+  assert.equal(
+    processCommandSnapshot.text.includes('docker run'),
+    false,
+    'The process startup option still depended on Docker'
+  )
   await control.command('click', '[data-testid="copy-remote-docker-command"]')
   await control.command('waitFor', '[data-testid="copy-remote-docker-command"]', {
     text: '已复制',
@@ -581,13 +605,12 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   })
   assert.equal(
     await control.command('getClipboardText', ''),
-    runnableCommandSnapshot.text,
-    'The remote Docker command was not copied into the desktop E2E clipboard'
+    processCommandSnapshot.text,
+    'The remote device startup script was not copied into the desktop E2E clipboard'
   )
-  await captureVerificationScreenshot(control, 'cloud-00-remote-docker-command.png')
-  const generatedDeviceId = runnableCommandSnapshot.text.match(/DEVICE_ID=([^\s\\]+)/)?.[1]
-  const generatedDeviceName = runnableCommandSnapshot.text.match(/DEVICE_NAME=([^\s\\]+)/)?.[1]
-  const generatedAuthToken = runnableCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
+  const generatedDeviceId = processCommandSnapshot.text.match(/DEVICE_ID=([^\s\\]+)/)?.[1]
+  const generatedDeviceName = processCommandSnapshot.text.match(/DEVICE_NAME=([^\s\\]+)/)?.[1]
+  const generatedAuthToken = processCommandSnapshot.text.match(/WEGENT_AUTH_TOKEN=([^\s\\]+)/)?.[1]
   assert.ok(generatedDeviceId, 'The generated command did not include a device ID')
   assert.ok(generatedDeviceName, 'The generated command did not include a device name')
   assert.ok(generatedAuthToken, 'The generated command did not include an auth token')
@@ -595,6 +618,7 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
     deviceId: generatedDeviceId,
     deviceName: generatedDeviceName,
     authToken: generatedAuthToken,
+    startupScript: processCommandSnapshot.text,
   })
   await waitForSnapshot(
     control,
@@ -603,6 +627,7 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
       snapshot.testIds.includes(`connection-device-${generatedDeviceId}`),
     'The generated remote device did not close the dialog and refresh the device list'
   )
+  await captureVerificationScreenshot(control, 'cloud-00-remote-device-startup-connected.png')
   await control.command('navigate', 'body', { value: '/' })
 }
 
@@ -718,7 +743,7 @@ async function verifyCloudProjectFlow(
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
   await verifyLocalRemoteControlFlow(control, cloudEnvironment)
-  await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
+  await verifyRemoteDeviceStartupFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
