@@ -5,7 +5,10 @@
 import {
   execFile,
   spawn,
+  type ChildProcess,
+  type ChildProcessWithoutNullStreams,
   type ExecFileOptions,
+  type SpawnOptions,
   type SpawnOptionsWithoutStdio,
 } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -18,8 +21,18 @@ import { promisify } from 'node:util'
  */
 export function spawnProcess(
   command: string,
+  args: readonly string[],
+  options: SpawnOptionsWithoutStdio
+): ChildProcessWithoutNullStreams
+export function spawnProcess(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions
+): ChildProcess
+export function spawnProcess(
+  command: string,
   args: readonly string[] = [],
-  options: SpawnOptionsWithoutStdio = {}
+  options: SpawnOptions = {}
 ) {
   return spawn(command, args, { ...options, windowsHide: true })
 }
@@ -28,7 +41,7 @@ export function spawnProcess(
 export function spawnVisible(
   command: string,
   args: readonly string[] = [],
-  options: SpawnOptionsWithoutStdio = {}
+  options: SpawnOptions = {}
 ) {
   return spawn(command, args, options)
 }

@@ -118,7 +118,7 @@ export class WorkbenchPluginManager {
       },
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
-    })
+    }) as PluginChild
     await waitForSpawn(child, pluginId)
     const readline = createInterface({ input: child.stdout, crlfDelay: Infinity })
     this.sidecars.set(pluginId, {

@@ -1,4 +1,5 @@
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
@@ -431,7 +432,7 @@ function runCommand(
       ...options,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
-    })
+    }) as ChildProcessWithoutNullStreams
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8')

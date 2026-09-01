@@ -1,4 +1,5 @@
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { join } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
 import { spawnProcess } from './process.js'
@@ -505,7 +506,7 @@ function runCommand(
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    }) as ChildProcessWithoutNullStreams
     let stdout = ''
     let stderr = ''
     const timeout = setTimeout(() => {
