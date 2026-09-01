@@ -42,9 +42,17 @@ platform keychain/keystore; access tokens stay in memory.
 cd wework-mobile
 pnpm install
 pnpm start
+pnpm device
 pnpm typecheck
 pnpm test
 pnpm build
+```
+
+`pnpm device` opens an iOS/Android selector. You can also start a platform directly:
+
+```bash
+./scripts/run-mobile.sh ios
+./scripts/run-mobile.sh android
 ```
 
 Set an optional build-time Backend default with `EXPO_PUBLIC_BACKEND_URL`. When it is omitted,
