@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   Menu,
+  WebContentsView,
   session,
   shell,
   type ContextMenuParams,
@@ -92,6 +93,30 @@ interface BrowserDownload {
   path: string | null
 }
 
+export interface BrowserRequestHeaderRule {
+  id: string
+  origins: string[]
+  pathPrefixes: string[]
+  headers: Record<string, string>
+  expiresAt?: number | null
+  allowInsecure?: boolean
+}
+
+export interface BrowserBackgroundPageState {
+  id: string
+  title: string | null
+  url: string | null
+  userAgent: string
+  isLoading: boolean
+  httpResponseCode: number | null
+  httpStatusText: string | null
+  navigationError: {
+    code: number
+    message: string
+    url: string | null
+  } | null
+}
+
 export const EMBEDDED_BROWSER_PARTITION = 'persist:wework-browser'
 export const EMBEDDED_BROWSER_ROUTE_PARTITION_PREFIX = 'persist:wework-browser-app-route:'
 export const EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR = ':host:'
@@ -111,23 +136,169 @@ export class EmbeddedBrowserManager {
   private readonly downloads = new Map<string, BrowserDownload>()
   private readonly agentControlPaused = new Set<string>()
   private readonly agentApprovals = new Map<string, BrowserAgentApproval>()
+  private readonly backgroundPages = new Map<
+    string,
+    {
+      view: WebContentsView
+      httpResponseCode: number | null
+      httpStatusText: string | null
+      navigationError: BrowserBackgroundPageState['navigationError']
+    }
+  >()
   private readonly history: BrowserHistoryStore
   private eventSequence = 0
   private historyGeneration = 0
+  private readonly requestHeaderRules = new Map<string, BrowserRequestHeaderRule>()
 
   constructor(
     dataDirectory: string,
     private readonly onEvent: (event: BrowserHostEvent) => void = () => {}
   ) {
     this.history = new BrowserHistoryStore(join(dataDirectory, 'browser-history.json'))
-    session
-      .fromPartition(EMBEDDED_BROWSER_PARTITION)
-      .on('will-download', (_event, item, webContents) => {
-        const entry = [...this.entries.values()].find(
-          candidate => candidate.contents.id === webContents.id
-        )
-        if (entry) this.trackDownload(entry, item)
-      })
+    const browserSession = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
+    browserSession.on('will-download', (_event, item, webContents) => {
+      const entry = [...this.entries.values()].find(
+        candidate => candidate.contents.id === webContents.id
+      )
+      if (entry) this.trackDownload(entry, item)
+    })
+    browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      callback({ requestHeaders: this.requestHeaders(details.url, details.requestHeaders) })
+    })
+  }
+
+  setRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
+    validateRequestHeaderRule(rule)
+    this.requestHeaderRules.set(rule.id, structuredClone(rule))
+  }
+
+  removeRequestHeaderRule(id: string): void {
+    this.requestHeaderRules.delete(id)
+  }
+
+  createBackgroundPage(id: string): BrowserBackgroundPageState {
+    const normalizedId = requiredBackgroundPageId(id)
+    if (this.backgroundPages.has(normalizedId)) {
+      throw new Error('Browser background page already exists')
+    }
+    const view = new WebContentsView({
+      webPreferences: {
+        session: session.fromPartition(EMBEDDED_BROWSER_PARTITION),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+      },
+    })
+    const entry: {
+      view: WebContentsView
+      httpResponseCode: number | null
+      httpStatusText: string | null
+      navigationError: BrowserBackgroundPageState['navigationError']
+    } = {
+      view,
+      httpResponseCode: null,
+      httpStatusText: null,
+      navigationError: null,
+    }
+    this.backgroundPages.set(normalizedId, entry)
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      if (isBrowserUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    view.webContents.on(
+      'did-fail-load',
+      (_event, code: number, message: string, url: string, isMainFrame: boolean) => {
+        if (!isMainFrame) return
+        entry.navigationError = { code, message, url: url || null }
+      }
+    )
+    view.webContents.on(
+      'did-navigate',
+      (_event, _url: string, httpResponseCode: number, httpStatusText: string) => {
+        entry.httpResponseCode = httpResponseCode >= 0 ? httpResponseCode : null
+        entry.httpStatusText = httpStatusText || null
+      }
+    )
+    view.webContents.once('destroyed', () => {
+      if (this.backgroundPages.get(normalizedId)?.view === view) {
+        this.backgroundPages.delete(normalizedId)
+      }
+    })
+    return this.backgroundPageState(normalizedId)
+  }
+
+  async navigateBackgroundPage(id: string, rawUrl: string): Promise<BrowserBackgroundPageState> {
+    const entry = this.requiredBackgroundPage(id)
+    entry.navigationError = null
+    entry.httpResponseCode = null
+    entry.httpStatusText = null
+    await entry.view.webContents.loadURL(validRemoteBrowserUrl(rawUrl))
+    return this.backgroundPageState(id)
+  }
+
+  setBackgroundPageUserAgent(id: string, userAgent: string): BrowserBackgroundPageState {
+    const entry = this.requiredBackgroundPage(id)
+    entry.view.webContents.setUserAgent(requiredUserAgent(userAgent))
+    return this.backgroundPageState(id)
+  }
+
+  backgroundPageState(id: string): BrowserBackgroundPageState {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.requiredBackgroundPage(normalizedId)
+    const contents = entry.view.webContents
+    return {
+      id: normalizedId,
+      title: contents.getTitle() || null,
+      url: contents.getURL() || null,
+      userAgent: contents.getUserAgent(),
+      isLoading: contents.isLoading(),
+      httpResponseCode: entry.httpResponseCode,
+      httpStatusText: entry.httpStatusText,
+      navigationError: entry.navigationError,
+    }
+  }
+
+  closeBackgroundPage(id: string): void {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.backgroundPages.get(normalizedId)
+    if (!entry) return
+    this.backgroundPages.delete(normalizedId)
+    if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close()
+  }
+
+  private requestHeaders(rawUrl: string, headers: Record<string, string>): Record<string, string> {
+    let url: URL
+    try {
+      url = new URL(rawUrl)
+    } catch {
+      return headers
+    }
+    const now = Date.now()
+    let next = headers
+    for (const [id, rule] of this.requestHeaderRules) {
+      if (rule.expiresAt != null && rule.expiresAt <= now) {
+        this.requestHeaderRules.delete(id)
+        continue
+      }
+      if (
+        rule.origins.includes(url.origin) &&
+        rule.pathPrefixes.some(prefix => url.pathname.startsWith(prefix))
+      ) {
+        next = { ...next, ...rule.headers }
+      }
+    }
+    return next
+  }
+
+  private requiredBackgroundPage(id: string) {
+    const normalizedId = requiredBackgroundPageId(id)
+    const entry = this.backgroundPages.get(normalizedId)
+    if (!entry || entry.view.webContents.isDestroyed()) {
+      throw new Error('Browser background page does not exist')
+    }
+    return entry
   }
 
   attach(label: string, contents: WebContents): void {
@@ -926,6 +1097,47 @@ export class EmbeddedBrowserManager {
   }
 }
 
+function validateRequestHeaderRule(rule: BrowserRequestHeaderRule): void {
+  if (!/^[a-zA-Z0-9._:-]{1,160}$/.test(rule.id)) {
+    throw new Error('Browser request header rule id is invalid')
+  }
+  if (rule.origins.length === 0 || rule.pathPrefixes.length === 0) {
+    throw new Error('Browser request header rule must include origins and path prefixes')
+  }
+  for (const origin of rule.origins) {
+    const parsed = new URL(origin)
+    if (
+      parsed.origin !== origin ||
+      !['http:', 'https:'].includes(parsed.protocol) ||
+      (parsed.protocol === 'http:' && rule.allowInsecure !== true)
+    ) {
+      throw new Error(
+        'Browser request header rule origin must be HTTPS unless insecure HTTP is explicitly allowed'
+      )
+    }
+  }
+  if (rule.pathPrefixes.some(prefix => !prefix.startsWith('/'))) {
+    throw new Error('Browser request header rule path prefix is invalid')
+  }
+  const forbidden = new Set([
+    'connection',
+    'content-length',
+    'cookie',
+    'host',
+    'proxy-authorization',
+  ])
+  for (const [name, value] of Object.entries(rule.headers)) {
+    if (
+      !/^[a-zA-Z0-9-]+$/.test(name) ||
+      forbidden.has(name.toLowerCase()) ||
+      value.includes('\r') ||
+      value.includes('\n')
+    ) {
+      throw new Error('Browser request header rule contains an invalid header')
+    }
+  }
+}
+
 function browserFrame(bounds: BrowserBounds): number[] {
   return [bounds.x, bounds.y, bounds.width, bounds.height]
 }
@@ -1005,10 +1217,34 @@ function requiredLabel(label: string): string {
   return value
 }
 
+function requiredBackgroundPageId(id: string): string {
+  const value = id?.trim()
+  if (!value || !/^[a-zA-Z0-9._:-]{1,160}$/.test(value)) {
+    throw new Error('Browser background page id is invalid')
+  }
+  return value
+}
+
+function requiredUserAgent(userAgent: string): string {
+  const value = userAgent?.trim()
+  if (!value || value.length > 4096 || /[\r\n]/.test(value)) {
+    throw new Error('Browser user agent is invalid')
+  }
+  return value
+}
+
 function validBrowserUrl(value: string): string {
   const url = new URL(value)
   if (!isBrowserUrl(url.toString())) {
     throw new Error(`Embedded browser URL protocol is not allowed: ${url.protocol}`)
+  }
+  return url.toString()
+}
+
+function validRemoteBrowserUrl(value: string): string {
+  const url = new URL(value)
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`Browser background page URL protocol is not allowed: ${url.protocol}`)
   }
   return url.toString()
 }
