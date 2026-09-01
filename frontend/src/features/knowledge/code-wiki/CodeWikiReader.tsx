@@ -201,7 +201,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   // page it was just asked to show.
   const [navigationOpen, setNavigationOpen] = useState(false)
   const pagesRequest = useRef(0)
-  const observedRun = useRef<Pick<CodeWikiRunStatus, 'generation_id' | 'status'> | null>(null)
+  const pageTreeGenerationId = useRef<number | null>(null)
   const projectName = String(
     (wiki.source as { projectName?: string } | undefined)?.projectName ?? ''
   )
@@ -219,6 +219,7 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         const response = await codeWikiApi.pages(wiki.id)
         if (pagesRequest.current !== request) return
 
+        pageTreeGenerationId.current = response.published_generation_id ?? 0
         setPages(response.pages)
         const first = firstReadable(response.pages)
         setActivePath(current => {
@@ -231,7 +232,10 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
         }
         throw error
       } finally {
-        if (showLoading && pagesRequest.current === request) setLoading(false)
+        // A status-driven refresh can supersede the initial request before it has
+        // settled. The newer request must be able to finish that initial spinner
+        // even though the refresh itself did not ask to show one.
+        if (pagesRequest.current === request) setLoading(false)
       }
     },
     [wiki.id]
@@ -248,20 +252,14 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const runGenerationId = runStatus.status?.generation_id
 
   useEffect(() => {
-    if (!runState || runGenerationId === undefined) return
+    if (runState !== 'completed' || runGenerationId === undefined) return
+    if (pageTreeGenerationId.current === runGenerationId) return
 
-    const previous = observedRun.current
-    observedRun.current = { status: runState, generation_id: runGenerationId }
-    if (
-      previous?.status === 'running' &&
-      previous.generation_id === runGenerationId &&
-      runState === 'completed'
-    ) {
-      // Status is intentionally the only thing polled during a long run. Once the
-      // publication transaction completes, refresh the heavier tree exactly once so
-      // navigation and the currently selected document move to the new version too.
-      void reloadPages(true, false).catch(() => undefined)
-    }
+    // Status is intentionally the only thing polled during a long run. Compare its
+    // completed version with the version the tree actually came from instead of
+    // inferring a transition from this component's lifetime: the reader may mount
+    // after completion, and the first tree request may have started before publish.
+    void reloadPages(true, false).catch(() => undefined)
   }, [reloadPages, runGenerationId, runState])
 
   const handleRepublished = useCallback(async () => {

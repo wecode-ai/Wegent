@@ -165,6 +165,40 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(screen.getByTestId('wiki-page-content')).toHaveTextContent('11')
   })
 
+  it('rechecks the tree when status already reports a newly published generation', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    const oldTree = { pages: [], published_generation_id: 33 }
+    const newTree = {
+      pages: [
+        {
+          path: 'index',
+          title: 'New overview',
+          document_id: 11,
+          has_content: true,
+          children: [],
+        },
+      ],
+      published_generation_id: 34,
+    }
+    codeWikiApi.pages.mockReset()
+    codeWikiApi.pages.mockResolvedValueOnce(oldTree)
+    codeWikiApi.pages.mockResolvedValueOnce(newTree)
+    mockRunStatus = {
+      status: 'completed',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_at: '2026-09-01T00:00:00Z',
+      last_published_commit: 'new',
+    }
+
+    render(<CodeWikiReader wiki={WIKI} />)
+
+    await waitFor(() => expect(codeWikiApi.pages).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByTestId('wiki-page-content')).toHaveTextContent('11'))
+  })
+
   it('reloads the published page tree after restoring a version', async () => {
     const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
     codeWikiApi.pages.mockClear()

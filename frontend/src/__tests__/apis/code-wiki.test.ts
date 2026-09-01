@@ -8,6 +8,7 @@ import client from '@/apis/client'
 jest.mock('@/apis/client', () => ({
   __esModule: true,
   default: {
+    get: jest.fn(),
     post: jest.fn(),
   },
 }))
@@ -29,6 +30,16 @@ describe('codeWikiApi', () => {
 
     expect(client.post).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/generations', {
       force_full: true,
+    })
+  })
+
+  it('always reads the published page tree from the network', async () => {
+    ;(client.get as jest.Mock).mockResolvedValue({ pages: [], published_generation_id: 7 })
+
+    await codeWikiApi.pages(12)
+
+    expect(client.get).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/pages', {
+      cache: 'no-store',
     })
   })
 

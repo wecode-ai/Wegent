@@ -374,6 +374,8 @@ def test_the_creator_can_read_the_wiki_they_just_created(
     )
 
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["published_generation_id"] == 0
 
 
 def test_a_code_wiki_appears_in_the_general_knowledge_base_list(

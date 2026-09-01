@@ -70,6 +70,7 @@ from app.services.knowledge.code_wiki.navigation import page_tree
 from app.services.knowledge.code_wiki.publisher import (
     PUBLISHED_AT_KEY,
     PUBLISHED_COMMIT_KEY,
+    published_generation_id,
 )
 from app.services.knowledge.code_wiki.registry import (
     CODE_WIKI_NAMESPACE,
@@ -353,6 +354,7 @@ def create_code_wiki(
 @trace_sync("get_code_wiki_pages", "knowledge.api")
 def get_code_wiki_pages(
     knowledge_base_id: int,
+    response: Response,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -362,8 +364,13 @@ def get_code_wiki_pages(
     wiki account, so its ACL grants nobody else anything.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    # This is the one read the reader repeats immediately after a generation
+    # publishes. Serving its pre-publication tree from a browser or proxy cache
+    # leaves a completed version looking empty until a manual reload.
+    response.headers["Cache-Control"] = "no-store"
     return CodeWikiPageTree(
-        pages=[_as_page_node(node) for node in page_tree(db, knowledge_base)]
+        pages=[_as_page_node(node) for node in page_tree(db, knowledge_base)],
+        published_generation_id=published_generation_id(knowledge_base),
     )
 
 
