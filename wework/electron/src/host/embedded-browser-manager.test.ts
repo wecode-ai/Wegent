@@ -159,6 +159,30 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('settles pending cursor arrival when the browser label changes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    const moveSequence = manager.showAgentCursor('workspace-browser', 120, 80)
+    const arrival = manager.waitForAgentCursorArrival('workspace-browser', moveSequence)
+
+    manager.relabel('workspace-browser', 'workspace-browser-task-1')
+
+    await expect(arrival).resolves.toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('keeps the host cursor visible briefly between adjacent agent actions', async () => {
     vi.useFakeTimers()
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))

@@ -462,6 +462,7 @@ export class EmbeddedBrowserManager {
       this.agentCursorArrivals.delete(fromLabel)
       this.agentCursorArrivals.set(target, arrivedSequence)
     }
+    this.cancelAgentCursorArrivalWaiters(fromLabel)
     this.clearAgentCursorHide(fromLabel)
     if (cursorState && !this.agentActive.has(fromLabel)) this.scheduleAgentCursorHide(target)
     if (this.agentActive.delete(fromLabel)) this.agentActive.add(target)
@@ -712,14 +713,7 @@ export class EmbeddedBrowserManager {
     this.clearAgentCursorHide(label)
     this.agentCursorStates.delete(label)
     this.agentCursorArrivals.delete(label)
-    const cursorWaiters = this.agentCursorArrivalWaiters.get(label)
-    if (cursorWaiters) {
-      this.agentCursorArrivalWaiters.delete(label)
-      for (const waiter of cursorWaiters) {
-        clearTimeout(waiter.timeout)
-        waiter.resolve(false)
-      }
-    }
+    this.cancelAgentCursorArrivalWaiters(label)
     for (const [approvalId, approval] of this.agentApprovals) {
       if (approval.label === label) this.agentApprovals.delete(approvalId)
     }
@@ -747,6 +741,16 @@ export class EmbeddedBrowserManager {
     if (!timer) return
     clearTimeout(timer)
     this.agentCursorHideTimers.delete(label)
+  }
+
+  private cancelAgentCursorArrivalWaiters(label: string): void {
+    const waiters = this.agentCursorArrivalWaiters.get(label)
+    if (!waiters) return
+    this.agentCursorArrivalWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.resolve(false)
+    }
   }
 
   async clearData(kinds: string[] | null): Promise<number> {

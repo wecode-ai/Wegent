@@ -1017,6 +1017,52 @@ describe('WorkspaceBrowserPanel', () => {
     expect(onAgentActiveChange).toHaveBeenLastCalledWith(false)
   })
 
+  test('clears visible agent cursor activity when the browser closes', async () => {
+    let handleAgentCursor!: (event: {
+      label: string
+      visible: boolean
+      x: number
+      y: number
+      animateMovement: boolean
+      moveSequence: number
+      createdAtUnixMs: number
+    }) => void
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockImplementation(handler => {
+      handleAgentCursor = handler
+      return null
+    })
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const onAgentActiveChange = vi.fn()
+    render(<WorkspaceBrowserPanel active onAgentActiveChange={onAgentActiveChange} />)
+    await screen.findByTestId('workspace-browser-native-view')
+
+    act(() => {
+      handleAgentCursor({
+        label: 'workspace-browser',
+        visible: true,
+        x: 100,
+        y: 50,
+        animateMovement: true,
+        moveSequence: 1,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(true)
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(false)
+  })
+
   test('keeps agent control paused until the user returns it to AI', async () => {
     let handleAgentState!: (event: {
       label: string

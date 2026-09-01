@@ -344,7 +344,8 @@ export class EmbeddedBrowserBridge {
     const point = actionCursorPoint(request, preview)
     if (!point) return preview
     const moveSequence = this.browser.showAgentCursor(label, point.x, point.y)
-    await this.browser.waitForAgentCursorArrival(label, moveSequence)
+    const arrived = await this.browser.waitForAgentCursorArrival(label, moveSequence)
+    if (!arrived) throw new Error('Timed out waiting for embedded browser agent cursor arrival')
     if (this.browser.isAgentControlPaused(label)) return agentControlPausedResult(request.action)
     return this.runAction(label, request)
   }

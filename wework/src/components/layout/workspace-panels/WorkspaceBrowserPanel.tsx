@@ -745,6 +745,7 @@ export function WorkspaceBrowserTabPanel({
       setClearDataNotice(null)
       setClearingDataKind(null)
       setAgentState(null)
+      setAgentCursor(null)
       onTitleChange?.(null)
       onFaviconChange?.(null)
     })
