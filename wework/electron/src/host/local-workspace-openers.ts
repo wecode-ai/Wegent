@@ -390,7 +390,9 @@ async function resolveWindowsExecutable(
 
   for (const command of opener.commands) {
     try {
-      const { stdout } = await execFileAsync('where.exe', [command])
+      const { stdout } = await execFileAsync('where.exe', [command], {
+        windowsHide: true,
+      })
       const resolved = stdout
         .split(/\r?\n/)
         .map(path => path.trim())
@@ -519,12 +521,11 @@ foreach ($dir in $folders) {
 }
 `
   try {
-    const { stdout } = await execFileAsync('pwsh.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      script,
-    ])
+    const { stdout } = await execFileAsync(
+      'pwsh.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { windowsHide: true }
+    )
     return new Map(
       stdout.split(/\r?\n/).flatMap(line => {
         const separator = line.indexOf('\t')

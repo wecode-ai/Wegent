@@ -716,6 +716,7 @@ async fn run_plugin_command(
 fn plugin_command(program: &Path, rest: &[String]) -> Command {
     if looks_like_shell_script(program) {
         let mut cmd = Command::new("sh");
+        crate::process::hide_windows_console(&mut cmd);
         cmd.arg(program);
         for arg in rest {
             cmd.arg(arg);
@@ -723,6 +724,7 @@ fn plugin_command(program: &Path, rest: &[String]) -> Command {
         cmd
     } else if program.extension().and_then(|ext| ext.to_str()) == Some("ps1") {
         let mut cmd = Command::new("pwsh");
+        crate::process::hide_windows_console(&mut cmd);
         cmd.args([
             "-NoProfile",
             "-NonInteractive",
@@ -737,6 +739,7 @@ fn plugin_command(program: &Path, rest: &[String]) -> Command {
         cmd
     } else {
         let mut cmd = Command::new(program);
+        crate::process::hide_windows_console(&mut cmd);
         for arg in rest {
             cmd.arg(arg);
         }

@@ -422,6 +422,7 @@ fn is_executable_file(path: &Path) -> bool {
 
 async fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new(path);
+    crate::process::hide_windows_console(&mut command);
     command
         .args(args)
         .kill_on_drop(true)

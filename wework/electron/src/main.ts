@@ -1554,6 +1554,7 @@ async function readNodeVersion(path: string): Promise<string> {
   const { stdout } = await execFileAsync(path, ['--version'], {
     env: environment,
     timeout: 5000,
+    windowsHide: true,
   })
   const output = stdout.trim()
   const match = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(output)
