@@ -10948,7 +10948,7 @@ describe('DesktopWorkbenchLayout', () => {
     )
   })
 
-  test('reveals the Electron startup window only after the active transcript is ready', async () => {
+  test('reveals the Electron startup window once the task list is ready', async () => {
     runtimeMocks.electron = true
     const { rerender } = render(
       <DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading />
@@ -10957,30 +10957,114 @@ describe('DesktopWorkbenchLayout', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
 
-    rerender(<DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading={false} />)
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        isRuntimeTranscriptLoading
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
 
     await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
     })
   })
 
-  test('keeps the startup animation visible until the routed task is restored', async () => {
+  test('reveals a blank workbench when the persisted startup pane no longer exists', async () => {
+    runtimeMocks.electron = true
+    localStorage.setItem(
+      'wework:workbench-split-groups:v3:fixed-task',
+      JSON.stringify({
+        version: 3,
+        state: {
+          version: 3,
+          groups: [],
+          activeView: {
+            type: 'single',
+            layout: {
+              version: 2,
+              root: {
+                id: 'stale-startup-pane',
+                type: 'pane',
+                paneKey: 'runtime:old-device:missing-task',
+              },
+              focusedPaneId: 'stale-startup-pane',
+            },
+          },
+        },
+      })
+    )
+
+    render(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        workspaceTabId="fixed-task"
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('desktop-workbench-main')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
+    })
+    expect(localStorage.getItem('wework:workbench-split-groups:v3:fixed-task')).toContain(
+      'runtime:old-device:missing-task'
+    )
+  })
+
+  test('reveals the workbench after task-list loading without waiting for route restoration', async () => {
     runtimeMocks.electron = true
     window.history.pushState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-a')
-    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
     const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
 
     await act(async () => {
       await Promise.resolve()
     })
-    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady', {
+      source: 'task-list',
+    })
 
-    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+    rerender(
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        isRuntimeTranscriptLoading
+        state={{
+          ...baseProps.state,
+          runtimeWork: {
+            projects: [],
+            chats: [],
+            totalTasks: 0,
+          },
+        }}
+      />
+    )
 
     await waitFor(() => {
-      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady', {
+        source: 'task-list',
+      })
     })
   })
 

@@ -35,6 +35,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   goBackEmbeddedBrowser: vi.fn(),
   goForwardEmbeddedBrowser: vi.fn(),
   isEmbeddedBrowserLabelTransferred: vi.fn(),
+  listenEmbeddedBrowserAgentCursor: vi.fn(),
   listenEmbeddedBrowserAgentState: vi.fn(),
   listenEmbeddedBrowserAnnotationState: vi.fn(),
   listenEmbeddedBrowserAnnotationRequests: vi.fn(),
@@ -44,6 +45,7 @@ const embeddedBrowserMocks = vi.hoisted(() => ({
   listenEmbeddedBrowserLocalFilePreview: vi.fn(),
   listenEmbeddedBrowserPageStateChanges: vi.fn(),
   navigateEmbeddedBrowser: vi.fn(),
+  notifyEmbeddedBrowserAgentCursorArrived: vi.fn(),
   openEmbeddedBrowser: vi.fn(),
   pauseEmbeddedBrowserDownload: vi.fn(),
   readEmbeddedBrowserPageState: vi.fn(),
@@ -198,6 +200,7 @@ describe('WorkspaceBrowserPanel', () => {
     embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserAnnotationState.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserAnnotationRequests.mockReturnValue(null)
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserDownloads.mockReturnValue(null)
     embeddedBrowserMocks.listenEmbeddedBrowserInvalidTlsCertificates.mockReturnValue(null)
@@ -909,7 +912,7 @@ describe('WorkspaceBrowserPanel', () => {
     consoleError.mockRestore()
   })
 
-  test('shows agent browser state and lets the user take over', async () => {
+  test('reports active agent control without adding a running status bar', () => {
     let handleAgentState!: (event: {
       label: string
       status: string
@@ -924,7 +927,8 @@ describe('WorkspaceBrowserPanel', () => {
       return null
     })
 
-    render(<WorkspaceBrowserPanel active />)
+    const onAgentActiveChange = vi.fn()
+    render(<WorkspaceBrowserPanel active onAgentActiveChange={onAgentActiveChange} />)
 
     act(() => {
       handleAgentState({
@@ -939,12 +943,124 @@ describe('WorkspaceBrowserPanel', () => {
       })
     })
 
-    expect(screen.getByTestId('workspace-browser-agent-status')).toHaveTextContent('AI 正在点击')
-    fireEvent.click(screen.getByTestId('workspace-browser-agent-pause-button'))
-    expect(embeddedBrowserMocks.setEmbeddedBrowserAgentControlPaused).toHaveBeenCalledWith(
-      true,
-      'workspace-browser'
-    )
+    expect(screen.queryByTestId('workspace-browser-agent-status')).not.toBeInTheDocument()
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(true)
+  })
+
+  test('keeps the tab agent icon active while the cursor remains visible', () => {
+    let handleAgentState!: (event: {
+      label: string
+      status: string
+      action: string | null
+      target: string | null
+      message: string | null
+      errorCode: string | null
+      createdAtUnixMs: number
+    }) => void
+    let handleAgentCursor!: (event: {
+      label: string
+      visible: boolean
+      x: number
+      y: number
+      animateMovement: boolean
+      moveSequence: number
+      createdAtUnixMs: number
+    }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentState.mockImplementation(handler => {
+      handleAgentState = handler
+      return null
+    })
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockImplementation(handler => {
+      handleAgentCursor = handler
+      return null
+    })
+
+    const onAgentActiveChange = vi.fn()
+    render(<WorkspaceBrowserPanel active onAgentActiveChange={onAgentActiveChange} />)
+
+    act(() => {
+      handleAgentCursor({
+        label: 'workspace-browser',
+        visible: true,
+        x: 100,
+        y: 50,
+        animateMovement: true,
+        moveSequence: 1,
+        createdAtUnixMs: Date.now(),
+      })
+      handleAgentState({
+        label: 'workspace-browser',
+        status: 'idle',
+        action: 'click',
+        target: 'index 2',
+        message: null,
+        errorCode: null,
+        approval: null,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(true)
+
+    act(() => {
+      handleAgentCursor({
+        label: 'workspace-browser',
+        visible: false,
+        x: 100,
+        y: 50,
+        animateMovement: false,
+        moveSequence: 1,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(false)
+  })
+
+  test('clears visible agent cursor activity when the browser closes', async () => {
+    let handleAgentCursor!: (event: {
+      label: string
+      visible: boolean
+      x: number
+      y: number
+      animateMovement: boolean
+      moveSequence: number
+      createdAtUnixMs: number
+    }) => void
+    let handleClose!: (event: { label: string; nativeLabel: string }) => void
+    embeddedBrowserMocks.listenEmbeddedBrowserAgentCursor.mockImplementation(handler => {
+      handleAgentCursor = handler
+      return null
+    })
+    embeddedBrowserMocks.listenEmbeddedBrowserCloseRequests.mockImplementation(handler => {
+      handleClose = handler
+      return Promise.resolve(vi.fn())
+    })
+    const onAgentActiveChange = vi.fn()
+    render(<WorkspaceBrowserPanel active onAgentActiveChange={onAgentActiveChange} />)
+    await screen.findByTestId('workspace-browser-native-view')
+
+    act(() => {
+      handleAgentCursor({
+        label: 'workspace-browser',
+        visible: true,
+        x: 100,
+        y: 50,
+        animateMovement: true,
+        moveSequence: 1,
+        createdAtUnixMs: Date.now(),
+      })
+    })
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(true)
+
+    act(() => {
+      handleClose({
+        label: 'workspace-browser',
+        nativeLabel: 'workspace-browser-native-1',
+      })
+    })
+
+    expect(onAgentActiveChange).toHaveBeenLastCalledWith(false)
   })
 
   test('keeps agent control paused until the user returns it to AI', async () => {
