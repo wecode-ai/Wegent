@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.api.endpoints.openapi_responses import (
+    _build_result_block_streaming_chunks,
     _create_non_streaming_response_unified,
     _filter_current_assistant_turn,
     _iter_callback_events,
@@ -61,6 +62,43 @@ async def test_callback_event_stream_waits_for_executor_terminal_event():
     assert [event.type for event in events] == ["chunk", "done"]
     assert events[0].content == "hello"
     assert pubsub.get_message.await_count == 4
+
+
+def test_result_blocks_become_created_then_updated_streaming_chunks():
+    known_blocks = {}
+
+    created = _build_result_block_streaming_chunks(
+        {
+            "blocks": [
+                {
+                    "id": "image-1",
+                    "type": "image",
+                    "status": "streaming",
+                    "is_placeholder": True,
+                }
+            ]
+        },
+        known_blocks,
+    )
+    updated = _build_result_block_streaming_chunks(
+        {
+            "blocks": [
+                {
+                    "id": "image-1",
+                    "type": "image",
+                    "status": "done",
+                    "is_placeholder": False,
+                    "image_attachment_ids": [51],
+                }
+            ]
+        },
+        known_blocks,
+    )
+
+    assert created[0].type == "block_created"
+    assert updated[0].type == "block_updated"
+    assert updated[0].data["updates"]["status"] == "done"
+    assert known_blocks["image-1"]["image_attachment_ids"] == [51]
 
 
 @pytest.fixture
@@ -737,6 +775,115 @@ class TestOpenAPIResponsesCreate:
 
         assert filtered == [current_assistant]
 
+    @patch("app.api.endpoints.openapi_responses._create_streaming_response_unified")
+    def test_create_response_streaming_not_supported_for_executor(
+        self,
+        mock_create_streaming,
+        test_client: TestClient,
+        test_api_key,
+        test_team: Kind,
+        test_bot: Kind,
+        test_model: Kind,
+        test_public_shell: Kind,
+    ):
+        """Test streaming returns error when not supported by shell type.
+
+        Note: With the unified trigger architecture, streaming support is determined
+        by ExecutionRouter based on shell_type. For non-Chat Shell types, the
+        dispatch_sse_stream will raise NotImplementedError.
+        """
+        from fastapi import HTTPException
+
+        # Mock the streaming function to raise NotImplementedError (simulating non-SSE mode)
+        mock_create_streaming.side_effect = HTTPException(
+            status_code=400,
+            detail="Streaming is only supported for Chat Shell type teams",
+        )
+
+        response = test_client.post(
+            "/api/v1/responses",
+            headers={"X-API-Key": test_api_key[0]},
+            json={"model": "default#test-team", "input": "Hello", "stream": True},
+        )
+
+        assert response.status_code == 400
+        assert "Streaming is only supported" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_non_sse_executor_streaming_uses_callback_path(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Non-SSE executor shells can stream through the callback channel."""
+        from app.api.endpoints.openapi_responses import (
+            _create_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+        from app.services.execution.router import (
+            CommunicationMode,
+            ExecutionTarget,
+        )
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            bot=[{"shell_type": "ClaudeCode"}],
+            model_config={"modelType": "llm"},
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=False,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.router.route",
+                return_value=ExecutionTarget(
+                    mode=CommunicationMode.HTTP_CALLBACK,
+                ),
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._persist_terminal_failure",
+                new=AsyncMock(),
+            ) as mock_persist_failure,
+        ):
+            response = await _create_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                ),
+                input_text="hello",
+                tool_settings={},
+            )
+
+        assert response.media_type == "text/event-stream"
+        mock_persist_failure.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_callback_streaming_subscribe_failure_returns_failed_event(
         self,
@@ -765,6 +912,7 @@ class TestOpenAPIResponsesCreate:
             task_id=101,
             subtask_id=654,
             bot=[{"shell_type": "ClaudeCode"}],
+            model_config={"modelType": "llm"},
         )
         expected_user_id = test_user.id
         expected_username = test_user.user_name
@@ -850,6 +998,112 @@ class TestOpenAPIResponsesCreate:
         assert "team_name=test-team" in caplog.text
         assert "shell_type=ClaudeCode" in caplog.text
         assert "route_mode=http_callback" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_video_streaming_returns_bad_request(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """Video generation is asynchronous and rejects stream=true."""
+        from fastapi import HTTPException
+
+        from app.api.endpoints.openapi_responses import (
+            _create_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            model_config={"modelType": "video"},
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ),
+            patch(
+                "app.api.endpoints.openapi_responses._persist_terminal_failure",
+                new=AsyncMock(),
+            ) as mock_persist_failure,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await _create_streaming_response_unified(
+                    db=test_db,
+                    user=test_user,
+                    team=test_team,
+                    model_info={"namespace": "default", "team_name": "test-team"},
+                    request_body=ResponseCreateInput(
+                        model="default#test-team",
+                        input="hello",
+                        stream=True,
+                    ),
+                    input_text="hello",
+                    tool_settings={},
+                )
+
+        assert exc_info.value.status_code == 400
+        assert "not supported for video generation" in exc_info.value.detail
+        mock_persist_failure.assert_awaited_once_with(
+            subtask_id=654,
+            task_id=101,
+            error_message=exc_info.value.detail,
+            error_code="streaming_not_supported",
+        )
+
+    @pytest.mark.asyncio
+    async def test_video_streaming_with_background_is_allowed(self):
+        """background=true takes precedence over stream=true for video."""
+        from app.api.endpoints.openapi_responses import _reject_video_streaming
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        execution_request = SimpleNamespace(
+            model_config={"modelType": "video"},
+        )
+
+        with patch(
+            "app.api.endpoints.openapi_responses._persist_terminal_failure",
+            new=AsyncMock(),
+        ) as mock_persist_failure:
+            await _reject_video_streaming(
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="hello",
+                    stream=True,
+                    background=True,
+                ),
+                execution_request=execution_request,
+                subtask_id=654,
+                task_id=101,
+            )
+
+        mock_persist_failure.assert_not_awaited()
+
+    def test_video_generation_forces_background_execution(self):
+        """Video generation remains asynchronous without a caller flag."""
+        from app.api.endpoints.openapi_responses import _should_run_in_background
+
+        execution_request = SimpleNamespace(
+            model_config={"modelType": "video"},
+        )
+
+        assert _should_run_in_background(
+            requested_background=False,
+            execution_request=execution_request,
+        )
 
     def test_create_response_with_wegent_tools(
         self, test_client: TestClient, test_api_key
@@ -965,6 +1219,84 @@ class TestOpenAPIResponsesCreate:
         assert mock_build_execution_request.await_args.kwargs["message"] == (
             "follow-up question"
         )
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_build_request_passes_generation_and_attachment_order(
+        self,
+        test_db: Session,
+        test_user: User,
+        test_team: Kind,
+    ):
+        """OpenAPI generation options and linked attachment order reach execution."""
+        from app.api.endpoints.openapi_responses import (
+            _create_non_streaming_response_unified,
+        )
+        from app.schemas.openapi_response import ResponseCreateInput
+
+        setup = SimpleNamespace(
+            task=SimpleNamespace(id=101, json={"metadata": {"labels": {}}}),
+            task_id=101,
+            user_subtask=SimpleNamespace(id=321),
+            assistant_subtask=SimpleNamespace(id=654),
+        )
+        execution_request = SimpleNamespace(
+            task_id=101,
+            subtask_id=654,
+            model_config={"modelType": "image"},
+        )
+        query_db = MagicMock()
+        query_db.query.return_value.filter.return_value.order_by.return_value.all.return_value = (
+            []
+        )
+
+        with (
+            patch(
+                "app.services.openapi.chat_session.setup_chat_session",
+                return_value=setup,
+            ) as setup_chat_session_mock,
+            patch(
+                "app.api.endpoints.openapi_responses.link_contexts_to_subtask",
+                return_value=[31, 12],
+            ),
+            patch(
+                "app.services.chat.trigger.unified.build_execution_request",
+                new=AsyncMock(return_value=execution_request),
+            ) as mock_build_execution_request,
+            patch(
+                "app.services.execution.execution_dispatcher.supports_streaming",
+                return_value=False,
+            ),
+            patch(
+                "app.services.execution.execution_dispatcher.dispatch",
+                new=AsyncMock(),
+            ),
+            patch(
+                "app.db.session.SessionLocal",
+                return_value=query_db,
+            ),
+        ):
+            response = await _create_non_streaming_response_unified(
+                db=test_db,
+                user=test_user,
+                team=test_team,
+                model_info={"namespace": "default", "team_name": "test-team"},
+                request_body=ResponseCreateInput(
+                    model="default#test-team",
+                    input="generate an image",
+                    attachment_ids=[12, 31],
+                    wegent_options={"generation": {"size": "1024x1024"}},
+                ),
+                input_text="generate an image",
+                tool_settings={},
+            )
+
+        assert response.status == "queued"
+        build_kwargs = mock_build_execution_request.await_args.kwargs
+        assert build_kwargs["attachment_ids"] == [31, 12]
+        assert build_kwargs["generation_params"].size == "1024x1024"
+        assert setup_chat_session_mock.call_args.kwargs["generation_params"] == {
+            "size": "1024x1024"
+        }
 
     @pytest.mark.asyncio
     async def test_non_streaming_dispatch_failure_persists_failed_status(
@@ -1119,6 +1451,47 @@ class TestOpenAPIResponsesCreate:
 
         assert setup.assistant_subtask.executor_name == "executor-123"
         assert setup.assistant_subtask.executor_namespace == "default"
+
+    def test_setup_chat_session_uses_generation_model_type_as_task_type(self):
+        from app.services.openapi.chat_session import setup_chat_session
+
+        session = SimpleNamespace(
+            task=SimpleNamespace(id=41),
+            task_id=41,
+            user_subtask=SimpleNamespace(id=42),
+            assistant_subtask=SimpleNamespace(id=43),
+            existing_subtasks=[],
+            bot_name="video-bot",
+            bot_namespace="default",
+        )
+
+        with patch(
+            "app.services.openapi.chat_session.prepare_execution_session",
+            return_value=session,
+        ) as prepare_session:
+            setup_chat_session(
+                db=MagicMock(),
+                user=SimpleNamespace(id=7),
+                team=SimpleNamespace(id=9),
+                model_info={
+                    "namespace": "default",
+                    "team_name": "video-agent",
+                    "model_type": "video",
+                },
+                input_text="Generate a video",
+                tool_settings={},
+                generation_params={
+                    "resolution": "1080p",
+                    "duration": 5,
+                },
+            )
+
+        task_params = prepare_session.call_args.kwargs["task_params"]
+        assert task_params.task_type == "video"
+        assert task_params.generate_params == {
+            "resolution": "1080p",
+            "duration": 5,
+        }
 
 
 @pytest.mark.api

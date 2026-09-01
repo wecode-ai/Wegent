@@ -8,6 +8,7 @@ interface UnifiedAddButtonProps {
   className?: string
   icon?: ReactNode
   variant?: 'default' | 'primary' | 'outline' | 'secondary'
+  disabled?: boolean
   [key: `data-${string}`]: string | undefined
 }
 
@@ -17,6 +18,7 @@ export default function UnifiedAddButton({
   className = '',
   icon,
   variant = 'default',
+  disabled = false,
   ...dataAttributes
 }: UnifiedAddButtonProps) {
   return (
@@ -24,6 +26,7 @@ export default function UnifiedAddButton({
       onClick={onClick}
       variant={variant}
       size="sm"
+      disabled={disabled}
       className={`flex items-center gap-2 ${className}`}
       {...dataAttributes}
     >

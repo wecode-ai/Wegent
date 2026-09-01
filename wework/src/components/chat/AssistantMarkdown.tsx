@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { HTMLAttributes, OlHTMLAttributes, ReactNode } from 'react'
 import type { Element as HastElement } from 'hast'
 import { FileText, Folder, Link2 } from 'lucide-react'
@@ -51,6 +60,7 @@ const STREAMING_DIAGRAM_LANGUAGES = new Map([
   ['weworkstreamingplantuml', 'plantuml'],
   ['weworkstreamingpuml', 'puml'],
 ])
+const MarkdownStreamingContext = createContext(false)
 interface AssistantMarkdownProps {
   content: string
   isStreaming?: boolean
@@ -107,6 +117,8 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   fileChanges,
 }: AssistantMarkdownProps) {
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
+  const streamdownMode =
+    variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
   const displayContent = useMemo(
     () => stripUnsupportedContentReferenceCitations(bufferedContent),
     [bufferedContent]
@@ -117,7 +129,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     return parts.flatMap<AssistantMarkdownPart>(part => {
       if (part.kind === 'visualization') return [part]
       const chunks = windowMarkdown ? splitStaticMarkdownChunks(part.content) : [part.content]
-      const windowed = chunks.length > 1
+      const windowed = windowMarkdown
       return chunks.map(content => ({ kind: 'markdown', content, windowed }))
     })
   }, [displayContent, windowMarkdown])
@@ -188,7 +200,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <strong className="font-semibold">{children}</strong>
       ),
       code: (props: MarkdownCodeProps) => (
-        <MarkdownCode {...props} compact={variant === 'process'} isStreaming={isStreaming} />
+        <MarkdownCode {...props} compact={variant === 'process'} />
       ),
       inlineCode: ({ children }: { children?: ReactNode }) => (
         <MarkdownInlineCode compact={variant === 'process'}>{children}</MarkdownInlineCode>
@@ -233,7 +245,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
         <AssistantMarkdownImage src={src} alt={alt} />
       ),
     }),
-    [headingClasses, isStreaming, openFile, variant]
+    [headingClasses, openFile, variant]
   )
 
   return (
@@ -255,8 +267,29 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             content={part.content}
             eager={index === 0 || index === contentParts.length - 1}
           >
+            <MarkdownStreamingContext.Provider
+              value={isStreaming && index === contentParts.length - 1}
+            >
+              <Streamdown
+                mode={streamdownMode}
+                isAnimating={false}
+                controls={false}
+                linkSafety={{ enabled: false }}
+                lineNumbers={false}
+                urlTransform={url => url}
+                components={components}
+              >
+                {prepareAssistantMarkdownContent(
+                  part.content,
+                  isStreaming && index === contentParts.length - 1
+                )}
+              </Streamdown>
+            </MarkdownStreamingContext.Provider>
+          </WindowedMarkdownChunk>
+        ) : (
+          <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
             <Streamdown
-              mode={isStreaming && index === contentParts.length - 1 ? 'streaming' : 'static'}
+              mode={streamdownMode}
               isAnimating={false}
               controls={false}
               linkSafety={{ enabled: false }}
@@ -264,25 +297,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               urlTransform={url => url}
               components={components}
             >
-              {prepareAssistantMarkdownContent(
-                part.content,
-                isStreaming && index === contentParts.length - 1
-              )}
+              {prepareAssistantMarkdownContent(part.content, isStreaming)}
             </Streamdown>
-          </WindowedMarkdownChunk>
-        ) : (
-          <Streamdown
-            key={`markdown-${index}`}
-            mode={isStreaming ? 'streaming' : 'static'}
-            isAnimating={false}
-            controls={false}
-            linkSafety={{ enabled: false }}
-            lineNumbers={false}
-            urlTransform={url => url}
-            components={components}
-          >
-            {prepareAssistantMarkdownContent(part.content, isStreaming)}
-          </Streamdown>
+          </MarkdownStreamingContext.Provider>
         )
       )}
     </div>
@@ -356,17 +373,10 @@ function estimateMarkdownChunkHeight(content: string): number {
 type MarkdownCodeProps = {
   node?: HastElement
   compact?: boolean
-  isStreaming?: boolean
 } & HTMLAttributes<HTMLElement>
 
-function MarkdownCode({
-  className,
-  children,
-  node,
-  compact = false,
-  isStreaming = false,
-  ...props
-}: MarkdownCodeProps) {
+function MarkdownCode({ className, children, node, compact = false, ...props }: MarkdownCodeProps) {
+  const isStreaming = useContext(MarkdownStreamingContext)
   const match = /language-(\w*)/.exec(className || '')
   const text = reactNodeToText(children)
   const isBlock =

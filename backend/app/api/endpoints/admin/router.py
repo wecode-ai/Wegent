@@ -13,6 +13,7 @@ from app.api.endpoints.admin import (
     im_channels,
     kind_management,
     marketplace,
+    oauth_clients,
     plugins,
     public_bots,
     public_ghosts,
@@ -45,6 +46,7 @@ router.include_router(system_config.router, tags=["admin-system-config"])
 router.include_router(api_keys.router, tags=["admin-api-keys"])
 router.include_router(connector_apps.router, tags=["admin-connector-apps"])
 router.include_router(token_issuers.router, tags=["admin-token-issuers"])
+router.include_router(oauth_clients.router, tags=["admin-oauth-clients"])
 router.include_router(kind_management.router, tags=["admin-kind-management"])
 router.include_router(marketplace.router, tags=["admin-marketplace"])
 router.include_router(stats.router, tags=["admin-stats"])

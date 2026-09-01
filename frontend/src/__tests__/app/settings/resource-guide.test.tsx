@@ -65,9 +65,9 @@ jest.mock('@/features/settings/components/groups/GroupManager', () => ({
   GroupManager: () => <div>Group Manager</div>,
 }))
 
-jest.mock('@/features/settings/components/ApiKeyList', () => ({
+jest.mock('@/features/settings/components/DeveloperCredentials', () => ({
   __esModule: true,
-  default: () => <div>API Keys</div>,
+  default: () => <div>Developer Credentials</div>,
 }))
 
 jest.mock('@/features/pet/components/PetSettings', () => ({

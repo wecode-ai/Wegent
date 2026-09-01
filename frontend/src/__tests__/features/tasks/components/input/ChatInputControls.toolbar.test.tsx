@@ -374,6 +374,45 @@ describe('ChatInputControls toolbar actions', () => {
     expect(screen.queryByTestId('agent-skill-selector-button')).not.toBeInTheDocument()
   })
 
+  it('hides workflow-owned video controls through hiddenVideoParams', () => {
+    const workflowTeam: Team = {
+      ...selectedTeam,
+      mode_spec: {
+        allowedModelCategories: ['video'],
+        hiddenVideoParams: ['duration', 'model', 'resolution', 'ratio'],
+      },
+    }
+
+    render(
+      <ChatInputControls
+        {...createProps()}
+        selectedTeam={workflowTeam}
+        teams={[workflowTeam]}
+        showVideoControlsInChat
+        selectedVideoModel={null}
+        onVideoModelChange={jest.fn()}
+        selectedResolution="1080p"
+        onResolutionChange={jest.fn()}
+        selectedRatio="9:16"
+        onRatioChange={jest.fn()}
+        selectedDuration={5}
+        onDurationChange={jest.fn()}
+        hideDurationSelector
+        videoGenerationModes={[
+          { id: 'text_to_video', label: '文生视频' },
+          { id: 'omni_reference', label: '全能参考' },
+        ]}
+        selectedVideoGenerationMode="text_to_video"
+        onVideoGenerationModeChange={jest.fn()}
+      />
+    )
+
+    expect(screen.queryByTestId('model-selector')).not.toBeInTheDocument()
+    expect(screen.getByTestId('video-generation-mode-selector')).toBeInTheDocument()
+    expect(screen.queryByTestId('video-settings-popover')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('agent-skill-selector-button')).not.toBeInTheDocument()
+  })
+
   it('moves video model and generation mode into more actions in a narrow chat pane', () => {
     const workflowTeam: Team = {
       ...selectedTeam,

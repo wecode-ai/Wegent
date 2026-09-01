@@ -129,6 +129,14 @@ class VideoAgent(PollingAgent):
                 resolve_uploaded_media(
                     request.user_subtask_id,
                     user_id,
+                    attachment_ids=[
+                        attachment_id
+                        for attachment in request.attachments
+                        if isinstance(
+                            attachment_id := attachment.get("id"),
+                            int,
+                        )
+                    ],
                 )
             )
             images_by_identity = {

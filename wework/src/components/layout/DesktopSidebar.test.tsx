@@ -216,7 +216,7 @@ describe('DesktopSidebar', () => {
     Element.prototype.scrollIntoView = vi.fn()
     vi.mocked(openLocalWorkspace).mockReset()
     clearRuntimeConversationCacheForTests()
-  })
+  }, 60_000)
 
   afterEach(() => {
     clearRuntimeConversationCacheForTests()

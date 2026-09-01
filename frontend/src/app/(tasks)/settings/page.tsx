@@ -17,8 +17,8 @@ import { SettingsTabNav, SettingsTabId } from '@/features/settings/components/Se
 import IntegrationsPage from '@/features/settings/components/IntegrationsPage'
 import NotificationSettings from '@/features/settings/components/NotificationSettings'
 import { GroupManager } from '@/features/settings/components/groups/GroupManager'
-import ApiKeyList from '@/features/settings/components/ApiKeyList'
 import PublishedAppsPage from '@wecode/components/settings/PublishedAppsPage'
+import DeveloperCredentials from '@/features/settings/components/DeveloperCredentials'
 import { PetSettings } from '@/features/pet/components/PetSettings'
 import { useTranslation } from '@/hooks/useTranslation'
 import { GithubStarButton } from '@/features/layout/GithubStarButton'
@@ -104,7 +104,7 @@ function SettingsContent() {
       case 'general':
         return <NotificationSettings />
       case 'api-keys':
-        return <ApiKeyList />
+        return <DeveloperCredentials />
       case 'published-apps':
         return <PublishedAppsPage />
       case 'pet':

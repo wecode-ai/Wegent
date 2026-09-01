@@ -14,7 +14,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use crate::{
-    codex_phase::{codex_item_id, codex_phase_name},
+    codex_phase::{codex_item_id, codex_phase_is_final, codex_phase_name},
     logging::log_executor_event,
 };
 
@@ -22,6 +22,14 @@ use super::util::{extract_text, item_type, raw_string_field, reasoning_content, 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TextChunkMapping {
+    OutputDelta {
+        item_id: String,
+        delta: String,
+    },
+    OutputCompleted {
+        item_id: String,
+        text: String,
+    },
     ProcessDelta {
         process_kind: &'static str,
         block_type: &'static str,
@@ -45,7 +53,8 @@ pub(crate) struct ToolOutputDeltaMapping {
 pub(crate) fn map_text_chunk(
     method: &str,
     params: &Value,
-    _resolved_phase: Option<&str>,
+    resolved_phase: Option<&str>,
+    output_item_id_fallback: Option<&str>,
 ) -> Result<Option<TextChunkMapping>, &'static str> {
     match method {
         "item/reasoning/delta"
@@ -67,6 +76,13 @@ pub(crate) fn map_text_chunk(
             let delta = raw_string_field(params, "delta")
                 .filter(|delta| !delta.is_empty())
                 .ok_or("missing_agent_message_delta")?;
+            if codex_phase_is_final(resolved_phase) {
+                if let Some(item_id) = notification_item_id(params)
+                    .or_else(|| output_item_id_fallback.map(str::to_owned))
+                {
+                    return Ok(Some(TextChunkMapping::OutputDelta { item_id, delta }));
+                }
+            }
             Ok(Some(TextChunkMapping::ProcessDelta {
                 process_kind: "assistant_message",
                 block_type: "text",
@@ -90,6 +106,13 @@ pub(crate) fn map_text_chunk(
             let Some(text) = completed_assistant_text(params) else {
                 return Ok(None);
             };
+            if codex_phase_is_final(resolved_phase) {
+                if let Some(item_id) = notification_item_id(params)
+                    .or_else(|| output_item_id_fallback.map(str::to_owned))
+                {
+                    return Ok(Some(TextChunkMapping::OutputCompleted { item_id, text }));
+                }
+            }
             Ok(Some(TextChunkMapping::ProcessCompleted {
                 process_kind: "assistant_message",
                 block_type: "text",
@@ -371,6 +394,7 @@ mod tests {
                 }
             }),
             None,
+            None,
         )
         .expect("reasoning summary should map");
 
@@ -381,6 +405,68 @@ mod tests {
                 block_type: "thinking",
                 item_id: Some("reasoning-1".to_owned()),
                 text: "Inspecting logsRunning focused tests".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn maps_final_agent_message_text_to_output_events() {
+        assert_eq!(
+            map_text_chunk(
+                "item/agentMessage/delta",
+                &json!({"itemId": "final-1", "delta": "Done"}),
+                Some("finalanswer"),
+                None,
+            )
+            .expect("final delta should map"),
+            Some(TextChunkMapping::OutputDelta {
+                item_id: "final-1".to_owned(),
+                delta: "Done".to_owned(),
+            })
+        );
+        assert_eq!(
+            map_text_chunk(
+                "item/completed",
+                &json!({
+                    "item": {
+                        "id": "final-1",
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done"
+                    }
+                }),
+                Some("finalanswer"),
+                None,
+            )
+            .expect("completed final text should map"),
+            Some(TextChunkMapping::OutputCompleted {
+                item_id: "final-1".to_owned(),
+                text: "Done".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn keeps_final_text_without_an_output_item_id_as_process_text() {
+        assert_eq!(
+            map_text_chunk(
+                "item/completed",
+                &json!({
+                    "item": {
+                        "type": "agentMessage",
+                        "phase": "final_answer",
+                        "text": "Done"
+                    }
+                }),
+                Some("finalanswer"),
+                None,
+            )
+            .expect("legacy final text should map"),
+            Some(TextChunkMapping::ProcessCompleted {
+                process_kind: "assistant_message",
+                block_type: "text",
+                item_id: None,
+                text: "Done".to_owned(),
             })
         );
     }

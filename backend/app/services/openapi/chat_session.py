@@ -45,6 +45,7 @@ def setup_chat_session(
     task_id: Optional[int] = None,
     api_key_name: Optional[str] = None,
     auto_delete_executor: Optional[str] = None,
+    generation_params: Optional[Dict[str, Any]] = None,
 ) -> ChatSessionSetup:
     """
     Set up chat session: build config, create task and subtasks.
@@ -63,6 +64,12 @@ def setup_chat_session(
         ChatSessionSetup with task, subtasks, and config
     """
     workspace_data = tool_settings.get("workspace") or {}
+    model_type = str(model_info.get("model_type") or "").strip().lower()
+    task_type = (
+        model_type
+        if model_type in {"image", "video"}
+        else "code" if workspace_data.get("git_url") else "chat"
+    )
     task_params = TaskCreationParams(
         message=input_text,
         model_id=model_info.get("model_id"),
@@ -71,11 +78,12 @@ def setup_chat_session(
         git_repo=workspace_data.get("git_repo"),
         git_domain=workspace_data.get("git_domain"),
         branch_name=workspace_data.get("branch"),
-        task_type="code" if workspace_data.get("git_url") else "chat",
+        task_type=task_type,
         source="chat_shell",
         is_api_call=True,
         api_key_name=api_key_name,
         auto_delete_executor=auto_delete_executor,
+        generate_params=generation_params,
     )
 
     session = prepare_execution_session(

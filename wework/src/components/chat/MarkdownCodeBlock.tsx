@@ -1,63 +1,26 @@
-import { useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { CSSProperties, HTMLProps, ReactNode } from 'react'
 import { ArrowRightToLine, Copy, CopyCheck, TextWrap } from 'lucide-react'
-import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { track } from '@/telemetry/client'
-import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash'
-import css from 'react-syntax-highlighter/dist/esm/languages/prism/css'
-import diff from 'react-syntax-highlighter/dist/esm/languages/prism/diff'
-import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker'
-import go from 'react-syntax-highlighter/dist/esm/languages/prism/go'
-import ini from 'react-syntax-highlighter/dist/esm/languages/prism/ini'
-import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript'
-import json from 'react-syntax-highlighter/dist/esm/languages/prism/json'
-import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx'
-import less from 'react-syntax-highlighter/dist/esm/languages/prism/less'
-import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown'
-import python from 'react-syntax-highlighter/dist/esm/languages/prism/python'
-import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust'
-import scss from 'react-syntax-highlighter/dist/esm/languages/prism/scss'
-import shellSession from 'react-syntax-highlighter/dist/esm/languages/prism/shell-session'
-import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql'
-import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx'
-import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript'
-import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml'
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism'
-
-SyntaxHighlighter.registerLanguage('bash', bash)
-SyntaxHighlighter.registerLanguage('css', css)
-SyntaxHighlighter.registerLanguage('diff', diff)
-SyntaxHighlighter.registerLanguage('docker', docker)
-SyntaxHighlighter.registerLanguage('go', go)
-SyntaxHighlighter.registerLanguage('ini', ini)
-SyntaxHighlighter.registerLanguage('javascript', javascript)
-SyntaxHighlighter.registerLanguage('json', json)
-SyntaxHighlighter.registerLanguage('jsx', jsx)
-SyntaxHighlighter.registerLanguage('less', less)
-SyntaxHighlighter.registerLanguage('markdown', markdown)
-SyntaxHighlighter.registerLanguage('python', python)
-SyntaxHighlighter.registerLanguage('rust', rust)
-SyntaxHighlighter.registerLanguage('scss', scss)
-SyntaxHighlighter.registerLanguage('shell-session', shellSession)
-SyntaxHighlighter.registerLanguage('sql', sql)
-SyntaxHighlighter.registerLanguage('tsx', tsx)
-SyntaxHighlighter.registerLanguage('typescript', typescript)
-SyntaxHighlighter.registerLanguage('yaml', yaml)
+import type { HighlightedCode } from './highlightCode'
+import 'highlight.js/styles/atom-one-dark.css'
 
 const LANGUAGE_ALIASES: Record<string, string> = {
   cjs: 'javascript',
-  cmd: 'bash',
-  dockerfile: 'docker',
+  cmd: 'shell',
+  docker: 'dockerfile',
   js: 'javascript',
+  jsx: 'javascript',
   md: 'markdown',
   mjs: 'javascript',
   py: 'python',
   rs: 'rust',
-  sh: 'bash',
-  shell: 'bash',
+  sh: 'shell',
+  'shell-session': 'shell',
   ts: 'typescript',
+  tsx: 'typescript',
   yml: 'yaml',
-  zsh: 'bash',
+  zsh: 'shell',
 }
 
 const DISPLAY_LANGUAGE_ALIASES: Record<string, string> = {
@@ -69,8 +32,7 @@ const CODE_ACTION_BUTTON_CLASS =
 
 const CODE_FONT_FAMILY =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
-const MAX_HIGHLIGHTED_CODE_CHARS = 2_000
-const MAX_HIGHLIGHTED_CODE_LINES = 80
+const HIGHLIGHT_INTERVAL_MS = 120
 
 const codeCustomStyle: CSSProperties = {
   margin: 0,
@@ -112,8 +74,9 @@ export function MarkdownCodeBlock({
   const wrapButtonLabel = effectiveWrapLines ? '禁用自动换行' : '开启自动换行'
   const codeStyle = getCodeCustomStyle(effectiveWrapLines)
   const codeProps = getCodeTagProps(effectiveWrapLines)
-  const lineProps = getLineProps(effectiveWrapLines)
-  const shouldHighlight = shouldHighlightCode(text, isStreaming)
+  const highlightedCode = useThrottledHighlightedCode(text, language)
+  const highlightedPrefix =
+    highlightedCode && text.startsWith(highlightedCode.code) ? highlightedCode : null
 
   const handleCopy = async () => {
     await copyCodeText(text)
@@ -185,44 +148,120 @@ export function MarkdownCodeBlock({
       <div
         data-testid="markdown-code-scroll-container"
         data-wrap={effectiveWrapLines ? 'true' : 'false'}
-        data-syntax-highlighted={shouldHighlight ? 'true' : 'false'}
+        data-syntax-highlighted={highlightedPrefix ? 'true' : 'false'}
         className={
           effectiveWrapLines
             ? 'max-w-full select-none overflow-x-hidden'
-            : 'max-w-full select-none overflow-x-auto'
+            : `max-w-full select-none overflow-x-auto ${
+                isStreaming ? 'scrollbar-none' : 'scrollbar-soft'
+              }`
         }
       >
-        {shouldHighlight ? (
-          <SyntaxHighlighter
-            language={language || 'text'}
-            style={oneDark}
-            customStyle={codeStyle}
-            codeTagProps={codeProps}
-            lineProps={lineProps}
-            PreTag="div"
-            showLineNumbers={false}
-            wrapLines={effectiveWrapLines}
-            wrapLongLines={effectiveWrapLines}
-          >
-            {text}
-          </SyntaxHighlighter>
-        ) : (
-          <pre style={codeStyle}>
-            <code {...codeProps}>{text}</code>
-          </pre>
-        )}
+        <pre style={codeStyle}>
+          <code {...codeProps}>
+            <HighlightedCodeContent text={text} highlightedCode={highlightedPrefix} />
+          </code>
+        </pre>
       </div>
     </div>
   )
 }
 
-function shouldHighlightCode(text: string, isStreaming: boolean): boolean {
-  if (isStreaming || text.length > MAX_HIGHLIGHTED_CODE_CHARS) return false
-  return text.split('\n', MAX_HIGHLIGHTED_CODE_LINES + 1).length <= MAX_HIGHLIGHTED_CODE_LINES
+function useThrottledHighlightedCode(text: string, language: string): HighlightedCode | null {
+  const [highlightedCode, setHighlightedCode] = useState<HighlightedCode | null>(null)
+  const stateRef = useRef({
+    disposed: false,
+    lastStartedAtMs: null as number | null,
+    latestLanguage: language,
+    latestText: text,
+    timeoutHandle: null as ReturnType<typeof setTimeout> | null,
+  })
+
+  useEffect(() => {
+    const state = stateRef.current
+    state.disposed = false
+    return () => {
+      state.disposed = true
+      if (state.timeoutHandle !== null) {
+        clearTimeout(state.timeoutHandle)
+        state.timeoutHandle = null
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    const state = stateRef.current
+    state.latestText = text
+    state.latestLanguage = language
+    if (state.timeoutHandle !== null) return
+
+    const now = performance.now()
+    const elapsed =
+      state.lastStartedAtMs === null ? HIGHLIGHT_INTERVAL_MS : now - state.lastStartedAtMs
+    const delay = Math.max(0, HIGHLIGHT_INTERVAL_MS - elapsed)
+    const startHighlight = () => {
+      state.timeoutHandle = null
+      if (state.disposed) return
+
+      const code = state.latestText
+      const nextLanguage = state.latestLanguage
+      state.lastStartedAtMs = performance.now()
+      void import('./highlightCode').then(({ highlightCode }) => {
+        if (state.disposed) return
+        setHighlightedCode(highlightCode(code, nextLanguage))
+      })
+    }
+
+    if (delay === 0) {
+      startHighlight()
+      return
+    }
+    state.timeoutHandle = setTimeout(startHighlight, delay)
+  }, [language, text])
+
+  return highlightedCode
 }
+
+function HighlightedCodeContent({
+  text,
+  highlightedCode,
+}: {
+  text: string
+  highlightedCode: HighlightedCode | null
+}) {
+  if (!highlightedCode) return text
+
+  const lines = highlightedCode.html.split('\n')
+  const pendingTail = text.slice(highlightedCode.code.length)
+  return (
+    <>
+      {lines.map((html, index) => (
+        <HighlightedCodeLine key={index} html={html} appendLineBreak={index < lines.length - 1} />
+      ))}
+      {pendingTail}
+    </>
+  )
+}
+
+const HighlightedCodeLine = memo(function HighlightedCodeLine({
+  html,
+  appendLineBreak,
+}: {
+  html: string
+  appendLineBreak: boolean
+}) {
+  return (
+    <>
+      <span dangerouslySetInnerHTML={{ __html: html }} />
+      {appendLineBreak ? '\n' : null}
+    </>
+  )
+})
 
 function normalizeLanguage(lang: string): string {
   const value = lang.trim().toLowerCase()
+  if (value === 'text' || value === 'plaintext') return 'plaintext'
+  if (value === 'html') return 'xml'
   return LANGUAGE_ALIASES[value] ?? value
 }
 
@@ -247,7 +286,7 @@ function hashString(value: string): string {
 function getCodeCustomStyle(wrapLines: boolean): CSSProperties {
   return {
     ...codeCustomStyle,
-    overflowX: wrapLines ? 'hidden' : 'auto',
+    overflowX: 'visible',
     whiteSpace: wrapLines ? 'pre-wrap' : 'pre',
     wordBreak: wrapLines ? 'break-word' : 'normal',
     overflowWrap: wrapLines ? 'anywhere' : 'normal',
@@ -259,21 +298,14 @@ function getCodeTagProps(wrapLines: boolean): HTMLProps<HTMLElement> {
     className: 'select-text',
     style: {
       fontFamily: CODE_FONT_FAMILY,
+      background: 'transparent',
+      color: '#abb2bf',
+      display: 'block',
+      overflowX: 'visible',
+      padding: 0,
       whiteSpace: wrapLines ? 'pre-wrap' : 'pre',
       wordBreak: wrapLines ? 'break-word' : 'normal',
       overflowWrap: wrapLines ? 'anywhere' : 'normal',
-    },
-  }
-}
-
-function getLineProps(wrapLines: boolean): HTMLProps<HTMLElement> | undefined {
-  if (!wrapLines) return undefined
-
-  return {
-    style: {
-      whiteSpace: 'pre-wrap',
-      wordBreak: 'break-word',
-      overflowWrap: 'anywhere',
     },
   }
 }
