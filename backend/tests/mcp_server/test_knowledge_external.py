@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.core.rate_limit import ExternalMcpRateLimitStatus
 from app.mcp_server import server as mcp_server_module
@@ -1632,9 +1633,9 @@ async def test_get_document_download_returns_short_lived_header_token(
 
 @pytest.mark.asyncio
 async def test_get_document_download_rejects_protected_knowledge_base(
-    test_db,
-    test_user,
-):
+    test_db: Session,
+    test_user: User,
+) -> None:
     now = datetime(2026, 1, 3, 13, 15, 0)
     attachment = _make_attachment(test_user.id, extracted_text="protected report")
     test_db.add(attachment)

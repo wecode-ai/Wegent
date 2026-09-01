@@ -463,6 +463,7 @@
         "metaInfo": "Metadata",
         "content": "Document Content",
         "contentLoadFailed": "Failed to load document content. Please retry.",
+        "protectedViewerUnavailable": "Protected document viewer is unavailable",
         "parsedContent": "Parsed Content",
         "sourceFile": "Original File",
         "truncated": "Content Truncated",

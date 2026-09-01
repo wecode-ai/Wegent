@@ -1514,6 +1514,22 @@ def test_a_code_wiki_and_its_registry_row_are_created_together(
     assert rows[0].source_url == source.source_url
 
 
+def test_code_wiki_persists_its_document_download_setting(
+    test_db: Session, test_user: User, kind_services_use_test_db
+) -> None:
+    from app.services.knowledge.orchestrator import knowledge_orchestrator
+
+    result = knowledge_orchestrator.create_code_wiki(
+        db=test_db,
+        user=test_user,
+        name="protected repo wiki",
+        source=_source(),
+        allow_document_download=False,
+    )
+
+    assert result.allow_document_download is False
+
+
 def test_the_registry_row_leaves_no_column_null_that_production_forbids(
     test_db: Session, test_user: User, kind_services_use_test_db
 ):

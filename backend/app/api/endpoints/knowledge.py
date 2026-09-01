@@ -1053,6 +1053,7 @@ def download_knowledge_document(
         content=document_file.content,
         media_type=document_file.media_type,
         headers={
+            "Cache-Control": "private, no-store",
             "Content-Disposition": document_file.content_disposition,
             "X-Content-Type-Options": "nosniff",
         },

@@ -463,6 +463,7 @@
         "metaInfo": "元信息",
         "content": "文档内容",
         "contentLoadFailed": "文档内容加载失败，请重试。",
+        "protectedViewerUnavailable": "受保护文档预览不可用",
         "parsedContent": "解析内容",
         "sourceFile": "原始文件",
         "truncated": "内容已截断",

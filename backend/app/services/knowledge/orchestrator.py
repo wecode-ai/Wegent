@@ -1404,6 +1404,7 @@ class KnowledgeOrchestrator:
         description: Optional[str] = None,
         namespace: str = "default",
         direct_access_requirement: Literal["read", "edit"] = "read",
+        allow_document_download: bool = True,
         # Empty is not "English", it is "fall back to the deployment default", which
         # is also what a wiki created before this field existed does.
         language: str = "",
@@ -1444,6 +1445,7 @@ class KnowledgeOrchestrator:
             description=description,
             namespace=namespace,
             direct_access_requirement=direct_access_requirement,
+            allow_document_download=allow_document_download,
             summary_enabled=summary_enabled,
             rag_config_mode=rag_config_mode,
             retrieval_config=retrieval_config,

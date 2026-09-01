@@ -5,6 +5,7 @@
 """Tests for the document-scoped browser download endpoints."""
 
 from types import SimpleNamespace
+from typing import NoReturn
 
 import pytest
 from fastapi import HTTPException
@@ -17,13 +18,15 @@ from app.services.knowledge.external_document_access import (
 )
 
 
-def test_download_token_is_issued_for_the_requested_knowledge_document(monkeypatch):
+def test_download_token_is_issued_for_the_requested_knowledge_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
-    def fake_get_document_file_or_raise(db, **kwargs):
+    def fake_get_document_file_or_raise(db: object, **kwargs: object) -> None:
         captured.update(kwargs)
 
-    def fake_create_document_download_token(**kwargs):
+    def fake_create_document_download_token(**kwargs: object) -> str:
         captured["token_kwargs"] = kwargs
         return "token-12"
 
@@ -53,7 +56,9 @@ def test_download_token_is_issued_for_the_requested_knowledge_document(monkeypat
     assert response["download_token"] == "token-12"
 
 
-def test_document_download_rechecks_the_document_scoped_policy(monkeypatch):
+def test_document_download_rechecks_the_document_scoped_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         knowledge,
         "verify_document_download_token",
@@ -79,12 +84,15 @@ def test_document_download_rechecks_the_document_scoped_policy(monkeypatch):
 
     assert response.status_code == 200
     assert response.body == b"document-body"
+    assert response.headers["cache-control"] == "private, no-store"
     assert (
         response.headers["content-disposition"] == 'attachment; filename="document.txt"'
     )
 
 
-def test_document_download_rejects_a_disabled_knowledge_base(monkeypatch):
+def test_document_download_rejects_a_disabled_knowledge_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         knowledge,
         "verify_document_download_token",
@@ -93,7 +101,7 @@ def test_document_download_rejects_a_disabled_knowledge_base(monkeypatch):
         ),
     )
 
-    def raise_disabled(db, **kwargs):
+    def raise_disabled(db: object, **kwargs: object) -> NoReturn:
         raise ExternalDocumentAccessError(
             "Document download is disabled", "DOCUMENT_DOWNLOAD_DISABLED"
         )

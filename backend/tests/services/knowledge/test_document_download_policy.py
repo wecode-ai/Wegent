@@ -6,6 +6,9 @@
 
 from datetime import datetime
 
+import pytest
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
 from app.models.kind import Kind
 from app.models.namespace import Namespace
@@ -29,7 +32,10 @@ def _knowledge_base(*, namespace: str, allow_document_download: bool) -> Kind:
     )
 
 
-def test_configuration_disables_original_download_for_personal_kb(test_db, monkeypatch):
+def test_configuration_disables_original_download_for_personal_kb(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         settings, "KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS", "none"
     )
@@ -42,7 +48,10 @@ def test_configuration_disables_original_download_for_personal_kb(test_db, monke
     assert decision.protected_by_namespace is False
 
 
-def test_organization_namespace_is_protected_by_default(test_db, monkeypatch):
+def test_organization_namespace_is_protected_by_default(
+    test_db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
         settings, "KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS", "organization"
     )

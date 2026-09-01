@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import type { ReactNode, SyntheticEvent } from 'react'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   getKnowledgeDocumentProtectionExtension,
   isKnowledgeDocumentProtectionRequired,
@@ -93,6 +94,7 @@ export function DocumentProtectionBoundary({
   preferExtension = false,
   watermarkText = 'Protected',
 }: DocumentProtectionBoundaryProps) {
+  const { t } = useTranslation('knowledge')
   const extension = useSyncExternalStore(
     subscribeKnowledgeDocumentProtectionExtension,
     getKnowledgeDocumentProtectionExtension,
@@ -109,7 +111,7 @@ export function DocumentProtectionBoundary({
         className="flex h-full min-h-[200px] items-center justify-center text-sm text-red-600"
         data-testid="protected-document-extension-unavailable"
       >
-        Protected document viewer is unavailable
+        {t('document.document.detail.protectedViewerUnavailable')}
       </div>
     )
   }

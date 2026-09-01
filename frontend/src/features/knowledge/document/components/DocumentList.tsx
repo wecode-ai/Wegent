@@ -267,8 +267,8 @@ export function DocumentList({
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
   const [documentProtection, setDocumentProtection] = useState<DocumentProtection>({
-    original_download_allowed: knowledgeBase.allow_document_download ?? true,
-    copy_allowed: knowledgeBase.allow_document_download ?? true,
+    original_download_allowed: false,
+    copy_allowed: false,
     watermark_text: null as string | null,
   })
   const [searchQuery, setSearchQuery] = useState('')
@@ -289,8 +289,8 @@ export function DocumentList({
       .catch(() => {
         if (!cancelled) {
           setDocumentProtection({
-            original_download_allowed: knowledgeBase.allow_document_download ?? true,
-            copy_allowed: knowledgeBase.allow_document_download ?? true,
+            original_download_allowed: false,
+            copy_allowed: false,
             watermark_text: null,
           })
         }
