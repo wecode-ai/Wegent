@@ -437,7 +437,8 @@
     "description": "Manage service keys, personal API keys, and outbound token issuance",
     "service_keys": "Service Keys",
     "personal_keys": "Personal Keys",
-    "outbound_tokens": "Outbound Issuance"
+    "outbound_tokens": "Outbound Issuance",
+    "oauth_clients": "OAuth Apps"
   },
   "service_keys": {
     "title": "Service Key Management",
