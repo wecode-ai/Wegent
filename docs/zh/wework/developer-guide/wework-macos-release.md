@@ -169,6 +169,23 @@ Codex 下载包按 `wework/codex-binaries.lock.json` 固定并校验 SHA-512。�
 打包链路时，应解包或检查真实应用产物，确认这些文件存在且与仓库中的源文件一致；
 仅检查中间资源目录不能证明最终发行物合规。
 
+## 开发模式热更新
+
+`pnpm --dir wework run dev:mac` 会通过
+`wework/scripts/dev-wework-app-watch.mjs` 持续构建原始 Wework 应用。监听器启动时
+清理一次 `dsh/app-wework/web`，后续增量构建不得再次清空该目录；正在运行的
+renderer 可能仍在请求上一代哈希资源，提前删除会在新产物写入期间造成白屏。
+
+每次构建只有在 Vite 完成 bundle、关闭构建结果并规范化文件查看器元数据后，才能
+写入 `.wework-build-id`。Core DSH 使用这个标记作为已发布构建 ID，页面只在标记
+变化后刷新，不能把 `index.html` 的中间写入状态当成可加载版本。
+
+开发热更新模式下，`/wework/app/` 下的静态资源必须返回
+`Cache-Control: no-store`。除哈希资源外，该目录还包含固定文件名的
+`plugins/*.js`；如果这些文件使用生产环境的长期 immutable 缓存，刷新后会把旧插件
+bundle 与新主 bundle 混合，导致 React Context 等模块出现两份实例。正式构建仍
+使用 `public, max-age=31536000, immutable`。
+
 ## 本地验证
 
 发布相关改动至少运行：

@@ -31,4 +31,15 @@ describe('PreferencesStore', () => {
     })
     expect(await readFile(join(root, 'app-preferences.json'), 'utf8')).toContain('"theme": "dark"')
   })
+
+  test('clears persisted application preferences', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-preferences-'))
+    roots.push(root)
+    const store = new PreferencesStore(root)
+    await store.update({ locale: 'zh-CN', appearanceMode: 'dark' })
+
+    await store.clear()
+
+    await expect(new PreferencesStore(root).read()).resolves.toEqual({})
+  })
 })

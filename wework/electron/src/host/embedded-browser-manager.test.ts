@@ -123,6 +123,153 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     vi.clearAllMocks()
   })
 
+  test('publishes host cursor events and waits for renderer arrival', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+
+    const moveSequence = manager.showAgentCursor('workspace-browser', 120, 80)
+    const arrival = manager.waitForAgentCursorArrival('workspace-browser', moveSequence)
+    manager.notifyAgentCursorArrived('workspace-browser', moveSequence)
+
+    await expect(arrival).resolves.toBe(true)
+    manager.hideAgentCursor('workspace-browser')
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'agent-cursor',
+          payload: expect.objectContaining({
+            label: 'workspace-browser',
+            visible: true,
+            x: 120,
+            y: 80,
+            moveSequence,
+          }),
+        }),
+        expect.objectContaining({
+          type: 'agent-cursor',
+          payload: expect.objectContaining({
+            label: 'workspace-browser',
+            visible: false,
+            moveSequence,
+          }),
+        }),
+      ])
+    )
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('settles pending cursor arrival when the browser label changes', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    const moveSequence = manager.showAgentCursor('workspace-browser', 120, 80)
+    const arrival = manager.waitForAgentCursorArrival('workspace-browser', moveSequence)
+
+    manager.relabel('workspace-browser', 'workspace-browser-task-1')
+
+    await expect(arrival).resolves.toBe(false)
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('keeps the host cursor visible briefly between adjacent agent actions', async () => {
+    vi.useFakeTimers()
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+
+    manager.emitAgentState('workspace-browser', 'running', { action: 'click' })
+    manager.showAgentCursor('workspace-browser', 120, 80)
+    manager.emitAgentState('workspace-browser', 'idle', { action: 'click' })
+
+    expect(events.filter(event => event.type === 'agent-cursor').at(-1)?.payload).toMatchObject({
+      visible: true,
+    })
+
+    vi.advanceTimersByTime(3_999)
+    expect(events.filter(event => event.type === 'agent-cursor').at(-1)?.payload).toMatchObject({
+      visible: true,
+    })
+
+    vi.advanceTimersByTime(1)
+    expect(events.filter(event => event.type === 'agent-cursor').at(-1)?.payload).toMatchObject({
+      visible: false,
+    })
+
+    vi.useRealTimers()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('cancels a pending cursor hide when another agent action starts', async () => {
+    vi.useFakeTimers()
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+
+    manager.emitAgentState('workspace-browser', 'running', { action: 'click' })
+    manager.showAgentCursor('workspace-browser', 120, 80)
+    manager.emitAgentState('workspace-browser', 'idle', { action: 'click' })
+    vi.advanceTimersByTime(2_000)
+
+    manager.emitAgentState('workspace-browser', 'running', { action: 'click' })
+    vi.advanceTimersByTime(4_000)
+
+    expect(events.filter(event => event.type === 'agent-cursor').at(-1)?.payload).toMatchObject({
+      visible: true,
+    })
+
+    manager.emitAgentState('workspace-browser', 'idle', { action: 'click' })
+    vi.advanceTimersByTime(4_000)
+    expect(events.filter(event => event.type === 'agent-cursor').at(-1)?.payload).toMatchObject({
+      visible: false,
+    })
+
+    vi.useRealTimers()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('pauses active agent control when the user presses the mouse in the page', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const events: BrowserHostEvent[] = []
+    const manager = new EmbeddedBrowserManager(directory, event => events.push(event))
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+    manager.emitAgentState('workspace-browser', 'running', { action: 'waitFor' })
+
+    contents.emit('before-mouse-event', {}, { type: 'mouseDown' })
+
+    expect(manager.isAgentControlPaused('workspace-browser')).toBe(true)
+    expect(events.at(-1)).toMatchObject({
+      type: 'agent-state',
+      payload: {
+        label: 'workspace-browser',
+        status: 'paused',
+      },
+    })
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('registers an attached browser before its initial navigation settles', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)

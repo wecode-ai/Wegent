@@ -291,7 +291,11 @@ async function fillEditorElement(bridge, selector, value) {
     text: value,
     timeoutMs: 5_000,
   })
-  assert.equal(result.ok, true, `Could not fill in-page annotation editor control: ${selector}`)
+  assert.equal(
+    result.ok,
+    true,
+    `Could not fill in-page annotation editor control: ${selector}; result=${JSON.stringify(result)}`
+  )
 }
 
 async function captureBrowserScreenshot(bridge, resultDir, name) {
@@ -762,6 +766,12 @@ async function clickMarker(bridge) {
   )
 }
 
+async function resumeAgentControl(control, browserLabel) {
+  await control.command('setEmbeddedBrowserAgentControlPaused', 'body', {
+    value: JSON.stringify({ label: browserLabel, paused: false }),
+  })
+}
+
 async function verifyCore(
   control,
   executorHome,
@@ -771,7 +781,7 @@ async function verifyCore(
   resultDir
 ) {
   const fixtureUrl = `${control.url}${FIXTURE_PATH}`
-  const { bridge } = await setupBrowser(
+  const { bridge, browserLabel } = await setupBrowser(
     control,
     executorHome,
     fixtureUrl,
@@ -877,6 +887,7 @@ async function verifyCore(
   await captureScreenshot(control, 'browser-annotation-03d-three-annotations.png')
 
   await clickMarker(bridge)
+  await resumeAgentControl(control, browserLabel)
   await waitForEditorElement(bridge, OVERLAY_INPUT_SELECTOR, uiTimeoutMs)
   await captureBrowserScreenshot(bridge, resultDir, 'browser-annotation-04-edit-card.png')
   await fillEditorElement(bridge, OVERLAY_INPUT_SELECTOR, 'Edited browser annotation comment')
@@ -885,6 +896,7 @@ async function verifyCore(
   await waitForAnnotationSave(control, bridge, editRevision, uiTimeoutMs)
 
   await clickMarker(bridge)
+  await resumeAgentControl(control, browserLabel)
   await waitForEditorElement(bridge, OVERLAY_DELETE_SELECTOR, uiTimeoutMs)
   const deleteRevision = await browserAnnotationRevision(control)
   await clickEditorElement(bridge, OVERLAY_DELETE_SELECTOR)
