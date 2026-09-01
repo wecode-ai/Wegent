@@ -75,14 +75,17 @@ def test_apply_generation_params_rejects_image_options_for_video() -> None:
         )
 
 
-def test_apply_generation_params_rejects_non_generation_model() -> None:
+def test_apply_generation_params_ignores_non_generation_model() -> None:
     from app.services.chat.trigger import unified as trigger_unified
 
-    with pytest.raises(ValueError, match="only supported for image or video"):
-        trigger_unified._apply_generation_params(
-            {"modelType": "llm"},
-            SimpleNamespace(size="1024x1024"),
-        )
+    model_config = {"modelType": "llm"}
+
+    trigger_unified._apply_generation_params(
+        model_config,
+        SimpleNamespace(size="1024x1024"),
+    )
+
+    assert model_config == {"modelType": "llm"}
 
 
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
