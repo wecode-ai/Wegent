@@ -1908,6 +1908,39 @@ class TestOpenAPIResponsesGet:
         assert data["output"][0]["type"] == "message"
         assert data["output"][0]["role"] == "assistant"
 
+    def test_get_response_keeps_policy_blocked_response_failed(
+        self,
+        test_client: TestClient,
+        test_api_key,
+        test_db: Session,
+        test_task: TaskResource,
+        test_subtasks: list,
+    ) -> None:
+        test_task.json = {
+            **test_task.json,
+            "status": {
+                **test_task.json["status"],
+                "status": "COMPLETED",
+                "result": {"value": "", "policy_blocked": True},
+            },
+        }
+        test_db.commit()
+
+        response = test_client.get(
+            f"/api/v1/responses/resp_{test_task.id}",
+            headers={"X-API-Key": test_api_key[0]},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == f"resp_{test_task.id}"
+        assert data["status"] == "failed"
+        assert data["error"] == {
+            "code": "PROMPT_PROTECTION_BLOCKED",
+            "message": "该请求无法处理，请调整问题后再试。",
+        }
+        assert data["output"] == []
+
     def test_task_to_response_object_omits_pending_user_input_from_subtasks(
         self,
         test_user: User,

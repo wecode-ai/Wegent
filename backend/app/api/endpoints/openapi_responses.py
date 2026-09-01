@@ -176,6 +176,10 @@ def _task_to_response_object(
     """Convert task dictionary to ResponseObject."""
     task_id = task_dict.get("id")
     wegent_status = task_dict.get("status", "PENDING")
+    task_result = task_dict.get("result")
+    policy_blocked = (
+        isinstance(task_result, dict) and task_result.get("policy_blocked") is True
+    )
     created_at = task_dict.get("created_at")
 
     # Convert datetime to unix timestamp
@@ -185,7 +189,7 @@ def _task_to_response_object(
         created_at_unix = int(datetime.now().timestamp())
 
     output = []
-    if subtasks:
+    if subtasks and not policy_blocked:
         output = build_response_output(subtasks)
     pending_user_input, pending_user_input_payload = extract_pending_user_input_state(
         _latest_assistant_subtask(subtasks or [])
@@ -193,14 +197,18 @@ def _task_to_response_object(
 
     # Build error if failed
     error = None
+    response_status = wegent_status_to_openai_status(wegent_status)
     error_message = task_dict.get("error_message")
-    if wegent_status == "FAILED" and error_message:
+    if policy_blocked:
+        response_status = "failed"
+        error = ResponseError(code=BLOCKED_ERROR_CODE, message=BLOCKED_MESSAGE)
+    elif wegent_status == "FAILED" and error_message:
         error = ResponseError(code="task_failed", message=error_message)
 
     return ResponseObject(
         id=f"resp_{task_id}",
         created_at=created_at_unix,
-        status=wegent_status_to_openai_status(wegent_status),
+        status=response_status,
         error=error,
         model=model_string,
         output=output,
