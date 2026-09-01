@@ -499,13 +499,38 @@ function stripUnsupportedContentReferenceCitations(content: string): string {
     .replace(TRAILING_CONTENT_REFERENCE_CITATION_PATTERN, '')
 }
 
+function splitMarkdownImageDestination(rawHref: string): {
+  destination: string
+  titleSuffix: string
+} {
+  const href = rawHref.trim()
+  if (href.startsWith('<')) {
+    const closingBracket = href.indexOf('>')
+    if (closingBracket > 0) {
+      return {
+        destination: href.slice(1, closingBracket),
+        titleSuffix: href.slice(closingBracket + 1),
+      }
+    }
+  }
+
+  const titledDestination = href.match(/^(.*?)(\s+(?:"[^"]*"|'[^']*'))$/)
+  return titledDestination
+    ? {
+        destination: titledDestination[1].trim(),
+        titleSuffix: titledDestination[2],
+      }
+    : { destination: href, titleSuffix: '' }
+}
+
 function encodeLocalMarkdownLinks(content: string): string {
   return content.replace(MARKDOWN_LINK_PATTERN, (match, imageMarker, label, rawHref) => {
     const href = String(rawHref).trim()
     if (imageMarker) {
-      const localPath = localMarkdownImagePath(href)
+      const { destination, titleSuffix } = splitMarkdownImageDestination(href)
+      const localPath = localMarkdownImagePath(destination)
       return localPath
-        ? `![${label}](${WEWORK_MARKDOWN_IMAGE_PREFIX}${encodeURIComponent(localPath)})`
+        ? `![${label}](${WEWORK_MARKDOWN_IMAGE_PREFIX}${encodeURIComponent(localPath)}${titleSuffix})`
         : match
     }
     const target = classifyMarkdownLink(href)

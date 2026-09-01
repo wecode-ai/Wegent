@@ -260,7 +260,7 @@ const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verificati
 const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
 const LOCAL_MARKDOWN_IMAGE_PROMPT =
   'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE: render the temporary image.'
-const LOCAL_MARKDOWN_IMAGE_FILENAME = 'wework-e2e-assistant-markdown-image.png'
+const LOCAL_MARKDOWN_IMAGE_FILENAME = `wework-e2e-assistant-markdown-image-${randomUUID()}.png`
 const LOCAL_MARKDOWN_IMAGE_ALT = 'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE_ALT'
 const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
