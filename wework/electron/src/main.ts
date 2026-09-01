@@ -56,6 +56,7 @@ import { WorkbenchPluginManager } from './host/workbench-plugin-manager.js'
 import {
   resolveStartupSplashTheme,
   StartupSplash,
+  startupSplashBlocksMainWindowActivation,
   type StartupSplashTheme,
 } from './host/startup-splash.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
@@ -90,6 +91,8 @@ import {
 import { keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
 import { GlobalShortcutController } from './host/global-shortcut-controller.js'
 import { resolveDshAppRoute } from './host/dsh-app-route.js'
+import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
+import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -97,6 +100,7 @@ const packageMetadata = createRequire(import.meta.url)('../package.json') as {
   weworkUpdateBaseUrl?: string
 } & BrandRuntimeMetadata
 const dshPreloadPath = resolve(packageRoot, 'dist/dsh-preload.cjs')
+const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
 const execFileAsync = promisify(execFile)
@@ -117,6 +121,7 @@ app.setPath('userData', userDataPath)
 if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
 
 let mainWindow: BrowserWindow | null = null
+let startupSplashWindow: BrowserWindow | null = null
 const workspaceWindows = new Map<string, BrowserWindow>()
 const dshWindowLabels = new Map<number, string>()
 let primaryDshLoaded = false
@@ -125,6 +130,7 @@ let desktopRuntime: DesktopRuntime | null = null
 let smartApps: SmartAppManager | null = null
 let embeddedBrowser: EmbeddedBrowserManager | null = null
 let embeddedBrowserBridge: EmbeddedBrowserBridge | null = null
+let browserAnnotations: BrowserAnnotationController | null = null
 let computerUse: ComputerUseService | null = null
 let workbenchPlugins: WorkbenchPluginManager | null = null
 let systemDragWindow: BrowserWindow | null = null
@@ -163,6 +169,18 @@ const pendingEmbeddedBrowserAttachments = new Map<
 const rendererHealth = new RendererHealthService()
 const systemSleep = new SystemSleepController()
 const appUpdateLogger = new AppUpdateLogger(join(app.getPath('logs'), 'app-update.log'))
+const executorHome =
+  process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
+const logRetention = new LogRetentionService({
+  directories: [
+    app.getPath('logs'),
+    join(executorHome, 'logs'),
+    ...(process.env.WEGENT_EXECUTOR_LOG_DIR?.trim()
+      ? [process.env.WEGENT_EXECUTOR_LOG_DIR.trim()]
+      : []),
+  ],
+  onResult: reportLogCleanup,
+})
 autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
@@ -187,8 +205,18 @@ if (keepE2EWindowInBackground) {
 
 if (!hasSingleInstanceLock) app.quit()
 
+function focusStartupSplashIfActive(): boolean {
+  const snapshot = startupSplash?.snapshot()
+  if (!startupSplashBlocksMainWindowActivation(snapshot ?? null)) return false
+
+  const target = startupSplashWindow
+  if (target && !target.isDestroyed() && target.isVisible()) target.focus()
+  return true
+}
+
 app.on('second-instance', () => {
   if (keepE2EWindowInBackground) return
+  if (focusStartupSplashIfActive()) return
   if (!mainWindow) return
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.show()
@@ -257,7 +285,7 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
     pendingEmbeddedBrowserAttachments.set(contents.id, queue)
     params.partition = EMBEDDED_BROWSER_PARTITION
     webPreferences.session = session.fromPartition(EMBEDDED_BROWSER_PARTITION)
-    delete webPreferences.preload
+    webPreferences.preload = browserAnnotationPreloadPath
     delete params.allowpopups
     delete params.disablewebsecurity
     delete params.webpreferences
@@ -299,6 +327,10 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
+
+ipcMain.on('wework:browser-annotation-event', (event, payload: unknown) => {
+  browserAnnotations?.handleRuntimeEvent(event.sender.id, payload)
+})
 
 function embeddedBrowserRouteFromParams(
   params: Record<string, unknown>
@@ -385,7 +417,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
-    mainWindow?.show()
   })
   contents.on('unresponsive', () => rendererHealth.unresponsive())
   contents.on('responsive', () => rendererHealth.responsive())
@@ -403,9 +434,6 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
-    await startupSplash?.close({
-      capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
-    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -717,32 +745,46 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
       webviewTag: true,
     },
   })
+  startupSplashWindow = new BrowserWindow({
+    ...desktopWindowFrameOptions(),
+    width: 1440,
+    height: 960,
+    title: 'Wework',
+    backgroundColor: startupTheme === 'dark' ? '#101316' : '#fafafa',
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  })
   startupSplash = new StartupSplash({
     window: {
-      isDestroyed: () => mainWindow?.isDestroyed() ?? true,
-      isVisible: () => mainWindow?.isVisible() ?? false,
-      once: (event, listener) => {
-        if (event === 'closed') mainWindow?.once('closed', listener)
-        else mainWindow?.once('ready-to-show', listener)
-      },
+      close: () => startupSplashWindow?.close(),
+      isDestroyed: () => startupSplashWindow?.isDestroyed() ?? true,
+      isVisible: () => startupSplashWindow?.isVisible() ?? false,
+      on: (_event, listener) => startupSplashWindow?.on('close', listener),
+      once: (_event, listener) => startupSplashWindow?.once('closed', listener),
       show: () => {
-        if (!keepE2EWindowInBackground) mainWindow?.show()
+        if (!keepE2EWindowInBackground) startupSplashWindow?.show()
       },
       webContents: {
         capturePage: async () => {
-          if (!mainWindow) throw new Error('Main window is unavailable')
-          return mainWindow.webContents.capturePage()
+          if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
+          return startupSplashWindow.webContents.capturePage()
         },
         executeJavaScript: async code => {
-          if (!mainWindow) throw new Error('Main window is unavailable')
-          return mainWindow.webContents.executeJavaScript(code)
+          if (!startupSplashWindow) throw new Error('Startup splash window is unavailable')
+          return startupSplashWindow.webContents.executeJavaScript(code)
         },
-        isDestroyed: () => mainWindow?.webContents.isDestroyed() ?? true,
+        isDestroyed: () => startupSplashWindow?.webContents.isDestroyed() ?? true,
       },
     },
     theme: startupTheme,
   })
-  const startupShown = startupSplash.show()
+  startupSplashWindow.on('closed', () => {
+    startupSplashWindow = null
+  })
   mainWindow.on('resize', layoutPrimaryView)
   mainWindow.on('close', event => {
     if (quitting) return
@@ -754,10 +796,14 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
     primaryDshSecurityInstalled = false
     mainWindow = null
   })
-  await mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
+  const mainShellLoading = mainWindow.loadFile(resolve(packageRoot, 'dist/shell/index.html'), {
     query: { theme: startupTheme },
   })
-  await startupShown
+  await startupSplashWindow.loadFile(resolve(packageRoot, 'dist/shell/startup-splash/index.html'), {
+    query: { theme: startupTheme },
+  })
+  await startupSplash.show()
+  await mainShellLoading
 }
 
 async function setDockVisible(visible: boolean): Promise<void> {
@@ -823,6 +869,7 @@ async function cancelMainWindowClose(): Promise<void> {
 }
 
 async function reactivateMainWindow(): Promise<void> {
+  if (focusStartupSplashIfActive()) return
   const target = mainWindow
   if (!target || target.isDestroyed()) return
   if (keepE2EWindowInBackground) {
@@ -956,6 +1003,7 @@ function installIpc(): void {
 }
 
 async function shutdown(): Promise<void> {
+  await logRetention.stop()
   systemResume.stop()
   systemSleep.stop()
   trayNativeStatus?.stop()
@@ -976,6 +1024,7 @@ async function shutdown(): Promise<void> {
   embeddedBrowser?.stop()
   const plugins = workbenchPlugins
   workbenchPlugins = null
+  browserAnnotations = null
   const browserBridge = embeddedBrowserBridge
   embeddedBrowserBridge = null
   const computerUseService = computerUse
@@ -1025,6 +1074,15 @@ async function configureDesktopRuntime(): Promise<void> {
   })
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
+  })
+  browserAnnotations = new BrowserAnnotationController({
+    browser: embeddedBrowser,
+    publish: state => {
+      desktopHostEvents.publish(
+        'browser.annotation-state',
+        state as unknown as Record<string, unknown>
+      )
+    },
   })
   embeddedBrowserBridge = new EmbeddedBrowserBridge(
     embeddedBrowser,
@@ -1076,6 +1134,7 @@ async function configureDesktopRuntime(): Promise<void> {
         {
           coreDshPlugins: () => desktopRuntime,
           appUpdates,
+          browserAnnotations,
           cleanupStaleTemporaryImages,
           events: desktopHostEvents,
           feedback,
@@ -1106,6 +1165,13 @@ async function configureDesktopRuntime(): Promise<void> {
           },
           hideMainWindow: hideMainWindowToBackground,
           dockVisible: () => dockVisible,
+          rendererStartupReady: async () => {
+            if (!mainWindow || mainWindow.isDestroyed()) return
+            if (!keepE2EWindowInBackground) mainWindow.show()
+            await startupSplash?.close({
+              capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
+            })
+          },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
           traySetState: state => {
@@ -1236,6 +1302,7 @@ function startDesktopRuntime(): Promise<void> {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
+    await logRetention.start()
     if (keepE2EWindowInBackground) {
       app.hide()
       app.dock?.hide()
@@ -1277,6 +1344,22 @@ if (hasSingleInstanceLock) {
     )
     void startDesktopRuntime()
   })
+}
+
+function reportLogCleanup(result: LogCleanupResult): void {
+  if (result.removedFiles > 0) {
+    console.info('[logs] retention cleanup completed', {
+      remainingBytes: result.remainingBytes,
+      removedBytes: result.removedBytes,
+      removedFiles: result.removedFiles,
+      scannedFiles: result.scannedFiles,
+    })
+  }
+  if (result.failures.length > 0) {
+    console.warn('[logs] retention cleanup had failures', {
+      failureCount: result.failures.length,
+    })
+  }
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {

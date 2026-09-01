@@ -192,15 +192,30 @@ Product distributions may provide an implementation for `@extensions/cloud-deskt
 
 ## Annotation Flow
 
-The browser address bar includes an annotation icon. In annotation mode:
+The browser address bar includes an annotation icon. The implementation has three layers:
 
-- Hovering the page highlights only the current DOM element.
-- Clicking an element opens a comment editor.
-- Pressing Enter in the editor publishes the annotation into the Wework main composer attachment area.
-- After sending, the conversation displays the comment attachment style and clears the composer attachment.
-- The model receives hidden `<workspace_comment_context>` content that describes the annotated visible web page region; the UI does not display that raw hidden context.
+- The Electron `browser-annotation-controller` owns annotations, drafts, original-view preview state, and runtime revisions per browser logical label. It is the only state source of truth.
+- A dedicated preload uses a page-local ShadowRoot for target hit testing, highlighting, numbered markers, anchor rebinding, and design styles so annotation internals do not pollute page observers.
+- A separate transparent overlay window renders the compact comment or design editor. The React browser panel owns only the annotation toolbar, count, and transfer into the main composer.
+
+In annotation mode:
+
+- Hover highlights only the current DOM element. Clicking creates a stable anchor containing selector, DOM path, text, and geometry context, then opens the editor.
+- The comment editor supports add, save, cancel, and delete. Saved annotations render numbered page markers that reopen the editor.
+- The design editor starts from the target's computed styles and can change text, appearance, and layout properties. The preload applies those changes and rebinds them after target-node replacement.
+- Holding Original View uses the same render/sync path to suppress every design change and restore replaced text. Releasing it reapplies the annotation design.
+- A same-URL reload preserves annotations and rebinds anchors. A real cross-URL navigation exits annotation mode and clears the draft so stale page state cannot leak.
+- Published annotations enter the Wework main composer attachment area. The runtime DTO sent to the model contains element context, comment, and design changes but omits screenshots, timestamps, and other UI-private fields.
 
 Annotations are comments on the visible web page, not code selection comments. `browser_annotation` items should be interpreted by the model as comments on current visible page elements.
+
+Annotation regression coverage is split into independently runnable checkpoints:
+
+- `browser-annotation-core`: target selection, comment creation, numbered marker, editing, deletion, and exit.
+- `browser-annotation-anchors`: anchor recovery after DOM movement, same-URL reload, and target-node replacement.
+- `browser-annotation-design`: computed-style baseline, design application, Original View, and design rebinding.
+
+`browser-annotation` is the composite entry for all three checkpoints. It must expand and execute every member instead of reporting success after only the generic desktop flow.
 
 ## Development Checks
 
@@ -215,6 +230,7 @@ pnpm --dir wework/electron typecheck
 pnpm --dir wework/electron test
 pnpm --filter wework e2e:desktop:embedded-browser
 pnpm --filter wework e2e:desktop -- --segment browser-toolbar-actions
+pnpm --filter wework e2e:desktop -- --segment browser-annotation
 ```
 
 `e2e:desktop:embedded-browser` must create task A, switch to task B, and then use task A's specific label for the first bridge `open`, `waitFor`, and `inspect`. It verifies that the inactive task completes background navigation before the tool timeout without taking over task B's browser, and that the same page state is visible after switching back to task A. A test that covers only a second open, an active-task open, or a manually exposed browser panel does not exercise the first-open and inactive-task routing races.

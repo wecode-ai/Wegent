@@ -280,6 +280,9 @@ function createRect({
 
 function mockDesktopWorkbenchMainWidth(width: number) {
   return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+    if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
+      return createRect({ left: 0, top: 0, width, height: 720 })
+    }
     if (
       this.tagName === 'MAIN' &&
       this.querySelector('[data-testid="desktop-workbench-content"]')
@@ -2896,7 +2899,7 @@ describe('DesktopWorkbenchLayout', () => {
       configurable: true,
     })
     Object.defineProperty(scroller, 'scrollTop', {
-      value: 0,
+      value: -200,
       writable: true,
       configurable: true,
     })
@@ -5928,6 +5931,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     const content = screen.getByTestId('desktop-workbench-content')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
+    expect(rightPanelShell).toHaveClass('h-full', 'min-h-0', 'overflow-hidden')
     await waitFor(() => {
       expect(content).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({
@@ -9126,6 +9130,39 @@ describe('DesktopWorkbenchLayout', () => {
     expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
   })
 
+  test('uses the shared workbench width in the first task-switch layout', () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
+      if (this.getAttribute('data-testid') === 'desktop-workbench-pane-stack-container') {
+        return createRect({ left: 0, top: 0, width: 1024, height: 720 })
+      }
+      return createRect({ left: 0, top: 0, width: 0, height: 0 })
+    })
+    const secondTask = {
+      ...activeProjectRuntimeTask,
+      taskId: 'runtime-project-shared-width',
+    }
+    const renderTask = (task: typeof activeProjectRuntimeTask) => (
+      <DesktopWorkbenchLayout
+        {...baseProps}
+        state={{
+          ...activeProjectState,
+          currentRuntimeTask: task,
+        }}
+      />
+    )
+    const activePane = () => within(screen.getByTestId('desktop-workbench-main'))
+    const view = render(renderTask(activeProjectRuntimeTask))
+
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+
+    view.rerender(renderTask(secondTask))
+
+    expect(activePane().getByTestId('environment-info-popover')).toBeInTheDocument()
+    expect(activePane().getByTestId('environment-info-panel-container')).toContainElement(
+      activePane().getByTestId('environment-info-popover')
+    )
+  })
+
   test('keeps the overlay summary state separate from the pinned summary state', async () => {
     mockDesktopWorkbenchMainWidth(1024)
     render(
@@ -10890,6 +10927,72 @@ describe('DesktopWorkbenchLayout', () => {
       'data-embedded-browser-label',
       'workspace-browser-runtime-b'
     )
+  })
+
+  test('reveals the Electron startup window only after the active transcript is ready', async () => {
+    runtimeMocks.electron = true
+    const { rerender } = render(
+      <DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading />
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...baseProps} isRuntimeTranscriptLoading={false} />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
+  })
+
+  test('keeps the startup animation visible until the routed task is restored', async () => {
+    runtimeMocks.electron = true
+    window.history.pushState({}, '', '/runtime-tasks?deviceId=local-device&taskId=runtime-a')
+    const { propsForTask, taskA } = createLocalRuntimeTaskPanelFixture()
+    const { rerender } = render(<DesktopWorkbenchLayout {...baseProps} />)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...propsForTask(taskA)} />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
+  })
+
+  test('does not reveal an inactive project-space surface during startup', async () => {
+    runtimeMocks.electron = true
+    deliveryApiMock.available = true
+    window.history.pushState({}, '', '/todo')
+    const props = {
+      ...baseProps,
+      surfaceKind: 'board' as const,
+      state: {
+        ...baseProps.state,
+        user: {
+          id: 1,
+          user_name: 'local',
+          email: 'local@example.com',
+        },
+      },
+    }
+    const { rerender } = render(<DesktopWorkbenchLayout {...props} routeActive={false} />)
+
+    await waitFor(() => {
+      expect(deliveryApiMock.listCloudProjects).toHaveBeenCalled()
+    })
+    expect(desktopHostMocks.invoke).not.toHaveBeenCalledWith('renderer.startupReady')
+
+    rerender(<DesktopWorkbenchLayout {...props} routeActive />)
+
+    await waitFor(() => {
+      expect(desktopHostMocks.invoke).toHaveBeenCalledWith('renderer.startupReady')
+    })
   })
 
   test('does not reuse a migrated default browser label after switching panes', async () => {

@@ -191,6 +191,7 @@ export default defineConfig({
       ...configDefaults.exclude,
       'dsh/**/*.test.mjs',
       'e2e/**',
+      'scripts/electron-e2e-launch-arguments.test.mjs',
       'scripts/harness-runtime-metadata.test.mjs',
       'test-results/**',
     ],

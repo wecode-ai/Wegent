@@ -37,6 +37,8 @@ def _remote_device(user_id: int, device_id: str = "remote-device-1") -> Kind:
                 "createdAt": datetime.now().isoformat(),
             },
             "runtimeTransferHost": "192.0.2.40",
+            "runtimeInstanceId": "runtime-stable",
+            "appDeviceId": "desktop-app-device",
         },
         "status": {"state": "Available"},
     }
@@ -63,6 +65,9 @@ async def test_device_service_lists_remote_devices(test_db, test_user):
     assert devices[0]["device_type"] == DeviceType.REMOTE.value
     assert devices[0]["remote_config"]["provider"] == "docker"
     assert devices[0]["runtime_transfer_host"] == "192.0.2.40"
+    assert devices[0]["socket_device_id"] == "remote-device-1"
+    assert devices[0]["runtime_instance_id"] == "runtime-stable"
+    assert devices[0]["app_device_id"] == "desktop-app-device"
 
 
 @pytest.mark.asyncio

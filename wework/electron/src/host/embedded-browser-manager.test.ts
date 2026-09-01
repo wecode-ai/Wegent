@@ -61,6 +61,7 @@ class FakeWebContents extends EventEmitter {
     this.emit('destroyed')
   })
   executeJavaScript = vi.fn()
+  focus = vi.fn()
   getTitle = vi.fn(() => '')
   getURL = vi.fn(() => this.url)
   inspectElement = vi.fn()
@@ -76,6 +77,7 @@ class FakeWebContents extends EventEmitter {
   })
   capturePage = vi.fn()
   reload = vi.fn()
+  sendInputEvent = vi.fn()
   setWindowOpenHandler = vi.fn()
   setZoomFactor = vi.fn()
   devToolsWebContents: object | null = {}
@@ -557,6 +559,33 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     )
     expect(contents.capturePage).toHaveBeenCalledOnce()
     expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('sends a focused native click to the embedded browser', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    manager.clickAt('workspace-browser', 120.4, 48.6)
+
+    expect(contents.focus).toHaveBeenCalledOnce()
+    expect(contents.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'mouseMove', x: 120, y: 49 }],
+      [{ type: 'mouseDown', x: 120, y: 49, button: 'left', clickCount: 1 }],
+      [{ type: 'mouseUp', x: 120, y: 49, button: 'left', clickCount: 1 }],
+    ])
     await rm(directory, { recursive: true, force: true })
   })
 

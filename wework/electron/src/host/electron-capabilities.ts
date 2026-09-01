@@ -45,6 +45,8 @@ import {
   saveCustomWorkspaceOpener,
 } from './local-workspace-openers.js'
 import type { DesktopHostEventBroker } from './desktop-host-events.js'
+import type { BrowserAnnotationController } from './browser-annotation-controller.js'
+import { RotatingLog } from '../runtime/rotating-log.js'
 
 export { captureWebContentsDataUrl } from './web-contents-capture.js'
 
@@ -52,6 +54,7 @@ export const WEWORK_APP_PRINCIPAL = '@wegent/dsh-app-wework'
 
 export interface ElectronDesktopServices {
   appUpdates?: AppUpdateService
+  browserAnnotations?: BrowserAnnotationController
   events: DesktopHostEventBroker
   feedback: FeedbackBundleManager
   openRuntimeTask: (taskAddressId: string) => void
@@ -120,6 +123,7 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
+  rendererStartupReady: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -175,6 +179,7 @@ export function createElectronCapabilityRouter(
       executorPid: null,
       workbenchRuntimes: [],
     }),
+    rendererStartupReady: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -194,12 +199,22 @@ export function createElectronCapabilityRouter(
 ): HostCapabilityRouter {
   const router = new HostCapabilityRouter()
   const attachments = new LocalAttachmentStore(localAttachmentRoot())
+  const filePreviewLog = new RotatingLog({
+    path: join(app.getPath('logs'), 'file-preview.log'),
+    maxBytes: 2 * 1024 * 1024,
+    retainedFiles: 2,
+  })
   router.grant(WEWORK_APP_PRINCIPAL, HOST_CAPABILITIES)
 
   router.register('app.getVersion', () => ({ version: app.getVersion() }))
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
+  router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('diagnostics.filePreview', params => {
+    const event = recordParam(params, 'event')
+    return filePreviewLog.write('supervisor', JSON.stringify(event))
+  })
   registerAppUpdateCapabilities(router, desktopServices.appUpdates)
   router.register('attachment.begin', params =>
     attachments.begin(stringParam(params, 'filename'), requiredIntegerParam(params, 'size'))
@@ -224,6 +239,7 @@ export function createElectronCapabilityRouter(
       navigateExisting: booleanParam(params, 'navigateExisting') ?? true,
     })
   )
+  registerBrowserAnnotationCapabilities(router, desktopServices.browserAnnotations)
   router.register('browser.setBounds', params =>
     browser.setBounds(
       stringParam(params, 'label'),
@@ -359,11 +375,12 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.capturePopoutWindow', () => e2eHost.capturePopout())
   router.register('e2e.capturePrimaryView', async params => {
-    const contents = e2eHost.captureTarget(optionalStringParam(params, 'windowLabel') ?? 'main')
+    const windowLabel = optionalStringParam(params, 'windowLabel') ?? 'main'
+    const contents = e2eHost.captureTarget(windowLabel)
     if (!contents || contents.isDestroyed()) {
       throw new HostCapabilityError('e2e_view_unavailable', 'Primary DSH view is unavailable')
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.captureWorkspaceWindow', async params => {
     const requestedLabel = optionalStringParam(params, 'windowLabel')
@@ -381,7 +398,7 @@ export function createElectronCapabilityRouter(
         `Workspace DSH view is unavailable: ${label}`
       )
     }
-    return captureWebContentsDataUrl(contents, { debuggerOnly: true })
+    return captureWebContentsDataUrl(contents, { preferDebugger: true })
   })
   router.register('e2e.closeMainWindow', () => requiredWindow(window).close())
   router.register('e2e.activateRuntimeTaskNotification', params => {
@@ -771,6 +788,36 @@ export function registerDesktopServiceCapabilities(
       stringParam(params, 'capability'),
       stringParam(params, 'method'),
       params.params ?? {}
+    )
+  )
+}
+
+export function registerBrowserAnnotationCapabilities(
+  router: HostCapabilityRouter,
+  annotations: BrowserAnnotationController | undefined
+): void {
+  router.register('browser.annotation.start', params => {
+    const controller = requiredBrowserAnnotations(annotations)
+    const mode = stringParam(params, 'mode')
+    if (mode !== 'quick' && mode !== 'batch') invalidParam('browser.annotation.start')
+    const x = nullableNumberParam(params, 'x')
+    const y = nullableNumberParam(params, 'y')
+    if ((x == null) !== (y == null)) invalidParam('browser.annotation.start')
+    controller.start(stringParam(params, 'label'), mode, x == null || y == null ? null : { x, y })
+  })
+  router.register('browser.annotation.stop', params =>
+    requiredBrowserAnnotations(annotations).stop(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.clear', params =>
+    requiredBrowserAnnotations(annotations).clear(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.state', params =>
+    requiredBrowserAnnotations(annotations).state(stringParam(params, 'label'))
+  )
+  router.register('browser.annotation.setOriginalView', params =>
+    requiredBrowserAnnotations(annotations).setOriginalView(
+      stringParam(params, 'label'),
+      booleanParam(params, 'enabled') ?? false
     )
   )
 }
@@ -1271,6 +1318,15 @@ function compact<Value extends object>(value: Value): Value {
 function requiredAppUpdates(value: AppUpdateService | undefined): AppUpdateService {
   if (!value) throw new HostCapabilityError('capability_unavailable', 'App updates are unavailable')
   return value
+}
+
+function requiredBrowserAnnotations(
+  annotations: BrowserAnnotationController | undefined
+): BrowserAnnotationController {
+  if (!annotations) {
+    throw new HostCapabilityError('capability_unavailable', 'Browser annotations are unavailable')
+  }
+  return annotations
 }
 
 function updateChannelParam(params: Record<string, unknown>): WeworkUpdateChannel {

@@ -606,6 +606,68 @@ export async function verifyRemoteDockerCommandFlow(control, cloudEnvironment) {
   await control.command('navigate', 'body', { value: '/' })
 }
 
+export async function verifyLocalRemoteControlFlow(control, cloudEnvironment) {
+  await control.command('setAppPreferences', 'body', {
+    value: JSON.stringify({ remoteControlEnabled: false }),
+  })
+  await control.command('navigate', 'body', { value: '/settings/connections' })
+  await control.command('waitFor', '[data-testid="remote-control-toggle"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'false',
+    'Remote control should default to disabled'
+  )
+
+  const initialDevice = await cloudEnvironment.waitForConnectedAppDevice()
+  assert.ok(initialDevice.runtime_instance_id, 'The app device did not expose a Runtime identity')
+  assert.ok(initialDevice.app_device_id, 'The app device did not expose its physical app identity')
+
+  await control.command('click', '[data-testid="remote-control-toggle"]')
+  const remoteDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'remote')
+  assert.equal(remoteDevice.device_id, initialDevice.device_id)
+  assert.equal(remoteDevice.runtime_instance_id, initialDevice.runtime_instance_id)
+  assert.equal(remoteDevice.app_device_id, initialDevice.app_device_id)
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'true',
+    'Remote control switch did not stay enabled'
+  )
+  const runtimeSettings = await cloudEnvironment.runtimeSettings(initialDevice.device_id)
+  assert.equal(runtimeSettings.device_id, initialDevice.device_id)
+  await captureVerificationScreenshot(control, 'cloud-00-local-remote-control-enabled.png')
+
+  await control.command('click', '[data-testid="remote-control-toggle"]')
+  const appDevice = await cloudEnvironment.waitForDeviceType(initialDevice.device_id, 'app')
+  assert.equal(appDevice.device_id, initialDevice.device_id)
+  assert.equal(appDevice.runtime_instance_id, initialDevice.runtime_instance_id)
+  assert.equal(appDevice.app_device_id, initialDevice.app_device_id)
+  assert.equal(
+    (await cloudEnvironment.devices()).filter(
+      device => device.device_id === initialDevice.device_id
+    ).length,
+    1,
+    'Toggling remote control created a duplicate device registration'
+  )
+  assert.equal(
+    await control.command('getAttribute', '[data-testid="remote-control-toggle"]', {
+      value: 'aria-checked',
+    }),
+    'false',
+    'Remote control switch did not stay disabled'
+  )
+  await assert.rejects(
+    () => cloudEnvironment.runtimeSettings(initialDevice.device_id),
+    /Remote control is disabled for this app device/
+  )
+  await control.command('navigate', 'body', { value: '/' })
+}
+
 async function verifyFailedCloudConnectionCanDisconnect(control) {
   await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
     text: '云端工作',
@@ -655,6 +717,7 @@ async function verifyCloudProjectFlow(
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  await verifyLocalRemoteControlFlow(control, cloudEnvironment)
   await verifyRemoteDockerCommandFlow(control, cloudEnvironment)
   await control.command('waitFor', '[data-testid="projects-create-button"]', {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -1092,6 +1155,15 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
     'retry-01-failure-restored-after-switch.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
+  const retryFailureDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const assistantCountBeforeRetry = Number(
+    retryFailureDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
+  )
+  const userCountBeforeRetry = Number(
+    retryFailureDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0
+  )
   await control.command(
     'click',
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-error-retry"]`
@@ -1111,13 +1183,27 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   )
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'The failed attempt card remained after retry succeeded'
+    true,
+    'Retry removed the failed attempt instead of preserving the conversation history'
+  )
+  const successfulRetryDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const successfulRetryAssistantCount = Number(
+    successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Retry success left an empty assistant turn in the live conversation'
+    successfulRetryAssistantCount,
+    assistantCountBeforeRetry + 1,
+    'Retry did not append the successful assistant response as a new turn'
+  )
+  const successfulRetryUserCount = Number(
+    successfulRetryDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0
+  )
+  assert.equal(
+    successfulRetryUserCount,
+    userCountBeforeRetry + 1,
+    'Retry did not append a continuation user message'
   )
 
   await control.command('click', '[data-testid="new-chat-button"]')
@@ -1146,23 +1232,31 @@ async function verifyRetryFailureRestoration(control, composerSelector) {
   successfulRetrySnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
   assert.equal(
     successfulRetrySnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'A cached failure card returned after reopening the successfully retried conversation'
+    true,
+    'Reopening the conversation lost the preserved failed attempt'
+  )
+  const reopenedRetryDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
   )
   assert.equal(
-    successfulRetrySnapshot.testIds.filter(testId => testId === 'message-assistant').length,
-    1,
-    'Reopening a successful retry restored an empty failed assistant turn'
+    Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.assistant ?? 0),
+    successfulRetryAssistantCount,
+    'Reopening the conversation lost the successful continuation turn'
+  )
+  assert.equal(
+    Number(reopenedRetryDebugSnapshot.pane?.messageSummary?.byRole?.user ?? 0),
+    successfulRetryUserCount,
+    'Reopening the conversation lost the continuation user message'
   )
   await captureVerificationScreenshot(
     control,
-    'retry-02-success-restored-without-failed-turn.png',
+    'retry-02-success-restored-with-failed-turn.png',
     ACTIVE_WORKBENCH_SELECTOR
   )
   assert.equal(
     control.scenarioRequests.get('retry')?.length,
     2,
-    'Retry did not issue exactly one additional request for the failed user message'
+    'Retry did not issue exactly one continuation request'
   )
 }
 

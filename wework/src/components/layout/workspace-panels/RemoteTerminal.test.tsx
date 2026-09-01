@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { StrictMode } from 'react'
 import { openExternalUrl } from '@/lib/external-links'
 import { createRemoteTerminalClient } from '@/lib/remote-terminal-socket'
+import {
+  consumeWorkbenchComposerFocusRequest,
+  requestWorkbenchComposerFocus,
+} from '@/lib/workbenchComposerFocus'
 import { RemoteTerminal } from './RemoteTerminal'
 
 const testState = vi.hoisted(() => ({
@@ -28,6 +32,8 @@ const testState = vi.hoisted(() => ({
     dispose: ReturnType<typeof vi.fn>
     focus: ReturnType<typeof vi.fn>
     refresh: ReturnType<typeof vi.fn>
+    textarea: HTMLTextAreaElement
+    textareaFocus: ReturnType<typeof vi.spyOn>
     options: { theme?: unknown }
   }>,
   webLinksAddonInstances: [] as Array<{
@@ -68,6 +74,8 @@ vi.mock('@xterm/xterm', () => ({
   Terminal: vi.fn().mockImplementation(function TerminalMock(options: Record<string, unknown>) {
     testState.terminalConstructorOptions.push(options)
     const dataHandlers: Array<(data: string) => void> = []
+    const textarea = document.createElement('textarea')
+    const textareaFocus = vi.spyOn(textarea, 'focus')
     const terminal = {
       rows: 24,
       cols: 80,
@@ -92,6 +100,8 @@ vi.mock('@xterm/xterm', () => ({
       dispose: vi.fn(),
       focus: vi.fn(),
       refresh: vi.fn(),
+      textarea,
+      textareaFocus,
       options: {},
     }
     testState.terminalInstances.push(terminal)
@@ -288,6 +298,68 @@ describe('RemoteTerminal', () => {
     )
 
     expect(client.resize).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not take focus from the composer when reactivated', () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    const { rerender } = render(
+      <RemoteTerminal
+        sessionId="terminal-1"
+        clientFactory={createRemoteTerminalClient}
+        active={false}
+      />
+    )
+    const composer = document.createElement('textarea')
+    composer.dataset.testid = 'chat-message-input'
+    document.body.append(composer)
+    composer.focus()
+
+    rerender(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
+
+    expect(composer).toHaveFocus()
+    expect(testState.terminalInstances[0].textareaFocus).not.toHaveBeenCalled()
+    composer.remove()
+  })
+
+  test('does not focus the terminal while a composer focus request is pending', () => {
+    const now = Date.now()
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(now)
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+    requestWorkbenchComposerFocus('runtime:device-1:task-1')
+
+    render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
+
+    expect(testState.terminalInstances[0].textareaFocus).not.toHaveBeenCalled()
+    dateNowSpy.mockReturnValue(now + 2_001)
+    consumeWorkbenchComposerFocusRequest('runtime:device-1:task-1', Symbol('cleanup-1'))
+    consumeWorkbenchComposerFocusRequest('runtime:device-1:task-1', Symbol('cleanup-2'))
+    dateNowSpy.mockRestore()
+  })
+
+  test('focuses the terminal when activated without a focused composer', () => {
+    const client = createClient({
+      attach: vi.fn(() => new Promise(() => undefined)),
+    })
+    createRemoteTerminalClientMock.mockReturnValue(client)
+
+    render(
+      <RemoteTerminal sessionId="terminal-1" clientFactory={createRemoteTerminalClient} active />
+    )
+
+    expect(testState.terminalInstances[0].textareaFocus).toHaveBeenCalledWith({
+      preventScroll: true,
+    })
   })
 
   test('refreshes buffered rows when activated and when the window regains focus', () => {

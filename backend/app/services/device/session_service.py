@@ -13,6 +13,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from app.core.socketio import get_sio
 from app.schemas.device import DeviceType
+from app.services.device.remote_control_policy import (
+    REMOTE_CONTROL_DISABLED_MESSAGE,
+    device_kind_type,
+    remote_control_is_enabled,
+)
 from app.services.device.terminal_session_service import (
     TerminalSessionRecord,
     terminal_session_service,
@@ -54,11 +59,16 @@ class LocalDeviceSessionService:
         path: str,
         create_if_missing: bool = False,
         ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
+        allow_app_device: bool = True,
     ) -> dict[str, Any]:
         """Ask an online local device to start an interactive project session."""
         device_kind = device_service.get_device_by_device_id(db, user_id, device_id)
         if not device_kind:
             raise DeviceSessionNotFoundError("Device not found or access denied")
+        if not allow_app_device and not remote_control_is_enabled(
+            device_kind_type(device_kind)
+        ):
+            raise DeviceSessionError(REMOTE_CONTROL_DISABLED_MESSAGE)
 
         online_info = await device_service.get_device_online_info(user_id, device_id)
         if not online_info:

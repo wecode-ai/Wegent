@@ -1254,7 +1254,7 @@ function GlobalImNotificationBell({
                   type="button"
                   data-testid="sidebar-global-im-notification-settings-button"
                   onClick={openSessionSettings}
-                  className="h-8 rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
+                  className="h-8 shrink-0 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                 >
                   {t('workbench.away_im_reminder_change_session', '更换会话')}
                 </button>
@@ -2170,7 +2170,7 @@ function RuntimeTaskRow({
             data-testid={`runtime-local-task-archive-toast-${task.taskId}`}
             role="status"
             aria-live="polite"
-            className="fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
+            className="electron-titlebar-interactive-region pointer-events-auto fixed left-1/2 top-5 z-[200] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-surface px-4 py-2 text-sm text-text-primary shadow-lg"
           >
             <button
               type="button"

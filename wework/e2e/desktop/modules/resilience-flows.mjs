@@ -205,6 +205,12 @@ async function verifyFollowUpSendRejectionNotice({ composerSelector, control }) 
 }
 
 async function verifyRateLimitRecovery({ composerSelector, control }) {
+  const beforeRecoveryDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
+  const failedMessageCountBeforeRecovery = Number(
+    beforeRecoveryDebugSnapshot.pane?.messageSummary?.byStatus?.failed ?? 0
+  )
   control.setScenario('rate_limit')
   await sendPromptUntilScenarioRequest(control, composerSelector, RATE_LIMIT_PROMPT, 'rate_limit')
   await withTimeout(
@@ -217,11 +223,13 @@ async function verifyRateLimitRecovery({ composerSelector, control }) {
     `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
     { text: RATE_LIMIT_COMPLETION_TEXT, timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
   )
-  const recoveredSnapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+  const recoveredDebugSnapshot = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body')
+  )
   assert.equal(
-    recoveredSnapshot.testIds.includes('assistant-error-card'),
-    false,
-    'The recovered rate-limit request rendered an assistant error'
+    Number(recoveredDebugSnapshot.pane?.messageSummary?.byStatus?.failed ?? 0),
+    failedMessageCountBeforeRecovery,
+    'The recovered rate-limit request appended a failed assistant message'
   )
   assert.equal(
     control.scenarioRequests.get('rate_limit')?.length,

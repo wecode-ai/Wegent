@@ -37,6 +37,9 @@ const LONG_CODE_REASONING = Array.from(
 const VISUALIZATION_PROMPT = 'WEWORK_DESKTOP_E2E_ABSOLUTE_VISUALIZATION'
 const VISUALIZATION_TITLE = 'Absolute visualization E2E'
 const VISUALIZATION_MARKER = 'WEWORK_DESKTOP_E2E_VISUALIZATION_VISIBLE'
+const WINDOWS_LINK_PROMPT = 'WEWORK_DESKTOP_E2E_WINDOWS_DRIVE_LINK'
+const WINDOWS_LINK_LABEL = 'wegent'
+const WINDOWS_LINK_COMPLETION = '[wegent](C:/projects/example-app/wegent)'
 const PHASE_FLIP_PROMPT = 'WEWORK_DESKTOP_E2E_PROCESS_TO_FALLBACK_FINAL'
 const PHASE_FLIP_TEXT = 'WEWORK_DESKTOP_E2E_FALLBACK_FINAL_FROM_PROCESS'
 const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
@@ -64,6 +67,8 @@ const SCROLLER_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-wo
 const SCROLL_TO_BOTTOM_BUTTON_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="scroll-to-bottom-button"]`
 const COMPOSER_CARD_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"]`
 const ASSISTANT_CONTENT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-message-content"]`
+const ASSISTANT_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+const ASSISTANT_MARKDOWN_LINK_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="assistant-markdown-link"]`
 const THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="thinking-indicator"]`
 const TOOL_THINKING_INDICATOR_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-thinking-indicator"]`
 const USER_MESSAGE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-user"]`
@@ -373,6 +378,10 @@ function requestContainsVisualizationPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(VISUALIZATION_PROMPT)
 }
 
+function requestContainsWindowsLinkPrompt(body) {
+  return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
+}
+
 function requestContainsTimerPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
 }
@@ -459,7 +468,17 @@ async function getSingleElementMetrics(control, selector, description) {
 }
 
 function distanceFromBottom(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, -metrics.scrollTop)
+  }
   return Math.max(0, metrics.scrollHeight - metrics.clientHeight - metrics.scrollTop)
+}
+
+function distanceFromTop(metrics) {
+  if (metrics.scrollOrigin === 'bottom') {
+    return Math.max(0, metrics.scrollHeight - metrics.clientHeight + metrics.scrollTop)
+  }
+  return Math.max(0, metrics.scrollTop)
 }
 
 function assertElementFullyVisible(elementMetrics, scrollerMetrics, description) {
@@ -545,6 +564,7 @@ async function waitForBottom(control, description, timeoutMs) {
 
 async function assertScrollPositionRemainsStable(control, initialMetrics, description, timeoutMs) {
   const startedAt = Date.now()
+  const initialDistanceFromTop = distanceFromTop(initialMetrics)
   while (Date.now() - startedAt < timeoutMs) {
     const metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
     assert.ok(
@@ -552,8 +572,8 @@ async function assertScrollPositionRemainsStable(control, initialMetrics, descri
       `${description} returned to the bottom after the user scrolled upward`
     )
     assert.ok(
-      Math.abs(metrics.scrollTop - initialMetrics.scrollTop) <= 8,
-      `${description} jumped from ${initialMetrics.scrollTop}px to ${metrics.scrollTop}px`
+      Math.abs(distanceFromTop(metrics) - initialDistanceFromTop) <= 8,
+      `${description} jumped from ${initialDistanceFromTop}px to ${distanceFromTop(metrics)}px from the content top`
     )
     await new Promise(resolve => setTimeout(resolve, 100))
   }
@@ -825,6 +845,23 @@ export function createDesktopScenario({
     await capture(control, 'streaming-text-00-long-code-terminal-burst.png')
   }
 
+  const verifyWindowsDriveLinkRendering = async control => {
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
+    await control.command('fill', COMPOSER_SELECTOR, { value: WINDOWS_LINK_PROMPT })
+    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+    await control.command('waitFor', ASSISTANT_MARKDOWN_LINK_SELECTOR, {
+      text: WINDOWS_LINK_LABEL,
+      timeoutMs: uiTimeoutMs,
+    })
+    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
+    assert.ok(
+      !snapshot.text.includes('[blocked]'),
+      'The Windows drive-letter markdown link was rendered as blocked text'
+    )
+    await capture(control, 'streaming-text-00-windows-drive-link.png')
+  }
+
   const verifyStoppedTurnOrder = async control => {
     await control.command('click', '[data-testid="new-chat-button"]')
     await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -844,7 +881,7 @@ export function createDesktopScenario({
     await control.command('waitFor', '[data-testid="pause-response-button"]', {
       timeoutMs: uiTimeoutMs,
     })
-    await control.command('waitFor', PROCESS_TEXT_SELECTOR, {
+    await control.command('waitFor', ASSISTANT_MESSAGE_SELECTOR, {
       text: ORDER_STOP_PARTIAL,
       stableMs: 500,
       timeoutMs: uiTimeoutMs,
@@ -1082,6 +1119,18 @@ export function createDesktopScenario({
         return true
       }
 
+      if (requestContainsWindowsLinkPrompt(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(WINDOWS_LINK_COMPLETION),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+
       const historyTurn = findHistoryTurn(body)
       if (historyTurn) {
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
@@ -1175,6 +1224,7 @@ export function createDesktopScenario({
       }
 
       await verifyLongCodeTerminalBurst(control)
+      await verifyWindowsDriveLinkRendering(control)
 
       await control.command('click', '[data-testid="new-chat-button"]')
       await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
@@ -1639,8 +1689,9 @@ export function createDesktopScenario({
         'The streaming conversation after pending bottom restores had time to run'
       )
       assert.ok(
-        Math.abs(stableUserScrollPosition.scrollTop - userScrollPosition.scrollTop) <= 8,
-        `The streaming conversation jumped from ${userScrollPosition.scrollTop}px to ${stableUserScrollPosition.scrollTop}px after the user scrolled upward`
+        Math.abs(distanceFromTop(stableUserScrollPosition) - distanceFromTop(userScrollPosition)) <=
+          8,
+        `The streaming conversation jumped from ${distanceFromTop(userScrollPosition)}px to ${distanceFromTop(stableUserScrollPosition)}px from the content top after the user scrolled upward`
       )
       await assertComposerDocked(
         control,
@@ -1714,14 +1765,14 @@ export function createDesktopScenario({
       const anchorTops = stabilitySamples.frames.map(sample => sample.anchorTop)
       const anchorRange = Math.max(...anchorTops) - Math.min(...anchorTops)
       const effectiveScrollEvents = stabilitySamples.scrollEvents.filter(
-        sample => Math.abs(sample.scrollTop - scrollerBeforeAppend.scrollTop) >= 0.5
+        sample => Math.abs(distanceFromTop(sample) - distanceFromTop(scrollerBeforeAppend)) >= 0.5
       )
       const scrollDirections = effectiveScrollEvents
         .slice(1)
         .map((sample, index) =>
-          Math.abs(sample.scrollTop - effectiveScrollEvents[index].scrollTop) < 0.5
+          Math.abs(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index])) < 0.5
             ? 0
-            : Math.sign(sample.scrollTop - effectiveScrollEvents[index].scrollTop)
+            : Math.sign(distanceFromTop(sample) - distanceFromTop(effectiveScrollEvents[index]))
         )
         .filter(direction => direction !== 0)
       const directionReversals = scrollDirections.filter(
@@ -1751,8 +1802,8 @@ export function createDesktopScenario({
         `The user-selected streaming text moved from ${anchorBeforeAppend.top}px to ${anchorAfterAppend.top}px while later content arrived`
       )
       assert.ok(
-        Math.abs(scrollerAfterAppend.scrollTop - scrollerBeforeAppend.scrollTop) <= 8,
-        `The paused streaming scroller moved from ${scrollerBeforeAppend.scrollTop}px to ${scrollerAfterAppend.scrollTop}px`
+        Math.abs(distanceFromTop(scrollerAfterAppend) - distanceFromTop(scrollerBeforeAppend)) <= 8,
+        `The paused streaming scroller moved from ${distanceFromTop(scrollerBeforeAppend)}px to ${distanceFromTop(scrollerAfterAppend)}px from the content top`
       )
       await assertComposerDocked(
         control,
