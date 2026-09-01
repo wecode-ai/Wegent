@@ -5,10 +5,12 @@ import {
   closeEmbeddedBrowser,
   evalEmbeddedBrowserJson,
   listenEmbeddedBrowserAnnotationRequests,
+  listenEmbeddedBrowserAgentCursor,
   listenEmbeddedBrowserAgentState,
   listenEmbeddedBrowserOpenRequests,
   listenEmbeddedBrowserPageStateChanges,
   relabelEmbeddedBrowser,
+  notifyEmbeddedBrowserAgentCursorArrived,
   resolveEmbeddedBrowserAgentApproval,
   requestEmbeddedBrowserOpen,
   setEmbeddedBrowserAgentControlPaused,
@@ -124,10 +126,56 @@ describe('embedded-browser', () => {
     })
   })
 
+  test('acknowledges AI cursor arrival through Electron', async () => {
+    await notifyEmbeddedBrowserAgentCursorArrived('workspace-browser-task-1', 7)
+
+    expect(desktopHostMocks.invoke).toHaveBeenCalledWith('browser.notifyAgentCursorArrived', {
+      label: 'workspace-browser-task-1',
+      moveSequence: 7,
+    })
+  })
+
   test('listens for embedded browser agent state events', async () => {
     const handler = vi.fn()
 
     const unlisten = await listenEmbeddedBrowserAgentState(handler)
+    expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
+    unlisten?.()
+  })
+
+  test('listens for embedded browser agent cursor events', async () => {
+    desktopHostMocks.subscribe.mockImplementation(handler => {
+      handler({
+        sequence: 1,
+        type: 'browser.event',
+        payload: {
+          sequence: 7,
+          type: 'agent-cursor',
+          payload: {
+            label: 'workspace-browser',
+            visible: true,
+            x: 120,
+            y: 80,
+            animateMovement: true,
+            moveSequence: 3,
+            createdAtUnixMs: 1_788_249_600_000,
+          },
+        },
+      })
+      return () => {}
+    })
+    const handler = vi.fn()
+
+    const unlisten = await listenEmbeddedBrowserAgentCursor(handler)
+    expect(handler).toHaveBeenCalledWith({
+      label: 'workspace-browser',
+      visible: true,
+      x: 120,
+      y: 80,
+      animateMovement: true,
+      moveSequence: 3,
+      createdAtUnixMs: 1_788_249_600_000,
+    })
     expect(desktopHostMocks.subscribe).toHaveBeenCalledOnce()
     unlisten?.()
   })
