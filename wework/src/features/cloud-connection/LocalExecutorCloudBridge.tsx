@@ -34,7 +34,13 @@ function runtimeAuthRefreshDelayMs(expiresInSeconds: number) {
   return Math.max(1_000, (expiresInSeconds - leadSeconds) * 1_000)
 }
 
-type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection
+type LocalExecutorCloudBridgeProps = Omit<
+  LocalExecutorCloudConnection,
+  'registrationDeviceType'
+> & {
+  preferencesLoaded: boolean
+  remoteControlEnabled: boolean
+}
 
 export function LocalExecutorCloudBridge({
   apiBaseUrl,
@@ -42,6 +48,8 @@ export function LocalExecutorCloudBridge({
   socketBaseUrl,
   isConnected,
   token,
+  preferencesLoaded,
+  remoteControlEnabled,
 }: LocalExecutorCloudBridgeProps) {
   const connectionGenerationRef = useRef(0)
   const [connectorRefreshRevision, setConnectorRefreshRevision] = useState(0)
@@ -55,6 +63,10 @@ export function LocalExecutorCloudBridge({
   useEffect(() => {
     const generation = connectionGenerationRef.current + 1
     connectionGenerationRef.current = generation
+    if (!preferencesLoaded) {
+      setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
+      return
+    }
     const backendUrl = isConnected ? configuredBackendUrl : null
     const authToken = isConnected ? token : null
     const connected = Boolean(backendUrl && socketBaseUrl && authToken)
@@ -95,6 +107,7 @@ export function LocalExecutorCloudBridge({
             socketBaseUrl,
             isConnected,
             token,
+            registrationDeviceType: remoteControlEnabled ? 'remote' : 'app',
           },
           { isCurrent: isCurrentConnectionAttempt }
         )
@@ -142,7 +155,15 @@ export function LocalExecutorCloudBridge({
       if (statusTimer) clearTimeout(statusTimer)
       setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
     }
-  }, [apiBaseUrl, configuredBackendUrl, isConnected, socketBaseUrl, token])
+  }, [
+    apiBaseUrl,
+    configuredBackendUrl,
+    isConnected,
+    preferencesLoaded,
+    remoteControlEnabled,
+    socketBaseUrl,
+    token,
+  ])
 
   useEffect(() => {
     if (!isCloudConnectionUiAvailable()) return

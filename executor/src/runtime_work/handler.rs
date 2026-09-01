@@ -41,6 +41,7 @@ use crate::{
     protocol::ExecutionRequest,
     runner::ExecutionOutcome,
     server::{executor_loopback_base_url, harness_context, local_model_proxy},
+    task_runtime::LocalTaskStore,
 };
 
 const WORKTREE_RECONCILIATION_RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -554,6 +555,7 @@ pub struct RuntimeWorkRpcHandler {
     notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
+    task_store_path: Arc<PathBuf>,
     store: RuntimeWorkStore,
     worktrees: WorktreeManager,
     worktree_reconciliation_state: Arc<AsyncMutex<WorktreeReconciliationState>>,
@@ -763,6 +765,7 @@ impl RuntimeWorkRpcHandler {
             notification_router: Arc::new(Mutex::new(None)),
             archived_delete_tx,
             automation_store: AutomationStore::from_env(),
+            task_store_path: Arc::new(LocalTaskStore::default_path()),
             store,
             worktrees,
             worktree_reconciliation_state: Arc::new(AsyncMutex::new(

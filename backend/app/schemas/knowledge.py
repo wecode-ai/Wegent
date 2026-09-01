@@ -636,6 +636,27 @@ class CodeWikiPageTree(BaseModel):
     pages: List[CodeWikiPageNode]
 
 
+class CodeWikiRunProgress(BaseModel):
+    """A derived stage for a run currently in progress."""
+
+    stage: Literal[
+        "generating",
+        "planning",
+        "plan_review",
+        "revising_plan",
+        "writing",
+        "qa_review",
+        "repairing",
+        "recheck",
+        "publishing",
+        "finishing",
+    ]
+    current_step: int = Field(0, ge=0)
+    total_steps: int = Field(0, ge=0)
+    pages_written: int = Field(0, ge=0)
+    pages_total: int = Field(0, ge=0)
+
+
 class CodeWikiRunStatus(BaseModel):
     """Whether anything is being done to this wiki, and what came of it last time.
 
@@ -664,6 +685,7 @@ class CodeWikiRunStatus(BaseModel):
             "that rather than reporting the wiki as busy."
         ),
     )
+    progress: Optional[CodeWikiRunProgress] = None
     last_published_at: Optional[str] = None
     last_published_commit: str = ""
 

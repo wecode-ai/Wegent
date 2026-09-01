@@ -8,6 +8,7 @@ import pytest
 
 import app.api.ws.device_namespace as device_namespace_module
 from app.api.ws.device_namespace import DeviceNamespace
+from app.schemas.device import DeviceType
 
 
 @pytest.mark.asyncio
@@ -17,6 +18,7 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
         return_value={
             "user_id": 17,
             "device_id": "cloud-device",
+            "device_type": DeviceType.CLOUD.value,
             "execution_target_id": "cloud-device",
             "execution_environment": "cloud",
             "runtime_instance_id": "runtime-1",
@@ -55,12 +57,13 @@ async def test_registered_device_pulls_work_with_socket_identity(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_app_executor_pulls_work_for_its_app_target(monkeypatch):
+async def test_app_only_executor_cannot_pull_backend_work(monkeypatch):
     namespace = DeviceNamespace()
     namespace.get_session = AsyncMock(
         return_value={
             "user_id": 17,
             "device_id": "executor-runtime-device",
+            "device_type": DeviceType.APP.value,
             "execution_target_id": "electron-app-device",
             "execution_environment": "local",
             "runtime_instance_id": "runtime-1",
@@ -87,6 +90,42 @@ async def test_app_executor_pulls_work_for_its_app_target(monkeypatch):
     )
 
     assert result == {"success": True, "task": None}
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_remote_executor_pulls_work_for_its_stable_app_target(monkeypatch):
+    namespace = DeviceNamespace()
+    namespace.get_session = AsyncMock(
+        return_value={
+            "user_id": 17,
+            "device_id": "executor-runtime-device",
+            "device_type": DeviceType.REMOTE.value,
+            "execution_target_id": "electron-app-device",
+            "execution_environment": "local",
+            "runtime_instance_id": "runtime-1",
+        }
+    )
+    calls = []
+
+    def pull(**kwargs):
+        calls.append(kwargs)
+        return {"success": True, "task": None}
+
+    monkeypatch.setattr(device_namespace_module, "pull_execution", pull)
+
+    runtime_capacity = {
+        "limit": 1,
+        "active": 0,
+        "active_task_ids": [],
+        "queued": 0,
+    }
+    result = await namespace.on_runtime_tasks_pull(
+        "socket-1",
+        {"runtime_capacity": runtime_capacity},
+    )
+
+    assert result == {"success": True, "task": None}
     assert calls == [
         {
             "owner_user_id": 17,
@@ -94,12 +133,7 @@ async def test_app_executor_pulls_work_for_its_app_target(monkeypatch):
             "runtime_device_id": "executor-runtime-device",
             "runtime_instance_id": "runtime-1",
             "environment": "local",
-            "runtime_capacity": {
-                "limit": 1,
-                "active": 0,
-                "active_task_ids": [],
-                "queued": 0,
-            },
+            "runtime_capacity": runtime_capacity,
         }
     ]
 

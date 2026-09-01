@@ -31,11 +31,17 @@ interface SplashWebContents {
 }
 
 export interface StartupSplashWindow {
+  close: () => void
   isDestroyed: () => boolean
   isVisible: () => boolean
-  once: (event: 'closed' | 'ready-to-show', listener: () => void) => void
+  on: (event: 'close', listener: (event: StartupSplashCloseEvent) => void) => void
+  once: (event: 'closed', listener: () => void) => void
   show: () => void
   webContents: SplashWebContents
+}
+
+export interface StartupSplashCloseEvent {
+  preventDefault: () => void
 }
 
 export interface StartupSplashOptions {
@@ -70,6 +76,12 @@ export function resolveStartupSplashTheme(
   return systemUsesDarkColors ? 'dark' : 'light'
 }
 
+export function startupSplashBlocksMainWindowActivation(
+  snapshot: StartupSplashSnapshot | null
+): boolean {
+  return snapshot !== null && snapshot.state !== 'closed'
+}
+
 async function writePng(path: string, bytes: Buffer): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, bytes)
@@ -82,10 +94,14 @@ export class StartupSplash {
   private state: StartupSplashSnapshot['state'] = 'idle'
   private showPromise: Promise<StartupSplashSnapshot> | null = null
   private closePromise: Promise<StartupSplashSnapshot> | null = null
+  private controlledClose = false
 
   constructor(private readonly options: StartupSplashOptions) {
     this.now = options.now ?? Date.now
     this.persistPng = options.writePng ?? writePng
+    options.window.on('close', event => {
+      if (!this.controlledClose) event.preventDefault()
+    })
     this.record('created')
   }
 
@@ -123,6 +139,10 @@ export class StartupSplash {
         await this.persistPng(options.capturePath, image.toPNG())
       }
     } finally {
+      if (!target.isDestroyed()) {
+        this.controlledClose = true
+        target.close()
+      }
       this.markClosed()
     }
 
@@ -147,23 +167,16 @@ export class StartupSplash {
   private async createAndShow(): Promise<StartupSplashSnapshot> {
     this.state = 'loading'
     const target = this.options.window
-
-    const shown = new Promise<void>(resolve => {
-      target.once('ready-to-show', () => {
-        if (!target.isDestroyed()) {
-          target.show()
-          this.state = 'visible'
-          this.record('shown')
-        }
-        resolve()
-      })
-    })
     target.once('closed', () => this.markClosed())
 
-    await shown
     if (!target.webContents.isDestroyed()) {
       await target.webContents.executeJavaScript(WAIT_FOR_ANIMATION_READY)
       this.record('animation-ready')
+    }
+    if (!target.isDestroyed()) {
+      target.show()
+      this.state = 'visible'
+      this.record('shown')
     }
     return this.snapshot()
   }

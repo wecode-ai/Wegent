@@ -1306,7 +1306,7 @@ fn emit_claude_tool_result(
     let event = if is_claude_subagent_tool(&tool_use.name) {
         builder.response_subagent_block_updated(
             &tool_use.id,
-            None,
+            Some(if is_error { "error" } else { "completed" }),
             output,
             None,
             tool_use.parent_tool_use_id.as_deref(),

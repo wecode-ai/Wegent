@@ -33,7 +33,7 @@ export interface TrayNativeStatus {
 export type TrayAction =
   | { type: 'open-app'; source: 'tray-icon' | 'tray-menu' }
   | { type: 'open-settings'; source: 'tray-menu' }
-  | { type: 'open-task'; source: 'tray-menu'; taskId: string }
+  | { type: 'open-task'; source: 'tray-menu' | 'notification'; taskId: string }
   | { type: 'quit-app'; source: 'tray-menu' }
 
 export type TrayActivation =

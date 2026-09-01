@@ -83,6 +83,8 @@ import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
 import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
 import { cn } from '@/lib/utils'
 import { track } from '@/telemetry/client'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
 import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
 import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
@@ -153,6 +155,7 @@ import {
   projectSpaceRef,
   projectSupportsRobotAutomation,
   sameProjectSpace,
+  subscribeProjectSpaceTaskBindingChanged,
   subscribeProjectSpaceTaskContextChanged,
 } from './projectSpaceSelection'
 import { CloudProjectsHome } from './CloudProjectsHome'
@@ -237,6 +240,7 @@ type PendingExecutionConfiguration = {
         type: 'save'
       }
 }
+type ExecutionConfigurationRequestResult = 'not-needed' | 'opened' | 'unavailable'
 
 const nativeBoardGroupFields: AITableField[] = [
   { id: 'status', name: '状态', type: 'status', config: null, raw: {} },
@@ -540,6 +544,7 @@ interface CloudTodoWorkspaceProps {
   runtimeTaskLifecycle?: RuntimeTaskLifecycleStoreSnapshot
   services: WorkbenchServices
   embedded?: boolean
+  startupActive?: boolean
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -1087,6 +1092,7 @@ export function CloudTodoWorkspace({
   runtimeTaskLifecycle,
   services,
   embedded = false,
+  startupActive = false,
   activeProjectRef,
   defaultProjectRequested = false,
   focusedItemId,
@@ -1796,6 +1802,17 @@ export function CloudTodoWorkspace({
   const pendingExecutionServices = pendingExecutionProject
     ? services.projectSpaceDetailServices?.[pendingExecutionProject.location]
     : undefined
+  function openExecutionConfiguration(
+    pending: PendingExecutionConfiguration
+  ): Exclude<ExecutionConfigurationRequestResult, 'not-needed'> {
+    const project = projectForItem(pending.item)
+    if (!project || !services.projectSpaceDetailServices?.[project.location]) {
+      setBoardError(t('todo.run_unavailable', '运行服务当前不可用'))
+      return 'unavailable'
+    }
+    setPendingExecutionConfiguration(pending)
+    return 'opened'
+  }
   const selectedProjectApi =
     selectedProject?.task_provider === 'dingtalk_aitable'
       ? apiForProject(selectedProject)
@@ -2084,6 +2101,34 @@ export function CloudTodoWorkspace({
   // `boardError` distinguishes a failed fetch (skeleton stays) from a
   // successfully loaded but empty project (renders the empty columns).
   const boardItemsLoading = selectedProject !== null && itemsProjectKey !== selectedProjectKey
+  const startupProjectsLoading =
+    (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
+    (Boolean(projectSpaceApis.cloud) && cloudProjectsLoading)
+  const startupProjectRouteReady =
+    !activeProjectRef ||
+    Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
+  const focusedStartupItem = focusedItemId
+    ? items.find(item => item.id === focusedItemId)
+    : undefined
+  const startupFocusedItemReady =
+    !focusedItemId ||
+    selectedItem?.id === focusedItemId ||
+    (!boardItemsLoading && (!focusedStartupItem || focusedStartupItem.can_view_detail === false))
+  const startupBoardReady =
+    startupActive &&
+    Boolean(workbench?.isStartupReady) &&
+    !startupProjectsLoading &&
+    startupProjectRouteReady &&
+    !boardItemsLoading &&
+    startupFocusedItemReady
+  useEffect(() => {
+    if (!startupBoardReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
+      return
+    }
+    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
+      console.error('[Wework] Failed to reveal the ready project space', error)
+    })
+  }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
   useEffect(() => {
@@ -2439,15 +2484,16 @@ export function CloudTodoWorkspace({
     return locatedItem
   }
 
-  function requestCreatedItemExecutionConfiguration(item: LocatedLoopItem): boolean {
+  function requestCreatedItemExecutionConfiguration(
+    item: LocatedLoopItem
+  ): ExecutionConfigurationRequestResult {
     if (!isProcessingStatus(item.status) || !itemNeedsExecutionConfiguration(item)) {
-      return false
+      return 'not-needed'
     }
-    setPendingExecutionConfiguration({
+    return openExecutionConfiguration({
       item,
       continuation: { type: 'save' },
     })
-    return true
   }
 
   async function createTodoInBoardColumn(
@@ -2712,13 +2758,17 @@ export function CloudTodoWorkspace({
     services.aitableApi,
     services.dwsApi,
   ])
-  useEffect(
-    () =>
-      subscribeProjectSpaceTaskContextChanged(() => {
-        setBoardRefreshNonce(value => value + 1)
-      }),
-    []
-  )
+  useEffect(() => {
+    const refreshBoard = () => {
+      setBoardRefreshNonce(value => value + 1)
+    }
+    const unsubscribeContextChanged = subscribeProjectSpaceTaskContextChanged(refreshBoard)
+    const unsubscribeBindingChanged = subscribeProjectSpaceTaskBindingChanged(refreshBoard)
+    return () => {
+      unsubscribeContextChanged()
+      unsubscribeBindingChanged()
+    }
+  }, [])
   useEffect(() => {
     const subscribe = selectedProjectChatClient?.subscribeLoopItemChanges
     boardLiveSubscriptionActiveRef.current = false
@@ -3011,7 +3061,7 @@ export function CloudTodoWorkspace({
     }
     const needsExecutionConfig = enteringExecution && itemNeedsExecutionConfiguration(executionItem)
     if (needsExecutionConfig && !executionResult) {
-      setPendingExecutionConfiguration({
+      openExecutionConfiguration({
         item: executionItem,
         continuation: { type: 'move', columnKey, beforeItemId },
       })
@@ -3117,7 +3167,7 @@ export function CloudTodoWorkspace({
           itemId: locatedUpdated.id,
           route: 'workflow_configuration',
         })
-        setPendingExecutionConfiguration({
+        openExecutionConfiguration({
           item: locatedUpdated,
           continuation: { type: 'save' },
         })
@@ -3390,8 +3440,8 @@ export function CloudTodoWorkspace({
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      const needsExecutionConfiguration = requestCreatedItemExecutionConfiguration(locatedItem)
-      if (input.createTask && !needsExecutionConfiguration) {
+      const executionConfigurationResult = requestCreatedItemExecutionConfiguration(locatedItem)
+      if (input.createTask && executionConfigurationResult === 'not-needed') {
         setBackgroundTaskItemId(locatedItem.id)
         openTaskComposer({
           workItemId: locatedItem.id,
@@ -4261,7 +4311,8 @@ export function CloudTodoWorkspace({
                 <AITableView api={aitableApi} project={selectedProject} />
               ) : projectView === 'automation' &&
                 selectedProjectAutomationSupported &&
-                selectedProjectApi ? (
+                selectedProjectApi &&
+                selectedProjectServices ? (
                 <ProjectAutomationView
                   key={selectedProject.id}
                   api={selectedProjectApi}
@@ -4269,7 +4320,7 @@ export function CloudTodoWorkspace({
                   projectAutomationApi={selectedProjectServices?.projectAutomationApi}
                   runtimeProfileApi={selectedProjectServices?.runtimeProfileApi}
                   executionApi={automationExecutionApi}
-                  deviceApi={services.deviceApi}
+                  deviceApi={selectedProjectServices.deviceApi}
                   modelApi={services.modelApi}
                   teamApi={selectedProjectServices?.teamApi}
                   pluginApi={selectedProjectServices?.pluginApi}
@@ -4748,7 +4799,7 @@ export function CloudTodoWorkspace({
                                         }
                                       }}
                                       onConfigureExecution={() =>
-                                        setPendingExecutionConfiguration({
+                                        openExecutionConfiguration({
                                           item,
                                           continuation: { type: 'save' },
                                         })
@@ -4879,7 +4930,7 @@ export function CloudTodoWorkspace({
             onConfirm={pendingAutomationSelection.onConfirm}
           />
         ) : null}
-        {pendingExecutionConfiguration ? (
+        {pendingExecutionConfiguration && pendingExecutionServices ? (
           <IssueExecutionConfigDialog
             item={pendingExecutionConfiguration.item}
             projectChatAgentApi={
@@ -4889,7 +4940,7 @@ export function CloudTodoWorkspace({
               pendingExecutionServices?.runtimeProfileApi ?? services.runtimeProfileApi
             }
             modelApi={services.modelApi}
-            deviceApi={services.deviceApi}
+            deviceApi={pendingExecutionServices.deviceApi}
             localProjects={localProjects}
             onClose={() => setPendingExecutionConfiguration(null)}
             onConfirm={async result => {

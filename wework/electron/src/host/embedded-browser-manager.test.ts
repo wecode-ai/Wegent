@@ -39,6 +39,8 @@ vi.mock('electron', () => ({
 }))
 
 class FakeWebContents extends EventEmitter {
+  private static nextId = 1
+  readonly id = FakeWebContents.nextId++
   readonly debugger = {
     attach: vi.fn(),
     detach: vi.fn(),
@@ -59,6 +61,7 @@ class FakeWebContents extends EventEmitter {
     this.emit('destroyed')
   })
   executeJavaScript = vi.fn()
+  focus = vi.fn()
   getTitle = vi.fn(() => '')
   getURL = vi.fn(() => this.url)
   inspectElement = vi.fn()
@@ -74,6 +77,7 @@ class FakeWebContents extends EventEmitter {
   })
   capturePage = vi.fn()
   reload = vi.fn()
+  sendInputEvent = vi.fn()
   setWindowOpenHandler = vi.fn()
   setZoomFactor = vi.fn()
   devToolsWebContents: object | null = {}
@@ -426,6 +430,48 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     await rm(directory, { recursive: true, force: true })
   })
 
+  test('replaces an attached browser and ignores a stale identity-scoped close', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const previousContents = new FakeWebContents()
+    previousContents.loadURL.mockImplementation(async url => {
+      previousContents.commitUrl(url)
+    })
+    manager.attach('smart-app:test', previousContents as unknown as WebContents)
+    const previousState = await manager.open({
+      label: 'smart-app:test',
+      url: 'https://previous.example/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    const currentContents = new FakeWebContents()
+    currentContents.loadURL.mockImplementation(async url => {
+      currentContents.commitUrl(url)
+    })
+    manager.attach('smart-app:test', currentContents as unknown as WebContents)
+    const currentState = await manager.open({
+      label: 'smart-app:test',
+      url: 'https://current.example/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    expect(previousContents.close).toHaveBeenCalledOnce()
+    expect(currentState.nativeLabel).not.toBe(previousState.nativeLabel)
+    manager.close('smart-app:test', previousState.nativeLabel)
+    expect(manager.state('smart-app:test')).toMatchObject({
+      nativeLabel: currentState.nativeLabel,
+      url: 'https://current.example/',
+    })
+
+    manager.close('smart-app:test', currentState.nativeLabel)
+    expect(currentContents.close).toHaveBeenCalledOnce()
+    await rm(directory, { recursive: true, force: true })
+  })
+
   test('records, searches, removes, and clears persisted browser history', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
     const manager = new EmbeddedBrowserManager(directory)
@@ -513,6 +559,33 @@ describe('EmbeddedBrowserManager lifecycle', () => {
     )
     expect(contents.capturePage).toHaveBeenCalledOnce()
     expect(contents.debugger.sendCommand).not.toHaveBeenCalled()
+    await rm(directory, { recursive: true, force: true })
+  })
+
+  test('sends a focused native click to the embedded browser', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'wework-browser-manager-'))
+    const manager = new EmbeddedBrowserManager(directory)
+    const contents = new FakeWebContents()
+    contents.loadURL.mockImplementation(async url => {
+      contents.commitUrl(url)
+    })
+    manager.attach('workspace-browser', contents as unknown as WebContents)
+    await manager.open({
+      label: 'workspace-browser',
+      url: 'https://example.test/',
+      bounds: { x: 0, y: 0, width: 800, height: 600 },
+      visible: true,
+      navigateExisting: true,
+    })
+
+    manager.clickAt('workspace-browser', 120.4, 48.6)
+
+    expect(contents.focus).toHaveBeenCalledOnce()
+    expect(contents.sendInputEvent.mock.calls).toEqual([
+      [{ type: 'mouseMove', x: 120, y: 49 }],
+      [{ type: 'mouseDown', x: 120, y: 49, button: 'left', clickCount: 1 }],
+      [{ type: 'mouseUp', x: 120, y: 49, button: 'left', clickCount: 1 }],
+    ])
     await rm(directory, { recursive: true, force: true })
   })
 

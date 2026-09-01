@@ -308,6 +308,12 @@ CI reliability depends on these invariants:
   wait for each target element before reading attributes or asserting state.
   Visible final text does not imply that associated disclosure controls or
   timelines have mounted.
+- After a page reload, task switch, or injected lifecycle/transcript event,
+  desktop E2E must not wait only for sidebar, composer, or debug state. Before
+  reading a virtualized transcript or asserting text occurrence counts, wait
+  for the expected conversation text to appear in a page snapshot, then retain
+  exact occurrence assertions so fixed delays or reruns cannot hide missing or
+  duplicated messages.
 - Wework release-note lookups for GitHub commit authors retry transient API or
   TLS failures a limited number of times with exponential backoff. The release
   job must still fail after retries are exhausted instead of silently omitting

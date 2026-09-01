@@ -218,7 +218,6 @@ function createManager(root: string): SmartAppManager {
     runtimeHost: () => ({
       open: vi.fn(),
       close: vi.fn(),
-      activate: vi.fn(),
       runningTabIds: () => new Set(),
     }),
   })

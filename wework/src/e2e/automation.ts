@@ -50,6 +50,7 @@ import { suspendDshTerminalEventDelivery } from '@/api/dsh/terminalTransport'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { downloadPendingWeworkUpdate } from '@/lib/app-updater'
+import { createTrayTaskMenuId } from '@/desktop/trayTaskMenuId'
 
 const DEFAULT_WAIT_TIMEOUT_MS = 5000
 const LOCAL_MODEL_SEND_CIRCUIT_BREAKER_ERROR = 'WEWORK_E2E_LOCAL_MODEL_SEND_CIRCUIT_OPEN'
@@ -64,6 +65,9 @@ interface DesktopControlResult {
 
 interface ScrollStabilitySamplePoint {
   anchorTop: number
+  clientHeight: number
+  scrollHeight: number
+  scrollOrigin: 'bottom' | 'top'
   scrollTop: number
   time: number
 }
@@ -506,6 +510,7 @@ function desktopControlElementMetrics(selector: string): string {
         right: rect.right,
         scrollHeight: element.scrollHeight,
         scrollLeft: element.scrollLeft,
+        scrollOrigin: element.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
         scrollTop: element.scrollTop,
         scrollWidth: element.scrollWidth,
         top: rect.top,
@@ -513,6 +518,16 @@ function desktopControlElementMetrics(selector: string): string {
       }
     })
   )
+}
+
+function desktopControlContentScrollTop(element: HTMLElement): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return element.scrollTop
+  return Math.max(0, element.scrollHeight - element.clientHeight + element.scrollTop)
+}
+
+function desktopControlDomScrollTop(element: HTMLElement, contentScrollTop: number): number {
+  if (element.dataset.scrollOrigin !== 'bottom') return contentScrollTop
+  return contentScrollTop - Math.max(0, element.scrollHeight - element.clientHeight)
 }
 
 function desktopControlSnapshot(selector = 'body'): string {
@@ -1476,12 +1491,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         return pressDesktopControlKey(command.target ?? command.selector, command.key)
       }
       return ''
+    case 'activateRuntimeTaskCompletionNotification': {
+      const address = JSON.parse(command.value ?? '{}') as RuntimeTaskAddress
+      await invokeDesktopHost('e2e.activateRuntimeTaskNotification', {
+        taskAddressId: createTrayTaskMenuId(address),
+      })
+      return ''
+    }
     case 'getSystemNotifications':
       return JSON.stringify(
         (
           globalThis as typeof globalThis & {
             __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-              notifications: Array<{ title: string; body: string }>
+              notifications: Array<{
+                title: string
+                body: string
+                address?: RuntimeTaskAddress
+              }>
             }
           }
         ).__WEWORK_E2E_SYSTEM_NOTIFICATIONS__?.notifications ?? []
@@ -1489,7 +1515,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'clearSystemNotifications': {
       const root = globalThis as typeof globalThis & {
         __WEWORK_E2E_SYSTEM_NOTIFICATIONS__?: {
-          notifications: Array<{ title: string; body: string }>
+          notifications: Array<{
+            title: string
+            body: string
+            address?: RuntimeTaskAddress
+          }>
         }
       }
       root.__WEWORK_E2E_SYSTEM_NOTIFICATIONS__ = { notifications: [] }
@@ -1732,7 +1762,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         scrollEvents: [],
         stop: () => {},
       }
-      const capture = (time: number) => {
+      const capture = (time: number): ScrollStabilitySamplePoint | null => {
         const anchors = findDesktopControlElements(command.selector)
         const anchor = options.anchorText
           ? anchors.find(candidate => candidate.textContent?.includes(options.anchorText ?? ''))
@@ -1740,6 +1770,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         if (!anchor) return null
         return {
           anchorTop: anchor.getBoundingClientRect().top,
+          clientHeight: scroller.clientHeight,
+          scrollHeight: scroller.scrollHeight,
+          scrollOrigin: scroller.dataset.scrollOrigin === 'bottom' ? 'bottom' : 'top',
           scrollTop: scroller.scrollTop,
           time: time - startedAt,
         }
@@ -1893,7 +1926,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: 120,
         })
       )
-      element.scrollTop = element.scrollHeight
+      element.scrollTop =
+        element.dataset.scrollOrigin === 'bottom'
+          ? 0
+          : Math.max(0, element.scrollHeight - element.clientHeight)
       element.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(element.scrollTop)
     }
@@ -1913,7 +1949,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           deltaY: -Math.max(120, distance),
         })
       )
-      scroller.scrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight - distance)
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      scroller.scrollTop =
+        scroller.dataset.scrollOrigin === 'bottom'
+          ? -Math.min(distance, maxScrollTop)
+          : Math.max(0, maxScrollTop - distance)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
     }
@@ -1926,18 +1966,65 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       }
 
       const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
-      const nextScrollTop = maxScrollTop * ratio
+      const nextContentScrollTop = maxScrollTop * ratio
+      const currentContentScrollTop = desktopControlContentScrollTop(scroller)
       scroller.dispatchEvent(
         new WheelEvent('wheel', {
           bubbles: true,
           cancelable: true,
           composed: true,
-          deltaY: nextScrollTop < scroller.scrollTop ? -120 : 120,
+          deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
         })
       )
-      scroller.scrollTop = nextScrollTop
+      scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
       return String(scroller.scrollTop)
+    }
+    case 'sampleRapidScrollContent': {
+      const scroller = findDesktopControlElements(command.selector)[0]
+      if (!scroller) throw new Error(`Unable to find selector "${command.selector}"`)
+      const options = JSON.parse(command.value ?? '{}') as {
+        contentSelector?: string
+        ratios?: number[]
+      }
+      const contentSelector = options.contentSelector?.trim()
+      if (!contentSelector) {
+        throw new Error('sampleRapidScrollContent requires contentSelector')
+      }
+      const ratios = options.ratios ?? []
+      if (
+        ratios.length === 0 ||
+        ratios.some(ratio => !Number.isFinite(ratio) || ratio < 0 || ratio > 1)
+      ) {
+        throw new Error('sampleRapidScrollContent requires ratios between 0 and 1')
+      }
+
+      const maxScrollTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight)
+      const viewport = scroller.getBoundingClientRect()
+      const samples = ratios.map(ratio => {
+        const nextContentScrollTop = maxScrollTop * ratio
+        const currentContentScrollTop = desktopControlContentScrollTop(scroller)
+        scroller.dispatchEvent(
+          new WheelEvent('wheel', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            deltaY: nextContentScrollTop < currentContentScrollTop ? -120 : 120,
+          })
+        )
+        scroller.scrollTop = desktopControlDomScrollTop(scroller, nextContentScrollTop)
+        scroller.dispatchEvent(new Event('scroll', { bubbles: true }))
+
+        const hasVisibleContent = Array.from(
+          scroller.querySelectorAll<HTMLElement>(contentSelector)
+        ).some(element => {
+          if (!element.textContent?.trim()) return false
+          const bounds = element.getBoundingClientRect()
+          return bounds.bottom > viewport.top && bounds.top < viewport.bottom
+        })
+        return { hasVisibleContent, ratio, scrollTop: scroller.scrollTop }
+      })
+      return JSON.stringify(samples)
     }
     case 'click': {
       const elements = findDesktopControlElements(command.selector)

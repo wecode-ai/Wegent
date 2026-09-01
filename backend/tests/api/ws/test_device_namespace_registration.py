@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.orm import sessionmaker
 
 from app.api.ws import device_namespace
-from app.api.ws.device_namespace import DeviceNamespace
+from app.api.ws.device_namespace import DeviceNamespace, DeviceRegistrationFingerprint
 from app.models.kind import Kind
 from app.schemas.device import DeviceType
 
@@ -252,7 +252,20 @@ async def test_remote_runtime_mismatch_is_not_hidden_by_registration_debounce(
         return func(*args)
 
     namespace = DeviceNamespace()
-    namespace._remember_registration(test_user.id, device_id, "Remote Device")
+    namespace._remember_registration(
+        test_user.id,
+        device_id,
+        DeviceRegistrationFingerprint(
+            display_name="Remote Device",
+            client_ip="198.51.100.32",
+            device_type=DeviceType.REMOTE.value,
+            bind_shell="claudecode",
+            runtime_transfer_host="",
+            runtime_instance_id="runtime-instance-original",
+            app_device_id="",
+        ),
+        "Remote Device",
+    )
     monkeypatch.setattr(
         namespace,
         "get_session",

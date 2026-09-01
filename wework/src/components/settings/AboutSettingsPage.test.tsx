@@ -29,7 +29,6 @@ function renderPage(overrides: Partial<AppUpdateContextValue> = {}) {
     installedReleaseNotes: null,
     status: 'idle',
     downloadProgress: null,
-    message: null,
     error: null,
     checkNow: vi.fn().mockResolvedValue(null),
     installUpdate: vi.fn().mockResolvedValue(undefined),
@@ -96,7 +95,13 @@ describe('AboutSettingsPage', () => {
 
   test('explains how to recover when an older update source lacks Beta manifests', () => {
     renderPage({
-      error: "the platform 'beta-darwin' was not found in the response `platforms` object",
+      error: {
+        stage: 'check',
+        kind: 'channel_migration',
+        code: 'APP_UPDATE_CHANNEL_MIGRATION_REQUIRED',
+        occurredAt: 1,
+        detail: null,
+      },
     })
 
     expect(screen.getByTestId('about-update-status')).toHaveTextContent(

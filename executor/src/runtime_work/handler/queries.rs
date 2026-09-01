@@ -253,6 +253,7 @@ impl RuntimeWorkRpcHandler {
                         &mut messages,
                         user_message_presentations(link),
                         &presentation_page_messages,
+                        &[],
                         false,
                         false,
                     );
@@ -380,6 +381,13 @@ impl RuntimeWorkRpcHandler {
         )
         .await
         .map_err(|error| AppIpcError::new("codex_error", error))?;
+        let presentation_page_turn_ids = thread
+            .get("turns")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|turn| string_field(turn, "id"))
+            .collect::<Vec<_>>();
         let presentation_page_messages = local_link.as_ref().map(|_| {
             if include_full_content {
                 full_transcript_messages(&thread, &self.device_id)
@@ -410,6 +418,7 @@ impl RuntimeWorkRpcHandler {
                 &mut messages,
                 user_message_presentations(link),
                 presentation_page_messages.as_deref().unwrap_or_default(),
+                &presentation_page_turn_ids,
                 page_before_cursor.is_some(),
                 page_after_cursor.is_some(),
             );

@@ -33,6 +33,14 @@ Codex tasks are discovered and controlled through the `codex app-server --stdio`
 
 `localTaskId` is the Wegent-side local task identity, not the provider runtime's session id. When the frontend, Backend, and executor need to pass provider session identity, they must use the opaque `runtimeHandle`, such as a Codex `threadId`, Claude Code `sessionId`, or OpenCode `sessionId`, or an explicit `providerSessionId`. `runtime.tasks.transcript` must not treat `localTaskId` as a provider session id when there is no LocalTask index mapping and no `runtimeHandle`; optimistic tasks that are still being created should return an empty local transcript until create/link completes.
 
+### My Tasks association and lifecycle
+
+After a non-ephemeral LocalTask is created and accepted by the executor scheduler, the executor associates it with the local system project **My Tasks** in the background. `runtime.tasks.create` does not wait for this association: the runtime task returns and starts first, then the executor idempotently creates the Issue and system binding in one SQLite `IMMEDIATE` transaction. Repeated association attempts must reuse the same binding and must not create duplicate Issues.
+
+The executor exclusively owns automatic writes for the default **My Tasks** association. The Wework frontend only reads the binding created by the executor and must not call `todos.create`, `todos.bind`, or implement a second automatic association path for the default project. An explicitly selected project or existing Issue may still have a separate user binding; system and user bindings have distinct types and may coexist.
+
+The executor is also the only source that projects Issue lifecycle status. After the background association commits, the executor reads the LocalTask's current state and reuses the shared runtime-status projection for queued, running, terminal, and archived states. Because a task may finish while its binding is being created, the association worker must not reuse the state captured at task creation, and the frontend must not write compensating in-progress or review states. Ephemeral tasks do not create My Tasks Issues.
+
 ## List Refresh
 
 Wework requests the task list on startup, explicit refresh, or device-state changes. It no longer refreshes the list through a fixed polling interval.

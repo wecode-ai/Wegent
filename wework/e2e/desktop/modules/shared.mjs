@@ -213,6 +213,8 @@ const SEND_REJECTION_RETRY_PROMPT =
   'WEWORK_DESKTOP_E2E_SEND_REJECTION_RETRY: queue this send after stale idle state.'
 const SEND_REJECTION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SEND_REJECTION_COMPLETE'
 const RETRY_PROMPT = 'WEWORK_DESKTOP_E2E_RETRY: fail once and then succeed after retry.'
+const RETRY_CONTINUATION_PROMPT =
+  'Continue the unfinished work from the previous turn. Use the existing conversation context and do not repeat work that is already complete.'
 const RETRY_FAILURE_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_FAILURE'
 const RETRY_CODEX_ERROR_TEXT = "Codex ran out of room in the model's context window."
 const RETRY_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RETRY_COMPLETE'
@@ -1547,6 +1549,7 @@ export {
   SEND_REJECTION_RETRY_PROMPT,
   SEND_REJECTION_COMPLETION_TEXT,
   RETRY_PROMPT,
+  RETRY_CONTINUATION_PROMPT,
   RETRY_FAILURE_TEXT,
   RETRY_CODEX_ERROR_TEXT,
   RETRY_COMPLETION_TEXT,

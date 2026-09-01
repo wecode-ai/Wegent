@@ -63,6 +63,7 @@ describe('createSitesApi', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -84,6 +85,7 @@ describe('createSitesApi', () => {
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer wegent-secret',
+          'X-Request-ID': expect.stringMatching(/^wework-http-/),
         },
       }
     )
@@ -131,6 +133,7 @@ describe('createSitesApi', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -157,6 +160,7 @@ describe('createSitesApi', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -188,6 +192,7 @@ describe('createSitesApi', () => {
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })
@@ -200,9 +205,11 @@ describe('createSitesApi', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/sites/site%2F1', {
       method: 'DELETE',
+      body: undefined,
       headers: {
         'Content-Type': 'application/json',
         Authorization: 'Bearer wegent-secret',
+        'X-Request-ID': expect.stringMatching(/^wework-http-/),
       },
     })
   })

@@ -14,6 +14,7 @@ import {
   registerCoreDshPluginCapabilities,
   registerDesktopServiceCapabilities,
   registerRendererStorageCapabilities,
+  showElectronNotification,
 } from './electron-capabilities.js'
 import { HOST_CAPABILITIES } from './capability-router.js'
 import type { AppUpdateService } from './app-update-service.js'
@@ -30,12 +31,59 @@ describe('cpuLoadRatioBetween', () => {
   })
 })
 
+describe('showElectronNotification', () => {
+  test('opens the targeted runtime task when the notification is clicked', () => {
+    const openRuntimeTask = vi.fn()
+    const listeners = new Map<string, () => void>()
+    const notification = {
+      once: vi.fn((event: string, listener: () => void) => {
+        listeners.set(event, listener)
+      }),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Task completed',
+        body: 'The reply is ready.',
+        taskAddressId: 'device-1:task-1',
+      },
+      openRuntimeTask,
+      () => notification
+    )
+    listeners.get('click')?.()
+
+    expect(notification.show).toHaveBeenCalledOnce()
+    expect(openRuntimeTask).toHaveBeenCalledWith('device-1:task-1')
+  })
+
+  test('does not add click navigation without a task target', () => {
+    const notification = {
+      once: vi.fn(),
+      show: vi.fn(),
+    }
+
+    showElectronNotification(
+      {
+        title: 'Assigned',
+        body: 'A project task was assigned.',
+      },
+      vi.fn(),
+      () => notification
+    )
+
+    expect(notification.once).not.toHaveBeenCalled()
+    expect(notification.show).toHaveBeenCalledOnce()
+  })
+})
+
 function createWebContents(input: {
   captureDataUrl?: string
   captureEmpty?: boolean
   captureError?: Error
   capturePending?: boolean
   debuggerData?: string
+  debuggerError?: Error
   debuggerPending?: boolean
 }) {
   let debuggerAttached = false
@@ -49,62 +97,93 @@ function createWebContents(input: {
     isAttached: vi.fn(() => debuggerAttached),
     sendCommand: vi.fn(async () => {
       if (input.debuggerPending) return new Promise<never>(() => undefined)
+      if (input.debuggerError) throw input.debuggerError
       return { data: input.debuggerData }
     }),
   }
+  const capturePage = vi.fn(async () => {
+    if (input.capturePending) return new Promise<never>(() => undefined)
+    if (input.captureError) throw input.captureError
+    return {
+      isEmpty: () => input.captureEmpty ?? false,
+      toDataURL: () => input.captureDataUrl ?? '',
+    }
+  })
   const contents = {
-    capturePage: vi.fn(async () => {
-      if (input.capturePending) return new Promise<never>(() => undefined)
-      if (input.captureError) throw input.captureError
-      return {
-        isEmpty: () => input.captureEmpty ?? false,
-        toDataURL: () => input.captureDataUrl ?? '',
-      }
-    }),
+    capturePage,
     debugger: debuggerSession,
   } as unknown as WebContents
-  return { contents, debuggerSession }
+  return { capturePage, contents, debuggerSession }
 }
 
 describe('captureWebContentsDataUrl', () => {
   test('uses Electron native capturePage for the visible composed surface', async () => {
-    const { contents, debuggerSession } = createWebContents({
+    const { capturePage, contents, debuggerSession } = createWebContents({
       captureDataUrl: 'data:image/png;base64,native-capture',
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { rect })).resolves.toBe(
       'data:image/png;base64,native-capture'
     )
+    expect(capturePage).toHaveBeenCalledWith(rect)
     expect(debuggerSession.attach).not.toHaveBeenCalled()
     expect(debuggerSession.sendCommand).not.toHaveBeenCalled()
   })
 
-  test('falls back to the debugger when capturePage returns an empty image', async () => {
-    const { contents, debuggerSession } = createWebContents({
-      captureEmpty: true,
+  test('can prefer debugger view capture without blocking on Electron capturePage', async () => {
+    const { capturePage, contents, debuggerSession } = createWebContents({
+      captureDataUrl: 'data:image/png;base64,native-capture',
       debuggerData: 'debugger-capture',
     })
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
+    await expect(captureWebContentsDataUrl(contents, { preferDebugger: true })).resolves.toBe(
       'data:image/png;base64,debugger-capture'
     )
     expect(debuggerSession.attach).toHaveBeenCalledOnce()
+    expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      captureBeyondViewport: false,
+      format: 'png',
+      fromSurface: false,
+    })
     expect(debuggerSession.detach).toHaveBeenCalledOnce()
+    expect(capturePage).not.toHaveBeenCalled()
   })
 
-  test('falls back to the debugger when Electron native capture throws', async () => {
+  test('falls back to native capture when preferred debugger capture times out', async () => {
+    vi.useFakeTimers()
+    try {
+      const { capturePage, contents, debuggerSession } = createWebContents({
+        captureDataUrl: 'data:image/png;base64,native-after-debugger-timeout',
+        debuggerPending: true,
+      })
+
+      const capture = captureWebContentsDataUrl(contents, { preferDebugger: true })
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      await expect(capture).resolves.toBe('data:image/png;base64,native-after-debugger-timeout')
+      expect(debuggerSession.detach).toHaveBeenCalledOnce()
+      expect(capturePage).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('reports both capture failures', async () => {
     const { contents, debuggerSession } = createWebContents({
       captureError: new Error('UnknownVizError'),
-      debuggerData: 'debugger-after-native-error',
+      debuggerError: new Error('DebuggerCaptureError'),
     })
+    const rect = { x: 10, y: 20, width: 30, height: 40 }
 
-    await expect(captureWebContentsDataUrl(contents)).resolves.toBe(
-      'data:image/png;base64,debugger-after-native-error'
+    await expect(captureWebContentsDataUrl(contents, { rect })).rejects.toThrow(
+      'Electron capturePage failed: UnknownVizError; CDP Page.captureScreenshot failed: DebuggerCaptureError'
     )
     expect(debuggerSession.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
       captureBeyondViewport: false,
       format: 'png',
       fromSurface: true,
+      clip: { ...rect, scale: 1 },
     })
   })
 

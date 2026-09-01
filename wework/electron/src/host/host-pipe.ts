@@ -67,6 +67,9 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
     }
     this.session = session
     lines.on('line', line => void this.handleLine(session, line))
+    const handleOutputError = (error: Error) => this.protocolFailure(session, error)
+    output.on('error', handleOutputError)
+    output.once('close', () => output.removeListener('error', handleOutputError))
     input.once('close', () => {
       if (this.session !== session) return
       this.detach()
@@ -188,8 +191,9 @@ export class HostPipeServer extends EventEmitter<HostPipeEvents> {
   }
 
   private protocolFailure(session: HostPipeSession, error: Error): void {
+    if (this.session !== session) return
     this.emit('protocolError', error)
-    if (this.session === session) this.detach()
+    this.detach()
   }
 
   private detach(): void {

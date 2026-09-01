@@ -143,7 +143,6 @@ function renderSidebar(
       installedReleaseNotes: null,
       status: 'idle',
       downloadProgress: null,
-      message: null,
       error: null,
       checkNow: vi.fn().mockResolvedValue(null),
       installUpdate: vi.fn().mockResolvedValue(undefined),
@@ -765,7 +764,13 @@ describe('DesktopSidebar', () => {
     renderSidebar({}, undefined, {
       availableUpdate: null,
       status: 'error',
-      error: 'updater does not have any endpoints set',
+      error: {
+        stage: 'check',
+        kind: 'unsupported',
+        code: 'APP_UPDATE_UNAVAILABLE',
+        occurredAt: 1,
+        detail: null,
+      },
     })
 
     expect(screen.queryByTestId('sidebar-app-update-button')).not.toBeInTheDocument()
@@ -3785,6 +3790,10 @@ describe('DesktopSidebar', () => {
       expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveTextContent(
         '撤销'
       )
+      expect(screen.getByTestId('runtime-local-task-archive-toast-codex-1')).toHaveClass(
+        'electron-titlebar-interactive-region',
+        'pointer-events-auto'
+      )
 
       await user.click(screen.getByTestId('runtime-local-task-archive-undo-codex-1'))
 
@@ -4825,7 +4834,9 @@ describe('DesktopSidebar', () => {
 
     await user.click(screen.getByTestId('sidebar-global-im-notification-button'))
     expect(screen.getByTestId('sidebar-global-im-notification-on-icon')).toBeInTheDocument()
-    await user.click(screen.getByTestId('sidebar-global-im-notification-settings-button'))
+    const settingsButton = screen.getByTestId('sidebar-global-im-notification-settings-button')
+    expect(settingsButton).toHaveClass('shrink-0', 'whitespace-nowrap')
+    await user.click(settingsButton)
 
     expect(onOpenGlobalImNotificationSettings).toHaveBeenCalledTimes(1)
     expect(onToggleGlobalImNotification).not.toHaveBeenCalled()

@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { getDshSlotEntries, WEWORK_DSH_SLOTS, type WeworkDshSlotEntry } from './dshUiSlots'
 
@@ -9,7 +10,7 @@ export interface WeworkDshSettingsContext {
   onBack: () => void
   onOpenCloudSettings: () => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void>
-  onRefreshWorkLists?: () => Promise<void>
+  onRefreshWorkLists?: RefreshWorkLists
 }
 
 export interface WeworkDshSettingsPage extends WeworkDshSlotEntry {

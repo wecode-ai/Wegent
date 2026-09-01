@@ -196,7 +196,7 @@
           'inspect'
         )
       }
-      const hit = document.elementFromPoint(x, y)
+      const hit = deepestElementFromPoint(x, y)
       const element = closestActionable(hit)
       if (!element) {
         return errorResult(
@@ -935,6 +935,7 @@
       message,
       suggestedNextAction,
       error: errorObject(code, message, suggestedNextAction),
+      warnings: [],
     }
   }
 
@@ -1020,14 +1021,19 @@
     let current = element
     while (current && current !== document.documentElement) {
       if (isClickActionable(current) || isEditable(current)) return current
-      current = current.parentElement
+      if (current.parentElement) {
+        current = current.parentElement
+        continue
+      }
+      const root = current.getRootNode()
+      current = root instanceof ShadowRoot ? root.host : null
     }
     return null
   }
 
   function scrollOriginElement(request) {
     if (Number.isFinite(Number(request.x)) && Number.isFinite(Number(request.y))) {
-      return document.elementFromPoint(Number(request.x), Number(request.y)) || document.body
+      return deepestElementFromPoint(Number(request.x), Number(request.y)) || document.body
     }
     return document.activeElement || document.body || document.documentElement
   }
@@ -1039,6 +1045,16 @@
       current = current.parentElement || current.getRootNode?.().host
     }
     return document.scrollingElement || document.documentElement
+  }
+
+  function deepestElementFromPoint(x, y) {
+    let element = document.elementFromPoint(x, y)
+    while (element?.shadowRoot) {
+      const nested = element.shadowRoot.elementFromPoint(x, y)
+      if (!nested || nested === element) break
+      element = nested
+    }
+    return element
   }
 
   function isScrollable(element, axis) {
@@ -1167,7 +1183,7 @@
   function elementFromRect(rect) {
     const x = Math.min(window.innerWidth - 1, Math.max(0, rect.x + rect.width / 2))
     const y = Math.min(window.innerHeight - 1, Math.max(0, rect.y + rect.height / 2))
-    return document.elementFromPoint(x, y)
+    return deepestElementFromPoint(x, y)
   }
 
   function rectFor(element) {

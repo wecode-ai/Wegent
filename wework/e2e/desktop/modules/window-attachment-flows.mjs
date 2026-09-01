@@ -1,5 +1,6 @@
 import {
   distanceFromBottom,
+  distanceFromTop,
   getSingleElementMetrics,
   waitForBottomMetrics,
   waitForNewTaskRow,
@@ -274,6 +275,44 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
   )
 }
 
+async function verifyRuntimeTaskNotificationNavigation({
+  composerSelector,
+  control,
+  taskRowTestId,
+}) {
+  const activeTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    .workbench?.currentRuntimeTask
+  assert.equal(
+    activeTask?.taskId,
+    taskRowTestId.replace('runtime-local-task-row-', ''),
+    'The notification navigation fixture did not expose the expected active task'
+  )
+  assert.ok(activeTask?.deviceId, 'The notification navigation fixture did not expose a device ID')
+
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, composerSelector)
+  await control.command('activateRuntimeTaskCompletionNotification', 'body', {
+    value: JSON.stringify({
+      deviceId: activeTask.deviceId,
+      taskId: activeTask.taskId,
+    }),
+  })
+
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    const currentTask = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+      .workbench?.currentRuntimeTask
+    if (
+      currentTask?.deviceId === activeTask.deviceId &&
+      currentTask?.taskId === activeTask.taskId
+    ) {
+      return
+    }
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  }
+  assert.fail('Activating the task completion notification did not open its runtime task')
+}
+
 async function verifyBackgroundTaskWindowLifecycle({
   app,
   appBundlePath,
@@ -496,6 +535,20 @@ async function verifyBackgroundTaskWindowLifecycle({
     control,
     lifecycleScreenshotName('04-background-task-latest-state-after-switch.png')
   )
+  setPhase('task-notification-navigation')
+  await verifyRuntimeTaskNotificationNavigation({
+    composerSelector,
+    control,
+    taskRowTestId,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: WINDOW_LIFECYCLE_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await captureVerificationScreenshot(
+    control,
+    lifecycleScreenshotName('04a-task-notification-opened-target.png')
+  )
   if (process.platform === 'darwin') {
     const assertionIds = await waitForMacosSleepAssertion(app.pid, false)
     sleepInhibitorEvidence.push({ stage: 'task-completed', assertionIds })
@@ -551,7 +604,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   const middleDistanceBeforeSwitch = distanceFromBottom(middlePositionBeforeSwitch)
   assert.ok(
-    middlePositionBeforeSwitch.scrollTop > 100,
+    distanceFromTop(middlePositionBeforeSwitch) > 100,
     'The long conversation did not leave the top before testing position restoration'
   )
   assert.ok(
@@ -623,7 +676,7 @@ async function verifyBackgroundTaskWindowLifecycle({
   )
   const middleDistanceAfterSwitch = distanceFromBottom(middlePositionAfterSwitch)
   assert.ok(
-    middlePositionAfterSwitch.scrollTop > 100,
+    distanceFromTop(middlePositionAfterSwitch) > 100,
     'The restored long conversation unexpectedly returned to the top'
   )
   assert.ok(
@@ -635,8 +688,8 @@ async function verifyBackgroundTaskWindowLifecycle({
     lifecycleScreenshotName('08-task-middle-position-after-switch-back.png')
   )
   assert.ok(
-    Math.abs(middlePositionAfterSwitch.scrollTop - middlePositionBeforeSwitch.scrollTop) <= 32,
-    `The middle scroll position moved from ${middlePositionBeforeSwitch.scrollTop}px to ${middlePositionAfterSwitch.scrollTop}px`
+    Math.abs(middleDistanceAfterSwitch - middleDistanceBeforeSwitch) <= 32,
+    `The middle distance from bottom moved from ${middleDistanceBeforeSwitch}px to ${middleDistanceAfterSwitch}px`
   )
 
   setPhase('turn-navigation-virtualized-anchor')

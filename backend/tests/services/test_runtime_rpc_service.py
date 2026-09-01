@@ -6,8 +6,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from shared.telemetry.context import set_request_context
 
-def _runtime_route(*, runtime_features=None, device_type=None):
+
+def _runtime_route(
+    *, runtime_features=None, device_type=None, app_device_id: str | None = None
+):
     from app.schemas.device import DeviceType
     from app.services.device.runtime_route import RuntimeRoute
 
@@ -25,6 +29,7 @@ def _runtime_route(*, runtime_features=None, device_type=None):
                 else {}
             ),
         },
+        app_device_id=app_device_id,
     )
 
 
@@ -92,6 +97,35 @@ def _socketio_with_call(call: AsyncMock, *, connected: bool = True):
             "manager": _SocketManager(connected=connected),
         },
     )()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_propagates_request_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.device import runtime_rpc_service as module
+
+    async def resolve_route(**_kwargs):
+        set_request_context("changed-during-route-resolution")
+        return _runtime_route()
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(side_effect=resolve_route),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+    set_request_context("cloud-runtime-request-1")
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.list",
+        payload={},
+    )
+
+    assert sio_call.await_args.args[1]["request_id"] == "cloud-runtime-request-1"
 
 
 @pytest.mark.asyncio
@@ -268,6 +302,35 @@ async def test_runtime_rpc_service_preserves_local_device_proxy(monkeypatch):
         "url": "http://127.0.0.1:7897"
     }
     load_proxy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_rejects_app_device_when_remote_control_is_disabled(
+    monkeypatch,
+):
+    from app.schemas.device import DeviceType
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(device_type=DeviceType.APP)),
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    with pytest.raises(module.RuntimeRpcError) as exc_info:
+        await module.RuntimeRpcService().call(
+            user_id=7,
+            device_id="device-1",
+            method="runtime.capacity.get",
+            payload={},
+        )
+
+    assert exc_info.value.code == "remote_control_disabled"
+    assert exc_info.value.retryable is False
+    assert str(exc_info.value) == "Remote control is disabled for this app device"
+    sio_call.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -585,6 +648,38 @@ async def test_runtime_rpc_service_projects_runtime_device_id_back_to_logical_id
         device_id="device-1",
         method="runtime.worktrees.capabilities",
         payload={"deviceId": "device-1"},
+    )
+
+    assert result["deviceId"] == "device-1"
+
+
+@pytest.mark.asyncio
+async def test_runtime_rpc_service_projects_app_device_id_back_to_logical_id(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route(app_device_id="electron-device-1")),
+    )
+    sio = _socketio_with_call(
+        AsyncMock(
+            return_value={
+                "accepted": True,
+                "deviceId": "electron-device-1",
+                "localTaskId": "runtime-task-1",
+            }
+        )
+    )
+    monkeypatch.setattr(module, "get_sio", lambda: sio)
+
+    result = await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={"message": "pwd"},
     )
 
     assert result["deviceId"] == "device-1"
