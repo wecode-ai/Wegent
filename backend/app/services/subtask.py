@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.task import TaskResource
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
 from app.services.base import BaseService
 from app.stores.tasks import subtask_store, task_access_store, task_store
@@ -385,6 +386,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         message_id = subtask.message_id
         task_id = subtask.task_id
 
+        # Lock the task row before reading the executor reference so a
+        # concurrent create_assistant_subtask cannot consume the same executor
+        # through the legacy fallback between the lookup and the persistence.
+        task = task_store.get_by_id_for_update(db, task_id=task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+
         # Capture the newest assistant executor inside the deletion range before
         # removing the records. ChatGPT-style edit deletes the assistant subtask
         # that carries executor_name; persisting it on the task lets the resend
@@ -409,7 +417,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         if latest_executor is not None:
             self._persist_task_executor_reference(
                 db,
-                task_id=task_id,
+                task=task,
                 executor_namespace=latest_executor.namespace,
                 executor_name=latest_executor.name,
                 executor_deleted_at=latest_executor.deleted_at,
@@ -426,7 +434,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         self,
         db: Session,
         *,
-        task_id: int,
+        task: TaskResource,
         executor_namespace: str,
         executor_name: str,
         executor_deleted_at: bool,
@@ -434,9 +442,6 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """Persist the last executor reference on the task for sandbox reuse."""
         if not executor_name:
             raise ValueError("Cannot persist an empty executor name")
-        task = task_store.get_by_id_for_update(db, task_id=task_id)
-        if task is None:
-            raise RuntimeError(f"Task {task_id} not found while preserving executor")
         json_data = dict(task.json or {})
         metadata = json_data.get("metadata")
         if not isinstance(metadata, dict):
