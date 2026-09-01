@@ -136,6 +136,12 @@ Electron，并设置 `ELECTRON_RUN_AS_NODE=1`。因此 Core DSH 以及 Codex ski
 显式执行的 `node script.ts` 或 `#!/usr/bin/env node` 都使用与当前 Electron
 版本绑定的 Node。
 
+该入口还会预加载标准流保护脚本。stdio MCP 或其他 Node 子进程的消费端关闭后，
+向已断开的 `stderr` 写诊断信息不得触发 Electron 的主进程异常弹窗；协议
+`stdout` 断开则表示调用方已经离开，子进程应正常退出。保护只处理 `EPIPE`，
+其他标准流错误仍保持失败并暴露根因。自定义 Node 可执行文件使用原生 Node
+错误处理，不加载这段 Electron 专用逻辑。
+
 ## Bundled sidecars 与资源
 
 构建前必须准备 Codex 和 DWS：
