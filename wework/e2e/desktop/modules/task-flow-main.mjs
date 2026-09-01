@@ -74,6 +74,7 @@ import {
 import {
   ensureTaskRowVisible,
   verifyConcurrentTaskMemory,
+  verifyLocalMarkdownImage,
   verifyMemoryGrowth,
   verifyToolBlockChronologicalOrder,
 } from './memory-tool-flows.mjs'
@@ -3920,6 +3921,12 @@ last_updated = "2026-07-30T00:00:00Z"`
 
       phase = 'standalone-view-image'
       await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
+
+      phase = 'local-markdown-image'
+      await verifyLocalMarkdownImage({
+        composerSelector,
+        control,
+      })
 
       if (desktopScenario) {
         phase = 'desktop-extension-scenario'
