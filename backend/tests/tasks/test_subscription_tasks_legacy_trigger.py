@@ -5,7 +5,7 @@
 """Regression tests for subscription_tasks with legacy invalid trigger config."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,9 +24,47 @@ from app.tasks.subscription_tasks import (
     SUBSCRIPTION_BATCH_SIZE,
     _disable_expired_subscription_if_needed,
     _dispatch_due_subscription,
+    _cleanup_stale_running_executions,
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
+
+
+def test_code_wiki_execution_uses_the_six_hour_stale_boundary(
+    test_db: Session, test_user: User
+):
+    plan = Kind(
+        user_id=test_user.id,
+        kind="Subscription",
+        name="wiki-plan",
+        namespace="default",
+        is_active=True,
+        json={"_internal": {"code_wiki_id": 99}},
+    )
+    test_db.add(plan)
+    test_db.flush()
+    execution = BackgroundExecution(
+        user_id=test_user.id,
+        subscription_id=plan.id,
+        task_id=123,
+        trigger_type="interval",
+        trigger_reason="scheduled",
+        prompt="check wiki",
+        status="RUNNING",
+        started_at=datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=4),
+    )
+    test_db.add(execution)
+    test_db.commit()
+
+    assert _cleanup_stale_running_executions(test_db) == 0
+    assert execution.status == "RUNNING"
+
+    execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+        hours=7
+    )
+    test_db.commit()
+    assert _cleanup_stale_running_executions(test_db) == 1
+    assert execution.status == "FAILED"
 
 
 @pytest.fixture(autouse=True)
@@ -259,6 +297,51 @@ def test_dispatch_due_subscription_updates_schedule_before_dispatch():
 
     assert dispatched is True
     assert calls == ["update", "dispatch"]
+
+
+def test_dispatch_due_code_wiki_plan_uses_its_dedicated_executor():
+    db = MagicMock()
+    subscription = Kind(
+        id=10,
+        kind="Subscription",
+        name="wiki-plan",
+        namespace="default",
+        user_id=20,
+        is_active=True,
+        json={
+            "_internal": {
+                "code_wiki_id": 99,
+                "trigger_type": "interval",
+                "next_execution_time": "2026-08-31T01:00:00",
+                "schedule": {"interval_days": 7},
+            }
+        },
+    )
+    execution = MagicMock(id=30)
+    service = MagicMock()
+    service.create_execution.return_value = execution
+
+    with (
+        patch(
+            "app.tasks.subscription_tasks.validate_subscription_for_read",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
+        ),
+        patch("app.tasks.subscription_tasks.execute_code_wiki_plan.delay") as dispatch,
+    ):
+        result = _dispatch_due_subscription(
+            db=db,
+            subscription=subscription,
+            trigger_type="interval",
+            subscription_service=service,
+            use_sync=False,
+        )
+
+    assert result is True
+    dispatch.assert_called_once_with(10, 30)
+    service.dispatch_background_execution.assert_not_called()
 
 
 def test_dispatch_due_subscription_marks_execution_failed_when_schedule_update_fails():

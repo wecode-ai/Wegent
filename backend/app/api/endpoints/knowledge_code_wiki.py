@@ -37,6 +37,9 @@ from app.core.wiki_config import wiki_settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
+    CodeWikiAutomaticUpdate,
+    CodeWikiAutomaticUpdateExecution,
+    CodeWikiAutomaticUpdateRequest,
     CodeWikiCreate,
     CodeWikiExisting,
     CodeWikiListItem,
@@ -57,6 +60,12 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.diagnostics import diagnose
+from app.services.knowledge.code_wiki.automatic_update import (
+    configure_plan,
+    next_time,
+    plan_for,
+    validate_runner_for_source,
+)
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
     GenerationWikiNotFound,
@@ -250,8 +259,22 @@ def create_code_wiki(
     try:
         source = SourceRepository.from_url(data.source_type, data.source_url)
         assert_user_can_read_source(db, current_user.id, source)
+        if data.automatic_update is not None:
+            schedule = CodeWikiAutomaticUpdateRequest.model_validate(
+                data.automatic_update.model_dump()
+            )
+            next_time(schedule)
+            validate_runner_for_source(
+                db,
+                user_id=schedule.execution_principal_user_id or current_user.id,
+                source=source,
+            )
     except SourceAccessDenied as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except (CodeWikiRunError, ValueError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
 
     existing_id = existing_wiki_id(db, source, owner_id=current_user.id)
     if existing_id:
@@ -309,7 +332,17 @@ def create_code_wiki(
         # which is a network call that can take the full connect timeout when the
         # host is slow. Blocking the response on it makes creating a wiki appear to
         # hang, and then to have failed, when the knowledge base is already saved.
-        background_tasks.add_task(start_first_run, current_user.id, result.id)
+        if data.automatic_update is not None:
+            knowledge_base = KnowledgeService._get_knowledge_base_record(db, result.id)
+            configure_plan(
+                db,
+                knowledge_base=knowledge_base,
+                data=CodeWikiAutomaticUpdateRequest.model_validate(
+                    data.automatic_update.model_dump()
+                ),
+            )
+        if data.generate_immediately:
+            background_tasks.add_task(start_first_run, current_user.id, result.id)
         return result
     except IntegrityError as e:
         # The same caller asking twice at once. UNIQUE (source_url, kind_id) settles
@@ -406,6 +439,92 @@ def _assert_caller_may_regenerate(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Knowledge Base manage permission is required to regenerate",
         )
+
+
+def _assert_caller_owns_schedule(user: User, knowledge_base: Kind) -> None:
+    if user.id != knowledge_base.user_id and user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the Knowledge Base owner or a system administrator may configure automatic updates",
+        )
+
+
+@router.get(
+    "/{knowledge_base_id}/code-wiki/automatic-update",
+    response_model=CodeWikiAutomaticUpdate,
+)
+def get_code_wiki_automatic_update(
+    knowledge_base_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    plan = plan_for(db, knowledge_base.id)
+    if plan is None:
+        return CodeWikiAutomaticUpdate(
+            can_configure=(
+                current_user.id == knowledge_base.user_id
+                or current_user.role == "admin"
+            ),
+            execution_principal_user_id=(knowledge_base.json or {})
+            .get("spec", {})
+            .get("executionPrincipalUserId"),
+        )
+    from app.models.subscription import BackgroundExecution
+
+    internal = (plan.json or {}).get("_internal", {})
+    schedule = internal.get("schedule") or {}
+    rows = (
+        db.query(BackgroundExecution)
+        .filter(BackgroundExecution.subscription_id == plan.id)
+        .order_by(BackgroundExecution.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    return CodeWikiAutomaticUpdate(
+        can_configure=(
+            current_user.id == knowledge_base.user_id or current_user.role == "admin"
+        ),
+        configured=True,
+        enabled=bool(internal.get("enabled", False)),
+        next_execution_time=internal.get("next_execution_time"),
+        execution_principal_user_id=(knowledge_base.json or {})
+        .get("spec", {})
+        .get("executionPrincipalUserId"),
+        executions=[
+            CodeWikiAutomaticUpdateExecution(
+                id=row.id,
+                status=row.status,
+                error_message=row.error_message,
+                result_summary=row.result_summary,
+                task_id=row.task_id,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ],
+        **schedule,
+    )
+
+
+@router.put(
+    "/{knowledge_base_id}/code-wiki/automatic-update",
+    response_model=CodeWikiAutomaticUpdate,
+)
+def put_code_wiki_automatic_update(
+    knowledge_base_id: int,
+    data: CodeWikiAutomaticUpdateRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_caller_owns_schedule(current_user, knowledge_base)
+    try:
+        configure_plan(db, knowledge_base=knowledge_base, data=data)
+    except (CodeWikiRunError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    return get_code_wiki_automatic_update(knowledge_base_id, current_user, db)
 
 
 @router.get("/{knowledge_base_id}/code-wiki/status", response_model=CodeWikiRunStatus)

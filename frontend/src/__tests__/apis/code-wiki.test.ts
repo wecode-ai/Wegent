@@ -17,7 +17,7 @@ describe('codeWikiApi', () => {
     jest.clearAllMocks()
   })
 
-  it('makes manual regeneration an explicit full rebuild', async () => {
+  it('checks for an incremental update by default', async () => {
     ;(client.post as jest.Mock).mockResolvedValue({
       started: true,
       mode: 'full',
@@ -26,6 +26,16 @@ describe('codeWikiApi', () => {
     })
 
     await codeWikiApi.regenerate(12)
+
+    expect(client.post).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/generations', {
+      force_full: false,
+    })
+  })
+
+  it('can explicitly request a full rebuild', async () => {
+    ;(client.post as jest.Mock).mockResolvedValue({ started: true, mode: 'full' })
+
+    await codeWikiApi.regenerate(12, true)
 
     expect(client.post).toHaveBeenCalledWith('/knowledge-bases/12/code-wiki/generations', {
       force_full: true,

@@ -15,6 +15,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -140,6 +143,13 @@ export function CreateKnowledgeBaseDialog({
     ] as const
   ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
   const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
+  const [initialGeneration, setInitialGeneration] = useState<'immediate' | 'scheduled'>('immediate')
+  const [initialIntervalDays, setInitialIntervalDays] = useState(7)
+  const [initialWeekday, setInitialWeekday] = useState(0)
+  const [initialTime, setInitialTime] = useState('09:00')
+  const [initialTimezone, setInitialTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone
+  )
   // Default enable summary for all KB types
   const [summaryEnabled, setSummaryEnabled] = useState(true)
   const [summaryModelRef, setSummaryModelRef] = useState<SummaryModelRef | null>(null)
@@ -186,6 +196,11 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
+      setInitialGeneration('immediate')
+      setInitialIntervalDays(7)
+      setInitialWeekday(0)
+      setInitialTime('09:00')
+      setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
       setSelectedGroupId(defaultGroupId || 'personal')
       setDirectAccessRequirement('read')
       setRetrievalConfig(createDefaultRetrievalConfig())
@@ -303,6 +318,18 @@ export function CreateKnowledgeBaseDialog({
               resolved_name: source.resolution?.name,
               resolved_description: source.resolution?.description,
               execution_model_ref: executionModelRef,
+              generate_immediately: initialGeneration === 'immediate',
+              automatic_update:
+                initialGeneration === 'scheduled'
+                  ? {
+                      enabled: true,
+                      interval_days: initialIntervalDays,
+                      weekday: initialWeekday,
+                      hour: Number(initialTime.split(':')[0]),
+                      minute: Number(initialTime.split(':')[1]),
+                      timezone: initialTimezone,
+                    }
+                  : null,
             }
           : {}),
       })
@@ -313,6 +340,11 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
+      setInitialGeneration('immediate')
+      setInitialIntervalDays(7)
+      setInitialWeekday(0)
+      setInitialTime('09:00')
+      setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
@@ -337,6 +369,11 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
+      setInitialGeneration('immediate')
+      setInitialIntervalDays(7)
+      setInitialWeekday(0)
+      setInitialTime('09:00')
+      setInitialTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone)
       setSummaryEnabled(true)
       setSummaryModelRef(null)
       setExecutionModelRef(null)
@@ -430,6 +467,87 @@ export function CreateKnowledgeBaseDialog({
                 {kind === 'code' ? (
                   <>
                     <CodeWikiSourceFields value={source} onChange={setSource} />
+                    <SimpleConfigRow
+                      label={t('knowledge:codeWiki.create.initialMode')}
+                      description={t('knowledge:codeWiki.create.initialModeHint')}
+                      align="start"
+                    >
+                      <RadioGroup
+                        value={initialGeneration}
+                        onValueChange={value =>
+                          setInitialGeneration(value as 'immediate' | 'scheduled')
+                        }
+                        className="space-y-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="immediate" id="code-wiki-create-immediate" />
+                          <Label htmlFor="code-wiki-create-immediate">
+                            {t('knowledge:codeWiki.create.generateImmediately')}
+                          </Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="scheduled" id="code-wiki-create-scheduled" />
+                          <Label htmlFor="code-wiki-create-scheduled">
+                            {t('knowledge:codeWiki.create.scheduledUpdate')}
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                      {initialGeneration === 'scheduled' && (
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <Select
+                            value={String(initialIntervalDays)}
+                            onValueChange={value => setInitialIntervalDays(Number(value))}
+                          >
+                            <SelectTrigger data-testid="code-wiki-create-cadence">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="7">
+                                {t('knowledge:codeWiki.automatic.weekly')}
+                              </SelectItem>
+                              <SelectItem value="14">
+                                {t('knowledge:codeWiki.automatic.biweekly')}
+                              </SelectItem>
+                              <SelectItem value="28">
+                                {t('knowledge:codeWiki.automatic.monthly')}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            type="number"
+                            min={7}
+                            max={365}
+                            value={initialIntervalDays}
+                            onChange={event => setInitialIntervalDays(Number(event.target.value))}
+                            aria-label={t('knowledge:codeWiki.automatic.customDays')}
+                          />
+                          <Select
+                            value={String(initialWeekday)}
+                            onValueChange={value => setInitialWeekday(Number(value))}
+                          >
+                            <SelectTrigger data-testid="code-wiki-create-weekday">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                                <SelectItem key={day} value={String(day)}>
+                                  {t(`knowledge:codeWiki.automatic.weekdays.${day}`)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            type="time"
+                            value={initialTime}
+                            onChange={event => setInitialTime(event.target.value)}
+                          />
+                          <Input
+                            value={initialTimezone}
+                            onChange={event => setInitialTimezone(event.target.value)}
+                          />
+                        </div>
+                      )}
+                    </SimpleConfigRow>
                     <SimpleConfigRow
                       label={t('knowledge:codeWiki.create.modelLabel')}
                       description={t('knowledge:codeWiki.create.modelDescription')}

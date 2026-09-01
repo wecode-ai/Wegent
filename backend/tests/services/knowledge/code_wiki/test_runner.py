@@ -57,6 +57,7 @@ class FakeTasks:
     # task is listed as a conversation is this run's decision, not a field a client
     # could set.
     namespaces: list[str] = field(default_factory=list)
+    users: list[int] = field(default_factory=list)
     next_id: int = 500
     fails: bool = False
 
@@ -71,6 +72,7 @@ class FakeTasks:
             raise RuntimeError("no executor available")
         self.created.append(obj_in)
         self.namespaces.append(namespace)
+        self.users.append(user.id)
         return {"id": task_id}
 
     @property
@@ -1041,6 +1043,40 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.started
     assert knowledge_base.user_id == test_user.id
     assert started.generation.user_id == test_user.id
+
+
+def test_a_configured_runner_owns_future_generations(
+    test_db: Session,
+    knowledge_base: Kind,
+    test_user: User,
+    tasks: FakeTasks,
+    monkeypatch,
+):
+    from app.services.knowledge.code_wiki import source
+
+    runner = User(
+        user_name="wiki-runner",
+        email="wiki-runner@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+    test_db.add(runner)
+    test_db.flush()
+    knowledge_base.json["spec"]["executionPrincipalUserId"] = runner.id
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(knowledge_base, "json")
+    test_db.flush()
+    monkeypatch.setattr(
+        source, "assert_user_can_read_source", lambda *args, **kwargs: {}
+    )
+
+    started = start_run(
+        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+    )
+
+    assert started.generation.user_id == runner.id
+    assert tasks.users[-1] == runner.id
 
 
 def test_an_inactive_wiki_owner_refuses_a_run_before_creating_a_task(

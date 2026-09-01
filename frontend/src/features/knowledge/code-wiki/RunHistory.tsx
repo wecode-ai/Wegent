@@ -37,6 +37,7 @@ interface RunHistoryProps {
   status: CodeWikiRunStatus | null
   /** Reload reader data after a past version becomes live again. */
   onRepublished?: () => void | Promise<void>
+  automaticUpdateEnabled?: boolean
 }
 
 /** What the chip says before anyone opens it. */
@@ -95,10 +96,12 @@ function RunRow({
   run,
   knowledgeBaseId,
   onRepublished,
+  automaticUpdateEnabled,
 }: {
   run: CodeWikiRunRecord
   knowledgeBaseId: number
   onRepublished: () => void | Promise<void>
+  automaticUpdateEnabled: boolean
 }) {
   const { t } = useTranslation('knowledge')
   const when = formatRelativeTime(run.started_at, t)
@@ -191,6 +194,11 @@ function RunRow({
               <AlertDialogTitle>{t('codeWiki.history.republishConfirmTitle')}</AlertDialogTitle>
               <AlertDialogDescription>
                 {t('codeWiki.history.republishConfirmBody')}
+                {automaticUpdateEnabled && (
+                  <span className="mt-2 block text-amber-500">
+                    {t('codeWiki.history.republishAutomaticWarning')}
+                  </span>
+                )}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -255,7 +263,12 @@ function RunRow({
  * Fetched when opened, not polled. The status chip beside it is already live, and
  * repeating a list of finished runs every few seconds would tell nobody anything.
  */
-export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistoryProps) {
+export function RunHistory({
+  knowledgeBaseId,
+  status,
+  onRepublished,
+  automaticUpdateEnabled = false,
+}: RunHistoryProps) {
   const { t } = useTranslation('knowledge')
   const [runs, setRuns] = useState<CodeWikiRunRecord[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -311,6 +324,7 @@ export function RunHistory({ knowledgeBaseId, status, onRepublished }: RunHistor
                 run={run}
                 knowledgeBaseId={knowledgeBaseId}
                 onRepublished={handleRepublished}
+                automaticUpdateEnabled={automaticUpdateEnabled}
               />
             ))}
           </ul>

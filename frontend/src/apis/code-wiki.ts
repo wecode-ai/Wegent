@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  CodeWikiAutomaticUpdate,
+  CodeWikiAutomaticUpdateRequest,
   CodeWikiCreateRequest,
   CodeWikiListResponse,
   CodeWikiPageTree,
@@ -100,11 +102,23 @@ export const codeWikiApi = {
       {}
     ),
 
-  /**
-   * Regenerate the complete wiki now, without waiting for a schedule or a new commit.
-   */
-  regenerate: async (knowledgeBaseId: number): Promise<CodeWikiRunResponse> =>
+  /** Check for an incremental update now, or explicitly force a full rebuild. */
+  regenerate: async (knowledgeBaseId: number, forceFull = false): Promise<CodeWikiRunResponse> =>
     client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
-      force_full: true,
+      force_full: forceFull,
     }),
+
+  automaticUpdate: async (knowledgeBaseId: number): Promise<CodeWikiAutomaticUpdate> =>
+    client.get<CodeWikiAutomaticUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/automatic-update`
+    ),
+
+  configureAutomaticUpdate: async (
+    knowledgeBaseId: number,
+    data: CodeWikiAutomaticUpdateRequest
+  ): Promise<CodeWikiAutomaticUpdate> =>
+    client.put<CodeWikiAutomaticUpdate>(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/automatic-update`,
+      data
+    ),
 }

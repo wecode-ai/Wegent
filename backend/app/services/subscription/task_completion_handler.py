@@ -170,7 +170,7 @@ class SubscriptionTaskCompletionHandler:
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
                     BackgroundExecutionStatus.FAILED,
-                ):
+                ) and not self._is_code_wiki_plan(db, execution):
                     await self._dispatch_notifications(
                         db, execution, event, result_summary
                     )
@@ -181,6 +181,14 @@ class SubscriptionTaskCompletionHandler:
                 f"task_id={event.task_id}, error={e}",
                 exc_info=True,
             )
+
+    @staticmethod
+    def _is_code_wiki_plan(db: Session, execution: BackgroundExecution) -> bool:
+        subscription = db.get(Kind, execution.subscription_id)
+        return bool(
+            subscription
+            and (subscription.json or {}).get("_internal", {}).get("code_wiki_id")
+        )
 
     def _find_execution_by_task_id(
         self, db: Session, task_id: int

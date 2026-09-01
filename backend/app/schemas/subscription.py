@@ -186,6 +186,12 @@ class SubscriptionKnowledgeBaseRef(BaseModel):
     namespace: str = Field("default", description="Knowledge base namespace")
 
 
+class SubscriptionCodeWikiRef(BaseModel):
+    """Reference controlled by the Code Wiki automatic-update API."""
+
+    id: int = Field(..., gt=0, description="Knowledge base id")
+
+
 class SubscriptionSkillRef(BaseModel):
     """Reference to a Skill for subscription."""
 
@@ -296,6 +302,10 @@ class SubscriptionSpec(BaseModel):
         None,
         description="Knowledge bases to bind to this subscription. "
         "AI will have access to these knowledge bases during execution.",
+    )
+    codeWikiRef: Optional[SubscriptionCodeWikiRef] = Field(
+        None,
+        description="Internal Code Wiki plan; generic subscription actions reject it.",
     )
     # Notification webhooks
     notificationWebhooks: Optional[List[NotificationWebhook]] = Field(
@@ -506,6 +516,9 @@ class SubscriptionInDB(SubscriptionBase):
     """Database Subscription model."""
 
     id: int
+    code_wiki_id: Optional[int] = Field(
+        None, description="Code Wiki id when this row is an automatic-update plan"
+    )
     user_id: int
     namespace: str = "default"
     webhook_url: Optional[str] = None

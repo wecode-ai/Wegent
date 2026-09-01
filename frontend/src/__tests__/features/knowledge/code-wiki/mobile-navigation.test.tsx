@@ -67,6 +67,7 @@ jest.mock('@/features/tasks/components/chat', () => ({
 jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: {
     pages: jest.fn(),
+    automaticUpdate: jest.fn().mockResolvedValue({ enabled: false }),
   },
 }))
 

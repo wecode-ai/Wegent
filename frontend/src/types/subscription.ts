@@ -99,6 +99,7 @@ export interface SubscriptionSkillRef {
 // Subscription configuration
 export interface Subscription {
   id: number
+  code_wiki_id?: number
   user_id: number
   name: string
   namespace: string

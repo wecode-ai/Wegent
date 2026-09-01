@@ -374,15 +374,32 @@ def _resolve_execution_context(
     """
     from app.services.adapters.team_kinds import team_kinds_service
 
-    task_user = db.get(User, knowledge_base.user_id)
+    configured_user_id = (
+        (knowledge_base.json or {}).get("spec", {}).get("executionPrincipalUserId")
+    )
+    task_user = db.get(User, configured_user_id or knowledge_base.user_id)
     if task_user is None:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner does not exist"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no owner to execute its generation"
         )
     if not task_user.is_active:
         raise CodeWikiRunError(
-            f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
+            "RUNNER_INACTIVE: configured generation runner is inactive"
+            if configured_user_id
+            else f"Code wiki {knowledge_base.id} has no active owner to execute its generation"
         )
+    if configured_user_id:
+        from app.services.knowledge.code_wiki.source import (
+            SourceAccessDenied,
+            assert_user_can_read_source,
+        )
+
+        try:
+            assert_user_can_read_source(db, task_user.id, source_of(knowledge_base))
+        except SourceAccessDenied as exc:
+            raise CodeWikiRunError(f"REPOSITORY_ACCESS_DENIED: {exc}") from exc
     team_name = wiki_settings.CODE_WIKI_TEAM_NAME
     if not team_name:
         raise CodeWikiRunError(

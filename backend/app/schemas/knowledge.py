@@ -500,6 +500,16 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         return v
 
 
+class CodeWikiCreationSchedule(BaseModel):
+    enabled: bool = True
+    interval_days: int = Field(7, ge=7, le=365)
+    weekday: int = Field(0, ge=0, le=6, description="Monday is 0")
+    hour: int = Field(9, ge=0, le=23)
+    minute: int = Field(0, ge=0, le=59)
+    timezone: str = Field("UTC", min_length=1, max_length=100)
+    execution_principal_user_id: Optional[int] = Field(None, gt=0)
+
+
 class CodeWikiCreate(KnowledgeBaseCreate):
     """Request to create a code wiki bound to a source repository.
 
@@ -563,6 +573,13 @@ class CodeWikiCreate(KnowledgeBaseCreate):
             "not one to inherit silently from whichever bot the team happens to bind."
         ),
     )
+    generate_immediately: bool = Field(
+        True, description="Start the first generation immediately after creation"
+    )
+    automatic_update: Optional[CodeWikiCreationSchedule] = Field(
+        None,
+        description="Create an enabled periodic plan and wait for its next slot",
+    )
 
     @field_validator("execution_model_ref")
     @classmethod
@@ -571,6 +588,14 @@ class CodeWikiCreate(KnowledgeBaseCreate):
         checked = validated_model_ref(value)
         assert checked is not None
         return checked
+
+    @model_validator(mode="after")
+    def choose_initial_execution(self):
+        if self.generate_immediately == (self.automatic_update is not None):
+            raise ValueError(
+                "Choose exactly one initial mode: generate immediately or scheduled update"
+            )
+        return self
 
 
 class CodeWikiChangedPath(BaseModel):
@@ -731,6 +756,35 @@ class CodeWikiRunResponse(BaseModel):
     reason: str = Field("", description="Why that mode was chosen")
     generation_id: int = Field(0, description="The version being written, when started")
     task_id: int = Field(0, description="Task running the agent, when started")
+
+
+class CodeWikiAutomaticUpdateRequest(CodeWikiCreationSchedule):
+    """The future schedule for one Code Wiki."""
+
+    enabled: bool = False
+
+
+class CodeWikiAutomaticUpdateExecution(BaseModel):
+    id: int
+    status: str
+    error_message: str = ""
+    result_summary: str = ""
+    task_id: int = 0
+    created_at: datetime
+
+
+class CodeWikiAutomaticUpdate(BaseModel):
+    can_configure: bool = False
+    enabled: bool = False
+    configured: bool = False
+    interval_days: int = 7
+    weekday: int = 0
+    hour: int = 9
+    minute: int = 0
+    timezone: str = "UTC"
+    execution_principal_user_id: Optional[int] = None
+    next_execution_time: Optional[datetime] = None
+    executions: List[CodeWikiAutomaticUpdateExecution] = Field(default_factory=list)
 
 
 class CodeWikiRunRecord(BaseModel):

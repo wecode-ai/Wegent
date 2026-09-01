@@ -117,6 +117,39 @@ export interface CodeWikiRunResponse {
   task_id: number
 }
 
+export interface CodeWikiAutomaticUpdateExecution {
+  id: number
+  status: string
+  error_message: string
+  result_summary: string
+  task_id: number
+  created_at: string
+}
+
+export interface CodeWikiAutomaticUpdate {
+  can_configure: boolean
+  configured: boolean
+  enabled: boolean
+  interval_days: number
+  weekday: number
+  hour: number
+  minute: number
+  timezone: string
+  execution_principal_user_id?: number | null
+  next_execution_time?: string | null
+  executions: CodeWikiAutomaticUpdateExecution[]
+}
+
+export interface CodeWikiAutomaticUpdateRequest {
+  enabled: boolean
+  interval_days: number
+  weekday: number
+  hour: number
+  minute: number
+  timezone: string
+  execution_principal_user_id?: number | null
+}
+
 /**
  * One node of the reader's navigation.
  *
