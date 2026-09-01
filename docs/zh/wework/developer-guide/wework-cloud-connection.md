@@ -23,7 +23,11 @@ Wework 默认就是一个完整的本地应用。本机 Codex、本地模型配�
 未发送草稿、布局和其他使用 `localStorage` 的界面偏好仍会保留。主进程串行处理变更，
 通过原子替换写入文件，并在 Unix 系统上使用 `0600` 权限。用户主动断开连接、删除配置
 或清空对应状态时，同样会同步删除持久化副本；不使用 Electron host 的网页版不经过
-这层桌面镜像。
+这层桌面镜像。主进程还会在加载新的 Core DSH origin 前清理旧 origin 的 Chromium
+`localStorage`：已有权威快照但尚无 origin 记录时执行一次全量迁移清理，之后只精确
+清理上一次记录的 `scheme://host:port`。当前 origin 写入
+`renderer-local-storage-origins.json`，同 origin 的 renderer 重建不会重复清理。
+首次还没有权威快照时保留浏览器存储，避免在建立持久化副本前丢失迁移数据。
 
 用户可以输入 Backend 根地址，也可以直接输入 `/api` 地址。前端会把地址归一化为 HTTP API 地址和 Socket.IO 连接信息。连接时先请求 `/health`，再调用 `/auth/wework/sessions` 创建短生命周期授权会话。Backend 返回完整 `authorize_url`，本地 Wework 在内置授权窗打开该云端授权页，并携带 `poll_token` 轮询会话结果。
 
