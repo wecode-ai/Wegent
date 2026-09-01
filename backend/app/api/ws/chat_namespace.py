@@ -1003,9 +1003,10 @@ class ChatNamespace(socketio.AsyncNamespace):
                 if branch:
                     execution_workspace["branch"] = branch
 
-            # Real user messages are not pipeline stage handoffs. Internal stage
-            # advancement passes its existing previous_bot_id explicitly.
+            # For pipeline confirm, get the previous stage's bot_id for session management
             previous_bot_id = None
+            if pipeline_info:
+                previous_bot_id = pipeline_info.get("current_stage_bot_id")
 
             params = TaskCreationParams(
                 message=effective_message,
@@ -1024,6 +1025,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 knowledge_base_id=payload.knowledge_base_id,
                 additional_skills=additional_skills_dicts,
                 pipeline_bot_ids=pipeline_bot_ids,
+                # Pipeline mode: pass previous stage's bot_id for session management
+                # TaskRequestBuilder will compare this with current bot_id to determine
+                # if a new session is needed (different bot = new session)
                 previous_bot_id=previous_bot_id,
                 pipeline_context_passing=pipeline_context_passing,
                 skip_status_check=payload.action == "pipeline:confirm",

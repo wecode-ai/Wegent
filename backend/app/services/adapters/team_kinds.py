@@ -2487,7 +2487,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
-            "shell_name": bot_crd.spec.shellRef.name,
             "shell_type": shell_type,
             "agent_config": agent_config,
             "system_prompt": system_prompt,

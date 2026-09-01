@@ -902,6 +902,7 @@ test.describe('Agent conversation regression', () => {
       bindMode: ['chat'],
       modelName: CHAT_MODEL_NAME,
       promptProtectionEnabled: true,
+      workflowMode: 'solo',
     })
     protectedClaudeTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-protected-claude-team`,
@@ -910,6 +911,7 @@ test.describe('Agent conversation regression', () => {
       bindMode: ['chat'],
       modelName: CLAUDE_MODEL_NAME,
       promptProtectionEnabled: true,
+      workflowMode: 'solo',
     })
     codeTeam = await createTeam(request, {
       teamName: `${TEST_PREFIX}-code-team`,
@@ -977,6 +979,7 @@ test.describe('Agent conversation regression', () => {
       preloadSkills?: string[]
       preloadSkillRefs?: Record<string, SkillRefMeta>
       promptProtectionEnabled?: boolean
+      workflowMode?: 'solo'
     }
   ): Promise<CreatedTeam> {
     const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
@@ -1013,8 +1016,10 @@ test.describe('Agent conversation regression', () => {
             role: 'worker',
           },
         ],
-        workflow: { mode: 'solo' },
-        prompt_protection_enabled: options.promptProtectionEnabled ?? false,
+        ...(options.workflowMode ? { workflow: { mode: options.workflowMode } } : {}),
+        ...(options.promptProtectionEnabled !== undefined
+          ? { prompt_protection_enabled: options.promptProtectionEnabled }
+          : {}),
         bind_mode: options.bindMode,
         namespace: 'default',
         is_active: true,
@@ -1027,16 +1032,18 @@ test.describe('Agent conversation regression', () => {
       prompt_protection_enabled?: boolean
     }
     expect(teamBody.id).toBeTruthy()
-    expect(teamBody.prompt_protection_enabled).toBe(options.promptProtectionEnabled ?? false)
+    if (options.promptProtectionEnabled !== undefined) {
+      expect(teamBody.prompt_protection_enabled).toBe(options.promptProtectionEnabled)
 
-    const detailResponse = await request.get(`${API_BASE_URL}/api/teams/${teamBody.id}`, {
-      headers: authHeaders(),
-    })
-    expect(detailResponse.status()).toBe(200)
-    const detailBody = (await detailResponse.json()) as {
-      prompt_protection_enabled?: boolean
+      const detailResponse = await request.get(`${API_BASE_URL}/api/teams/${teamBody.id}`, {
+        headers: authHeaders(),
+      })
+      expect(detailResponse.status()).toBe(200)
+      const detailBody = (await detailResponse.json()) as {
+        prompt_protection_enabled?: boolean
+      }
+      expect(detailBody.prompt_protection_enabled).toBe(options.promptProtectionEnabled)
     }
-    expect(detailBody.prompt_protection_enabled).toBe(options.promptProtectionEnabled ?? false)
 
     return {
       name: options.teamName,
@@ -1135,7 +1142,9 @@ test.describe('Agent conversation regression', () => {
         namespace: 'default',
         is_active: true,
         requires_workspace: false,
-        prompt_protection_enabled: options.promptProtectionEnabled ?? false,
+        ...(options.promptProtectionEnabled !== undefined
+          ? { prompt_protection_enabled: options.promptProtectionEnabled }
+          : {}),
         workflow: {
           mode: 'pipeline',
           leader_bot_id: stageOneBotId,

@@ -138,7 +138,7 @@ def _apply_generation_params(
     generate_params: Any,
 ) -> None:
     """Validate generation options against the selected model type and apply them."""
-    if generate_params is None or not _generation_params_for_log(generate_params):
+    if generate_params is None:
         return
 
     model_type = str(model_config.get("modelType") or "").strip().lower()
@@ -847,11 +847,7 @@ def _prompt_protection_context(
     from app.schemas.kind import Team as TeamCRD
 
     team_crd = TeamCRD.model_validate(team.json)
-    if (
-        not team_crd.spec.promptProtectionEnabled
-        or previous_bot_id is not None
-        or not isinstance(message, str)
-    ):
+    if not team_crd.spec.promptProtectionEnabled or not isinstance(message, str):
         return None
 
     shell_type = _request_shell_type(request)

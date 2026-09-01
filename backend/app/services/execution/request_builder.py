@@ -1280,10 +1280,9 @@ class TaskRequestBuilder:
             if team_member:
                 team_member_prompt = team_member.prompt
                 logger.debug(
-                    "[TaskRequestBuilder] Found matching member prompt for bot=%s, "
-                    "prompt_length=%d",
+                    "[TaskRequestBuilder] Found matching member prompt for bot=%s: %s",
                     bot.name,
-                    len(team_member_prompt or ""),
+                    team_member_prompt[:50] if team_member_prompt else None,
                 )
             else:
                 logger.warning(

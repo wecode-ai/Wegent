@@ -311,7 +311,7 @@ async def test_unified_trigger_blocks_before_dispatch(monkeypatch, collaboration
     assert gate_kwargs["model_config"] is request.model_config
 
 
-def test_pipeline_prompt_protection_uses_previous_bot_id_as_handoff_boundary():
+def test_pipeline_prompt_protection_uses_entrypoint_as_handoff_boundary():
     from app.api.ws import chat_namespace as _chat_namespace
     from app.services.chat.trigger import unified
 
@@ -351,7 +351,14 @@ def test_pipeline_prompt_protection_uses_previous_bot_id_as_handoff_boundary():
     assert (
         unified._prompt_protection_context(**kwargs, previous_bot_id=None) is not None
     )
-    assert unified._prompt_protection_context(**kwargs, previous_bot_id=101) is None
+    assert unified._prompt_protection_context(**kwargs, previous_bot_id=101) is not None
+    assert (
+        unified._prompt_protection_context(
+            **{**kwargs, "entrypoint": None},
+            previous_bot_id=101,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize("shell_type", ["Chat", "ClaudeCode", "Agno", "Dify"])
