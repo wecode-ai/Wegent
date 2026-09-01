@@ -55,4 +55,37 @@ describe('TransientNotice', () => {
     unmount()
     anchor.remove()
   })
+
+  test('keeps the clear timer active while an anchored notice is hidden', () => {
+    vi.useFakeTimers()
+    const anchor = document.createElement('div')
+    document.body.append(anchor)
+    const onClear = vi.fn()
+
+    const { rerender } = render(
+      <TransientNotice
+        message="Saved"
+        onClear={onClear}
+        horizontalAnchorRef={{ current: anchor }}
+        visible={false}
+      />
+    )
+
+    expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+    vi.advanceTimersByTime(2200)
+    expect(onClear).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <TransientNotice
+        message={null}
+        onClear={onClear}
+        horizontalAnchorRef={{ current: anchor }}
+        visible
+      />
+    )
+    expect(screen.queryByTestId('transient-notice')).not.toBeInTheDocument()
+
+    anchor.remove()
+    vi.useRealTimers()
+  })
 })

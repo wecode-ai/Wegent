@@ -2757,6 +2757,7 @@ export function WorkspaceBrowserTabPanel({
         tone="error"
         onClear={clearLocalFilePreviewToast}
         horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {downloadPeek ? (
         <div
@@ -2839,6 +2840,7 @@ export function WorkspaceBrowserTabPanel({
         tone={clearDataNotice?.tone}
         onClear={clearClearDataNotice}
         horizontalAnchorRef={browserPanelRef}
+        visible={active}
       />
       {invalidTlsCertificate ? (
         <div

@@ -7,6 +7,7 @@ interface TransientNoticeProps {
   tone?: 'success' | 'error'
   onClear: () => void
   horizontalAnchorRef?: RefObject<HTMLElement | null>
+  visible?: boolean
 }
 
 interface HorizontalPlacement {
@@ -21,6 +22,7 @@ export function TransientNotice({
   tone = 'success',
   onClear,
   horizontalAnchorRef,
+  visible = true,
 }: TransientNoticeProps) {
   const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
 
@@ -32,7 +34,7 @@ export function TransientNotice({
   }, [message, onClear])
 
   useLayoutEffect(() => {
-    if (!message || !horizontalAnchorRef) return
+    if (!message || !horizontalAnchorRef || !visible) return
     const anchor = horizontalAnchorRef.current
     if (!anchor) return
 
@@ -55,9 +57,9 @@ export function TransientNotice({
       window.removeEventListener('resize', updatePlacement)
       window.removeEventListener('scroll', updatePlacement, true)
     }
-  }, [horizontalAnchorRef, message])
+  }, [horizontalAnchorRef, message, visible])
 
-  if (!message) {
+  if (!message || !visible) {
     return null
   }
 
