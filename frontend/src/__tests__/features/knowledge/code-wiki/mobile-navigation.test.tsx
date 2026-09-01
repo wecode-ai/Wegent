@@ -67,6 +67,7 @@ jest.mock('@/features/tasks/components/chat', () => ({
 jest.mock('@/apis/code-wiki', () => ({
   codeWikiApi: {
     pages: jest.fn(),
+    cancel: jest.fn(),
   },
 }))
 
@@ -113,6 +114,8 @@ describe('navigating a wiki on a narrow screen', () => {
     mockRunStatus = null
     codeWikiApi.pages.mockReset()
     codeWikiApi.pages.mockResolvedValue({ pages: mockDefaultPages })
+    codeWikiApi.cancel.mockReset()
+    codeWikiApi.cancel.mockResolvedValue(undefined)
   })
 
   it('loads the newly published page tree when a running generation completes', async () => {
@@ -248,6 +251,35 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(configure).toHaveClass('h-11', 'w-11')
     fireEvent.click(configure)
     expect(onConfigure).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets a manager stop the in-flight generation from its progress card', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    mockRunStatus = {
+      status: 'running',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_commit: '',
+      progress: {
+        stage: 'writing',
+        current_step: 2,
+        total_steps: 3,
+        pages_written: 4,
+        pages_total: 9,
+      },
+    }
+
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    const cancel = await screen.findByTestId('code-wiki-progress-cancel')
+    expect(cancel).toHaveClass('h-11', 'sm:h-9')
+    fireEvent.click(cancel)
+    fireEvent.click(await screen.findByTestId('code-wiki-cancel-confirm-action'))
+
+    await waitFor(() => expect(codeWikiApi.cancel).toHaveBeenCalledWith(WIKI.id, 34))
+    expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1)
   })
 
   it('does not show the configuration control without manage permission', async () => {

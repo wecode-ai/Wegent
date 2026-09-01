@@ -31,4 +31,15 @@ describe('codeWikiApi', () => {
       force_full: true,
     })
   })
+
+  it('cancels a specific running generation', async () => {
+    ;(client.post as jest.Mock).mockResolvedValue(undefined)
+
+    await codeWikiApi.cancel(12, 7)
+
+    expect(client.post).toHaveBeenCalledWith(
+      '/knowledge-bases/12/code-wiki/generations/7/cancel',
+      {}
+    )
+  })
 })

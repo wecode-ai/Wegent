@@ -6,19 +6,26 @@
 
 import { useEffect, useState } from 'react'
 import { Check, ChevronDown, ChevronUp, Circle } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { CodeWikiRunProgress, CodeWikiRunStatus } from '@/types/code-wiki'
 
 interface GenerationProgressProps {
   status: CodeWikiRunStatus | null
+  onCancel?: () => void
+  cancelling?: boolean
 }
 
 const PLAN_ONLY_STEPS = ['plan', 'writing', 'publish'] as const
 const PLAN_AND_QA_STEPS = ['plan', 'writing', 'qa', 'publish'] as const
 type ProgressStep = (typeof PLAN_AND_QA_STEPS)[number]
 
-export function GenerationProgress({ status }: GenerationProgressProps) {
+export function GenerationProgress({
+  status,
+  onCancel,
+  cancelling = false,
+}: GenerationProgressProps) {
   const { t } = useTranslation('knowledge')
   const progress = visibleProgress(status)
   const [expanded, setExpanded] = useState(true)
@@ -93,9 +100,26 @@ export function GenerationProgress({ status }: GenerationProgressProps) {
           )}
         </button>
 
+        {onCancel && (
+          <div className="border-t border-border px-4 py-2.5 sm:px-5">
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={onCancel}
+              disabled={cancelling}
+              className="h-11 sm:h-9"
+              data-testid="code-wiki-progress-cancel"
+            >
+              {cancelling ? <Spinner size="sm" /> : null}
+              {t(cancelling ? 'codeWiki.progress.cancelling' : 'codeWiki.progress.cancel')}
+            </Button>
+          </div>
+        )}
+
         {hasSteps && expanded && (
           <ol
-            className="border-t border-border px-4 py-4 sm:px-5"
+            className={`${onCancel ? '' : 'border-t border-border '}px-4 py-4 sm:px-5`}
             data-testid="code-wiki-progress-steps"
           >
             {steps.map((step, index) => {

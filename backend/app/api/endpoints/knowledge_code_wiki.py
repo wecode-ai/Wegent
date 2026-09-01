@@ -36,6 +36,7 @@ from app.core import security
 from app.core.wiki_config import wiki_settings
 from app.models.kind import Kind
 from app.models.user import User
+from app.models.wiki import WikiGeneration, WikiGenerationStatus
 from app.schemas.knowledge import (
     CodeWikiCreate,
     CodeWikiExisting,
@@ -55,9 +56,11 @@ from app.schemas.knowledge import (
     KnowledgeBaseType,
     ResourceScope,
 )
+from app.services.adapters.task_kinds import task_kinds_service
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.diagnostics import diagnose
 from app.services.knowledge.code_wiki.generation import (
+    FailureCode,
     GenerationInFlight,
     GenerationWikiNotFound,
     current_run_state,
@@ -77,6 +80,7 @@ from app.services.knowledge.code_wiki.resolution import resolve_repository
 from app.services.knowledge.code_wiki.run_mode import ChangedPath
 from app.services.knowledge.code_wiki.runner import (
     CodeWikiRunError,
+    finish_run,
     republish_generation,
     start_first_run,
     start_run,
@@ -390,7 +394,7 @@ def _readable_code_wiki(db: Session, user: User, knowledge_base_id: int) -> Kind
     return knowledge_base
 
 
-def _assert_caller_may_regenerate(
+def _assert_caller_may_manage_generation(
     db: Session, user: User, knowledge_base: Kind
 ) -> None:
     """Refuse a caller who may read the wiki but cannot manage it.
@@ -404,7 +408,7 @@ def _assert_caller_may_regenerate(
     if not KnowledgeService.can_manage_knowledge_base(db, knowledge_base.id, user.id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Knowledge Base manage permission is required to regenerate",
+            detail="Knowledge Base manage permission is required to manage generations",
         )
 
 
@@ -446,6 +450,59 @@ def get_code_wiki_status(
         last_published_at=spec.get(PUBLISHED_AT_KEY),
         last_published_commit=str(spec.get(PUBLISHED_COMMIT_KEY, "") or ""),
     )
+
+
+@router.post(
+    "/{knowledge_base_id}/code-wiki/generations/{generation_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+@trace_sync("cancel_code_wiki_generation", "knowledge.api")
+async def cancel_code_wiki_generation(
+    knowledge_base_id: int,
+    generation_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Stop the current generation and immediately settle its wiki state.
+
+    The generation task is intentionally hidden from many conversation lists, so the
+    wiki owns this action instead of making the reader discover a task id. The task
+    service itself authorizes by task owner; a knowledge-base maintainer is also
+    allowed to stop a run, so this route authorizes that first and invokes the task
+    service as the generation owner.
+    """
+    knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
+    generation = db.get(WikiGeneration, generation_id)
+    if (
+        generation is None
+        or generation.kind_id != knowledge_base.id
+        or generation.status != WikiGenerationStatus.RUNNING
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code wiki generation is no longer running",
+        )
+    if not generation.task_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Code wiki generation has no task to cancel",
+        )
+
+    await task_kinds_service.cancel_task(
+        db=db,
+        task_id=generation.task_id,
+        user_id=generation.user_id,
+        background_task_runner=background_tasks.add_task,
+    )
+    finish_run(
+        db,
+        generation=generation,
+        succeeded=False,
+        failure_code=FailureCode.CANCELLED_BY_USER,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -509,7 +566,7 @@ def republish_code_wiki_version(
     repaired by coming back.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    _assert_caller_may_regenerate(db, current_user, knowledge_base)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
 
     try:
         result = republish_generation(
@@ -560,7 +617,7 @@ def start_code_wiki_run(
     which it was.
     """
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    _assert_caller_may_regenerate(db, current_user, knowledge_base)
+    _assert_caller_may_manage_generation(db, current_user, knowledge_base)
 
     try:
         started = start_run(

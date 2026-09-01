@@ -107,4 +107,12 @@ export const codeWikiApi = {
     client.post<CodeWikiRunResponse>(`/knowledge-bases/${knowledgeBaseId}/code-wiki/generations`, {
       force_full: true,
     }),
+
+  /** Stop the currently running version without changing the published wiki. */
+  cancel: async (knowledgeBaseId: number, generationId: number): Promise<void> => {
+    await client.post(
+      `/knowledge-bases/${knowledgeBaseId}/code-wiki/generations/${generationId}/cancel`,
+      {}
+    )
+  },
 }

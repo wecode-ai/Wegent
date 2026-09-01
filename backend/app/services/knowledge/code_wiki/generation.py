@@ -91,6 +91,8 @@ FAILURE_CODE_EXT_KEY = "failureCode"
 class FailureCode:
     """Failures this server states in its own words."""
 
+    #: A knowledge-base manager deliberately stopped the generation.
+    CANCELLED_BY_USER = "cancelled_by_user"
     #: The task reached a terminal state without the agent concluding its run.
     TASK_ENDED_WITHOUT_REPORT = "task_ended_without_report"
     #: No task could be created, so nothing was ever going to run.

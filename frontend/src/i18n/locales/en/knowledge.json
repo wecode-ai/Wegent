@@ -1216,6 +1216,9 @@
       "generateFirst": "Generate",
       "regenerateConfirmTitle": "Regenerate this wiki?",
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
+      "cancelConfirmTitle": "Stop this generation?",
+      "cancelConfirmBody": "The current draft will be discarded. Published pages are unchanged.",
+      "cancelled": "Generation stopped",
       "emptyGenerating": "This wiki is being generated",
       "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
       "emptyFailed": "The last run did not finish",
@@ -1224,6 +1227,8 @@
     "progress": {
       "title": "Generating",
       "step": "Stage {{current}}/{{total}}",
+      "cancel": "Stop generation",
+      "cancelling": "Stopping…",
       "stepLabel": {
         "plan": "Plan review",
         "planPassed_one": "Plan review passed ({{count}} page)",
@@ -1285,6 +1290,7 @@
       "failureDetailsDescription": "Full error message from this generation run."
     },
     "failure": {
+      "cancelled_by_user": "Generation was stopped",
       "task_ended_without_report": "The task ended without reporting a result",
       "task_not_created": "The generation task could not be created",
       "worker_abandoned": "The worker stopped reporting and the run was reclaimed",
