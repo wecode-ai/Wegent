@@ -460,6 +460,7 @@ function normalizeRightWorkspaceBrowserState(
     title: state?.title ?? null,
     faviconUrl: state?.faviconUrl ?? null,
     isLoading: state?.isLoading ?? false,
+    agentActive: false,
     hasActiveDownload: state?.hasActiveDownload ?? false,
     openRequest: state?.openRequest ?? null,
   }
@@ -1468,6 +1469,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       title: null,
       faviconUrl: null,
       isLoading: false,
+      agentActive: false,
       hasActiveDownload: false,
       openRequest: null,
       ...overrides,

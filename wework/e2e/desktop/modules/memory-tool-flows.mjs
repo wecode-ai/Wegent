@@ -15,6 +15,8 @@ import {
   EARLIER_TOOL_BLOCK_ID,
   GENERIC_MCP_TOOL_BLOCK_ID,
   LATER_TOOL_BLOCK_ID,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
   MEMORY_COMPLETION_TEXT,
   MEMORY_MAX_BASELINE_SAMPLES,
   MEMORY_MAX_PEAK_GROWTH_KIB,
@@ -34,15 +36,21 @@ import {
   assert,
   join,
   resultDir,
+  rm,
   selectE2EModel,
   sendPromptUntilScenarioRequest,
   withTimeout,
   writeFile,
 } from './shared.mjs'
+import { tmpdir } from 'node:os'
 
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 
 const MEMORY_RESPONSE_TIMEOUT_MS = 30_000
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64'
+)
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -218,6 +226,45 @@ async function verifyToolBlockChronologicalOrder({ composerSelector, control }) 
     'tool-block-order-04-later-command.png',
     laterSelector
   )
+}
+
+async function verifyLocalMarkdownImage({ composerSelector, control }) {
+  const imagePath = join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)
+  await writeFile(imagePath, ONE_PIXEL_PNG)
+  try {
+    control.setScenario('local_markdown_image')
+    await control.command('click', '[data-testid="new-chat-button"]')
+    await control.command('waitFor', composerSelector, {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await selectE2EModel(control)
+    await sendPromptUntilScenarioRequest(
+      control,
+      composerSelector,
+      LOCAL_MARKDOWN_IMAGE_PROMPT,
+      'local_markdown_image'
+    )
+    const imageSelector = '[data-testid="assistant-markdown-image"]'
+    await control.command('waitFor', imageSelector, {
+      visible: true,
+      stableMs: 500,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    const imageSrc = await control.command('getAttribute', imageSelector, { value: 'src' })
+    assert.ok(
+      imageSrc.startsWith('blob:'),
+      `The local Markdown image did not render through a Blob URL: ${imageSrc}`
+    )
+    assert.equal(
+      Number(
+        await control.command('getElementCount', '[data-testid="assistant-markdown-image-error"]')
+      ),
+      0,
+      'The local Markdown image rendered an error placeholder'
+    )
+  } finally {
+    await rm(imagePath, { force: true })
+  }
 }
 
 async function waitForBlankConversation(control, composerSelector) {
@@ -534,6 +581,7 @@ export {
   verifyExpandedToolDetail,
   ensureToggleExpanded,
   verifyToolBlockChronologicalOrder,
+  verifyLocalMarkdownImage,
   waitForBlankConversation,
   verifyConcurrentTaskMemory,
   verifyMemoryGrowth,

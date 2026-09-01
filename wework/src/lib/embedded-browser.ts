@@ -20,6 +20,7 @@ export const EMBEDDED_BROWSER_INVALID_TLS_CERTIFICATE_EVENT =
 export const EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT = 'wework:debug-panel-visibility-change'
 export const EMBEDDED_BROWSER_OCCLUSION_EVENT = 'wework:embedded-browser-occlusion-change'
 export const EMBEDDED_BROWSER_AGENT_STATE_EVENT = 'wework:embedded-browser-agent-state'
+export const EMBEDDED_BROWSER_AGENT_CURSOR_EVENT = 'wework:embedded-browser-agent-cursor'
 export const EMBEDDED_BROWSER_POPUP_EVENT = 'wework:embedded-browser-popup'
 export const EMBEDDED_BROWSER_ANNOTATION_STATE_EVENT = 'wework:embedded-browser-annotation-state'
 
@@ -108,6 +109,16 @@ export interface EmbeddedBrowserAgentStateEvent {
   createdAtUnixMs: number
 }
 
+export interface EmbeddedBrowserAgentCursorEvent {
+  label: string
+  visible: boolean
+  x: number
+  y: number
+  animateMovement: boolean
+  moveSequence: number
+  createdAtUnixMs: number
+}
+
 export interface EmbeddedBrowserAgentApproval {
   approvalId: string
   risk: string
@@ -148,6 +159,7 @@ export interface EmbeddedBrowserInvalidTlsCertificateEvent {
 interface ElectronBrowserHostEvent {
   sequence: number
   type:
+    | 'agent-cursor'
     | 'agent-state'
     | 'annotation-request'
     | 'close-request'
@@ -216,6 +228,16 @@ export async function setEmbeddedBrowserAgentControlPaused(
   label = DEFAULT_EMBEDDED_BROWSER_LABEL
 ): Promise<void> {
   await invokeDesktopHost<void>('browser.setAgentControlPaused', { label, paused })
+}
+
+export async function notifyEmbeddedBrowserAgentCursorArrived(
+  label: string,
+  moveSequence: number
+): Promise<void> {
+  await invokeDesktopHost<void>('browser.notifyAgentCursorArrived', {
+    label,
+    moveSequence,
+  })
 }
 
 export async function resolveEmbeddedBrowserAgentApproval(
@@ -294,6 +316,13 @@ export function listenEmbeddedBrowserAgentState(
 ): Promise<UnlistenFn> | null {
   if (!canUseEmbeddedBrowser()) return null
   return listenElectronBrowserEvents('agent-state', handler)
+}
+
+export function listenEmbeddedBrowserAgentCursor(
+  handler: (event: EmbeddedBrowserAgentCursorEvent) => void
+): Promise<UnlistenFn> | null {
+  if (!canUseEmbeddedBrowser()) return null
+  return listenElectronBrowserEvents('agent-cursor', handler)
 }
 
 export function canUseEmbeddedBrowser(): boolean {

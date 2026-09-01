@@ -45,6 +45,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -74,6 +75,7 @@ import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import { VncSessionManager } from './host/vnc-session-manager.js'
 import {
   prepareDesktopComponents,
+  shouldStageDesktopComponentUpdates,
   type DesktopComponentUpdateController,
 } from './runtime/desktop-components.js'
 import {
@@ -147,12 +149,14 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
 let dockVisible = true
 let e2eForegroundActivationAllowed = false
 let preferences: PreferencesStore | null = null
+let rendererStorage: RendererStorageStore | null = null
 let cloudCredentials: CloudCredentialService | null = null
 let windowClosePolicy: WindowClosePolicy | null = null
 let startupSplash: StartupSplash | null = null
@@ -418,6 +422,15 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
     })
   })
   try {
+    await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
+      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
+      clearOrigin: origin =>
+        contents.session.clearData({
+          dataTypes: ['localStorage'],
+          origins: [origin],
+          originMatchingMode: 'origin-in-all-contexts',
+        }),
+    })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',
     })
@@ -1050,7 +1063,7 @@ async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   const environment = await desktopEnvironment()
   if (!preferences) throw new Error('Desktop preferences are unavailable')
-  const rendererStorage = new RendererStorageStore(app.getPath('userData'))
+  rendererStorage = new RendererStorageStore(app.getPath('userData'))
   workbenchPlugins = new WorkbenchPluginManager()
   const feedback = new FeedbackBundleManager({
     appVersion: () => app.getVersion(),
@@ -1083,8 +1096,6 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
-  const savedPreferences = await preferences.read()
-  await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -1163,6 +1174,7 @@ async function configureDesktopRuntime(): Promise<void> {
             await startupSplash?.close({
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
+            scheduleComputerUseStartup()
           },
           startupSplashSnapshot: () => startupSplash?.snapshot() ?? null,
           trayActivate: activation => trayManager?.activate(activation) ?? false,
@@ -1245,6 +1257,23 @@ async function configureDesktopRuntime(): Promise<void> {
   })
 }
 
+function scheduleComputerUseStartup(): void {
+  if (computerUseStartupScheduled || quitting) return
+  const service = computerUse
+  const store = preferences
+  if (!service || !store) return
+  computerUseStartupScheduled = true
+  setImmediate(() => {
+    void restoreComputerUseAfterStartup({
+      isShuttingDown: () => quitting || computerUse !== service,
+      readPreferences: () => store.read(),
+      setEnabled: enabled => service.setEnabled(enabled),
+    }).catch(error => {
+      console.error('[computer-use] lazy startup failed', error)
+    })
+  })
+}
+
 function notifyRuntimeChanged(): void {
   mainWindow?.webContents.send('runtime:changed')
 }
@@ -1261,14 +1290,16 @@ function startDesktopRuntime(): Promise<void> {
     await loadPrimaryDshView()
     await componentUpdates?.confirmStartup()
     runtimePhase = 'ready'
-    void componentUpdates
-      ?.stageAvailableUpdate()
-      .then(staged => {
-        if (staged) console.log('[components] update staged for the next application restart')
-      })
-      .catch(error => {
-        console.error('[components] update check failed', error)
-      })
+    if (shouldStageDesktopComponentUpdates(process.env)) {
+      void componentUpdates
+        ?.stageAvailableUpdate()
+        .then(staged => {
+          if (staged) console.log('[components] update staged for the next application restart')
+        })
+        .catch(error => {
+          console.error('[components] update check failed', error)
+        })
+    }
   })()
     .catch(async error => {
       if (await componentUpdates?.rollbackStartup()) {

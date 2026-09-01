@@ -10,10 +10,13 @@ const ACTIVE_WORKBENCH_SELECTOR =
   '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
 const BROWSER_INPUT_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-url-input"]`
 const BROWSER_AGENT_STATUS_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-status"]`
-const BROWSER_AGENT_PAUSE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-pause-button"]`
 const BROWSER_AGENT_RESUME_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-resume-button"]`
 const BROWSER_AGENT_APPROVE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-agent-approval-approve-button"]`
-const TRANSIENT_NOTICE_SELECTOR = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="transient-notice"]`
+const BROWSER_AGENT_CURSOR_SELECTOR =
+  '[data-testid="workspace-browser-agent-cursor"][data-visible="true"]'
+const BROWSER_AGENT_TAB_ICON_SELECTOR =
+  '[data-testid^="right-workspace-browser-tab-"][aria-selected="true"] [data-testid$="-agent-icon"]'
+const TRANSIENT_NOTICE_SELECTOR = '[data-testid="transient-notice"]'
 const WORKBENCH_BROWSER_LABEL_SELECTOR =
   '[data-testid="desktop-workbench-content"][data-embedded-browser-label]'
 const BROWSER_LABEL = 'workspace-browser'
@@ -204,6 +207,35 @@ async function withTimeout(promise, timeoutMs, message) {
       timer = setTimeout(() => reject(new Error(message)), timeoutMs)
     }),
   ]).finally(() => clearTimeout(timer))
+}
+
+async function assertNoticeCenteredInBrowserPanel(control) {
+  const [noticeMetrics] = JSON.parse(
+    await control.command('getElementMetrics', TRANSIENT_NOTICE_SELECTOR)
+  )
+  const [panelMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="workspace-browser-panel"]`
+    )
+  )
+  const noticeCenter = noticeMetrics.left + noticeMetrics.width / 2
+  const panelCenter = panelMetrics.left + panelMetrics.width / 2
+
+  assert.ok(
+    Math.abs(noticeCenter - panelCenter) <= 1,
+    `Browser notice was not centered in the browser panel: ${JSON.stringify({
+      noticeMetrics,
+      panelMetrics,
+    })}`
+  )
+  assert.ok(
+    noticeMetrics.left >= panelMetrics.left && noticeMetrics.right <= panelMetrics.right,
+    `Browser notice exceeded the browser panel width: ${JSON.stringify({
+      noticeMetrics,
+      panelMetrics,
+    })}`
+  )
 }
 
 async function waitForControlValue(control, selector, expected, timeoutMs, message) {
@@ -480,7 +512,12 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         'The fresh local task did not expose its task-scoped embedded browser label'
       )
       const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
-      const bridgeCall = payload => callBridge(bridgeIdentity, { label: browserLabel, ...payload })
+      const bridgeCall = payload =>
+        withTimeout(
+          callBridge(bridgeIdentity, { label: browserLabel, ...payload }),
+          (payload.timeoutMs ?? uiTimeoutMs) + 5_000,
+          `Timed out waiting for embedded browser bridge action: ${payload.action}`
+        )
       const firstTaskTabTestId = await control.command(
         'getAttribute',
         '[data-tab-kind="task"][aria-selected="true"]',
@@ -790,9 +827,17 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: 'WEWORK_AGENT_STATUS_E2E_NEVER_APPEARS',
         timeoutMs: 4_000,
       })
-      await control.command('waitFor', BROWSER_AGENT_STATUS_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('waitFor', BROWSER_AGENT_PAUSE_SELECTOR, { timeoutMs: uiTimeoutMs })
-      await control.command('click', BROWSER_AGENT_PAUSE_SELECTOR)
+      await control.command('waitFor', BROWSER_AGENT_TAB_ICON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', BROWSER_AGENT_STATUS_SELECTOR)),
+        0,
+        'Running agent state should use the tab icon instead of a separate status bar'
+      )
+      await control.command('setEmbeddedBrowserAgentControlPaused', 'body', {
+        value: JSON.stringify({ label: browserLabel, paused: true }),
+      })
       await control.command('waitFor', BROWSER_AGENT_RESUME_SELECTOR, { timeoutMs: uiTimeoutMs })
       const pausedClick = await withTimeout(
         bridgeCall({
@@ -892,6 +937,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         text: BROWSER_CLEAR_STARTED_TEXT,
         timeoutMs: uiTimeoutMs,
       })
+      await assertNoticeCenteredInBrowserPanel(control)
       await control.command('waitFor', TRANSIENT_NOTICE_SELECTOR, {
         text: BROWSER_CLEAR_COMPLETED_TEXT,
         timeoutMs: 35_000,
@@ -973,7 +1019,6 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
         assert.equal(clickJson.action, 'click')
         assert.equal(clickJson.ok, true)
         assert.equal(clickJson.effect.domChanged, true)
-
         const waitText = await callTool('browser_wait_and_inspect', {
           condition: { textVisible: CLICKED_TEXT },
           inspectOptions: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
@@ -1085,14 +1130,40 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
       })
       assert.ok(afterFillInspect.inspectText.includes(DIRECT_FILLED_TEXT))
 
-      const clickResult = await bridgeCall({
+      const clickPromise = bridgeCall({
         action: 'click',
         ref: buttonNode.ref,
         timeoutMs: 5_000,
       })
+      await control.command('waitFor', BROWSER_AGENT_CURSOR_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', BROWSER_AGENT_TAB_ICON_SELECTOR, {
+        timeoutMs: uiTimeoutMs,
+      })
+      const cursorStyle = await control.command('getAttribute', BROWSER_AGENT_CURSOR_SELECTOR, {
+        value: 'style',
+      })
+      assert.ok(
+        cursorStyle.includes('translate3d'),
+        `The host AI cursor did not move to the click target: ${cursorStyle}`
+      )
+      const clickResult = await clickPromise
       assert.equal(clickResult.ok, true, `Click failed: ${JSON.stringify(clickResult)}`)
       assert.equal(clickResult.effect.domChanged, true)
-
+      await new Promise(resolve => setTimeout(resolve, 1_000))
+      const cursorVisibleAfterClick = await control.command(
+        'getAttribute',
+        BROWSER_AGENT_CURSOR_SELECTOR,
+        {
+          value: 'data-visible',
+        }
+      )
+      assert.equal(
+        cursorVisibleAfterClick,
+        'true',
+        'The host AI cursor disappeared immediately after the click'
+      )
       const finalInspect = await bridgeCall({
         action: 'inspect',
         options: { interactiveOnly: false, includeTextBlocks: true, maxNodes: 80 },
