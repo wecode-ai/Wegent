@@ -15,8 +15,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -143,7 +142,10 @@ export function CreateKnowledgeBaseDialog({
     ] as const
   ).filter(Boolean) as ReadonlyArray<readonly [KnowledgeBaseKind, typeof FileText, string]>
   const [source, setSource] = useState<CodeWikiSource>(createEmptySource)
-  const [initialGeneration, setInitialGeneration] = useState<'immediate' | 'scheduled'>('immediate')
+  const [scheduledUpdateEnabled, setScheduledUpdateEnabled] = useState(false)
+  const [initialCadence, setInitialCadence] = useState<
+    'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
+  >('weekly')
   const [initialIntervalDays, setInitialIntervalDays] = useState(7)
   const [initialWeekday, setInitialWeekday] = useState(0)
   const [initialTime, setInitialTime] = useState('09:00')
@@ -196,7 +198,8 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
-      setInitialGeneration('immediate')
+      setScheduledUpdateEnabled(false)
+      setInitialCadence('weekly')
       setInitialIntervalDays(7)
       setInitialWeekday(0)
       setInitialTime('09:00')
@@ -318,18 +321,17 @@ export function CreateKnowledgeBaseDialog({
               resolved_name: source.resolution?.name,
               resolved_description: source.resolution?.description,
               execution_model_ref: executionModelRef,
-              generate_immediately: initialGeneration === 'immediate',
-              automatic_update:
-                initialGeneration === 'scheduled'
-                  ? {
-                      enabled: true,
-                      interval_days: initialIntervalDays,
-                      weekday: initialWeekday,
-                      hour: Number(initialTime.split(':')[0]),
-                      minute: Number(initialTime.split(':')[1]),
-                      timezone: initialTimezone,
-                    }
-                  : null,
+              scheduled_update: scheduledUpdateEnabled
+                ? {
+                    enabled: true,
+                    cadence: initialCadence,
+                    interval_days: initialIntervalDays,
+                    weekday: initialWeekday,
+                    hour: Number(initialTime.split(':')[0]),
+                    minute: Number(initialTime.split(':')[1]),
+                    timezone: initialTimezone,
+                  }
+                : null,
             }
           : {}),
       })
@@ -340,7 +342,8 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
-      setInitialGeneration('immediate')
+      setScheduledUpdateEnabled(false)
+      setInitialCadence('weekly')
       setInitialIntervalDays(7)
       setInitialWeekday(0)
       setInitialTime('09:00')
@@ -369,7 +372,8 @@ export function CreateKnowledgeBaseDialog({
       setSelectedKbType(initialKbType)
       setKind('document')
       setSource(createEmptySource())
-      setInitialGeneration('immediate')
+      setScheduledUpdateEnabled(false)
+      setInitialCadence('weekly')
       setInitialIntervalDays(7)
       setInitialWeekday(0)
       setInitialTime('09:00')
@@ -468,74 +472,74 @@ export function CreateKnowledgeBaseDialog({
                   <>
                     <CodeWikiSourceFields value={source} onChange={setSource} />
                     <SimpleConfigRow
-                      label={t('knowledge:codeWiki.create.initialMode')}
-                      description={t('knowledge:codeWiki.create.initialModeHint')}
+                      label={t('knowledge:codeWiki.create.scheduledUpdate')}
+                      description={t('knowledge:codeWiki.create.scheduledUpdateHint')}
                       align="start"
                     >
-                      <RadioGroup
-                        value={initialGeneration}
-                        onValueChange={value =>
-                          setInitialGeneration(value as 'immediate' | 'scheduled')
-                        }
-                        className="space-y-2"
-                      >
-                        <div className="flex items-center gap-2">
-                          <RadioGroupItem value="immediate" id="code-wiki-create-immediate" />
-                          <Label htmlFor="code-wiki-create-immediate">
-                            {t('knowledge:codeWiki.create.generateImmediately')}
-                          </Label>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <RadioGroupItem value="scheduled" id="code-wiki-create-scheduled" />
-                          <Label htmlFor="code-wiki-create-scheduled">
-                            {t('knowledge:codeWiki.create.scheduledUpdate')}
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                      {initialGeneration === 'scheduled' && (
+                      <Switch
+                        checked={scheduledUpdateEnabled}
+                        onCheckedChange={setScheduledUpdateEnabled}
+                        aria-label={t('knowledge:codeWiki.create.scheduledUpdate')}
+                      />
+                      {scheduledUpdateEnabled && (
                         <div className="mt-3 grid grid-cols-2 gap-2">
                           <Select
-                            value={String(initialIntervalDays)}
-                            onValueChange={value => setInitialIntervalDays(Number(value))}
+                            value={initialCadence}
+                            onValueChange={value => {
+                              const cadence = value as typeof initialCadence
+                              setInitialCadence(cadence)
+                              const fixed = { daily: 1, weekly: 7, biweekly: 14, four_weeks: 28 }
+                              if (cadence !== 'custom') setInitialIntervalDays(fixed[cadence])
+                            }}
                           >
                             <SelectTrigger data-testid="code-wiki-create-cadence">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="7">
+                              <SelectItem value="daily">
+                                {t('knowledge:codeWiki.automatic.daily')}
+                              </SelectItem>
+                              <SelectItem value="weekly">
                                 {t('knowledge:codeWiki.automatic.weekly')}
                               </SelectItem>
-                              <SelectItem value="14">
+                              <SelectItem value="biweekly">
                                 {t('knowledge:codeWiki.automatic.biweekly')}
                               </SelectItem>
-                              <SelectItem value="28">
-                                {t('knowledge:codeWiki.automatic.monthly')}
+                              <SelectItem value="four_weeks">
+                                {t('knowledge:codeWiki.automatic.four_weeks')}
+                              </SelectItem>
+                              <SelectItem value="custom">
+                                {t('knowledge:codeWiki.automatic.custom')}
                               </SelectItem>
                             </SelectContent>
                           </Select>
-                          <Input
-                            type="number"
-                            min={7}
-                            max={365}
-                            value={initialIntervalDays}
-                            onChange={event => setInitialIntervalDays(Number(event.target.value))}
-                            aria-label={t('knowledge:codeWiki.automatic.customDays')}
-                          />
-                          <Select
-                            value={String(initialWeekday)}
-                            onValueChange={value => setInitialWeekday(Number(value))}
-                          >
-                            <SelectTrigger data-testid="code-wiki-create-weekday">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {[0, 1, 2, 3, 4, 5, 6].map(day => (
-                                <SelectItem key={day} value={String(day)}>
-                                  {t(`knowledge:codeWiki.automatic.weekdays.${day}`)}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          {initialCadence === 'custom' && (
+                            <Input
+                              type="number"
+                              min={2}
+                              max={365}
+                              value={initialIntervalDays}
+                              onChange={event => setInitialIntervalDays(Number(event.target.value))}
+                              aria-label={t('knowledge:codeWiki.automatic.customDays')}
+                            />
+                          )}
+                          {['weekly', 'biweekly', 'four_weeks'].includes(initialCadence) && (
+                            <Select
+                              value={String(initialWeekday)}
+                              onValueChange={value => setInitialWeekday(Number(value))}
+                            >
+                              <SelectTrigger data-testid="code-wiki-create-weekday">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {[0, 1, 2, 3, 4, 5, 6].map(day => (
+                                  <SelectItem key={day} value={String(day)}>
+                                    {t(`knowledge:codeWiki.automatic.weekdays.${day}`)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
                           <Input
                             type="time"
                             value={initialTime}

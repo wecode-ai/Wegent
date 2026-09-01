@@ -6,7 +6,7 @@
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -22,24 +22,50 @@ from app.schemas.subscription import (
 from app.services.subscription.service import SubscriptionService
 from app.tasks.subscription_tasks import (
     SUBSCRIPTION_BATCH_SIZE,
+    _cleanup_stale_running_executions,
     _disable_expired_subscription_if_needed,
     _dispatch_due_subscription,
-    _cleanup_stale_running_executions,
     check_due_subscriptions,
     check_due_subscriptions_sync,
 )
 
 
-def test_code_wiki_execution_uses_the_six_hour_stale_boundary(
-    test_db: Session, test_user: User
+def test_code_wiki_execution_uses_subscription_timeout(
+    test_db: Session, test_user: User, monkeypatch
 ):
+    from app.services.subscription.execution import background_execution_manager
+
+    cancel_task = AsyncMock(return_value=True)
+    monkeypatch.setattr(background_execution_manager, "cancel_task_by_id", cancel_task)
     plan = Kind(
         user_id=test_user.id,
         kind="Subscription",
         name="wiki-plan",
         namespace="default",
         is_active=True,
-        json={"_internal": {"code_wiki_id": 99}},
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Subscription",
+            "metadata": {"name": "wiki-plan", "namespace": "default"},
+            "spec": {
+                "displayName": "Wiki plan",
+                "taskType": "execution",
+                "visibility": "private",
+                "trigger": {
+                    "type": "interval",
+                    "interval": {"value": 1, "unit": "days"},
+                },
+                "teamRef": {"name": "code-wiki-team", "namespace": "default"},
+                "promptTemplate": "update",
+                "retryCount": 0,
+                "timeoutSeconds": 86400,
+                "enabled": True,
+                "executionTarget": {"type": "managed"},
+                "codeWikiRef": {"id": 99},
+            },
+            "status": {},
+            "_internal": {},
+        },
     )
     test_db.add(plan)
     test_db.flush()
@@ -58,13 +84,15 @@ def test_code_wiki_execution_uses_the_six_hour_stale_boundary(
 
     assert _cleanup_stale_running_executions(test_db) == 0
     assert execution.status == "RUNNING"
+    cancel_task.assert_not_awaited()
 
     execution.started_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-        hours=7
+        hours=25
     )
     test_db.commit()
     assert _cleanup_stale_running_executions(test_db) == 1
     assert execution.status == "FAILED"
+    cancel_task.assert_awaited_once_with(test_db, task_id=123, user_id=test_user.id)
 
 
 @pytest.fixture(autouse=True)
@@ -310,11 +338,11 @@ def test_dispatch_due_code_wiki_plan_uses_its_dedicated_executor():
         is_active=True,
         json={
             "_internal": {
-                "code_wiki_id": 99,
                 "trigger_type": "interval",
                 "next_execution_time": "2026-08-31T01:00:00",
                 "schedule": {"interval_days": 7},
-            }
+            },
+            "spec": {"codeWikiRef": {"id": 99}},
         },
     )
     execution = MagicMock(id=30)
@@ -329,7 +357,9 @@ def test_dispatch_due_code_wiki_plan_uses_its_dedicated_executor():
         patch(
             "app.tasks.subscription_tasks._get_trigger_reason", return_value="reason"
         ),
-        patch("app.tasks.subscription_tasks.execute_code_wiki_plan.delay") as dispatch,
+        patch(
+            "app.tasks.subscription_tasks.execute_code_wiki_scheduled_update.delay"
+        ) as dispatch,
     ):
         result = _dispatch_due_subscription(
             db=db,

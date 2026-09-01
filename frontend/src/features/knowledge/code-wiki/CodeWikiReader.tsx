@@ -215,13 +215,9 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
   const control = regenerateControl(runStatus.status, regenerating, t)
   const emptyState = emptyStateText(runStatus.status, t)
   const automaticCadence = automaticPlan
-    ? automaticPlan.interval_days === 7
-      ? t('codeWiki.automatic.weekly')
-      : automaticPlan.interval_days === 14
-        ? t('codeWiki.automatic.biweekly')
-        : automaticPlan.interval_days === 28
-          ? t('codeWiki.automatic.monthly')
-          : t('codeWiki.automatic.days', { days: automaticPlan.interval_days })
+    ? automaticPlan.cadence === 'custom'
+      ? t('codeWiki.automatic.days', { days: automaticPlan.interval_days })
+      : t(`codeWiki.automatic.${automaticPlan.cadence}`)
     : ''
 
   useEffect(() => {

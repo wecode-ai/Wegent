@@ -500,14 +500,32 @@ class KnowledgeBaseUpdate(MultimodalAnalysisFieldsMixin):
         return v
 
 
-class CodeWikiCreationSchedule(BaseModel):
+class CodeWikiScheduledUpdateRequest(BaseModel):
     enabled: bool = True
-    interval_days: int = Field(7, ge=7, le=365)
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
+    interval_days: int = Field(7, ge=1, le=365)
     weekday: int = Field(0, ge=0, le=6, description="Monday is 0")
     hour: int = Field(9, ge=0, le=23)
     minute: int = Field(0, ge=0, le=59)
     timezone: str = Field("UTC", min_length=1, max_length=100)
     execution_principal_user_id: Optional[int] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_cadence(self):
+        fixed_intervals = {
+            "daily": 1,
+            "weekly": 7,
+            "biweekly": 14,
+            "four_weeks": 28,
+        }
+        if self.cadence == "custom":
+            if self.interval_days < 2:
+                raise ValueError(
+                    "Custom update interval must be between 2 and 365 days"
+                )
+        else:
+            self.interval_days = fixed_intervals[self.cadence]
+        return self
 
 
 class CodeWikiCreate(KnowledgeBaseCreate):
@@ -573,13 +591,6 @@ class CodeWikiCreate(KnowledgeBaseCreate):
             "not one to inherit silently from whichever bot the team happens to bind."
         ),
     )
-    generate_immediately: bool = Field(
-        True, description="Start the first generation immediately after creation"
-    )
-    automatic_update: Optional[CodeWikiCreationSchedule] = Field(
-        None,
-        description="Create an enabled periodic plan and wait for its next slot",
-    )
 
     @field_validator("execution_model_ref")
     @classmethod
@@ -588,14 +599,6 @@ class CodeWikiCreate(KnowledgeBaseCreate):
         checked = validated_model_ref(value)
         assert checked is not None
         return checked
-
-    @model_validator(mode="after")
-    def choose_initial_execution(self):
-        if self.generate_immediately == (self.automatic_update is not None):
-            raise ValueError(
-                "Choose exactly one initial mode: generate immediately or scheduled update"
-            )
-        return self
 
 
 class CodeWikiChangedPath(BaseModel):
@@ -758,7 +761,7 @@ class CodeWikiRunResponse(BaseModel):
     task_id: int = Field(0, description="Task running the agent, when started")
 
 
-class CodeWikiAutomaticUpdateRequest(CodeWikiCreationSchedule):
+class CodeWikiAutomaticUpdateRequest(CodeWikiScheduledUpdateRequest):
     """The future schedule for one Code Wiki."""
 
     enabled: bool = False
@@ -777,6 +780,7 @@ class CodeWikiAutomaticUpdate(BaseModel):
     can_configure: bool = False
     enabled: bool = False
     configured: bool = False
+    cadence: Literal["daily", "weekly", "biweekly", "four_weeks", "custom"] = "weekly"
     interval_days: int = 7
     weekday: int = 0
     hour: int = 9

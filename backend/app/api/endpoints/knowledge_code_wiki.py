@@ -38,7 +38,6 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.knowledge import (
     CodeWikiAutomaticUpdate,
-    CodeWikiAutomaticUpdateExecution,
     CodeWikiAutomaticUpdateRequest,
     CodeWikiCreate,
     CodeWikiExisting,
@@ -60,12 +59,6 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge import KnowledgeService
 from app.services.knowledge.code_wiki.diagnostics import diagnose
-from app.services.knowledge.code_wiki.automatic_update import (
-    configure_plan,
-    next_time,
-    plan_for,
-    validate_runner_for_source,
-)
 from app.services.knowledge.code_wiki.generation import (
     GenerationInFlight,
     GenerationWikiNotFound,
@@ -89,6 +82,10 @@ from app.services.knowledge.code_wiki.runner import (
     republish_generation,
     start_first_run,
     start_run,
+)
+from app.services.knowledge.code_wiki.scheduled_update import (
+    configure_scheduled_update,
+    read_scheduled_update,
 )
 from app.services.knowledge.code_wiki.source import (
     SourceAccessDenied,
@@ -259,16 +256,6 @@ def create_code_wiki(
     try:
         source = SourceRepository.from_url(data.source_type, data.source_url)
         assert_user_can_read_source(db, current_user.id, source)
-        if data.automatic_update is not None:
-            schedule = CodeWikiAutomaticUpdateRequest.model_validate(
-                data.automatic_update.model_dump()
-            )
-            next_time(schedule)
-            validate_runner_for_source(
-                db,
-                user_id=schedule.execution_principal_user_id or current_user.id,
-                source=source,
-            )
     except SourceAccessDenied as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
     except (CodeWikiRunError, ValueError) as e:
@@ -332,17 +319,7 @@ def create_code_wiki(
         # which is a network call that can take the full connect timeout when the
         # host is slow. Blocking the response on it makes creating a wiki appear to
         # hang, and then to have failed, when the knowledge base is already saved.
-        if data.automatic_update is not None:
-            knowledge_base = KnowledgeService._get_knowledge_base_record(db, result.id)
-            configure_plan(
-                db,
-                knowledge_base=knowledge_base,
-                data=CodeWikiAutomaticUpdateRequest.model_validate(
-                    data.automatic_update.model_dump()
-                ),
-            )
-        if data.generate_immediately:
-            background_tasks.add_task(start_first_run, current_user.id, result.id)
+        background_tasks.add_task(start_first_run, current_user.id, result.id)
         return result
     except IntegrityError as e:
         # The same caller asking twice at once. UNIQUE (source_url, kind_id) settles
@@ -459,50 +436,12 @@ def get_code_wiki_automatic_update(
     db: Session = Depends(get_db),
 ):
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
-    plan = plan_for(db, knowledge_base.id)
-    if plan is None:
-        return CodeWikiAutomaticUpdate(
-            can_configure=(
-                current_user.id == knowledge_base.user_id
-                or current_user.role == "admin"
-            ),
-            execution_principal_user_id=(knowledge_base.json or {})
-            .get("spec", {})
-            .get("executionPrincipalUserId"),
-        )
-    from app.models.subscription import BackgroundExecution
-
-    internal = (plan.json or {}).get("_internal", {})
-    schedule = internal.get("schedule") or {}
-    rows = (
-        db.query(BackgroundExecution)
-        .filter(BackgroundExecution.subscription_id == plan.id)
-        .order_by(BackgroundExecution.created_at.desc())
-        .limit(20)
-        .all()
-    )
-    return CodeWikiAutomaticUpdate(
+    return read_scheduled_update(
+        db,
+        knowledge_base=knowledge_base,
         can_configure=(
             current_user.id == knowledge_base.user_id or current_user.role == "admin"
         ),
-        configured=True,
-        enabled=bool(internal.get("enabled", False)),
-        next_execution_time=internal.get("next_execution_time"),
-        execution_principal_user_id=(knowledge_base.json or {})
-        .get("spec", {})
-        .get("executionPrincipalUserId"),
-        executions=[
-            CodeWikiAutomaticUpdateExecution(
-                id=row.id,
-                status=row.status,
-                error_message=row.error_message,
-                result_summary=row.result_summary,
-                task_id=row.task_id,
-                created_at=row.created_at,
-            )
-            for row in rows
-        ],
-        **schedule,
     )
 
 
@@ -519,7 +458,7 @@ def put_code_wiki_automatic_update(
     knowledge_base = _readable_code_wiki(db, current_user, knowledge_base_id)
     _assert_caller_owns_schedule(current_user, knowledge_base)
     try:
-        configure_plan(db, knowledge_base=knowledge_base, data=data)
+        configure_scheduled_update(db, knowledge_base=knowledge_base, data=data)
     except (CodeWikiRunError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)

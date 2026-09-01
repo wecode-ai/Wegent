@@ -1205,11 +1205,8 @@
       "modelPlaceholder": "选择模型",
       "modelRequired": "请选择生成模型",
       "created": "代码 Wiki 已创建，正在生成内容。",
-      "createdScheduled": "代码 Wiki 已创建，将在下个计划时间检查并生成。",
-      "initialMode": "首次运行",
-      "initialModeHint": "立即生成，或等到下一个自动更新时间；已过的时间不会补跑。",
-      "generateImmediately": "创建后立即生成",
-      "scheduledUpdate": "按计划自动更新（默认每周一 09:00）"
+      "scheduledUpdate": "定期自动更新",
+      "scheduledUpdateHint": "首次生成会在创建后立即开始；也可以启用后续定期检查。"
     },
     "reader": {
       "update": "更新 Wiki",
@@ -1249,7 +1246,7 @@
       "enabledCadence": "自动更新 · {{cadence}}",
       "days": "每 {{days}} 天",
       "cadence": "更新周期",
-      "customDays": "自定义周期天数（至少 7 天）",
+      "customDays": "自定义周期天数（2–365 天）",
       "weekday": "星期",
       "time": "时间",
       "timezone": "时区",
@@ -1267,9 +1264,11 @@
         "5": "星期六",
         "6": "星期日"
       },
+      "daily": "每日",
       "weekly": "每周",
       "biweekly": "每两周",
-      "monthly": "每四周",
+      "four_weeks": "每四周",
+      "custom": "自定义",
       "next": "下次检查：{{when}}",
       "afterSave": "保存后计算",
       "saved": "自动更新设置已保存",

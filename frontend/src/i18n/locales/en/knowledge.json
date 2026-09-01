@@ -1205,11 +1205,8 @@
       "modelPlaceholder": "Select a model",
       "modelRequired": "Select the model to generate with",
       "created": "Code Wiki created. Content is generating.",
-      "createdScheduled": "Code Wiki created. It will check and generate at the next scheduled time.",
-      "initialMode": "First run",
-      "initialModeHint": "Generate now or wait for the next automatic slot; missed slots are not replayed.",
-      "generateImmediately": "Generate immediately after creation",
-      "scheduledUpdate": "Scheduled update (Monday 09:00 weekly by default)"
+      "scheduledUpdate": "Scheduled updates",
+      "scheduledUpdateHint": "The first generation starts after creation; optionally enable future checks too."
     },
     "reader": {
       "update": "Update Wiki",
@@ -1249,7 +1246,7 @@
       "enabledCadence": "Automatic · {{cadence}}",
       "days": "Every {{days}} days",
       "cadence": "Cadence",
-      "customDays": "Custom cadence in days (minimum 7)",
+      "customDays": "Custom cadence in days (2–365)",
       "weekday": "Weekday",
       "time": "Time",
       "timezone": "Time zone",
@@ -1267,9 +1264,11 @@
         "5": "Saturday",
         "6": "Sunday"
       },
+      "daily": "Daily",
       "weekly": "Weekly",
       "biweekly": "Every two weeks",
-      "monthly": "Every four weeks",
+      "four_weeks": "Every four weeks",
+      "custom": "Custom",
       "next": "Next check: {{when}}",
       "afterSave": "calculated after saving",
       "saved": "Automatic update settings saved",

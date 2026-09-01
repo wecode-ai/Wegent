@@ -17,6 +17,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
+from app.models.knowledge import KnowledgeDocument
 from app.models.user import User
 from app.models.wiki import (
     WikiContent,
@@ -1045,11 +1046,12 @@ def test_a_run_executes_as_the_wiki_owner_not_whoever_triggered_it(
     assert started.generation.user_id == test_user.id
 
 
-def test_a_configured_runner_owns_future_generations(
+def test_a_configured_runner_runs_future_generations_without_taking_file_ownership(
     test_db: Session,
     knowledge_base: Kind,
     test_user: User,
     tasks: FakeTasks,
+    no_side_effects: FakeEffects,
     monkeypatch,
 ):
     from app.services.knowledge.code_wiki import source
@@ -1072,11 +1074,26 @@ def test_a_configured_runner_owns_future_generations(
     )
 
     started = start_run(
-        test_db, knowledge_base=knowledge_base, user=test_user, head_commit=HEAD
+        test_db,
+        knowledge_base=knowledge_base,
+        user=test_user,
+        head_commit=HEAD,
+        background_execution_id=71,
+        background_execution_timeout_seconds=86400,
     )
 
     assert started.generation.user_id == runner.id
+    assert started.generation.ext["backgroundExecutionId"] == 71
+    assert started.generation.ext["backgroundExecutionTimeoutSeconds"] == 86400
     assert tasks.users[-1] == runner.id
+
+    _write_page(test_db, started.generation, "index")
+    finish_run(test_db, generation=started.generation, succeeded=True)
+
+    document = (
+        test_db.query(KnowledgeDocument).filter_by(kind_id=knowledge_base.id).one()
+    )
+    assert document.user_id == test_user.id
 
 
 def test_an_inactive_wiki_owner_refuses_a_run_before_creating_a_task(

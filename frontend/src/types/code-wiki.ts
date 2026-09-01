@@ -43,7 +43,7 @@ export interface CodeWikiListResponse {
  */
 export interface CodeWikiCreateRequest extends Omit<
   KnowledgeBaseCreate,
-  'name' | 'namespace' | 'kb_type'
+  'name' | 'namespace' | 'kb_type' | 'scheduled_update'
 > {
   /** Optional: left blank, the repository's own name is used. */
   name: string
@@ -129,6 +129,7 @@ export interface CodeWikiAutomaticUpdateExecution {
 export interface CodeWikiAutomaticUpdate {
   can_configure: boolean
   configured: boolean
+  cadence: CodeWikiUpdateCadence
   enabled: boolean
   interval_days: number
   weekday: number
@@ -142,6 +143,7 @@ export interface CodeWikiAutomaticUpdate {
 
 export interface CodeWikiAutomaticUpdateRequest {
   enabled: boolean
+  cadence: CodeWikiUpdateCadence
   interval_days: number
   weekday: number
   hour: number
@@ -149,6 +151,8 @@ export interface CodeWikiAutomaticUpdateRequest {
   timezone: string
   execution_principal_user_id?: number | null
 }
+
+export type CodeWikiUpdateCadence = 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
 
 /**
  * One node of the reader's navigation.

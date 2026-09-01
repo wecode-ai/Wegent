@@ -435,10 +435,10 @@ export interface KnowledgeBaseCreate {
    * sees it is the creator's choice rather than the team bot's default.
    */
   execution_model_ref?: SummaryModelRef | null
-  /** Initial Code Wiki behavior: immediate generation or wait for a periodic slot. */
-  generate_immediately?: boolean
-  automatic_update?: {
+  /** Optional future updates; the first generation always starts after creation. */
+  scheduled_update?: {
     enabled: boolean
+    cadence: 'daily' | 'weekly' | 'biweekly' | 'four_weeks' | 'custom'
     interval_days: number
     weekday: number
     hour: number
