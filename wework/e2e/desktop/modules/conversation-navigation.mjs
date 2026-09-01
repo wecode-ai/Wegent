@@ -846,6 +846,7 @@ async function verifyTurnNavigationTracksVisibleTurnMessages(
 }
 
 async function verifyEnvironmentPanelScrollStability(control) {
+  const scrollFrameSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-scroll-frame"]`
   const scrollerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
   const environmentPanelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-container"]`
   await control.command(
@@ -862,6 +863,11 @@ async function verifyEnvironmentPanelScrollStability(control) {
     scrollerSelector,
     'The conversation before verifying the fixed environment panel'
   )
+  const scrollFrameBeforeScroll = await getSingleElementMetrics(
+    control,
+    scrollFrameSelector,
+    'The full-width workbench scroll frame'
+  )
   assert.ok(
     scrollerBeforeScroll.scrollHeight > scrollerBeforeScroll.clientHeight,
     `The environment-panel fixture did not overflow: ${JSON.stringify(scrollerBeforeScroll)}`
@@ -870,6 +876,21 @@ async function verifyEnvironmentPanelScrollStability(control) {
     control,
     environmentPanelSelector,
     'The environment panel before scrolling the conversation'
+  )
+  assert.ok(
+    Math.abs(scrollerBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1 &&
+      Math.abs(scrollerBeforeScroll.width - scrollFrameBeforeScroll.width) <= 1,
+    `The conversation scrollbar was not aligned to the workbench right edge: ${JSON.stringify({
+      scrollFrame: scrollFrameBeforeScroll,
+      scroller: scrollerBeforeScroll,
+    })}`
+  )
+  assert.ok(
+    Math.abs(environmentPanelBeforeScroll.right - scrollFrameBeforeScroll.right) <= 1,
+    `The fixed environment panel was not aligned to the workbench right edge: ${JSON.stringify({
+      environmentPanel: environmentPanelBeforeScroll,
+      scrollFrame: scrollFrameBeforeScroll,
+    })}`
   )
   const assertEnvironmentPanelDidNotMove = (metrics, description) => {
     for (const property of ['top', 'right', 'bottom', 'left', 'width', 'height']) {
@@ -919,6 +940,13 @@ async function verifyEnvironmentPanelScrollStability(control) {
     environmentPanelSelector,
     'The environment panel after scrolling downward'
   )
+  assert.ok(
+    Number.isFinite(upwardScrollTop) && Number.isFinite(downwardScrollTop),
+    `The conversation scroller did not report numeric offsets: ${JSON.stringify({
+      downwardScrollTop,
+      upwardScrollTop,
+    })}`
+  )
   assert.notEqual(
     downwardScrollTop,
     upwardScrollTop,
@@ -935,6 +963,8 @@ async function verifyEnvironmentPanelScrollStability(control) {
       afterUpwardScroll: environmentPanelAfterUpwardScroll,
       beforeScroll: environmentPanelBeforeScroll,
       downwardScrollTop,
+      scrollFrame: scrollFrameBeforeScroll,
+      scroller: scrollerBeforeScroll,
       upwardScrollTop,
     })
   )

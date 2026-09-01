@@ -9014,13 +9014,18 @@ describe('DesktopWorkbenchLayout', () => {
     expect(environmentInfoPopover).toHaveAttribute('data-environment-info-popover')
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(true)
     const conversationScroller = screen.getByTestId('desktop-workbench-content')
-    expect(conversationScroller.firstElementChild).toHaveClass('grid', 'min-h-full', 'grid-cols-1')
+    expect(conversationScroller.firstElementChild).toHaveClass(
+      'grid',
+      'min-h-full',
+      'grid-cols-[minmax(0,1fr)_auto]'
+    )
+    expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-[320px]')
     expect(conversationScroller).not.toContainElement(environmentInfoPanel)
     expect(conversationScroller.parentElement).toContainElement(environmentInfoPanel)
-    expect(environmentInfoPanel).toHaveClass(
-      'overflow-hidden',
-      'has-[[data-environment-info-popover]]:overflow-visible'
+    expect(conversationScroller.parentElement).toBe(
+      screen.getByTestId('desktop-workbench-scroll-frame')
     )
+    expect(environmentInfoPanel).toHaveClass('absolute', 'right-0', 'w-[320px]', 'overflow-visible')
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[300px]',
       'bg-background',
@@ -9091,7 +9096,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
-    expect(environmentInfoPanel).toHaveClass('overflow-hidden')
+    expect(environmentInfoPanel).toHaveClass('w-0', 'overflow-hidden')
+    expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-0')
   })
 
   test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {

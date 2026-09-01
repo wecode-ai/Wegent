@@ -1651,6 +1651,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   const environmentInfoOpen = environmentInfoDocked
     ? environmentInfoPinned
     : environmentInfoOverlayOpen
+  const environmentInfoPanelExpanded = environmentInfoDocked && environmentInfoOpen
   const setEnvironmentInfoOpen = useCallback(
     (open: boolean) => {
       if (environmentInfoDocked) {
@@ -4397,6 +4398,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           style={{ maxWidth: chatColumnMaxWidth, width: chatColumnWidth }}
         />
         <div
+          data-testid="desktop-workbench-scroll-frame"
           className={cn(
             'relative flex h-full min-w-0 flex-none',
             rightPanelTransitionDisabled ? 'transition-none' : RIGHT_PANEL_WIDTH_TRANSITION_CLASS
@@ -4416,7 +4418,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               showPageTopBar && 'pt-11'
             )}
           >
-            <div className="grid min-h-full w-full shrink-0 grid-cols-1">
+            <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
               {isBootstrapping ? (
                 <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
               ) : activeLocalHarnessSession ? (
@@ -4959,12 +4961,24 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                   }
                 />
               )}
+              <div
+                aria-hidden="true"
+                data-testid="environment-info-panel-spacer"
+                className={cn(
+                  'w-0 shrink-0',
+                  environmentInfoPanelExpanded && 'w-[320px]',
+                  environmentInfoTransitionEnabled
+                    ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
+                    : 'transition-none'
+                )}
+              />
             </div>
           </div>
           <aside
             data-testid="environment-info-panel-container"
             className={cn(
-              'relative z-popover flex h-full w-0 shrink-0 flex-col overflow-hidden has-[[data-environment-info-popover]]:w-[320px] has-[[data-environment-info-popover]]:overflow-visible',
+              'absolute inset-y-0 right-0 z-popover flex w-0 flex-col overflow-hidden',
+              environmentInfoPanelExpanded && 'w-[320px] overflow-visible',
               showPageTopBar && 'pt-11',
               environmentInfoTransitionEnabled
                 ? 'transition-[width] duration-[300ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none'
