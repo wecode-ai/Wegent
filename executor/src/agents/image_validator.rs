@@ -6,7 +6,7 @@ use std::{future::Future, pin::Pin, process::Stdio, time::Duration};
 
 use serde::Serialize;
 use serde_json::Value;
-use tokio::{process::Command, time};
+use tokio::time;
 
 use crate::{
     protocol::ExecutionRequest,
@@ -81,8 +81,7 @@ async fn validate_image(request: ExecutionRequest) -> Result<ValidationResult, S
 }
 
 async fn run_check(check: ValidationCheck) -> CheckResult {
-    let mut command = Command::new("sh");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("sh");
     command
         .args(["-c", check.command])
         .stdout(Stdio::piped())

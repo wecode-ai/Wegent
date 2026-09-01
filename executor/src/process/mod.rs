@@ -47,8 +47,12 @@ use crate::{
     },
 };
 
+mod spawn;
+
 #[cfg(windows)]
 mod windows_batch;
+
+pub use spawn::{command, command_sync, shell};
 
 const DEFAULT_STREAM_TEXT_CHUNK_CHARS: usize = 256;
 const DEFAULT_STREAM_REASONING_CHUNK_CHARS: usize = 4_096;
@@ -855,16 +859,12 @@ impl Drop for ProcessTreeGuard {
 
 #[cfg(windows)]
 fn kill_windows_process_tree(pid: u32) {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let pid = pid.to_string();
-    let status = std::process::Command::new("taskkill")
+    let status = crate::process::command_sync("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .creation_flags(CREATE_NO_WINDOW)
         .status();
     if let Err(error) = status {
         log_executor_event(
@@ -876,7 +876,6 @@ fn kill_windows_process_tree(pid: u32) {
 
 async fn run_command_output(spec: CommandSpec, timeout_seconds: u64) -> CommandOutcome {
     let mut command = command_from_spec(&spec);
-    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -928,7 +927,6 @@ where
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    hide_windows_console(&mut command);
     if let Some(cwd) = spec.cwd.as_ref() {
         if let Err(error) = fs::create_dir_all(cwd) {
             return CommandOutcome::Failure {
@@ -987,7 +985,7 @@ fn command_from_spec(spec: &CommandSpec) -> Command {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
     let (program, prefix_args) = spawn_program_parts(&spec.program);
-    let mut command = Command::new(program);
+    let mut command = crate::process::command(program);
     command
         .args(prefix_args)
         .args(&spec.args)

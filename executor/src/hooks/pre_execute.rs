@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeMap, path::PathBuf, sync::OnceLock, time::Duration};
 
-use tokio::{process::Command, time::timeout};
+use tokio::time::timeout;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 30;
 
@@ -55,8 +55,7 @@ impl PreExecuteHook {
             return HookExit::success();
         };
 
-        let mut command = Command::new("bash");
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command("bash");
         command.arg(script).arg(&context.task_dir);
         command.env("WEGENT_TASK_DIR", &context.task_dir);
         if let Some(task_id) = context.task_id {

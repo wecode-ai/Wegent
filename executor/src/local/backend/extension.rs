@@ -11,7 +11,7 @@ use std::{
 };
 
 use serde_json::{json, Value};
-use tokio::{process::Command, time::timeout};
+use tokio::time::timeout;
 
 const EXTENSION_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -112,8 +112,7 @@ async fn run_script(
     payload: &Value,
 ) -> Result<String, String> {
     let payload_json = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_owned());
-    let mut command = Command::new("bash");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("bash");
     command
         .arg(script)
         .arg(action)

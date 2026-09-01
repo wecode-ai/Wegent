@@ -583,8 +583,7 @@ fn line_stats(
 fn numstat_by_path(workspace: &Path, patch: &[u8]) -> BTreeMap<String, (i64, i64, bool)> {
     let patch_path = unique_temp_dir("wegent-turn-numstat").join("changes.patch");
     let _ = fs::write(&patch_path, patch);
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command_sync("git");
     clear_local_git_env(&mut command);
     let result = command
         .arg("apply")
@@ -826,8 +825,7 @@ fn git_output_vec(
     env: Option<&BTreeMap<String, String>>,
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command_sync("git");
     clear_local_git_env(&mut command);
     command.arg("-C").arg(workspace).args(args);
     if let Some(env) = env {

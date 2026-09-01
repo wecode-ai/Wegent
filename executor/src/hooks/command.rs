@@ -39,7 +39,7 @@ pub async fn execute_command_hook<T: Serialize>(
     let timeout_seconds = config.timeout.clamp(1, MAX_TIMEOUT_SECONDS);
     let mut command = match resolved {
         ResolvedHookCommand::Executable { program } => executable_command(program),
-        ResolvedHookCommand::Shell(script) => shell_command(&script),
+        ResolvedHookCommand::Shell(script) => crate::process::shell(&script),
     };
     command
         .current_dir(cwd)
@@ -178,32 +178,9 @@ fn shell_quote(path: &Path) -> String {
 fn executable_command(program: PathBuf) -> Command {
     let program = program.to_string_lossy().into_owned();
     let (program, prefix_args) = crate::process::spawn_program_parts(&program);
-    let mut command = Command::new(program);
+    let mut command = crate::process::command(program);
     command.args(prefix_args);
-    crate::process::hide_windows_console(&mut command);
     command
-}
-
-fn shell_command(script: &str) -> Command {
-    #[cfg(windows)]
-    {
-        let mut command = Command::new("cmd");
-        command.args(["/S", "/C"]);
-        // cmd /S strips the first and last quote of the command line, so
-        // wrapping the script in quotes preserves inner quoting such as
-        // resolved plugin binary paths that contain spaces. Passing the script
-        // as a raw argument also prevents Rust from escaping those inner
-        // quotes into backslash forms that cmd does not understand.
-        command.raw_arg(format!("\"{}\"", script));
-        crate::process::hide_windows_console(&mut command);
-        command
-    }
-    #[cfg(not(windows))]
-    {
-        let mut command = Command::new("sh");
-        command.args(["-c", script]);
-        command
-    }
 }
 
 fn filtered_environment() -> BTreeMap<String, String> {

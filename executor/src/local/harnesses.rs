@@ -12,7 +12,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use tokio::{process::Command, time::timeout};
+use tokio::time::timeout;
 
 use crate::{path_compat::strip_windows_verbatim_prefix, process_environment};
 
@@ -421,8 +421,7 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 async fn read_command_version(path: &Path, args: &[&str]) -> Option<String> {
-    let mut command = Command::new(path);
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command(path);
     command
         .args(args)
         .kill_on_drop(true)

@@ -16,7 +16,7 @@ use std::{
 };
 
 #[cfg(target_os = "macos")]
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -1855,7 +1855,7 @@ fn normalize_path_or_raw(value: &str) -> String {
 
 #[cfg(target_os = "macos")]
 fn codex_app_is_running() -> bool {
-    Command::new("ps")
+    crate::process::command_sync("ps")
         .args(codex_app_running_probe_args())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

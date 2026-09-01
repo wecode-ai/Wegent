@@ -17,7 +17,7 @@ use std::{
 };
 
 use serde_json::json;
-use tokio::{io::AsyncWriteExt, process::Command, time};
+use tokio::{io::AsyncWriteExt, time};
 
 use crate::{
     agents::{resolve_codex_binary, resolve_codex_binary_path},
@@ -105,8 +105,7 @@ async fn run_git(
     env: &HashMap<String, String>,
     max_bytes: usize,
 ) -> Result<(String, bool), String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("git");
     command.args(args);
     command.env_clear();
     command.envs(env);
@@ -144,8 +143,7 @@ async fn run_codex(
     cwd: Option<&str>,
     env: &HashMap<String, String>,
 ) -> Result<String, String> {
-    let mut command = Command::new(binary);
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command(binary);
     command.args(codex_args(output_path));
     command.env_clear();
     command.envs(env);

@@ -11,7 +11,7 @@ use cbc::{
     Decryptor,
 };
 use serde_json::Value;
-use tokio::{io::AsyncWriteExt, process::Command};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     logging::{log_executor_event, task_fields},
@@ -363,8 +363,7 @@ async fn authenticate_github(git_domain: &str, credentials: &GitCredentials) -> 
             ("git_domain", git_domain.to_owned()),
         ],
     );
-    let mut command = Command::new("gh");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("gh");
     command
         .arg("auth")
         .arg("login")
@@ -485,7 +484,7 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
             ("git_domain", git_domain.to_owned()),
         ],
     );
-    let mut command = Command::new("glab");
+    let mut command = crate::process::command("glab");
     command
         .arg("auth")
         .arg("login")
@@ -495,7 +494,6 @@ async fn authenticate_gitlab(git_domain: &str, git_token: &str) -> bool {
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    crate::process::hide_windows_console(&mut command);
     let Ok(mut child) = command.spawn() else {
         return false;
     };
@@ -538,8 +536,7 @@ pub(crate) async fn configure_repo_proxy(git_domain: &str) {
         return;
     };
     for (key, value) in proxy_values {
-        let mut command = Command::new("git");
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command("git");
         let _ = command
             .arg("config")
             .arg("--global")

@@ -5,7 +5,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -152,8 +152,7 @@ impl ProcessManager {
         let Some(program) = plan.command.first() else {
             return false;
         };
-        let mut command = Command::new(program);
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command(program);
         command.args(plan.command.iter().skip(1));
         command.stdin(Stdio::null());
 

@@ -244,29 +244,13 @@ pub fn build_env(extra_env: &HashMap<String, String>) -> HashMap<String, String>
 fn process_command(request: &CommandRequest) -> Command {
     if !request.argv.is_empty() {
         let (program, prefix_args) = crate::process::spawn_program_parts(&request.argv[0]);
-        let mut command = Command::new(program);
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command(program);
         command.args(prefix_args);
         command.args(&request.argv[1..]);
         return command;
     }
 
-    shell_command(&request.command)
-}
-
-#[cfg(windows)]
-fn shell_command(command_line: &str) -> Command {
-    let mut command = Command::new("cmd");
-    command.args(["/C", command_line]);
-    crate::process::hide_windows_console(&mut command);
-    command
-}
-
-#[cfg(not(windows))]
-fn shell_command(command_line: &str) -> Command {
-    let mut command = Command::new("sh");
-    command.args(["-c", command_line]);
-    command
+    crate::process::shell(&request.command)
 }
 
 fn decode_and_truncate(data: &[u8], max_bytes: usize) -> (String, bool) {

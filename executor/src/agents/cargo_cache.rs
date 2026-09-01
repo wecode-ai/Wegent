@@ -5,8 +5,10 @@
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
 };
+
+#[cfg(test)]
+use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
@@ -90,8 +92,7 @@ fn shared_cargo_target_dir_for_workspace(workspace: &Path, cache_root: &Path) ->
 }
 
 fn git_common_dir(workspace: &Path) -> Option<PathBuf> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command_sync("git");
     let output = command
         .arg("-c")
         .arg("core.bare=false")

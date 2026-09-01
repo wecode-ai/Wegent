@@ -8,13 +8,15 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex, Weak,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[cfg(test)]
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1144,13 +1146,12 @@ fn add_git_worktree(source: &Path, target: &Path, git_ref: Option<&str>) -> Resu
 fn remove_git_worktree(path: &Path) -> Result<(), String> {
     let value = path.to_str().ok_or("Invalid worktree path")?;
     let common_dir = git_common_dir(path)?;
-    let mut command = Command::new("git");
+    let mut command = crate::process::command_sync("git");
     command
         .arg("--git-dir")
         .arg(common_dir)
         .args(["worktree", "remove", "--force", value]);
     command.env_remove("GIT_DIR").env_remove("GIT_WORK_TREE");
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
@@ -1184,32 +1185,29 @@ fn restore_git_worktree(git_common_dir: &Path, path: &Path, reference: &str) -> 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let mut command = Command::new("git");
+    let mut command = crate::process::command_sync("git");
     command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["worktree", "add", "--detach"])
         .arg(path)
         .arg(reference);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn delete_snapshot_ref(git_common_dir: &Path, reference: &str) -> Result<(), String> {
-    let mut command = Command::new("git");
+    let mut command = crate::process::command_sync("git");
     command
         .arg("--git-dir")
         .arg(git_common_dir)
         .args(["update-ref", "-d", reference]);
-    crate::process::hide_windows_console(&mut command);
     let output = command.output().map_err(|error| error.to_string())?;
     command_result(output).map(|_| ())
 }
 
 fn git_output(path: &Path, args: &[&str], envs: Option<&[(&str, &str)]>) -> Result<String, String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command_sync("git");
     command
         .arg("-c")
         .arg("core.bare=false")
@@ -1524,8 +1522,7 @@ fn git_ref_exists(repo_root: &Path, git_ref: &str) -> Result<bool, String> {
         return Ok(false);
     }
     let commit = format!("{git_ref}^{{commit}}");
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command_sync("git");
     command
         .arg("-c")
         .arg("core.bare=false")

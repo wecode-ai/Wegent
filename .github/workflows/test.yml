@@ -133,6 +133,9 @@ jobs:
         working-directory: ./executor
         run: cargo fmt --check
 
+      - name: Check executor command spawns use the hidden process API
+        run: scripts/check-executor-command-spawn.sh
+
       - name: Run executor Rust tests
         working-directory: ./executor
         run: cargo test --all-features

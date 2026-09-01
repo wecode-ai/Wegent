@@ -2636,7 +2636,7 @@ fn spawn_codex_app_server(
     let resolved_binary = resolve_codex_binary(binary);
     let codex_home = wework_codex_home();
     prepare_wework_codex_home(&codex_home)?;
-    let mut command = Command::new(&resolved_binary);
+    let mut command = crate::process::command(&resolved_binary);
     for key in EXECUTOR_INTERNAL_ENV_KEYS {
         command.env_remove(key);
     }

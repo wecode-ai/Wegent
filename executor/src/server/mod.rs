@@ -32,7 +32,7 @@ use axum::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::{process::Command, sync::Semaphore, time::timeout};
+use tokio::{sync::Semaphore, time::timeout};
 
 use crate::{
     agents::runtime_capabilities,
@@ -664,8 +664,7 @@ async fn zip_directory(path: &Path) -> Result<Vec<u8>, HttpError> {
         detail: "Directory name not found".to_owned(),
     })?;
 
-    let mut command = Command::new("zip");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("zip");
     command
         .arg("-r")
         .arg("-q")
@@ -1456,8 +1455,7 @@ async fn run_envd_process(request: &ProcessStartRequest) -> ProcessOutput {
         .collect::<Vec<_>>();
     let process_environment = process_environment::process_env(&requested_environment);
     let (program, prefix_args) = crate::process::spawn_program_parts(&request.process.cmd);
-    let mut command = Command::new(program);
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command(program);
     command
         .args(prefix_args)
         .args(&request.process.args)

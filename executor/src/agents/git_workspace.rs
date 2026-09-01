@@ -15,7 +15,7 @@ use std::os::unix::process::CommandExt;
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncReadExt},
-    process::{Child, Command},
+    process::Child,
     task::JoinHandle,
     time::timeout,
 };
@@ -219,8 +219,7 @@ async fn clone_repo(
         ));
     }
 
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("git");
     command.arg("clone");
     let branch = branch_name(request);
     if let Some(branch) = branch.as_deref() {
@@ -310,8 +309,7 @@ async fn clone_repo(
 }
 
 async fn validate_existing_git_repository(project_path: &Path) -> Result<(), String> {
-    let mut command = Command::new("git");
-    crate::process::hide_windows_console(&mut command);
+    let mut command = crate::process::command("git");
     command
         .arg("-C")
         .arg(project_path)
@@ -538,8 +536,7 @@ async fn setup_git_config(request: &ExecutionRequest, project_path: &Path) {
         return;
     };
     for (key, value) in [("user.name", git_login), ("user.email", git_email)] {
-        let mut command = Command::new("git");
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command("git");
         let _ = command
             .arg("-C")
             .arg(project_path)

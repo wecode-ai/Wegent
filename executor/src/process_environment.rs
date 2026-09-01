@@ -7,11 +7,14 @@ use std::{collections::HashMap, env, path::PathBuf};
 #[cfg(unix)]
 use std::{
     io::{Read, Seek, SeekFrom},
-    process::{Command, ExitStatus, Stdio},
+    process::{ExitStatus, Stdio},
     sync::OnceLock,
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(test)]
+use std::process::Command;
 
 #[cfg(unix)]
 use regex::Regex;
@@ -217,7 +220,7 @@ fn capture_shell_environment(
         "printf '%s' '{0}'; command env; printf '%s' '{0}'; exit",
         SHELL_ENV_DELIMITER
     );
-    let mut child = Command::new(shell)
+    let mut child = crate::process::command_sync(shell)
         .args(["-ilc", &script])
         .env("CODEX_SHELL", "1")
         .env(SHELL_ENV_MARKER, "1")

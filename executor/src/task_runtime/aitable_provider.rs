@@ -641,8 +641,7 @@ impl AITableProvider {
     fn command(&self, args: &[&str]) -> Result<Command, TaskRuntimeError> {
         std::fs::create_dir_all(&self.dws_config_dir)
             .map_err(|error| TaskRuntimeError::ProviderRequest(error.to_string()))?;
-        let mut command = Command::new(&self.dws_binary);
-        crate::process::hide_windows_console(&mut command);
+        let mut command = crate::process::command(&self.dws_binary);
         command
             .args(args)
             .args(["--format", "json"])
