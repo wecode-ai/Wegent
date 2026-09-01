@@ -40,6 +40,7 @@ core_segments=(
   renderer-storage
   tray-lifecycle
   conversation-state
+  environment-panel-scroll
   temporary-chat
   workspace-attachments
   rendering-extensions
@@ -128,7 +129,7 @@ core_shards=(
   task-status-sync,task-board-association,core-task-flow,change-request-status,context-compaction
   window-lifecycle,runtime-terminal-convergence,browser-toolbar-actions,browser-annotation-anchors
   project-automation
-  resilience
+  resilience,environment-panel-scroll
   workspace-attachments,automation-lifecycle
   project-assignment-notification,split-workbench,priority-filter
   rendering-extensions
@@ -502,17 +503,25 @@ classify_wework_path() {
       return
       ;;
 
-    # Right-workspace temporary chats have an independently bootstrapped
-    # ephemeral-thread scenario.
+    # The main workbench owns the independent message scroller and fixed
+    # environment panel, plus temporary-chat and project-context integration.
     wework/src/components/layout/DesktopWorkbenchMain.tsx | \
-      wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
-      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
-      wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
-      select_target "core:temporary-chat"
+      wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
+      select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
+        select_target "core:temporary-chat"
         select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
       fi
+      return
+      ;;
+
+    # Right-workspace temporary chats have an independently bootstrapped
+    # ephemeral-thread scenario.
+    wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx | \
+      wework/src/components/layout/workspace-panels/TemporaryChatPanel.tsx | \
+      wework/e2e/desktop/scenarios/temporary-chat.scenario.mjs)
+      select_target "core:temporary-chat"
       return
       ;;
 
