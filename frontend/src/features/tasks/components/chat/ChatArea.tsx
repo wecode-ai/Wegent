@@ -414,8 +414,11 @@ function ChatAreaContent({
   const imageCapabilities = imageConfig?.capabilities
   const imageReferenceFormats = imageCapabilities?.image_formats
   const videoGenerationModes = useMemo(
-    () => videoCapabilities?.generation_modes ?? [],
-    [videoCapabilities?.generation_modes]
+    () =>
+      teamHidesVideoParam(chatState.selectedTeam, 'generation_mode')
+        ? []
+        : (videoCapabilities?.generation_modes ?? []),
+    [chatState.selectedTeam, videoCapabilities?.generation_modes]
   )
   const [selectedVideoGenerationMode, setSelectedVideoGenerationMode] = useState<
     string | undefined
