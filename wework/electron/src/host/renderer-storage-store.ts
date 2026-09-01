@@ -104,6 +104,7 @@ export class RendererStorageStore {
       if (
         record.version !== 1 ||
         !Array.isArray(record.origins) ||
+        record.origins.length === 0 ||
         record.origins.some(origin => typeof origin !== 'string')
       ) {
         return null

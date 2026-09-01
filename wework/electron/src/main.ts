@@ -419,9 +419,13 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
   })
   try {
     await rendererStorage?.prepareOrigin(new URL(dshUrl).origin, {
-      clearAll: () => contents.session.clearStorageData({ storages: ['localstorage'] }),
+      clearAll: () => contents.session.clearData({ dataTypes: ['localStorage'] }),
       clearOrigin: origin =>
-        contents.session.clearStorageData({ origin, storages: ['localstorage'] }),
+        contents.session.clearData({
+          dataTypes: ['localStorage'],
+          origins: [origin],
+          originMatchingMode: 'origin-in-all-contexts',
+        }),
     })
     await contents.loadURL(dshUrl, {
       extraHeaders: 'X-Wework-Window-Label: main',

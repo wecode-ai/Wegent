@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -58,6 +58,27 @@ describe('RendererStorageStore', () => {
     cleanup.clearOrigin.mockClear()
     await store.prepareOrigin('http://127.0.0.1:4102', cleanup)
     expect(cleanup.clearOrigin).not.toHaveBeenCalled()
+  })
+
+  it('treats an empty origin list as legacy browser storage', async () => {
+    const { root, store } = await createStore()
+    const cleanup = {
+      clearAll: vi.fn(async () => undefined),
+      clearOrigin: vi.fn(async () => undefined),
+    }
+    await store.initialize({ appearance: 'dark' })
+    await writeFile(
+      join(root, 'renderer-local-storage-origins.json'),
+      '{"version":1,"origins":[]}\n'
+    )
+
+    await store.prepareOrigin('http://127.0.0.1:4101', cleanup)
+
+    expect(cleanup.clearAll).toHaveBeenCalledOnce()
+    expect(cleanup.clearOrigin).not.toHaveBeenCalled()
+    expect(await readFile(join(root, 'renderer-local-storage-origins.json'), 'utf8')).toBe(
+      '{"version":1,"origins":["http://127.0.0.1:4101"]}\n'
+    )
   })
 
   it('seeds the durable store once and restores it on later origins', async () => {
