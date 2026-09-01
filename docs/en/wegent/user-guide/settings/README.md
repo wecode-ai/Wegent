@@ -19,7 +19,7 @@ The Settings module provides configuration functionality for the Wegent system, 
 | [Keyboard Shortcuts](./keyboard-shortcuts.md)           | Manage local shortcuts for the Wework desktop app              |
 | [Desktop App Preferences](./desktop-app-preferences.md) | Configure Wework desktop launch, background, and tray behavior |
 | [Browser settings](./browser-settings.md)               | Configure built-in browser links, privacy, and downloads       |
-| [Workbench tabs](./workspace-tabs.md)                    | Configure fixed, startup, and temporary regular tabs            |
+| [Workbench tabs](./workspace-tabs.md)                   | Configure fixed, startup, and temporary regular tabs           |
 
 ---
 
@@ -68,6 +68,18 @@ Skills are Claude Code capability extension packages:
 - **Upload Skills**: Package as ZIP file and upload
 - **Manage Skills**: View, download, update, delete
 - **Use Skills**: Reference Skills in Bots
+
+### OAuth Apps Management
+
+Application developers can create and manage external OAuth clients under **Settings → Developer Credentials → OAuth Apps** so external systems can verify the current Wegent user's identity. The page returns the `client_id` after creation; a confidential client's `client_secret` is shown only once.
+
+Each OAuth App requires an application name, a client type, and one or more exact redirect URIs. The provider centrally manages token lifetimes, TokenIssuer, and SigningKey; developers and administrators do not configure them per application.
+
+Developers can view and maintain only the OAuth Apps they created. Administrators use **Administration → API Keys → OAuth Apps** only for global review, disabling, and deletion.
+
+External access tokens may read only OAuth userinfo, which returns `id`, `user_name`, and `email`; they cannot call Wegent business APIs and do not grant roles, resource permissions, Git credentials, or other internal privileges.
+
+Changing the client type, rotating the secret, disabling the app, or deleting the app invalidates existing refresh tokens. See the [External OAuth 2.0 Integration Guide](../../developer-guide/external-oauth-integration.md) for the complete flow.
 
 ### Archived Chat Management
 
