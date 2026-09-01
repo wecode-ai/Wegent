@@ -60,66 +60,66 @@ export function GenerationProgress({
   return (
     <div className="px-4 pt-4" data-testid="code-wiki-generation-progress">
       <section className="mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-        <button
-          type="button"
-          className="flex min-h-11 w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
-          onClick={() => hasSteps && setExpanded(value => !value)}
-          disabled={!hasSteps}
-          aria-expanded={hasSteps ? expanded : undefined}
-          data-testid="code-wiki-progress-toggle"
-        >
-          <Spinner size="sm" className="shrink-0 text-primary" />
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-text-primary">
-              {t('codeWiki.progress.title')}
-            </p>
-            <p
-              className="truncate text-xs text-text-tertiary"
-              data-testid="code-wiki-progress-stage"
-            >
-              {t(`codeWiki.progress.stage.${progress.stage}`)}
-            </p>
-          </div>
-          {hasSteps && (
-            <>
-              <span
-                className="shrink-0 text-xs text-text-tertiary"
-                data-testid="code-wiki-progress-step"
+        <div className="flex items-center">
+          <button
+            type="button"
+            className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-surface-hover disabled:cursor-default disabled:hover:bg-transparent"
+            onClick={() => hasSteps && setExpanded(value => !value)}
+            disabled={!hasSteps}
+            aria-expanded={hasSteps ? expanded : undefined}
+            data-testid="code-wiki-progress-toggle"
+          >
+            <Spinner size="sm" className="shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-text-primary">
+                {t('codeWiki.progress.title')}
+              </p>
+              <p
+                className="truncate text-xs text-text-tertiary"
+                data-testid="code-wiki-progress-stage"
               >
-                {t('codeWiki.progress.step', {
-                  current: progress.current_step,
-                  total: progress.total_steps,
-                })}
-              </span>
-              {expanded ? (
-                <ChevronUp className="h-4 w-4 shrink-0 text-text-tertiary" />
-              ) : (
-                <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" />
-              )}
-            </>
-          )}
-        </button>
+                {t(`codeWiki.progress.stage.${progress.stage}`)}
+              </p>
+            </div>
+            {hasSteps && (
+              <>
+                <span
+                  className="shrink-0 text-xs text-text-tertiary"
+                  data-testid="code-wiki-progress-step"
+                >
+                  {t('codeWiki.progress.step', {
+                    current: progress.current_step,
+                    total: progress.total_steps,
+                  })}
+                </span>
+                {expanded ? (
+                  <ChevronUp className="h-4 w-4 shrink-0 text-text-tertiary" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-text-tertiary" />
+                )}
+              </>
+            )}
+          </button>
 
-        {onCancel && (
-          <div className="border-t border-border px-4 py-2.5 sm:px-5">
+          {onCancel && (
             <Button
               type="button"
               variant="destructive"
               size="sm"
               onClick={onCancel}
               disabled={cancelling}
-              className="h-11 sm:h-9"
+              className="mr-3 h-11 shrink-0 sm:h-9"
               data-testid="code-wiki-progress-cancel"
             >
               {cancelling ? <Spinner size="sm" /> : null}
               {t(cancelling ? 'codeWiki.progress.cancelling' : 'codeWiki.progress.cancel')}
             </Button>
-          </div>
-        )}
+          )}
+        </div>
 
         {hasSteps && expanded && (
           <ol
-            className={`${onCancel ? '' : 'border-t border-border '}px-4 py-4 sm:px-5`}
+            className="border-t border-border px-4 py-4 sm:px-5"
             data-testid="code-wiki-progress-steps"
           >
             {steps.map((step, index) => {
