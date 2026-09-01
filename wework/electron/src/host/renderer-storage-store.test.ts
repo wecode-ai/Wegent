@@ -128,4 +128,30 @@ describe('RendererStorageStore', () => {
       '{"version":1,"entries":{"__proto__":"safe","constructor":"value"}}\n'
     )
   })
+
+  it('removes only matching recovery prefixes', async () => {
+    const { root, store } = await createStore()
+    await store.initialize({
+      auth_token: 'preserved-token',
+      appearance: 'dark',
+      'wework:workbench-split-groups:v3:fixed-task': 'stale-layout',
+      'wework.workspaceTabs.v3:workspace-1': 'stale-tabs',
+    })
+
+    await store.removeByPrefixes(['wework:workbench-split-groups:', 'wework.workspaceTabs.v3:'])
+
+    await expect(new RendererStorageStore(root).initialize({})).resolves.toEqual({
+      auth_token: 'preserved-token',
+      appearance: 'dark',
+    })
+  })
+
+  it('clears all renderer application state', async () => {
+    const { root, store } = await createStore()
+    await store.initialize({ auth_token: 'token', appearance: 'dark' })
+
+    await store.clear()
+
+    await expect(new RendererStorageStore(root).initialize({})).resolves.toEqual({})
+  })
 })

@@ -2546,20 +2546,28 @@ class DesktopE2EServer {
         JSON.stringify(body).includes(CLOUD_FOLLOW_UP_PROMPT),
         'The real cloud Codex request did not contain the follow-up prompt'
       )
+      const stream = streamingTextEvents(responseId, CLOUD_FOLLOW_UP_COMPLETION_TEXT)
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse([responseCreated(responseId)]))
-      await this.cloudFollowUpRelease
-      response.end(
+      response.write(
         createSse([
-          assistantMessage(CLOUD_FOLLOW_UP_COMPLETION_TEXT),
-          responseCompleted(responseId),
+          ...stream.start,
+          {
+            type: 'response.output_text.delta',
+            item_id: stream.itemId,
+            output_index: 0,
+            content_index: 0,
+            delta: CLOUD_FOLLOW_UP_COMPLETION_TEXT,
+            offset: 0,
+          },
         ])
       )
+      await this.cloudFollowUpRelease
+      response.end(createSse(stream.finish))
       return
     }
 

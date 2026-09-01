@@ -191,6 +191,77 @@ async def test_runtime_rpc_service_applies_account_proxy_to_remote_model_configs
 
 
 @pytest.mark.asyncio
+async def test_runtime_rpc_service_bypasses_proxy_for_cloud_model_gateway(
+    monkeypatch,
+):
+    from app.services.device import runtime_rpc_service as module
+
+    monkeypatch.setattr(
+        module.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=_runtime_route()),
+    )
+    monkeypatch.setattr(
+        module,
+        "_load_remote_runtime_proxy_url",
+        lambda _user_id: "http://proxy.internal:7890",
+    )
+    sio_call = AsyncMock(return_value={"accepted": True})
+    monkeypatch.setattr(module, "get_sio", lambda: _socketio_with_call(sio_call))
+
+    await module.RuntimeRpcService().call(
+        user_id=7,
+        device_id="device-1",
+        method="runtime.tasks.create",
+        payload={
+            "executionRequest": {
+                "model_config": {
+                    "wework_model_kind": "cloud",
+                    "base_url": (
+                        "http://10.218.32.65:8000/api/runtime-work/"
+                        "llm-responses-proxy"
+                    ),
+                    "api_key": "desktop-token",
+                    "proxy": {"url": "http://stale-proxy.internal:7890"},
+                    "vision_sidecar": {
+                        "request_url": (
+                            "http://10.218.32.65:8000/api/runtime-work/"
+                            "llm-responses-proxy/responses"
+                        ),
+                    },
+                }
+            },
+            "friendlyTitleExecutionRequest": {
+                "model_config": {
+                    "wework_model_kind": "codex-official",
+                }
+            },
+        },
+    )
+
+    emitted = sio_call.await_args.args[1]["payload"]
+    cloud_model = emitted["executionRequest"]["model_config"]
+    assert cloud_model["base_url"] == (
+        "http://10.218.32.65:8000/api/runtime-work/llm-responses-proxy"
+    )
+    assert cloud_model["vision_sidecar"]["request_url"] == (
+        "http://10.218.32.65:8000/api/runtime-work/llm-responses-proxy/responses"
+    )
+    assert cloud_model["api_key"] == "desktop-token"
+    assert "proxy" not in cloud_model
+    assert cloud_model["runtime_config"]["codex"] == {
+        "use_proxy": False,
+        "proxy_configured": False,
+    }
+    title_model = emitted["friendlyTitleExecutionRequest"]["model_config"]
+    assert title_model["proxy"] == {"url": "http://proxy.internal:7890"}
+    assert title_model["runtime_config"]["codex"] == {
+        "use_proxy": True,
+        "proxy_configured": True,
+    }
+
+
+@pytest.mark.asyncio
 async def test_runtime_rpc_service_removes_client_proxy_without_account_proxy(
     monkeypatch,
 ):

@@ -94,6 +94,7 @@ export class StartupSplash {
   private state: StartupSplashSnapshot['state'] = 'idle'
   private showPromise: Promise<StartupSplashSnapshot> | null = null
   private closePromise: Promise<StartupSplashSnapshot> | null = null
+  private showErrorPromise: Promise<void> | null = null
   private controlledClose = false
 
   constructor(private readonly options: StartupSplashOptions) {
@@ -124,6 +125,19 @@ export class StartupSplash {
       this.closePromise = null
     })
     return this.closePromise
+  }
+
+  showError(): Promise<void> {
+    if (this.showErrorPromise) return this.showErrorPromise
+    const target = this.options.window
+    if (target.webContents.isDestroyed()) return Promise.resolve()
+    this.showErrorPromise = target.webContents
+      .executeJavaScript("window.dispatchEvent(new CustomEvent('wework-startup-error')); true")
+      .then(() => undefined)
+      .finally(() => {
+        this.showErrorPromise = null
+      })
+    return this.showErrorPromise
   }
 
   private async closeOnce(options: CloseStartupSplashOptions): Promise<StartupSplashSnapshot> {
