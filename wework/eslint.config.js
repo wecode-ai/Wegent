@@ -30,4 +30,23 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  {
+    files: ['electron/src/**/*.{ts,tsx}'],
+    ignores: ['electron/src/runtime/process.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'node:child_process',
+              allowTypeImports: true,
+              message:
+                'Use runtime/process.ts (spawnProcess / spawnVisible / execFileAsync) so Windows console windows stay hidden.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 ])

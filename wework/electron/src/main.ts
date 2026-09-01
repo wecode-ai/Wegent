@@ -18,13 +18,11 @@ import {
   type WebContents,
 } from 'electron'
 import electronUpdater from 'electron-updater'
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { release } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { promisify } from 'node:util'
 import {
   captureWebContentsDataUrl,
   createElectronCapabilityRouter,
@@ -49,6 +47,7 @@ import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
+import { execFileAsync } from './runtime/process.js'
 import { createSingleFlight, presentWindow } from './host/window-presentation.js'
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
@@ -104,7 +103,6 @@ const startupSplashPreloadPath = resolve(packageRoot, 'dist/startup-splash-prelo
 const browserAnnotationPreloadPath = resolve(packageRoot, 'dist/browser-annotation-preload.cjs')
 const developmentResourcesRoot = resolve(packageRoot, '..', 'resources')
 const { autoUpdater } = electronUpdater
-const execFileAsync = promisify(execFile)
 const keepE2EWindowInBackground = keepDesktopE2EInBackground(process.env, process.platform)
 const updateBaseUrl =
   process.env.WEWORK_UPDATE_BASE_URL?.trim() ||

@@ -1,10 +1,7 @@
-import {
-  spawn,
-  type ChildProcessWithoutNullStreams,
-  type SpawnOptionsWithoutStdio,
-} from 'node:child_process'
+import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
 import { EventEmitter, once } from 'node:events'
 import { RotatingLog, type RotatingLogOptions } from './rotating-log.js'
+import { spawnProcess } from './process.js'
 import { resolveSpawnCommand } from './spawn-command.js'
 
 export type RuntimeSupervisorState =
@@ -99,7 +96,7 @@ export class RuntimeSupervisor extends EventEmitter<RuntimeSupervisorEvents> {
       stdio.push('pipe')
     }
     const resolved = resolveSpawnCommand(this.options.command, this.options.args ?? [])
-    const child = spawn(resolved.command, resolved.args, {
+    const child = spawnProcess(resolved.command, resolved.args, {
       cwd: this.options.cwd,
       env: this.options.env,
       detached: process.platform !== 'win32',
@@ -330,7 +327,7 @@ function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS
     if (process.platform === 'win32') {
       const args = ['/pid', String(child.pid), '/t']
       if (signal === 'SIGKILL') args.push('/f')
-      const killer = spawn('taskkill', args, { windowsHide: true, stdio: 'ignore' })
+      const killer = spawnProcess('taskkill', args, { stdio: 'ignore' })
       killer.unref()
       return
     }

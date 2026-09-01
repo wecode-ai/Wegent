@@ -1,8 +1,6 @@
-import { execFile } from 'node:child_process'
 import { hostname } from 'node:os'
-import { promisify } from 'node:util'
 
-const execFileAsync = promisify(execFile)
+import { execFileAsync } from './process.js'
 
 interface DesktopDeviceNameOptions {
   environment: NodeJS.ProcessEnv

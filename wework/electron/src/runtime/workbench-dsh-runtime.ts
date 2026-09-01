@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process'
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import semver from 'semver'
@@ -9,6 +8,7 @@ import {
   type BundledDshRuntime,
   type CommandRunner,
 } from './core-dsh-runtime.js'
+import { spawnProcess } from './process.js'
 
 export const WORKBENCH_DSH_VERSION = '0.1.0-rc.8'
 
@@ -427,7 +427,7 @@ function runCommand(
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       ...options,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,

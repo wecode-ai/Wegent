@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import type { ChildProcessByStdio } from 'node:child_process'
 import type { Readable, Writable } from 'node:stream'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
+import { spawnProcess } from '../runtime/process.js'
 import { readdir, readFile, realpath, stat } from 'node:fs/promises'
 
 const MANIFEST_PATH = '.wework-plugin/plugin.json'
@@ -107,7 +108,7 @@ export class WorkbenchPluginManager {
     const desktop = plugin.manifest.desktop
     const command = plugin.desktopPath
     if (!desktop || !command) throw new Error('Plugin does not declare a desktop sidecar')
-    const child = spawn(command, desktop.args, {
+    const child = spawnProcess(command, desktop.args, {
       cwd: plugin.root,
       detached: process.platform !== 'win32',
       env: {
@@ -236,7 +237,7 @@ async function terminateProcessTree(sidecar: RunningSidecar): Promise<void> {
   const pid = sidecar.child.pid
   if (!pid || sidecar.child.exitCode !== null) return
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+    const killer = spawnProcess('taskkill', ['/PID', String(pid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
     })

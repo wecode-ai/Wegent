@@ -1,10 +1,8 @@
-import { execFile, spawn } from 'node:child_process'
 import { access, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, extname, join } from 'node:path'
-import { promisify } from 'node:util'
 
-const execFileAsync = promisify(execFile)
+import { execFileAsync, spawnProcess, spawnVisible } from '../runtime/process.js'
 
 export interface LocalWorkspaceOpenerAvailability {
   id: string
@@ -411,24 +409,32 @@ async function launchWindowsOpener(
   workspacePath: string
 ): Promise<void> {
   if (openerId === 'cmd') {
-    await launchDetached('cmd.exe', ['/C', 'start', '', command, '/K', `cd /d "${workspacePath}"`])
+    await launchDetached(
+      'cmd.exe',
+      ['/C', 'start', '', command, '/K', `cd /d "${workspacePath}"`],
+      { visible: true }
+    )
     return
   }
   if (openerId === 'powershell') {
     const escapedPath = workspacePath.replaceAll("'", "''")
-    await launchDetached('cmd.exe', [
-      '/C',
-      'start',
-      '',
-      command,
-      '-NoExit',
-      '-Command',
-      `Set-Location -LiteralPath '${escapedPath}'`,
-    ])
+    await launchDetached(
+      'cmd.exe',
+      [
+        '/C',
+        'start',
+        '',
+        command,
+        '-NoExit',
+        '-Command',
+        `Set-Location -LiteralPath '${escapedPath}'`,
+      ],
+      { visible: true }
+    )
     return
   }
   if (openerId === 'terminal') {
-    await launchDetached(command, ['-d', workspacePath])
+    await launchDetached(command, ['-d', workspacePath], { visible: true })
     return
   }
   if (['.cmd', '.bat'].includes(extname(command).toLowerCase())) {
@@ -438,9 +444,14 @@ async function launchWindowsOpener(
   await launchDetached(command, [workspacePath])
 }
 
-async function launchDetached(command: string, args: string[]): Promise<void> {
+async function launchDetached(
+  command: string,
+  args: string[],
+  options: { visible?: boolean } = {}
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, {
+    const spawnFn = options.visible ? spawnVisible : spawnProcess
+    const child = spawnFn(command, args, {
       detached: true,
       stdio: 'ignore',
     })

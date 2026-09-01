@@ -1,7 +1,4 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
-const execFileAsync = promisify(execFile)
+import { execFileAsync } from '../runtime/process.js'
 
 export interface ProcessDiagnosticsProcess {
   pid: number

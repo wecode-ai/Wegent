@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
 import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { runtimeNodeArgs } from './electron-node-runtime.js'
+import { spawnProcess } from './process.js'
 
 const PROFILE_NAME = 'wework-core'
 const STATE_FILE = '.wework-core-plugins.json'
@@ -499,7 +499,7 @@ function runCommand(
   options: { cwd: string; env: NodeJS.ProcessEnv }
 ): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       cwd: options.cwd,
       env: options.env,
       shell: false,
