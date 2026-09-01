@@ -268,6 +268,13 @@ describe('ChatInputCard layout', () => {
         onClear: onRestoreDefaultTeam,
       })
     )
+    expect(mockChatInputControls).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedTeam: imageTeam,
+        onClearTeam: onRestoreDefaultTeam,
+        showClearTeamButton: true,
+      })
+    )
   })
 
   it('does not allow clearing the selected team after the conversation starts', () => {
@@ -300,6 +307,12 @@ describe('ChatInputCard layout', () => {
       expect.objectContaining({
         team: imageTeam,
         showClearButton: false,
+      })
+    )
+    expect(mockChatInputControls).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        selectedTeam: imageTeam,
+        showClearTeamButton: false,
       })
     )
   })

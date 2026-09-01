@@ -15,18 +15,24 @@ jest.mock('@/hooks/useTranslation', () => ({
       const translations: Record<string, string> = {
         'chat:correction.label': '交叉验证',
         'correction.label': '交叉验证',
+        'correction.select_model': '选择交叉验证模型',
       }
       return translations[key] ?? (typeof fallback === 'string' ? fallback : key)
     },
   }),
 }))
 
-jest.mock('@/components/ui/dialog', () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+jest.mock('@/components/ui/drawer', () => ({
+  Drawer: ({ children, open }: { children: React.ReactNode; open?: boolean }) =>
+    open ? <>{children}</> : null,
+  DrawerContent: ({
+    children,
+    showHandle: _showHandle,
+    ...props
+  }: React.HTMLAttributes<HTMLDivElement> & { showHandle?: boolean }) => (
+    <div {...props}>{children}</div>
+  ),
+  DrawerTitle: (props: React.HTMLAttributes<HTMLHeadingElement>) => <h2 {...props} />,
 }))
 
 jest.mock('@/components/model-select/ModelCascadeSelect', () => ({
@@ -95,5 +101,26 @@ describe('mobile toggle controls', () => {
 
     expect(onToggle).toHaveBeenCalledWith(false)
     expect(mockedCorrectionApis.clearCorrectionModeState).toHaveBeenCalledWith(null)
+  })
+
+  it('opens correction model selection as the shared mobile drawer', async () => {
+    const onSelectorOpenChange = jest.fn()
+
+    render(
+      <MobileCorrectionModeToggle
+        enabled={false}
+        onToggle={jest.fn()}
+        taskId={null}
+        onSelectorOpenChange={onSelectorOpenChange}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('switch', { name: /交叉验证/ }))
+
+    const drawer = screen.getByTestId('mobile-correction-model-drawer')
+    expect(drawer).toHaveClass('max-h-[85vh]', 'bg-[#f2f2f7]')
+    expect(screen.getByText('选择交叉验证模型')).toBeInTheDocument()
+    expect(await screen.findByTestId('model-cascade-content')).toBeInTheDocument()
+    expect(onSelectorOpenChange).toHaveBeenCalledWith(true)
   })
 })

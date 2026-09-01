@@ -4,23 +4,14 @@
 
 'use client'
 
-import React, {
-  useMemo,
-  useState,
-  useCallback,
-  useEffect,
-  useRef,
-  type Dispatch,
-  type SetStateAction,
-} from 'react'
-import { CircleStop, Hand, Plus } from 'lucide-react'
+import React, { useMemo, useState, useCallback, type Dispatch, type SetStateAction } from 'react'
+import { ChevronRight, CircleStop, Hand, Plus, Zap } from 'lucide-react'
 import MobileModelSelector from '../selector/MobileModelSelector'
 import type { Model } from '../selector/ModelSelector'
 import VideoGenerationModeSelector from '../selector/VideoGenerationModeSelector'
 import VideoSettingsPopover from '../selector/VideoSettingsPopover'
 import MobileTeamSelector from '../selector/MobileTeamSelector'
 import MobileRepositorySelector from '../selector/MobileRepositorySelector'
-import MobileBranchSelector from '../selector/MobileBranchSelector'
 import MobileClarificationToggle from '../clarification/MobileClarificationToggle'
 import MobileCorrectionModeToggle from '../MobileCorrectionModeToggle'
 import ChatContextInput from '../chat/ChatContextInput'
@@ -29,6 +20,7 @@ import SendButton from './SendButton'
 import LoadingDots from '../message/LoadingDots'
 import { ActionButton } from '@/components/ui/action-button'
 import { Button } from '@/components/ui/button'
+import { Drawer, DrawerContent } from '@/components/ui/drawer'
 import type {
   Team,
   GitRepoInfo,
@@ -45,18 +37,13 @@ import {
   teamRequiresWorkspace,
 } from '../../service/messageService'
 import { supportsAttachments } from '../../service/attachmentService'
-import SkillSelectorPopover from '../selector/SkillSelectorPopover'
+import MobileSkillSelector from '../selector/MobileSkillSelector'
 import { getChatSendState } from './chatSendState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { filterTeamsByMode, type TeamModeFilter } from '../selector/team-selector-utils'
 import type { AspectRatioOption, ResolutionOption, VideoGenerationMode } from '@/apis/models'
 import { getVideoParamVisibility } from '../../utils/teamModeSpec'
-
-const MOBILE_ACTION_MENU_WIDTH = 224
-const MOBILE_ACTION_MENU_MARGIN = 12
-const MOBILE_ACTION_MENU_GAP = 8
-const MOBILE_ACTION_MENU_MAX_HEIGHT = 288
-const MOBILE_ACTION_MENU_MIN_HEIGHT = 44
+import { countEnabledSkills } from '../selector/skill-selector-utils'
 
 export interface MobileChatInputControlsProps {
   taskType?: TaskType
@@ -65,6 +52,8 @@ export interface MobileChatInputControlsProps {
   selectedTeam: Team | null
   teams?: Team[]
   onTeamChange?: (team: Team) => void
+  onClearTeam?: () => void
+  showClearTeamButton?: boolean
   selectedModel: Model | null
   setSelectedModel: (model: Model | null) => void
   forceOverride: boolean
@@ -109,6 +98,9 @@ export interface MobileChatInputControlsProps {
   selectedVideoModel?: Model | null
   onVideoModelChange?: (model: Model) => void
   isVideoModelsLoading?: boolean
+  selectedImageModel?: Model | null
+  onImageModelChange?: (model: Model) => void
+  isImageModelsLoading?: boolean
   showVideoControlsInChat?: boolean
   selectedResolution?: string
   onResolutionChange?: (resolution: string) => void
@@ -167,6 +159,8 @@ export function MobileChatInputControls({
   selectedTeam,
   teams = [],
   onTeamChange,
+  onClearTeam,
+  showClearTeamButton = false,
   selectedModel,
   setSelectedModel,
   forceOverride,
@@ -198,6 +192,9 @@ export function MobileChatInputControls({
   selectedVideoModel,
   onVideoModelChange,
   isVideoModelsLoading = false,
+  selectedImageModel,
+  onImageModelChange,
+  isImageModelsLoading = false,
   showVideoControlsInChat = false,
   selectedResolution = '720p',
   onResolutionChange,
@@ -236,16 +233,15 @@ export function MobileChatInputControls({
   hideSelectors,
 }: MobileChatInputControlsProps) {
   const { t } = useTranslation('chat')
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
-  const [contextSelectorOpen, setContextSelectorOpen] = useState(false)
-  const moreMenuButtonRef = useRef<HTMLButtonElement>(null)
-  const moreMenuRef = useRef<HTMLDivElement>(null)
-  const [moreMenuStyle, setMoreMenuStyle] = useState<React.CSSProperties>({})
+  const [resourceDrawerOpen, setResourceDrawerOpen] = useState(false)
+  const [nestedSelectorOpen, setNestedSelectorOpen] = useState(false)
+  const [skillDrawerOpen, setSkillDrawerOpen] = useState(false)
   const showChatContexts = canUseChatContexts(taskType, selectedTeam)
   const isVideoMode = taskType === 'video' || showVideoControlsInChat
   const hiddenVideoParams = selectedTeam?.mode_spec?.hiddenVideoParams ?? []
   const videoParamVisibility = getVideoParamVisibility(hiddenVideoParams, !hideDurationSelector)
-  const isGenerationMode = taskType === 'image' || isVideoMode
+  const isImageMode = taskType === 'image'
+  const isGenerationMode = isImageMode || isVideoMode
   const showAttachmentAction = isGenerationMode
     ? selectedVideoGenerationMode !== 'first_last_frame'
     : supportsAttachments(selectedTeam)
@@ -258,13 +254,7 @@ export function MobileChatInputControls({
     if (!selectedTeam) return null
     return filteredTeams.find(team => team.id === selectedTeam.id) ?? selectedTeam
   }, [filteredTeams, selectedTeam])
-  const canSwitchTeam =
-    Boolean(selectedTeamForDisplay) &&
-    filteredTeams.length > 0 &&
-    Boolean(onTeamChange) &&
-    !hasMessages &&
-    taskType !== 'image' &&
-    taskType !== 'video'
+  const canSwitchTeam = filteredTeams.length > 0 && Boolean(onTeamChange) && !hasMessages
   const showClarificationAction = isChatShell(selectedTeam)
   const showCorrectionAction = isChatShell(selectedTeam) && Boolean(onCorrectionModeToggle)
   const showGuidanceAction = isChatShell(selectedTeam) && Boolean(onSendGuidance)
@@ -272,7 +262,6 @@ export function MobileChatInputControls({
     showRepositorySelector &&
     teamRequiresWorkspace(selectedTeam) &&
     effectiveRequiresWorkspace !== false
-  const showBranchAction = showRepositoryAction && Boolean(selectedRepo)
   const showVideoSettings = Boolean(
     isVideoMode &&
     videoParamVisibility.showSettings &&
@@ -280,120 +269,34 @@ export function MobileChatInputControls({
     onRatioChange &&
     onDurationChange
   )
-  const hasSecondaryActions =
-    showAttachmentAction || showChatContexts || showSkillAction || showVideoSettings
-  const showMoreActions =
-    hasSecondaryActions ||
+  const hasMoreActions =
+    showAttachmentAction ||
+    showChatContexts ||
+    showSkillAction ||
+    showRepositoryAction ||
     showClarificationAction ||
     showCorrectionAction ||
     showGuidanceAction ||
-    showRepositoryAction ||
-    showBranchAction
-  const closeMoreMenu = useCallback(() => {
-    setMoreMenuOpen(false)
-    setContextSelectorOpen(false)
-  }, [])
-  useEffect(() => {
-    if (!showMoreActions && moreMenuOpen) closeMoreMenu()
-  }, [closeMoreMenu, moreMenuOpen, showMoreActions])
+    showVideoSettings
   const handleAttachmentFileSelect = useCallback(
     (files: File | File[]) => {
-      closeMoreMenu()
+      setResourceDrawerOpen(false)
       onFileSelect(files)
     },
-    [closeMoreMenu, onFileSelect]
+    [onFileSelect]
   )
-  const handleContextSelectorOpenChange = useCallback(
-    (open: boolean) => {
-      if (open) {
-        setContextSelectorOpen(true)
-        return
-      }
-      closeMoreMenu()
-      moreMenuButtonRef.current?.focus()
-    },
-    [closeMoreMenu]
-  )
-
-  const updateMoreMenuPosition = useCallback(() => {
-    const button = moreMenuButtonRef.current
-    if (!button) return
-
-    const rect = button.getBoundingClientRect()
-    const viewport = window.visualViewport
-    const viewportTop = viewport?.offsetTop ?? 0
-    const viewportWidth = viewport?.width ?? window.innerWidth
-    const topBoundary = viewportTop + MOBILE_ACTION_MENU_MARGIN
-    const menuBottom = Math.max(
-      topBoundary + MOBILE_ACTION_MENU_MIN_HEIGHT,
-      rect.top - MOBILE_ACTION_MENU_GAP
-    )
-    const availableHeight = Math.max(MOBILE_ACTION_MENU_MIN_HEIGHT, menuBottom - topBoundary)
-    const menuHeight = Math.min(MOBILE_ACTION_MENU_MAX_HEIGHT, availableHeight)
-    const maxLeft = Math.max(
-      MOBILE_ACTION_MENU_MARGIN,
-      viewportWidth - MOBILE_ACTION_MENU_WIDTH - MOBILE_ACTION_MENU_MARGIN
-    )
-
-    setMoreMenuStyle({
-      left: Math.min(Math.max(rect.left, MOBILE_ACTION_MENU_MARGIN), maxLeft),
-      top: menuBottom - menuHeight,
-      maxHeight: menuHeight,
-    })
+  const handleNestedSelectorOpenChange = useCallback((open: boolean) => {
+    setNestedSelectorOpen(open)
+    if (!open) {
+      setResourceDrawerOpen(false)
+    }
   }, [])
-
-  useEffect(() => {
-    if (!moreMenuOpen) return
-
-    updateMoreMenuPosition()
-    const viewport = window.visualViewport
-    window.addEventListener('resize', updateMoreMenuPosition)
-    window.addEventListener('scroll', updateMoreMenuPosition, true)
-    viewport?.addEventListener('resize', updateMoreMenuPosition)
-    viewport?.addEventListener('scroll', updateMoreMenuPosition)
-
-    return () => {
-      window.removeEventListener('resize', updateMoreMenuPosition)
-      window.removeEventListener('scroll', updateMoreMenuPosition, true)
-      viewport?.removeEventListener('resize', updateMoreMenuPosition)
-      viewport?.removeEventListener('scroll', updateMoreMenuPosition)
-    }
-  }, [moreMenuOpen, updateMoreMenuPosition])
-
-  useEffect(() => {
-    if (!moreMenuOpen) return
-
-    const isOwnedPopoverTarget = (target: EventTarget | null) => {
-      if (!(target instanceof Element)) return false
-      const popoverId = target.closest('[role="dialog"]')?.id
-      if (!popoverId) return false
-
-      return Array.from(moreMenuRef.current?.querySelectorAll('[aria-controls]') ?? []).some(
-        trigger => trigger.getAttribute('aria-controls') === popoverId
-      )
-    }
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (moreMenuButtonRef.current?.contains(target) || moreMenuRef.current?.contains(target)) {
-        return
-      }
-      if (isOwnedPopoverTarget(target)) return
-      closeMoreMenu()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented || isOwnedPopoverTarget(event.target))
-        return
-      closeMoreMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [closeMoreMenu, moreMenuOpen])
+  const enabledSkillCount = countEnabledSkills({
+    skills: availableSkills,
+    teamSkillNames,
+    preloadedSkillNames,
+    selectedSkillNames,
+  })
 
   // Render send button based on state
   const renderSendButton = () => {
@@ -492,48 +395,212 @@ export function MobileChatInputControls({
   }
 
   return (
-    <div
-      className={`flex items-center px-3 gap-2 min-w-0 overflow-visible ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
-    >
-      {/* Left: secondary actions menu - hidden when hideSelectors is true */}
+    <>
       <div
-        className={`relative flex items-center gap-1 flex-shrink-0 ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
+        className={`flex min-w-0 items-center gap-2 px-3 ${shouldHideChatInput ? 'py-3' : 'pb-2 pt-1'}`}
         data-tour="input-controls"
       >
-        {/* Secondary actions menu */}
-        {showMoreActions && (
+        {hasMoreActions && (
           <Button
-            ref={moreMenuButtonRef}
             type="button"
             variant="ghost"
-            size="sm"
-            aria-expanded={moreMenuOpen}
-            aria-label="More actions"
+            size="icon"
+            aria-expanded={resourceDrawerOpen}
+            aria-label={t('mobile_composer.more')}
             data-testid="mobile-input-more-actions-button"
-            title="More actions"
+            title={t('mobile_composer.more')}
             onClick={() => {
-              if (moreMenuOpen) {
-                closeMoreMenu()
-                return
-              }
-              setMoreMenuOpen(true)
+              setNestedSelectorOpen(false)
+              setResourceDrawerOpen(true)
             }}
-            className="h-8 w-8 p-0 rounded-full border border-border bg-base text-text-muted hover:text-text-primary hover:bg-hover"
+            disabled={hideSelectors}
+            className="h-11 w-11 shrink-0 rounded-xl border border-border bg-base text-text-muted hover:bg-hover hover:text-text-primary"
           >
-            <Plus className="h-4 w-4" />
+            <Plus className="h-5 w-5" />
           </Button>
         )}
 
-        {showMoreActions && moreMenuOpen && (
+        {onTeamChange && filteredTeams.length > 0 && (
+          <div className="min-w-0 flex-1 overflow-hidden" data-testid="mobile-team-selector-slot">
+            <MobileTeamSelector
+              selectedTeam={selectedTeamForDisplay}
+              teams={filteredTeams}
+              onTeamSelect={onTeamChange}
+              disabled={!canSwitchTeam || isStreaming || Boolean(hideSelectors)}
+              isLoading={false}
+              currentMode={teamModeFilter}
+              triggerVariant="compact"
+              onClear={onClearTeam}
+              showClearButton={showClearTeamButton}
+            />
+          </div>
+        )}
+
+        {!isGenerationMode && selectedTeam && (
+          <div className="min-w-0 flex-1 overflow-hidden" data-testid="mobile-model-selector-slot">
+            <MobileModelSelector
+              selectedModel={selectedModel}
+              setSelectedModel={setSelectedModel}
+              forceOverride={forceOverride}
+              setForceOverride={setForceOverride}
+              selectedTeam={selectedTeam}
+              disabled={
+                Boolean(hideSelectors) ||
+                isStreaming ||
+                (hasMessages && !canSwitchModelAfterMessages(selectedTeam))
+              }
+              teamId={teamId}
+              taskId={taskId}
+              taskModelId={taskModelId}
+              triggerVariant="compact"
+            />
+          </div>
+        )}
+
+        {isVideoMode && onVideoGenerationModeChange && (
+          <VideoGenerationModeSelector
+            modes={videoGenerationModes}
+            value={selectedVideoGenerationMode}
+            onChange={onVideoGenerationModeChange}
+            disabled={isStreaming}
+          />
+        )}
+        {isVideoMode && videoParamVisibility.showModel && onVideoModelChange && (
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <MobileModelSelector
+              selectedModel={selectedVideoModel ?? null}
+              setSelectedModel={model => model && onVideoModelChange(model)}
+              forceOverride={false}
+              setForceOverride={() => {}}
+              selectedTeam={selectedTeam}
+              disabled={isStreaming}
+              isLoading={isVideoModelsLoading}
+              modelCategoryType="video"
+            />
+          </div>
+        )}
+        {isImageMode && onImageModelChange && (
           <div
-            ref={moreMenuRef}
-            data-testid="mobile-input-more-actions-menu"
-            className={`fixed z-50 w-56 overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md ${contextSelectorOpen ? 'invisible pointer-events-none' : ''}`}
-            style={moreMenuStyle}
+            className="min-w-0 flex-1 overflow-hidden"
+            data-testid="mobile-image-model-selector-slot"
           >
-            {hasSecondaryActions && (
-              <div className="flex flex-col">
-                {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
+            <MobileModelSelector
+              selectedModel={selectedImageModel ?? null}
+              setSelectedModel={model => model && onImageModelChange(model)}
+              forceOverride={false}
+              setForceOverride={() => {}}
+              selectedTeam={selectedTeam}
+              disabled={isStreaming}
+              isLoading={isImageModelsLoading}
+              modelCategoryType="image"
+              triggerVariant="compact"
+            />
+          </div>
+        )}
+        <div className="shrink-0">{renderSendButton()}</div>
+      </div>
+
+      <Drawer open={resourceDrawerOpen} onOpenChange={setResourceDrawerOpen}>
+        {resourceDrawerOpen && (
+          <DrawerContent
+            className={`max-h-[85vh] bg-[#f2f2f7] dark:bg-[#1c1c1e] ${
+              nestedSelectorOpen ? 'invisible pointer-events-none' : ''
+            }`}
+            showHandle={false}
+            data-testid="mobile-input-more-actions-menu"
+          >
+            <div className="flex justify-center pb-3 pt-2">
+              <div className="h-1 w-9 rounded-full bg-[#3c3c43]/30 dark:bg-[#5c5c5e]" />
+            </div>
+            <div
+              className="max-h-[65vh] min-h-0 flex-1 overflow-y-auto px-4 pb-4"
+              style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+            >
+              <div className="px-1 pb-2 text-xs font-medium text-[#8e8e93]">
+                {t('mobile_composer.more')}
+              </div>
+              {(showAttachmentAction || showChatContexts || showSkillAction) && (
+                <div className="overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+                  {showAttachmentAction && (
+                    <AttachmentButton
+                      onFileSelect={handleAttachmentFileSelect}
+                      disabled={isStreaming}
+                      accept={attachmentAccept}
+                      triggerVariant="menu-item"
+                    />
+                  )}
+                  {showChatContexts && (
+                    <ChatContextInput
+                      selectedContexts={selectedContexts}
+                      onContextsChange={setSelectedContexts}
+                      excludeKnowledgeBaseId={knowledgeBaseId}
+                      triggerVariant="menu-item"
+                      onSelectorOpenChange={handleNestedSelectorOpenChange}
+                    />
+                  )}
+                  {showSkillAction && onToggleSkill && (
+                    <button
+                      type="button"
+                      data-testid="mobile-more-skills-button"
+                      onClick={() => {
+                        setResourceDrawerOpen(false)
+                        setSkillDrawerOpen(true)
+                      }}
+                      disabled={isStreaming}
+                      className="flex min-h-14 w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-hover active:bg-hover disabled:opacity-60"
+                    >
+                      <Zap className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-text-primary">
+                          {t('common:skillSelector.skill_button_label')}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-text-muted">
+                          {t('mobile_composer.skill_count', { count: enabledSkillCount })}
+                        </span>
+                      </span>
+                      <ChevronRight
+                        className="h-4 w-4 shrink-0 text-text-muted"
+                        aria-hidden="true"
+                      />
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {(showRepositoryAction || showClarificationAction || showCorrectionAction) && (
+                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+                  {showRepositoryAction && (
+                    <MobileRepositorySelector
+                      selectedRepo={selectedRepo}
+                      handleRepoChange={setSelectedRepo}
+                      selectedBranch={selectedBranch}
+                      handleBranchChange={setSelectedBranch}
+                      disabled={hasMessages}
+                      selectedTaskDetail={selectedTaskDetail}
+                      onSelectorOpenChange={handleNestedSelectorOpenChange}
+                    />
+                  )}
+                  {showClarificationAction && (
+                    <MobileClarificationToggle
+                      enabled={enableClarification}
+                      onToggle={setEnableClarification}
+                      disabled={isStreaming}
+                    />
+                  )}
+                  {showCorrectionAction && onCorrectionModeToggle && (
+                    <MobileCorrectionModeToggle
+                      enabled={enableCorrectionMode}
+                      onToggle={onCorrectionModeToggle}
+                      disabled={isStreaming}
+                      correctionModelName={correctionModelName}
+                      taskId={selectedTaskDetail?.id ?? null}
+                      onSelectorOpenChange={handleNestedSelectorOpenChange}
+                    />
+                  )}
+                </div>
+              )}
+              {showVideoSettings && onResolutionChange && onRatioChange && onDurationChange && (
+                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
                   <VideoSettingsPopover
                     selectedRatio={selectedRatio}
                     onRatioChange={onRatioChange}
@@ -551,157 +618,44 @@ export function MobileChatInputControls({
                     hiddenVideoParams={hiddenVideoParams}
                     triggerVariant="menu-item"
                   />
-                )}
-                {showAttachmentAction && (
-                  <AttachmentButton
-                    onFileSelect={handleAttachmentFileSelect}
-                    disabled={isStreaming}
-                    accept={attachmentAccept}
-                    triggerVariant="menu-item"
-                  />
-                )}
-                {showChatContexts && (
-                  <ChatContextInput
-                    selectedContexts={selectedContexts}
-                    onContextsChange={setSelectedContexts}
-                    excludeKnowledgeBaseId={knowledgeBaseId}
-                    triggerVariant="menu-item"
-                    onSelectorOpenChange={handleContextSelectorOpenChange}
-                  />
-                )}
-                {showSkillAction && onToggleSkill && (
-                  <SkillSelectorPopover
-                    skills={availableSkills}
-                    teamSkillNames={teamSkillNames}
-                    preloadedSkillNames={preloadedSkillNames}
-                    selectedSkillNames={selectedSkillNames}
-                    onToggleSkill={onToggleSkill}
-                    isChatShell={isChatShell(selectedTeam)}
-                    disabled={isStreaming}
-                    readOnly={hasMessages}
-                    triggerVariant="menu-item"
-                  />
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
-            {/* Clarification Toggle - full row clickable */}
-            {showClarificationAction && (
-              <MobileClarificationToggle
-                enabled={enableClarification}
-                onToggle={setEnableClarification}
-                disabled={isStreaming}
-              />
-            )}
-
-            {/* Correction Mode Toggle - full row clickable */}
-            {showCorrectionAction && onCorrectionModeToggle && (
-              <MobileCorrectionModeToggle
-                enabled={enableCorrectionMode}
-                onToggle={onCorrectionModeToggle}
-                disabled={isStreaming}
-                correctionModelName={correctionModelName}
-                taskId={selectedTaskDetail?.id ?? null}
-              />
-            )}
-
-            {showGuidanceAction && onSendGuidance && (
-              <Button
-                type="button"
-                variant="ghost"
-                data-testid="send-guidance-button"
-                onClick={onSendGuidance}
-                disabled={!canSendGuidance || !taskInputMessage.trim()}
-                className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
-              >
-                <Hand className="h-4 w-4 text-primary" />
-                <span>{t('guidance.send')}</span>
-              </Button>
-            )}
-
-            {/* Repository Selector - full row clickable, only show if team requires workspace */}
-            {showRepositoryAction && (
-              <MobileRepositorySelector
-                selectedRepo={selectedRepo}
-                handleRepoChange={setSelectedRepo}
-                disabled={hasMessages}
-                selectedTaskDetail={selectedTaskDetail}
-              />
-            )}
-
-            {/* Branch Selector - full row clickable, only show if team requires workspace */}
-            {showBranchAction && selectedRepo && (
-              <MobileBranchSelector
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                handleBranchChange={setSelectedBranch}
-                disabled={hasMessages}
-                taskDetail={selectedTaskDetail}
-              />
-            )}
-          </div>
+              {showGuidanceAction && onSendGuidance && (
+                <div className="mt-3 overflow-hidden rounded-xl bg-white dark:bg-[#2c2c2e]">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-testid="send-guidance-button"
+                    onClick={onSendGuidance}
+                    disabled={!canSendGuidance || !taskInputMessage.trim()}
+                    className="flex h-11 w-full items-center justify-start gap-3 px-3 text-sm"
+                  >
+                    <Hand className="h-4 w-4 text-primary" />
+                    <span>{t('guidance.send')}</span>
+                  </Button>
+                </div>
+              )}
+            </div>
+          </DrawerContent>
         )}
-      </div>
+      </Drawer>
 
-      {/* Right: Agent selector, Model selector, Send button */}
-      <div className="ml-auto flex flex-1 items-center justify-end gap-2 min-w-0 overflow-hidden">
-        {isVideoMode && onVideoGenerationModeChange && (
-          <VideoGenerationModeSelector
-            modes={videoGenerationModes}
-            value={selectedVideoGenerationMode}
-            onChange={onVideoGenerationModeChange}
-            disabled={isStreaming}
-          />
-        )}
-        {isVideoMode && videoParamVisibility.showModel && onVideoModelChange && (
-          <div className="flex-1 min-w-0 overflow-hidden">
-            <MobileModelSelector
-              selectedModel={selectedVideoModel ?? null}
-              setSelectedModel={model => model && onVideoModelChange(model)}
-              forceOverride={false}
-              setForceOverride={() => {}}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming}
-              isLoading={isVideoModelsLoading}
-              modelCategoryType="video"
-            />
-          </div>
-        )}
-        {canSwitchTeam && selectedTeamForDisplay && onTeamChange && (
-          <div
-            className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            <MobileTeamSelector
-              selectedTeam={selectedTeamForDisplay}
-              teams={filteredTeams}
-              onTeamSelect={onTeamChange}
-              disabled={isStreaming}
-              isLoading={false}
-              hideTriggerIcon={false}
-              currentMode={teamModeFilter}
-            />
-          </div>
-        )}
-        {selectedTeam && !isGenerationMode && (
-          <div
-            className={`flex-1 min-w-0 overflow-hidden ${hideSelectors ? 'opacity-50 pointer-events-none' : ''}`}
-          >
-            <MobileModelSelector
-              selectedModel={selectedModel}
-              setSelectedModel={setSelectedModel}
-              forceOverride={forceOverride}
-              setForceOverride={setForceOverride}
-              selectedTeam={selectedTeam}
-              disabled={isStreaming || (hasMessages && !canSwitchModelAfterMessages(selectedTeam))}
-              teamId={teamId}
-              taskId={taskId}
-              taskModelId={taskModelId}
-            />
-          </div>
-        )}
-        <div className="flex-shrink-0">{renderSendButton()}</div>
-      </div>
-    </div>
+      {showSkillAction && onToggleSkill && (
+        <MobileSkillSelector
+          skills={availableSkills}
+          teamSkillNames={teamSkillNames}
+          preloadedSkillNames={preloadedSkillNames}
+          selectedSkillNames={selectedSkillNames}
+          onToggleSkill={onToggleSkill}
+          disabled={isStreaming}
+          readOnly={hasMessages}
+          open={skillDrawerOpen}
+          onOpenChange={setSkillDrawerOpen}
+          hideTrigger
+        />
+      )}
+    </>
   )
 }
 

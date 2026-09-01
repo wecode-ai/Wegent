@@ -10,6 +10,13 @@
     "expand": "Expand input area",
     "collapse": "Collapse input area"
   },
+  "mobile_composer": {
+    "more": "More",
+    "workspace": "Repository / Branch",
+    "not_selected": "Not selected",
+    "skill_count": "{{count}} skills",
+    "skills_description": "Choose skills available for this conversation"
+  },
   "actions": {
     "send": "Send",
     "clear": "Clear Chat",
@@ -299,6 +306,7 @@
   "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
   "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
   "quick_launch": {
+    "quick_start": "Quick start",
     "system_functions": "Recommended features",
     "favorite_agents": "My favorites",
     "overwrite_confirm_title": "Replace current input?",
@@ -740,6 +748,7 @@
     "download": "Download Video",
     "reference_image": "Reference Image (Optional)",
     "no_models": "No video models available",
+    "settings_title": "Video settings",
     "ratio_section": "Aspect ratio",
     "duration_section": "Duration",
     "duration_auto": "Auto",

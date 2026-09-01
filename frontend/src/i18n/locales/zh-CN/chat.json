@@ -10,6 +10,13 @@
     "expand": "展开输入框",
     "collapse": "收起输入框"
   },
+  "mobile_composer": {
+    "more": "更多",
+    "workspace": "仓库 / 分支",
+    "not_selected": "未选择",
+    "skill_count": "{{count}} 个技能",
+    "skills_description": "选择本次对话可用的技能"
+  },
   "actions": {
     "send": "发送",
     "clear": "清空聊天",
@@ -299,6 +306,7 @@
   "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
   "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
   "quick_launch": {
+    "quick_start": "快捷开始",
     "system_functions": "推荐功能",
     "favorite_agents": "我的收藏",
     "overwrite_confirm_title": "覆盖当前输入？",
@@ -740,6 +748,7 @@
     "download": "下载视频",
     "reference_image": "参考图片（可选）",
     "no_models": "暂无可用的视频模型",
+    "settings_title": "视频设置",
     "ratio_section": "比例",
     "duration_section": "时长",
     "duration_auto": "智能时长",
