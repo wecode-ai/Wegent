@@ -173,6 +173,15 @@ body {
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
   opacity: 0;
   transform: translate(-50%, calc(-50% + 12px)) scale(0.97);
+  transition: height 220ms ease;
+}
+
+:root[data-recovery-visible='true'] .splash {
+  height: 304px;
+}
+
+:root[data-confirmation-visible='true'] .splash {
+  height: 286px;
 }
 
 :root[data-animation-ready='true'] .splash {
@@ -490,6 +499,98 @@ body[data-stage='2'] .monitor-status {
 .stage-dot.is-active {
   width: 14px;
   background: #7c3aed;
+}
+
+.startup-recovery {
+  width: 100%;
+  margin-top: 10px;
+  padding: 0 24px;
+}
+
+.startup-actions,
+.startup-confirmation-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.startup-button,
+.startup-link-button {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.startup-button {
+  min-height: 30px;
+  padding: 6px 11px;
+  color: #383838;
+  border: 1px solid rgb(23 23 23 / 12%);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.startup-button-primary {
+  color: #fff;
+  border-color: #303030;
+  background: #303030;
+}
+
+.startup-button-danger {
+  color: #fff;
+  border-color: #dc2626;
+  background: #dc2626;
+}
+
+.startup-link-button {
+  padding: 5px 2px;
+  color: #1677c8;
+  background: transparent;
+  font-size: 12px;
+}
+
+.startup-button:focus-visible,
+.startup-link-button:focus-visible {
+  outline: 2px solid #339cff;
+  outline-offset: 2px;
+}
+
+.startup-button:disabled,
+.startup-link-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.startup-action-error {
+  margin: 7px 0 0;
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.startup-confirmation {
+  width: calc(100% - 48px);
+  text-align: center;
+}
+
+.startup-confirmation h2 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.startup-confirmation p {
+  margin: 8px auto 12px;
+  max-width: 330px;
+  line-height: 17px;
+}
+
+:root[data-confirmation-visible='true'] .workbench-scene,
+:root[data-confirmation-visible='true'] .splash-copy,
+:root[data-confirmation-visible='true'] .stage-indicator,
+:root[data-confirmation-visible='true'] .startup-recovery {
+  display: none;
 }
 
 @keyframes floor-arrive {
@@ -833,6 +934,32 @@ body[data-stage='2'] .monitor-status {
 
   .stage-dot {
     background: rgb(255 255 255 / 16%);
+  }
+
+  .startup-button {
+    color: #e5e5e5;
+    border-color: rgb(255 255 255 / 16%);
+    background: #262626;
+  }
+
+  .startup-button-primary {
+    color: #181818;
+    border-color: #f3f3f3;
+    background: #f3f3f3;
+  }
+
+  .startup-button-danger {
+    color: #fff;
+    border-color: #dc2626;
+    background: #dc2626;
+  }
+
+  .startup-link-button {
+    color: #66b8ff;
+  }
+
+  .startup-action-error {
+    color: #fca5a5;
   }
 }
 

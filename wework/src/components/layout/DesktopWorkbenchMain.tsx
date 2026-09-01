@@ -205,11 +205,8 @@ import {
 } from './desktopWorkbenchPaneTypes'
 import {
   findRuntimeTask,
-  isSameRuntimeTaskAddress,
   truncateRuntimeTaskTitle,
 } from '@/features/workbench/workbenchRuntimeHelpers'
-import { stripAppBasePath } from '@/config/runtime'
-import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
 import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
 import { useRuntimeTaskContinueInIm } from './useRuntimeTaskContinueInIm'
@@ -733,9 +730,26 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   const resolvePane = useCallback(
     (paneKey: string) => {
       if (paneKey === activePaneKey) return props.activePane
-      return resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
+      const resolvedPane = resolveRuntimeWorkbenchPane(state.runtimeWork, paneKey)
+      if (resolvedPane) return resolvedPane
+
+      const activeLayout = props.splitGroups.activeLayout
+      const canShowBlankStartupPane =
+        state.runtimeWork !== null &&
+        props.activePane.currentRuntimeTask === null &&
+        activeLayout.root.type === 'pane' &&
+        activeLayout.root.paneKey === paneKey &&
+        paneKey.startsWith('runtime:') &&
+        !runtimePaneKeySet.has(paneKey)
+      return canShowBlankStartupPane ? props.activePane : null
     },
-    [activePaneKey, props.activePane, state.runtimeWork]
+    [
+      activePaneKey,
+      props.activePane,
+      props.splitGroups.activeLayout,
+      runtimePaneKeySet,
+      state.runtimeWork,
+    ]
   )
   const getPaneTitle = useCallback(
     (pane: WorkbenchPaneIdentity) => {
@@ -946,7 +960,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     createDeviceDirectory,
     startNewChat,
   } = useWorkbenchPaneContext()
-  const { services, openRuntimeTask, workspaceTabId, isStartupReady } = useWorkbench()
+  const { services, openRuntimeTask, workspaceTabId } = useWorkbench()
   const { t } = useTranslation('common')
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
@@ -972,26 +986,26 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     currentRuntimeTask,
     debugSnapshotEnabled: paneActive && paneVisible && workbenchVisible,
   })
-  const startupTaskRoute = parseRuntimeTaskRoute(
-    stripAppBasePath(window.location.pathname),
-    window.location.search
-  )
-  const startupTaskRouteReady =
-    !startupTaskRoute || isSameRuntimeTaskAddress(currentRuntimeTask, startupTaskRoute)
   const startupSurfaceReady =
-    isStartupReady &&
-    startupTaskRouteReady &&
-    !paneSession.transcriptLoading &&
-    paneActive &&
-    paneVisible &&
-    workbenchVisible
+    state.runtimeWork !== null && paneActive && paneVisible && workbenchVisible
   useEffect(() => {
     if (!startupSurfaceReady || !isElectronRuntime() || getDesktopWindowLabel() !== 'main') {
       return
     }
-    void invokeDesktopHost<void>('renderer.startupReady').catch(error => {
-      console.error('[Wework] Failed to reveal the ready workbench', error)
+    console.info('[startup][renderer]', {
+      step: 'task-list-ready',
+      status: 'completed',
     })
+    void invokeDesktopHost<void>('renderer.startupReady', { source: 'task-list' })
+      .then(() => {
+        console.info('[startup][renderer]', {
+          step: 'startup-ready-notification',
+          status: 'completed',
+        })
+      })
+      .catch(error => {
+        console.error('[Wework] Failed to reveal the ready workbench', error)
+      })
   }, [startupSurfaceReady])
   const refinePluginTrialPrompt = usePluginTrialPromptRefinement({
     source: currentRuntimeTask,

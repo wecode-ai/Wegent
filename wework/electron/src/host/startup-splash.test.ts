@@ -93,6 +93,9 @@ describe('StartupSplash', () => {
     expect(html).toContain('class="human-working-arm"')
     expect(html).toContain('class="robot-working-arm"')
     expect(html).toContain('aria-valuemax="3"')
+    expect(html).toContain('id="startup-recover"')
+    expect(html).toContain('id="startup-reset-open"')
+    expect(html).toContain('id="startup-confirmation"')
     expect(styles).toContain('@keyframes robot-bob')
     expect(styles).toContain('@keyframes human-bob')
     expect(styles).toContain('@keyframes splash-enter')
@@ -105,8 +108,13 @@ describe('StartupSplash', () => {
     expect(script).toContain("navigator.language.toLowerCase().startsWith('zh')")
     expect(script).toContain("stageIndicator.setAttribute('aria-valuenow'")
     expect(script).toContain('启动时间比预期稍长')
-    expect(script).toContain('仍在加载项目和会话，请稍候…')
+    expect(script).toContain('仍在加载任务列表，请稍候…')
     expect(script).toContain('}, 10_000)')
+    expect(script).toContain('}, 30_000)')
+    expect(script).toContain("'wework-startup-error'")
+    expect(script).toContain("runRecoveryAction('retry')")
+    expect(script).toContain("showConfirmation('recover')")
+    expect(script).toContain("showConfirmation('resetAppState')")
     expect(script).toMatch(
       /requestAnimationFrame\(\(\) => \{\s+requestAnimationFrame\(\(\) => \{\s+document\.documentElement\.dataset\.animationReady = 'true'/
     )
@@ -143,6 +151,17 @@ describe('StartupSplash', () => {
     const snapshot = await show()
 
     expect(snapshot.theme).toBe('dark')
+  })
+
+  test('notifies the splash renderer when startup fails', async () => {
+    const { show, splash, target } = createFixture()
+    await show()
+
+    await splash.showError()
+
+    expect(target.webContents.executeJavaScript).toHaveBeenLastCalledWith(
+      expect.stringContaining('wework-startup-error')
+    )
   })
 
   test('resolves explicit appearance modes before falling back to the system theme', () => {

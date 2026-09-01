@@ -38,6 +38,16 @@ const stageIndicator = document.querySelector('#stage-indicator')
 const statusElement = document.querySelector('#splash-status')
 const titleElement = document.querySelector('#splash-title')
 const stageDots = [...document.querySelectorAll('.stage-dot')]
+const recoveryElement = document.querySelector('#startup-recovery')
+const retryButton = document.querySelector('#startup-retry')
+const recoverButton = document.querySelector('#startup-recover')
+const resetOpenButton = document.querySelector('#startup-reset-open')
+const actionErrorElement = document.querySelector('#startup-action-error')
+const confirmationElement = document.querySelector('#startup-confirmation')
+const confirmationTitle = document.querySelector('#startup-confirmation-title')
+const confirmationDescription = document.querySelector('#startup-confirmation-description')
+const confirmationCancel = document.querySelector('#startup-confirmation-cancel')
+const confirmationSubmit = document.querySelector('#startup-confirmation-submit')
 const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const isChinese = navigator.language.toLowerCase().startsWith('zh')
 const currentPaths = stages[0].paths.map(path => [...path])
@@ -45,6 +55,10 @@ const velocities = stages[0].paths.map(path => path.map(() => 0))
 let stageIndex = prefersReducedMotion ? stages.length - 1 : 0
 let previousTime = performance.now()
 let slowStartup = false
+let startupFailed = false
+let pendingResetMode = null
+let actionPending = false
+let confirmationTrigger = null
 
 function pathData(points) {
   let data = `M${points[0]} ${points[1]}`
@@ -64,13 +78,17 @@ function updateCopy(index, animate) {
   const stage = stages[index]
   document.documentElement.lang = isChinese ? 'zh-CN' : 'en'
   document.body.dataset.stage = String(index)
-  titleElement.textContent = slowStartup
+  titleElement.textContent = startupFailed
     ? isChinese
-      ? '启动时间比预期稍长'
-      : 'Startup is taking longer than expected'
-    : isChinese
-      ? '我们正在准备工作台'
-      : "We're preparing your workbench"
+      ? 'Wework 启动失败'
+      : 'Wework could not start'
+    : slowStartup
+      ? isChinese
+        ? '启动时间比预期稍长'
+        : 'Startup is taking longer than expected'
+      : isChinese
+        ? '我们正在准备工作台'
+        : "We're preparing your workbench"
   splashRoot.setAttribute('aria-label', isChinese ? 'Wework 正在启动' : 'Wework is starting')
   stageIndicator.setAttribute(
     'aria-label',
@@ -79,13 +97,17 @@ function updateCopy(index, animate) {
   stageIndicator.setAttribute('aria-valuenow', String(index + 1))
 
   const replaceStatus = () => {
-    statusElement.textContent = slowStartup
+    statusElement.textContent = startupFailed
       ? isChinese
-        ? '仍在加载项目和会话，请稍候…'
-        : 'Still loading your projects and conversations…'
-      : isChinese
-        ? stage.zh
-        : stage.en
+        ? '你可以重试，或重置启动状态后重新打开'
+        : 'Retry, or reset startup state and reopen Wework'
+      : slowStartup
+        ? isChinese
+          ? '仍在加载任务列表，请稍候…'
+          : 'Still loading your task list…'
+        : isChinese
+          ? stage.zh
+          : stage.en
     statusElement.classList.remove('is-changing')
   }
 
@@ -100,6 +122,104 @@ function updateCopy(index, animate) {
     dot.classList.toggle('is-active', dotIndex === index)
   })
 }
+
+function setLocalizedActionCopy() {
+  retryButton.textContent = isChinese ? '重新启动' : 'Restart'
+  recoverButton.textContent = isChinese ? '恢复工作台' : 'Recover workbench'
+  resetOpenButton.textContent = isChinese ? '更多重置选项' : 'More reset options'
+  confirmationCancel.textContent = isChinese ? '取消' : 'Cancel'
+}
+
+function showRecovery() {
+  recoveryElement.hidden = false
+  document.documentElement.dataset.recoveryVisible = 'true'
+}
+
+function showConfirmation(mode) {
+  pendingResetMode = mode
+  confirmationTrigger = document.activeElement
+  confirmationElement.hidden = false
+  document.documentElement.dataset.confirmationVisible = 'true'
+  if (mode === 'recover') {
+    confirmationTitle.textContent = isChinese ? '恢复工作台？' : 'Recover the workbench?'
+    confirmationDescription.textContent = isChinese
+      ? '将清除标签页、分屏和上次会话恢复状态。登录、项目、任务和偏好设置不会受到影响。'
+      : 'This clears tabs, split layouts, and previous-session restore state. Your sign-in, projects, tasks, and preferences are preserved.'
+    confirmationSubmit.textContent = isChinese ? '恢复并重启' : 'Recover and restart'
+    confirmationSubmit.classList.remove('startup-button-danger')
+    confirmationSubmit.classList.add('startup-button-primary')
+    confirmationSubmit.focus()
+    return
+  }
+  confirmationTitle.textContent = isChinese ? '彻底重置应用状态？' : 'Reset all app state?'
+  confirmationDescription.textContent = isChinese
+    ? '将退出登录，并清除界面偏好、标签页和应用缓存。本地任务、插件、智能应用和工作目录会保留。'
+    : 'This signs you out and clears UI preferences, tabs, and app caches. Local tasks, plugins, Smart apps, and workspaces are preserved.'
+  confirmationSubmit.textContent = isChinese ? '彻底重置并重启' : 'Reset and restart'
+  confirmationSubmit.classList.remove('startup-button-primary')
+  confirmationSubmit.classList.add('startup-button-danger')
+  confirmationSubmit.focus()
+}
+
+function hideConfirmation() {
+  if (actionPending) return
+  pendingResetMode = null
+  confirmationElement.hidden = true
+  delete document.documentElement.dataset.confirmationVisible
+  if (confirmationTrigger instanceof HTMLElement) confirmationTrigger.focus()
+  confirmationTrigger = null
+}
+
+function setActionPending(pending) {
+  actionPending = pending
+  retryButton.disabled = pending
+  recoverButton.disabled = pending
+  resetOpenButton.disabled = pending
+  confirmationCancel.disabled = pending
+  confirmationSubmit.disabled = pending
+}
+
+async function runRecoveryAction(action) {
+  actionErrorElement.hidden = true
+  setActionPending(true)
+  try {
+    const recovery = window.weworkStartupRecovery
+    if (!recovery || typeof recovery[action] !== 'function') {
+      throw new Error('Startup recovery is unavailable')
+    }
+    await recovery[action]()
+  } catch {
+    setActionPending(false)
+    actionErrorElement.textContent = isChinese
+      ? '操作失败，请重新尝试。'
+      : 'The operation failed. Please try again.'
+    actionErrorElement.hidden = false
+  }
+}
+
+setLocalizedActionCopy()
+retryButton.addEventListener('click', () => void runRecoveryAction('retry'))
+recoverButton.addEventListener('click', () => showConfirmation('recover'))
+resetOpenButton.addEventListener('click', () => showConfirmation('resetAppState'))
+confirmationCancel.addEventListener('click', hideConfirmation)
+confirmationSubmit.addEventListener('click', () => {
+  if (pendingResetMode) void runRecoveryAction(pendingResetMode)
+})
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !confirmationElement.hidden) {
+    event.preventDefault()
+    hideConfirmation()
+  }
+})
+
+window.addEventListener('wework-startup-error', () => {
+  startupFailed = true
+  slowStartup = true
+  document.body.dataset.startupError = 'true'
+  document.body.dataset.slowStartup = 'true'
+  updateCopy(stageIndex, true)
+  showRecovery()
+})
 
 function animateMorph(time) {
   const delta = Math.min((time - previousTime) / 1000, 0.032)
@@ -133,7 +253,7 @@ if (prefersReducedMotion) {
   requestAnimationFrame(animateMorph)
   window.setInterval(() => {
     stageIndex = (stageIndex + 1) % stages.length
-    if (!slowStartup) updateCopy(stageIndex, true)
+    if (!slowStartup && !startupFailed) updateCopy(stageIndex, true)
   }, 1150)
 }
 
@@ -142,6 +262,10 @@ window.setTimeout(() => {
   document.body.dataset.slowStartup = 'true'
   updateCopy(stageIndex, true)
 }, 10_000)
+
+window.setTimeout(() => {
+  if (!startupFailed) showRecovery()
+}, 30_000)
 
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
