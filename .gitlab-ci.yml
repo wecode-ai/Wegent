@@ -43,6 +43,7 @@ wegent-runtime:
         ALIAS_IMAGE: pushregistry.api.weibo.com/ci/wegent-runtime:latest
       when: on_success
     - when: manual
+      allow_failure: true
 
 wgent-shell:
   stage: package
