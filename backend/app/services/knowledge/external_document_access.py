@@ -223,6 +223,24 @@ def get_document_file_or_raise(
         user_id=user_id,
         document_id=document_id,
     )
+    knowledge_base, _ = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=access.knowledge_base_id,
+        user_id=user_id,
+    )
+    if knowledge_base is None:
+        raise ExternalDocumentAccessError("Knowledge base not found", "not_found")
+
+    from app.services.knowledge.document_download_policy import (
+        DocumentDownloadDisabledError,
+        require_document_download_allowed,
+    )
+
+    try:
+        require_document_download_allowed(db, knowledge_base)
+    except DocumentDownloadDisabledError as exc:
+        raise ExternalDocumentAccessError(str(exc), exc.code) from exc
+
     if not access.downloadable or access.attachment is None:
         raise ExternalDocumentAccessError(
             "Document file is unavailable", "file_unavailable"

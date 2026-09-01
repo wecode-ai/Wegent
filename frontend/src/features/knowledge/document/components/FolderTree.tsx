@@ -63,6 +63,7 @@ interface FolderTreeProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  allowDownload?: boolean
   nameColumnWidth?: number
   showActionsColumn?: boolean
   /** Folder CRUD handlers */
@@ -414,6 +415,7 @@ interface FolderTreeNodeProps {
   includedInFolderScope?: (doc: KnowledgeDocument) => boolean
   onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
   ragConfigured?: boolean
+  allowDownload?: boolean
   nameColumnWidth?: number
   showActionsColumn?: boolean
   // Folder selection props
@@ -452,6 +454,7 @@ function FolderTreeNode({
   includedInFolderScope,
   onSelect,
   ragConfigured,
+  allowDownload,
   nameColumnWidth,
   showActionsColumn,
   canSelectFolders,
@@ -500,6 +503,7 @@ function FolderTreeNode({
             onSelect={onSelect}
             compact={true}
             ragConfigured={ragConfigured}
+            allowDownload={allowDownload}
             showActionsColumn={showActionsColumn}
           />
         </div>
@@ -530,6 +534,7 @@ function FolderTreeNode({
         onSelect={onSelect}
         compact={false}
         ragConfigured={ragConfigured}
+        allowDownload={allowDownload}
         nameColumnWidth={nameColumnWidth}
         showActionsColumn={showActionsColumn}
       />
@@ -633,6 +638,7 @@ export function FolderTree({
   includedInFolderScope,
   onSelect,
   ragConfigured,
+  allowDownload = true,
   nameColumnWidth,
   showActionsColumn,
   onCreateFolder,
@@ -769,6 +775,7 @@ export function FolderTree({
             includedInFolderScope={includedInFolderScope}
             onSelect={onSelect}
             ragConfigured={ragConfigured}
+            allowDownload={allowDownload}
             showActionsColumn={showActionsColumn}
             canSelectFolders={canSelectFolders}
             selectedFolderIds={selectedFolderIds}
@@ -811,6 +818,7 @@ export function FolderTree({
       includedInFolderScope={includedInFolderScope}
       onSelect={onSelect}
       ragConfigured={ragConfigured}
+      allowDownload={allowDownload}
       nameColumnWidth={nameColumnWidth}
       showActionsColumn={showActionsColumn}
       canSelectFolders={canSelectFolders}

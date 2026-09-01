@@ -1631,6 +1631,57 @@ async def test_get_document_download_returns_short_lived_header_token(
 
 
 @pytest.mark.asyncio
+async def test_get_document_download_rejects_protected_knowledge_base(
+    test_db,
+    test_user,
+):
+    now = datetime(2026, 1, 3, 13, 15, 0)
+    attachment = _make_attachment(test_user.id, extracted_text="protected report")
+    test_db.add(attachment)
+    test_db.flush()
+    document = KnowledgeDocument(
+        kind_id=25,
+        attachment_id=attachment.id,
+        name="protected-report.pdf",
+        file_extension="pdf",
+        file_size=123,
+        user_id=test_user.id,
+        is_active=True,
+        index_status=DocumentIndexStatus.SUCCESS,
+        source_type="file",
+        folder_id=0,
+        created_at=now,
+        updated_at=now,
+    )
+    test_db.add(document)
+    test_db.commit()
+
+    kb = _make_kb(25, test_user.id, "Protected KB", now)
+    kb.json["spec"]["allowDocumentDownload"] = False
+    token = _set_external_user(test_user)
+    try:
+        with (
+            patch.object(knowledge_external, "SessionLocal", return_value=test_db),
+            patch.object(
+                knowledge_external.KnowledgeService,
+                "get_knowledge_base",
+                return_value=(kb, True),
+            ),
+        ):
+            result = await knowledge_external.wegent_kb_get_document_download(
+                document_id=document.id,
+                disposition="attachment",
+            )
+    finally:
+        _reset_external_user(token)
+
+    assert json.loads(result) == {
+        "error": "Document download is disabled",
+        "code": "DOCUMENT_DOWNLOAD_DISABLED",
+    }
+
+
+@pytest.mark.asyncio
 async def test_get_document_download_rejects_inline_for_non_previewable_file(
     test_db,
     test_user,

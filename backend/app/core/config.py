@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Task Manager Backend"
     VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
+    # Namespace levels whose KB files cannot be downloaded as originals. Use
+    # "none" to disable the deployment-level rule explicitly.
+    KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS: str = "organization"
     # API docs toggle (from env ENABLE_API_DOCS, default True)
     ENABLE_API_DOCS: bool = True
     # Whether the auth handshake should surface first-run system initialization.
@@ -379,6 +382,25 @@ class Settings(BaseSettings):
     def parse_local_device_commands(cls, v: Any) -> dict[str, Any]:
         """Parse local device command map from JSON settings."""
         return _parse_json_object_setting(v, "LOCAL_DEVICE_COMMANDS")
+
+    @field_validator("KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS", mode="before")
+    @classmethod
+    def parse_forced_document_protection_levels(cls, v: Any) -> str:
+        """Validate the deployment-level original-file protection setting."""
+        levels = {item.strip().lower() for item in str(v).split(",") if item.strip()}
+        if levels == {"none"}:
+            return "none"
+
+        valid_levels = {"personal", "group", "organization"}
+        invalid_levels = levels - valid_levels
+        if not levels or invalid_levels or "none" in levels:
+            invalid = ", ".join(sorted(invalid_levels or {"none"}))
+            raise ValueError(
+                "KNOWLEDGE_DOCUMENT_FORCE_PROTECT_NAMESPACE_LEVELS must be "
+                "'none' or a comma-separated list of personal, group, organization; "
+                f"received invalid level(s): {invalid}"
+            )
+        return ",".join(sorted(levels))
 
     @field_validator("RAG_RUNTIME_MODE", mode="before")
     @classmethod

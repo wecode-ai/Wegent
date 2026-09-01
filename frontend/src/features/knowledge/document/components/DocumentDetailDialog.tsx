@@ -49,7 +49,7 @@ import { DocumentSummarySection } from './DocumentSummarySection'
 import { DocumentContentViewer } from './DocumentContentViewer'
 import { KnowledgeSourcePreview } from './KnowledgeSourcePreview'
 import { getProcessingErrorMessage } from '../utils/processing-error'
-import { downloadAttachment, formatFileSize } from '@/apis/attachments'
+import { formatFileSize } from '@/apis/attachments'
 import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { getKnowledgeConfig } from '@/apis/knowledge'
 import { buildKbUrl } from '@/utils/knowledgeUrl'
@@ -66,6 +66,8 @@ import { formatDateTime } from '@/utils/dateTime'
 import { parseUTCDate } from '@/lib/utils'
 import { isDocumentEditable, getExternalSourceInfo } from '../utils/documentUtils'
 import { isKnowledgeSourcePreviewSupported } from '../utils/sourcePreview'
+import { DocumentProtectionBoundary } from './DocumentProtectionBoundary'
+import { useKnowledgeDocumentDownload } from '../hooks/useKnowledgeDocumentDownload'
 
 // Dynamically import the WYSIWYG editor to avoid SSR issues
 const WysiwygEditor = dynamic(
@@ -95,6 +97,10 @@ interface DocumentDetailDialogProps {
   knowledgeBaseNamespace?: string
   /** Whether this KB belongs to an organization-level namespace (affects URL format) */
   isOrganization?: boolean
+  /** Whether the KB may deliver original document files. */
+  allowDownload?: boolean
+  /** Server-supplied display text for the preview watermark. */
+  watermarkText?: string | null
 }
 
 export function DocumentDetailDialog({
@@ -107,8 +113,13 @@ export function DocumentDetailDialog({
   knowledgeBaseName = '',
   knowledgeBaseNamespace = 'default',
   isOrganization = false,
+  allowDownload = true,
+  watermarkText,
 }: DocumentDetailDialogProps) {
   const { t, getCurrentLanguage } = useTranslation('knowledge')
+  const downloadDocument = useKnowledgeDocumentDownload()
+  const protectedPreview = !allowDownload || isOrganization
+  const effectiveWatermarkText = watermarkText || t('document.document.detail.protectedWatermark')
   const [copiedContent, setCopiedContent] = useState(false)
   const [copiedLink, setCopiedLink] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
@@ -122,7 +133,7 @@ export function DocumentDetailDialog({
   // View mode: 'preview' for markdown rendering/formatted JSON, 'raw' for plain text
   const [viewMode, setViewMode] = useState<'preview' | 'raw'>('preview')
   const [contentSourceMode, setContentSourceMode] = useState<'parsed' | 'source'>(() =>
-    document && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
+    document && allowDownload && isKnowledgeSourcePreviewSupported(document) ? 'source' : 'parsed'
   )
   const [isSummaryOpen, setIsSummaryOpen] = useState(contentSourceMode === 'parsed')
   const summaryManuallyToggledRef = useRef(false)
@@ -133,6 +144,8 @@ export function DocumentDetailDialog({
   const [isFullscreen, setIsFullscreen] = useState(false)
   // Chunk storage configuration - controls whether chunks section is visible
   const [chunkStorageEnabled, setChunkStorageEnabled] = useState(false)
+  // Extraction guards apply to the read-only protected preview, never the editor.
+  const protectedContent = protectedPreview && !isEditing
 
   // Fetch knowledge config on mount to check if chunk storage is enabled
   useEffect(() => {
@@ -168,8 +181,8 @@ export function DocumentDetailDialog({
     [document?.source_type, document?.file_extension, canEdit]
   )
   const canPreviewSource = useMemo(
-    () => Boolean(document && isKnowledgeSourcePreviewSupported(document)),
-    [document]
+    () => Boolean(document && allowDownload && isKnowledgeSourcePreviewSupported(document)),
+    [allowDownload, document]
   )
   // Source governance metadata for imported external documents.
   const externalSourceInfo = useMemo(
@@ -238,13 +251,14 @@ export function DocumentDetailDialog({
   }
 
   const handleSourceDownload = useCallback(async () => {
-    if (!document?.attachment_id) return
+    if (!allowDownload) return
+    if (!document) return
     try {
-      await downloadAttachment(document.attachment_id, document.name)
+      await downloadDocument(document)
     } catch {
       toast.error(t('document.document.detail.sourcePreview.downloadFailed'))
     }
-  }, [document?.attachment_id, document?.name, t])
+  }, [allowDownload, document, downloadDocument, t])
 
   const handleEdit = useCallback(async () => {
     if (!isEditable) return
@@ -464,20 +478,22 @@ export function DocumentDetailDialog({
                       aria-hidden={!isSourceView}
                       data-testid="knowledge-source-preview-actions"
                     >
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={handleSourceDownload}
-                        className="max-md:min-h-[44px] max-md:min-w-[44px]"
-                        aria-label={t('document.document.detail.sourcePreview.download')}
-                        data-testid="knowledge-source-preview-download"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        <span className="hidden md:inline">
-                          {t('document.document.detail.sourcePreview.download')}
-                        </span>
-                      </Button>
+                      {allowDownload && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSourceDownload}
+                          className="max-md:min-h-[44px] max-md:min-w-[44px]"
+                          aria-label={t('document.document.detail.sourcePreview.download')}
+                          data-testid="knowledge-source-preview-download"
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                          <span className="hidden md:inline">
+                            {t('document.document.detail.sourcePreview.download')}
+                          </span>
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
@@ -566,7 +582,8 @@ export function DocumentDetailDialog({
               isSourceView || (isEditing && isFullscreen)
                 ? 'flex flex-col overflow-hidden'
                 : 'overflow-y-auto',
-              isEditing && !isFullscreen && 'flex flex-col'
+              isEditing && !isFullscreen && 'flex flex-col',
+              protectedContent && 'select-none'
             )}
           >
             {!isEditing && !isFullscreen && detail?.summary && (
@@ -724,7 +741,7 @@ export function DocumentDetailDialog({
                               </Tooltip>
                             )}
                             {/* Copy link button - always visible in preview mode */}
-                            {documentFullUrl && (
+                            {documentFullUrl && !protectedPreview && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -782,7 +799,7 @@ export function DocumentDetailDialog({
                                 )}
                               </Button>
                             )}
-                            {fullContent && (
+                            {fullContent && !protectedPreview && (
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -823,20 +840,27 @@ export function DocumentDetailDialog({
                         />
                       </div>
                     ) : (
-                      <DocumentContentViewer
-                        content={fullContent}
-                        document={document}
+                      <DocumentProtectionBoundary
+                        enabled={protectedPreview}
                         knowledgeBaseId={knowledgeBaseId}
-                        knowledgeBaseName={knowledgeBaseName}
-                        knowledgeBaseNamespace={knowledgeBaseNamespace}
-                        isOrganization={isOrganization}
-                        viewMode={viewMode}
-                        hasMoreContent={hasMoreContent}
-                        loadingMore={loadingMore}
-                        contentLength={detail?.content_length}
-                        onLoadMore={loadMore}
-                        onOpenChange={onOpenChange}
-                      />
+                        preferExtension={isOrganization}
+                        watermarkText={effectiveWatermarkText}
+                      >
+                        <DocumentContentViewer
+                          content={fullContent}
+                          document={document}
+                          knowledgeBaseId={knowledgeBaseId}
+                          knowledgeBaseName={knowledgeBaseName}
+                          knowledgeBaseNamespace={knowledgeBaseNamespace}
+                          isOrganization={isOrganization}
+                          viewMode={viewMode}
+                          hasMoreContent={hasMoreContent}
+                          loadingMore={loadingMore}
+                          contentLength={detail?.content_length}
+                          onLoadMore={loadMore}
+                          onOpenChange={onOpenChange}
+                        />
+                      </DocumentProtectionBoundary>
                     )}
                   </div>
                 )}

@@ -19,6 +19,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Query,
+    Response,
     status,
 )
 from sqlalchemy.exc import IntegrityError
@@ -48,6 +49,7 @@ from app.schemas.knowledge import (
     DocumentContentUpdate,
     DocumentDetailResponse,
     DocumentMoveRequest,
+    DocumentProtectionResponse,
     ExternalDocumentBatchImportRequest,
     ExternalDocumentBatchImportResponse,
     ExternalDocumentImportRequest,
@@ -78,6 +80,16 @@ from app.services.knowledge import (
     KnowledgeFolderService,
     KnowledgeService,
     knowledge_base_qa_service,
+)
+from app.services.knowledge.document_download_policy import (
+    resolve_document_download_decision,
+)
+from app.services.knowledge.external_document_access import (
+    ExternalDocumentAccessError,
+    create_document_download_token,
+    get_document_file_or_raise,
+    load_document_file_or_raise,
+    verify_document_download_token,
 )
 from app.services.knowledge.external_document_import import (
     ExternalDocumentImportError,
@@ -476,6 +488,7 @@ def create_knowledge_base(
             description=data.description,
             namespace=data.namespace or "default",
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             kb_type=data.kb_type or "notebook",
             summary_enabled=data.summary_enabled,
             rag_config_mode=data.rag_config_mode,
@@ -509,6 +522,39 @@ def create_knowledge_base(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.get(
+    "/{knowledge_base_id}/document-protection",
+    response_model=DocumentProtectionResponse,
+)
+def get_document_protection(
+    knowledge_base_id: int,
+    response: Response,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return UI-only protection state; file exits still authorize independently."""
+    knowledge_base, has_access = KnowledgeService.get_knowledge_base(
+        db=db,
+        knowledge_base_id=knowledge_base_id,
+        user_id=current_user.id,
+    )
+    if not knowledge_base or not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Knowledge base not found",
+        )
+
+    decision = resolve_document_download_decision(db, knowledge_base)
+    response.headers["Cache-Control"] = "private, no-store"
+    return DocumentProtectionResponse(
+        original_download_allowed=decision.original_download_allowed,
+        copy_allowed=decision.original_download_allowed,
+        watermark_text=(
+            None if decision.original_download_allowed else current_user.user_name
+        ),
+    )
 
 
 @router.get("/{knowledge_base_id}", response_model=KnowledgeBaseResponse)
@@ -563,6 +609,7 @@ def update_knowledge_base(
             name=data.name,
             description=data.description,
             direct_access_requirement=data.direct_access_requirement,
+            allow_document_download=data.allow_document_download,
             retrieval_config=_dump_retrieval_config_for_api(data.retrieval_config),
             summary_enabled=data.summary_enabled,
             summary_model_ref=data.summary_model_ref,
@@ -932,6 +979,84 @@ def get_external_document_import_statuses(
 
 # Document-specific endpoints (without knowledge_base_id in path)
 document_router = APIRouter()
+
+
+def _raise_knowledge_document_download_error(
+    error: ExternalDocumentAccessError,
+) -> None:
+    """Translate document-scoped file access failures to HTTP responses."""
+    status_code = {
+        "not_found": status.HTTP_404_NOT_FOUND,
+        "file_unavailable": status.HTTP_404_NOT_FOUND,
+        "forbidden": status.HTTP_403_FORBIDDEN,
+        "DOCUMENT_DOWNLOAD_DISABLED": status.HTTP_403_FORBIDDEN,
+    }.get(error.code, status.HTTP_400_BAD_REQUEST)
+    detail: str | dict[str, str] = str(error)
+    if error.code == "DOCUMENT_DOWNLOAD_DISABLED":
+        detail = {"code": error.code, "message": str(error)}
+    raise HTTPException(status_code=status_code, detail=detail) from error
+
+
+@document_router.post("/{document_id}/download-token")
+@trace_sync("create_knowledge_document_download_token", "knowledge.api")
+def create_knowledge_document_download_token(
+    document_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int | str]:
+    """Create a browser download credential for one knowledge document only."""
+    try:
+        get_document_file_or_raise(
+            db,
+            user_id=current_user.id,
+            document_id=document_id,
+            disposition="attachment",
+        )
+    except ExternalDocumentAccessError as exc:
+        _raise_knowledge_document_download_error(exc)
+
+    return {
+        "download_token": create_document_download_token(
+            user_id=current_user.id,
+            document_id=document_id,
+            disposition="attachment",
+        ),
+        "expires_in": 300,
+    }
+
+
+@document_router.get("/{document_id}/download")
+@trace_sync("download_knowledge_document", "knowledge.api")
+def download_knowledge_document(
+    document_id: int,
+    download_token: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+) -> Response:
+    """Download one original file through its knowledge-document authorization."""
+    token_payload = verify_document_download_token(download_token)
+    if token_payload is None or token_payload.document_id != document_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid download token"
+        )
+
+    try:
+        document_file = load_document_file_or_raise(
+            db,
+            user_id=token_payload.user_id,
+            document_id=document_id,
+            disposition=token_payload.disposition,
+        )
+    except ExternalDocumentAccessError as exc:
+        _raise_knowledge_document_download_error(exc)
+
+    return Response(
+        content=document_file.content,
+        media_type=document_file.media_type,
+        headers={
+            "Content-Disposition": document_file.content_disposition,
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @document_router.get("/{document_id}", response_model=KnowledgeDocumentResponse)

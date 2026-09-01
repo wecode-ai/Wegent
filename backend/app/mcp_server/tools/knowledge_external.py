@@ -50,6 +50,7 @@ from app.services.knowledge.external_document_access import (
     ExternalDocumentAccessError,
     create_document_download_token,
     get_document_access_or_raise,
+    get_document_file_or_raise,
     normalize_disposition,
 )
 from app.services.knowledge.external_nodes import (
@@ -475,17 +476,12 @@ def _get_document_download_sync(
 ) -> str:
     db = SessionLocal()
     try:
-        access = get_document_access_or_raise(
+        access = get_document_file_or_raise(
             db,
             user_id=user_id,
             document_id=document_id,
+            disposition=disposition,
         )
-        if not access.downloadable:
-            return _json_error("Document file is unavailable", "file_unavailable")
-        if disposition == "inline" and not access.previewable:
-            return _json_error(
-                "Document file is not previewable", "unsupported_media_type"
-            )
 
         token = create_document_download_token(
             user_id=user_id,

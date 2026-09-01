@@ -1068,6 +1068,10 @@ class KnowledgeBaseSpec(BaseModel):
         default="read",
         description="Minimum capability required for direct knowledge base access",
     )
+    allowDocumentDownload: bool = Field(
+        default=True,
+        description="Whether readers may download original knowledge documents",
+    )
     kbType: Optional[str] = Field(
         "notebook",
         description=(

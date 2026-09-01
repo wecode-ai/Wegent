@@ -309,6 +309,7 @@ class KnowledgeService:
             "name": data.name,
             "description": data.description or "",
             "directAccessRequirement": data.direct_access_requirement,
+            "allowDocumentDownload": data.allow_document_download,
             # A code wiki is fixed here; there is deliberately no code path that turns
             # an existing knowledge base into one, or out of one.
             "kbType": KnowledgeBaseType(
@@ -879,6 +880,9 @@ class KnowledgeService:
 
         if data.direct_access_requirement is not None:
             spec["directAccessRequirement"] = data.direct_access_requirement
+
+        if "allow_document_download" in data.model_fields_set:
+            spec["allowDocumentDownload"] = data.allow_document_download
 
         # Update retrieval config if provided (only allowed fields)
         if data.retrieval_config is not None:

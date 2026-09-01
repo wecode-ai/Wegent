@@ -56,6 +56,7 @@ import { useOffPageDocumentPolling } from '../hooks/useOffPageDocumentPolling'
 import { useModelSupportsVideo } from '@/features/knowledge/multimodal/hooks/useModelSupportsVideo'
 import { documentViewOf } from '@/types/knowledge'
 import type {
+  DocumentProtection,
   KnowledgeBase,
   KnowledgeContentOrigin,
   KnowledgeDocument,
@@ -83,6 +84,7 @@ import {
 import { findDocumentByName, findDocumentForDeepLink } from '../utils/document-lookup'
 import { createDocumentsFromAttachments } from '../utils/document-creation'
 import { DocumentSourceWorkspaceHeader } from './DocumentSourceWorkspaceHeader'
+import { getDocumentProtection } from '@/apis/knowledge'
 
 export { deletedFolderAffectsActiveFolder, folderTreeContainsId }
 export { shouldDisableDocumentBatchActions } from '../hooks/useKnowledgeResourceSelection'
@@ -264,6 +266,11 @@ export function DocumentList({
   readOnly = false,
 }: DocumentListProps) {
   const { t } = useTranslation('knowledge')
+  const [documentProtection, setDocumentProtection] = useState<DocumentProtection>({
+    original_download_allowed: knowledgeBase.allow_document_download ?? true,
+    copy_allowed: knowledgeBase.allow_document_download ?? true,
+    watermark_text: null as string | null,
+  })
   const [searchQuery, setSearchQuery] = useState('')
   const [sortField, setSortField] = useState<SortField>('createdAt')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
@@ -272,6 +279,30 @@ export function DocumentList({
   const previousRefreshTokenRef = useRef(refreshToken)
   // Expand-all view: show full folder+document tree when KB document_count < 200
   const [isExpandAllView, setIsExpandAllView] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void getDocumentProtection(knowledgeBase.id)
+      .then(protection => {
+        if (!cancelled) setDocumentProtection(protection)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDocumentProtection({
+            original_download_allowed: knowledgeBase.allow_document_download ?? true,
+            copy_allowed: knowledgeBase.allow_document_download ?? true,
+            watermark_text: null,
+          })
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [knowledgeBase.allow_document_download, knowledgeBase.id])
+
+  // Internal deployments retain their organization-level protection boundary.
+  // The core endpoint controls all other knowledge bases.
+  const allowDownload = documentProtection.original_download_allowed && !isOrganization
 
   // Folder state
   const {
@@ -1502,6 +1533,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={handleSelectDoc}
                 ragConfigured={ragConfigured}
+                allowDownload={allowDownload}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
@@ -1560,6 +1592,7 @@ export function DocumentList({
                 includedInFolderScope={isDocumentIncludedInFolderScope}
                 onSelect={canManageDocumentArea ? handleSelectDoc : undefined}
                 ragConfigured={ragConfigured}
+                allowDownload={allowDownload}
                 onCreateFolder={canManageFolderStructure ? handleCreateFolder : undefined}
                 onRenameFolder={canManageFolderStructure ? handleRenameFolder : undefined}
                 onDeleteFolder={canManageFolderStructure ? handleDeleteFolderClick : undefined}
@@ -1633,6 +1666,8 @@ export function DocumentList({
         knowledgeBaseName={knowledgeBase.name}
         knowledgeBaseNamespace={knowledgeBase.namespace || 'default'}
         isOrganization={isOrganization}
+        allowDownload={allowDownload}
+        watermarkText={documentProtection.watermark_text}
       />
       <DocumentUpload
         knowledgeBaseId={knowledgeBase.id}

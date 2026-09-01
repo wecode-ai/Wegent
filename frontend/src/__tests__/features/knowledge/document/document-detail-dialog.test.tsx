@@ -10,7 +10,7 @@ import type { DocumentSummary, KnowledgeDocument } from '@/types/knowledge'
 import { toast } from 'sonner'
 
 const mockRouterPush = jest.fn()
-const mockDownloadAttachment = jest.fn()
+const mockDownloadKnowledgeDocument = jest.fn()
 let mockDocumentSummary: DocumentSummary | null = null
 const mockDialogContent = jest.fn(
   ({ children }: { children: React.ReactNode; className?: string }) => <div>{children}</div>
@@ -57,6 +57,7 @@ jest.mock('@/apis/knowledge', () => ({
     chunk_storage_enabled: false,
   }),
   listKnowledgeBases: (...args: unknown[]) => mockListKnowledgeBases(...args),
+  downloadKnowledgeDocument: (...args: unknown[]) => mockDownloadKnowledgeDocument(...args),
 }))
 
 jest.mock('@/apis/knowledge-base', () => ({
@@ -66,7 +67,6 @@ jest.mock('@/apis/knowledge-base', () => ({
 }))
 
 jest.mock('@/apis/attachments', () => ({
-  downloadAttachment: (...args: unknown[]) => mockDownloadAttachment(...args),
   formatFileSize: (bytes: number) => `${bytes} B`,
   isImageExtension: () => false,
 }))
@@ -88,6 +88,11 @@ jest.mock('@/features/knowledge/document/hooks/useDocumentDetail', () => ({
     loadAllContent: jest.fn(),
     refresh: jest.fn(),
   }),
+}))
+
+jest.mock('@/features/knowledge/document/hooks/useKnowledgeDocumentDownload', () => ({
+  useKnowledgeDocumentDownload: () => (document: KnowledgeDocument) =>
+    mockDownloadKnowledgeDocument(document.id, document.name),
 }))
 
 jest.mock('@/features/knowledge/document/components/ChunksSection', () => ({
@@ -143,7 +148,7 @@ jest.mock('sonner', () => ({
 beforeEach(() => {
   mockRouterPush.mockClear()
   mockDialogContent.mockClear()
-  mockDownloadAttachment.mockReset()
+  mockDownloadKnowledgeDocument.mockReset()
   mockDocumentSummary = null
   mockListKnowledgeBases.mockResolvedValue({ items: [] })
 })
@@ -168,6 +173,65 @@ const baseDocument: KnowledgeDocument = {
 }
 
 describe('DocumentDetailDialog permissions', () => {
+  it('renders the protected watermark inside the scrollable content so it covers scrolled sections', async () => {
+    const canvasContext = {
+      scale: jest.fn(),
+      translate: jest.fn(),
+      rotate: jest.fn(),
+      fillText: jest.fn(),
+      font: '',
+      fillStyle: '',
+      textAlign: 'start',
+      textBaseline: 'alphabetic',
+    } as unknown as CanvasRenderingContext2D
+    const getContext = jest
+      .spyOn(HTMLCanvasElement.prototype, 'getContext')
+      .mockReturnValue(canvasContext)
+    const toDataURL = jest
+      .spyOn(HTMLCanvasElement.prototype, 'toDataURL')
+      .mockReturnValue('data:image/png;base64,watermark')
+
+    try {
+      render(
+        <DocumentDetailDialog
+          open={true}
+          onOpenChange={jest.fn()}
+          document={baseDocument}
+          knowledgeBaseId={21}
+          allowDownload={false}
+          watermarkText="reader@example.com"
+        />
+      )
+
+      const watermark = screen.getByTestId('knowledge-document-watermark')
+      await waitFor(() => {
+        expect(watermark.style.backgroundImage).toContain('data:image/png')
+      })
+      expect(watermark).toHaveClass('absolute', 'inset-0')
+      expect(watermark).toHaveAttribute('data-watermark-pattern', 'tiled')
+      // Match the internal build: no forced background-size, so tile/text size is identical
+      expect(watermark.style.backgroundSize).toBe('')
+
+      // The boundary grows with the content inside the scroller, so the watermark
+      // stays over every scrolled section instead of only the first screen.
+      const boundary = watermark.parentElement as HTMLElement
+      expect(boundary).toHaveClass('relative', 'h-full', 'overflow-hidden', 'select-none')
+      const scroller = watermark.closest('.overflow-y-auto')
+      expect(scroller).not.toBeNull()
+      expect(scroller).toContainElement(watermark)
+
+      // Copy is blocked on the protected boundary
+      const copyEvent = new Event('copy', { cancelable: true, bubbles: true })
+      boundary.dispatchEvent(copyEvent)
+      expect(copyEvent.defaultPrevented).toBe(true)
+
+      expect(canvasContext.fillText).toHaveBeenCalledWith('reader@example.com', 0, 0)
+    } finally {
+      getContext.mockRestore()
+      toDataURL.mockRestore()
+    }
+  })
+
   it('hides the edit button when the user cannot manage the document', () => {
     render(
       <DocumentDetailDialog
@@ -544,7 +608,7 @@ describe('DocumentDetailDialog original file preview', () => {
 
   it('downloads the original file from the dialog header and preserves the preview on failure', async () => {
     const user = userEvent.setup()
-    mockDownloadAttachment.mockRejectedValue(new Error('download failed'))
+    mockDownloadKnowledgeDocument.mockRejectedValue(new Error('download failed'))
     render(
       <DocumentDetailDialog
         open={true}
@@ -556,7 +620,7 @@ describe('DocumentDetailDialog original file preview', () => {
 
     await user.click(screen.getByTestId('knowledge-source-preview-download'))
 
-    expect(mockDownloadAttachment).toHaveBeenCalledWith(32, 'report.docx')
+    expect(mockDownloadKnowledgeDocument).toHaveBeenCalledWith(22, 'report.docx')
     expect(toast.error).toHaveBeenCalledWith(
       'document.document.detail.sourcePreview.downloadFailed'
     )
