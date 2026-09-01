@@ -16,6 +16,7 @@ from typing import Any, Optional
 from socketio.exceptions import BadNamespaceError, DisconnectedError
 from socketio.exceptions import TimeoutError as SocketTimeoutError
 
+from app.core.config import settings
 from app.core.socketio import get_sio
 from app.db.session import get_db_session
 from app.schemas.device import DeviceType
@@ -113,7 +114,30 @@ def _set_runtime_proxy(model_config: dict[str, Any], proxy_url: str) -> None:
     model_config["runtime_config"] = runtime_config
 
 
-async def _enforce_remote_runtime_proxy(
+def _cloud_model_gateway_base_url() -> str:
+    backend_url = str(settings.WEGENT_BACKEND_PUBLIC_URL or "").rstrip("/")
+    if not backend_url:
+        return ""
+    api_prefix = str(settings.API_PREFIX or "/api").strip("/")
+    return f"{backend_url}/{api_prefix}/runtime-work/llm-responses-proxy"
+
+
+def _set_cloud_model_gateway(
+    model_config: dict[str, Any], gateway_base_url: str
+) -> bool:
+    if model_config.get("wework_model_kind") != "cloud":
+        return False
+    if not gateway_base_url:
+        raise ValueError("WEGENT_BACKEND_PUBLIC_URL is required for cloud models")
+
+    model_config["base_url"] = gateway_base_url
+    vision_sidecar = model_config.get("vision_sidecar")
+    if isinstance(vision_sidecar, dict):
+        vision_sidecar["request_url"] = f"{gateway_base_url}/responses"
+    return True
+
+
+async def _enforce_remote_runtime_model_policy(
     *,
     user_id: int,
     device_type: DeviceType,
@@ -132,15 +156,23 @@ async def _enforce_remote_runtime_proxy(
         return payload
 
     proxy_url = await asyncio.to_thread(_load_remote_runtime_proxy_url, user_id)
+    gateway_base_url = _cloud_model_gateway_base_url()
+    cloud_model_config_count = 0
     for model_config in model_configs:
-        _set_runtime_proxy(model_config, proxy_url)
+        if _set_cloud_model_gateway(model_config, gateway_base_url):
+            cloud_model_config_count += 1
+            _set_runtime_proxy(model_config, "")
+        else:
+            _set_runtime_proxy(model_config, proxy_url)
     logger.info(
-        "[RuntimeRpcService] Applied account proxy policy: "
-        "user_id=%s method=%s configured=%s model_config_count=%s",
+        "[RuntimeRpcService] Applied remote model policy: "
+        "user_id=%s method=%s account_proxy_configured=%s model_config_count=%s "
+        "cloud_model_config_count=%s",
         user_id,
         method,
         bool(proxy_url),
         len(model_configs),
+        cloud_model_config_count,
     )
     return next_payload
 
@@ -254,7 +286,7 @@ class RuntimeRpcService:
                 ) from exc
 
         try:
-            payload = await _enforce_remote_runtime_proxy(
+            payload = await _enforce_remote_runtime_model_policy(
                 user_id=user_id,
                 device_type=route.device_type,
                 method=method,
@@ -262,7 +294,7 @@ class RuntimeRpcService:
             )
         except Exception as exc:
             logger.exception(
-                "[RuntimeRpcService] Failed to resolve account proxy policy: "
+                "[RuntimeRpcService] Failed to apply remote model policy: "
                 "request_id=%s user_id=%s logical_device_id=%s method=%s",
                 request_id or "-",
                 user_id,
@@ -270,7 +302,7 @@ class RuntimeRpcService:
                 method,
             )
             raise RuntimeRpcError(
-                "Failed to resolve cloud device proxy configuration",
+                "Failed to configure remote runtime model routing",
                 code="runtime_proxy_config_failed",
                 retryable=False,
                 details={"deviceId": route.logical_device_id},
