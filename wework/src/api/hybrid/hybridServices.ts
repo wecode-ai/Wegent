@@ -24,6 +24,8 @@ import { isAppDeviceRegistration, isCurrentAppDeviceId } from '@/lib/app-device-
 import { isCloudDevice, isRemoteDevice, isUsableDevice } from '@/lib/device-capabilities'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import { getWorkbenchDeviceIds } from '@/lib/workbench-device'
+import type { LocalExecutorEvent } from '@/desktop/localExecutor'
 import {
   EMPTY_RUNTIME_WORK,
   mergeDeviceLists,
@@ -310,6 +312,27 @@ function cloudDeviceIdFromData(data?: Record<string, unknown> | null): string | 
   if (direct) return direct
   const address = recordValue(data.address)
   return stringField(address, 'deviceId') ?? stringField(address, 'device_id')
+}
+
+function projectCloudRuntimeEventDeviceId(
+  event: LocalExecutorEvent,
+  devices: DeviceInfo[]
+): LocalExecutorEvent {
+  const eventDeviceId = cloudDeviceIdFromData(event.payload)
+  if (!eventDeviceId) return event
+
+  const device = devices.find(candidate => getWorkbenchDeviceIds(candidate).includes(eventDeviceId))
+  const logicalDeviceId = device?.device_id.trim()
+  if (!logicalDeviceId || logicalDeviceId === eventDeviceId) return event
+
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      deviceId: logicalDeviceId,
+      device_id: logicalDeviceId,
+    },
+  }
 }
 
 export function createHybridWorkbenchServices(
@@ -1252,7 +1275,10 @@ export function createHybridWorkbenchServices(
       const deviceId = cloudDeviceIdFromData(params)
       return cloudRuntimeIpc.request(method, params, deviceId)
     },
-    subscribe: cloudRuntimeIpc.subscribe,
+    subscribe: handler =>
+      cloudRuntimeIpc.subscribe(event => {
+        handler(projectCloudRuntimeEventDeviceId(event, rememberedCloudDevices))
+      }),
   })
   const hybridChatStream: WorkbenchServices['chatStream'] = {
     subscribe(handlers) {

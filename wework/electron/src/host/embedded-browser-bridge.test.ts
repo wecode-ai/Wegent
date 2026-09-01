@@ -124,6 +124,95 @@ describe('EmbeddedBrowserBridge', () => {
     expect(browser.navigate).toHaveBeenCalledWith('workspace-browser-2', 'https://example.test/')
   })
 
+  test('waits for the host cursor to arrive before dispatching a click', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    let resolveArrival: (arrived: boolean) => void = () => undefined
+    const arrival = new Promise<boolean>(resolve => {
+      resolveArrival = resolve
+    })
+    browser.evaluate.mockImplementation(async (_label, expression) => {
+      if (expression.includes('"previewOnly":true')) {
+        return {
+          ok: true,
+          target: { rect: { x: 40, y: 30, width: 120, height: 40 } },
+        }
+      }
+      return { ok: true, action: 'click' }
+    })
+    browser.waitForAgentCursorArrival.mockReturnValue(arrival)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const responsePromise = fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'click',
+        label: 'workspace-browser',
+        selector: '#run-agent',
+      }),
+    })
+
+    await vi.waitFor(() => {
+      expect(browser.showAgentCursor).toHaveBeenCalledWith('workspace-browser', 100, 50)
+    })
+    expect(browser.evaluate).toHaveBeenCalledOnce()
+    resolveArrival(true)
+
+    const response = await responsePromise
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      data: { ok: true, action: 'click' },
+    })
+    expect(browser.evaluate).toHaveBeenCalledTimes(2)
+    expect(browser.hideAgentCursor).not.toHaveBeenCalled()
+  })
+
+  test('does not dispatch a click when the host cursor does not arrive', async () => {
+    const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
+    const browser = fakeBrowser()
+    browser.evaluate.mockResolvedValue({
+      ok: true,
+      target: { rect: { x: 40, y: 30, width: 120, height: 40 } },
+    })
+    browser.waitForAgentCursorArrival.mockResolvedValue(false)
+    const bridge = new EmbeddedBrowserBridge(browser.manager, executorHome)
+    bridges.push(bridge)
+    const runtimePath = await bridge.start()
+    const identity = JSON.parse(await readFile(runtimePath, 'utf8')) as {
+      address: string
+      token: string
+    }
+
+    const response = await fetch(`http://${identity.address}/browser`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${identity.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        action: 'click',
+        label: 'workspace-browser',
+        selector: '#run-agent',
+      }),
+    })
+
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: 'Timed out waiting for embedded browser agent cursor arrival',
+    })
+    expect(browser.evaluate).toHaveBeenCalledOnce()
+  })
+
   test('follows an active browser label published after the open request', async () => {
     const executorHome = await mkdtemp(join(tmpdir(), 'wework-browser-bridge-'))
     const browser = fakeBrowser()
@@ -314,6 +403,9 @@ function fakeBrowser() {
   const navigate = vi.fn(async () => undefined)
   const evaluate = vi.fn()
   const clickAt = vi.fn()
+  const hideAgentCursor = vi.fn()
+  const showAgentCursor = vi.fn(() => 1)
+  const waitForAgentCursorArrival = vi.fn(async () => true)
   const manager = {
     activeLabel,
     has,
@@ -330,15 +422,21 @@ function fakeBrowser() {
     consumeApprovedAgentRisk: vi.fn(() => false),
     registerAgentApproval: vi.fn(() => null),
     emitAgentState: vi.fn(),
+    hideAgentCursor,
+    showAgentCursor,
+    waitForAgentCursorArrival,
   } as unknown as EmbeddedBrowserManager
   return {
     activeLabel,
     clickAt,
     evaluate,
     has,
+    hideAgentCursor,
     manager,
     navigate,
     requestOpen,
+    showAgentCursor,
     state,
+    waitForAgentCursorArrival,
   }
 }

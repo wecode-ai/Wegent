@@ -699,6 +699,9 @@ describe('CloudTodoWorkspace', () => {
     )
 
     await screen.findByTestId('cloud-project-header')
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.getBoardSnapshot).toHaveBeenCalledTimes(1)
+    })
     const initialSnapshotRequests = vi.mocked(workbenchServices.deliveryApi!.getBoardSnapshot).mock
       .calls.length
 

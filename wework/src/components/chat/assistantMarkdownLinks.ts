@@ -107,10 +107,14 @@ export function splitMarkdownFileLineSuffix(path: string): {
 }
 
 export function resolveDirectMarkdownImageSrc(src: string): string | null {
-  if (!isLocalImagePath(src)) return src
+  const localPath = localMarkdownImagePath(src)
+  if (!localPath) return src
 
-  const localPath = localPathFromMarkdownImageSrc(src)
   return isElectronRuntime() ? desktopFileUrl(localPath) : null
+}
+
+export function localMarkdownImagePath(src: string): string | null {
+  return isLocalImagePath(src) ? localPathFromMarkdownImageSrc(src) : null
 }
 
 export function localPathFromMarkdownImageSrc(src: string): string {
