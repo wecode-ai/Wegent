@@ -45,6 +45,7 @@ import {
 } from './host/embedded-browser-manager.js'
 import { EmbeddedBrowserBridge } from './host/embedded-browser-bridge.js'
 import { ComputerUseService } from './host/computer-use-service.js'
+import { restoreComputerUseAfterStartup } from './host/computer-use-startup.js'
 import { materializeBundledRuntimes } from './runtime/bundled-runtime-materializer.js'
 import { waitForRendererSelector } from './host/renderer-readiness.js'
 import { desktopWindowFrameOptions } from './host/window-layout.js'
@@ -162,6 +163,7 @@ let pendingSystemDrops: Array<{
 let runtimeError: string | null = null
 let runtimePhase: 'initializing' | 'ready' | 'failed' = 'initializing'
 let runtimeStartPromise: Promise<void> | null = null
+let computerUseStartupScheduled = false
 let electronNodeRuntimePromise: Promise<ElectronNodeRuntime> | null = null
 let quitting = false
 let shutdownPromise: Promise<void> | null = null
@@ -1129,8 +1131,6 @@ async function configureDesktopRuntime(): Promise<void> {
   computerUse = new ComputerUseService(
     environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework')
   )
-  const savedPreferences = await preferences.read()
-  await computerUse.setEnabled(savedPreferences.computerUseEnabled === true)
   const runtimeRoot = environment.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
   if (runtimeRoot) {
     smartApps = new SmartAppManager({
@@ -1211,6 +1211,7 @@ async function configureDesktopRuntime(): Promise<void> {
               capturePath: process.env.WEWORK_E2E_STARTUP_SPLASH_CAPTURE?.trim(),
             })
             logStartupStep('startup-splash-close', 'completed')
+            scheduleComputerUseStartup()
           },
           rendererStartupFailed: () => {
             logStartupStep('renderer-startup', 'failed')
@@ -1296,6 +1297,23 @@ async function configureDesktopRuntime(): Promise<void> {
     apply: status => trayManager?.setNativeStatus(status),
   })
   logStartupStep('runtime-configure', 'completed')
+}
+
+function scheduleComputerUseStartup(): void {
+  if (computerUseStartupScheduled || quitting) return
+  const service = computerUse
+  const store = preferences
+  if (!service || !store) return
+  computerUseStartupScheduled = true
+  setImmediate(() => {
+    void restoreComputerUseAfterStartup({
+      isShuttingDown: () => quitting || computerUse !== service,
+      readPreferences: () => store.read(),
+      setEnabled: enabled => service.setEnabled(enabled),
+    }).catch(error => {
+      console.error('[computer-use] lazy startup failed', error)
+    })
+  })
 }
 
 function notifyRuntimeChanged(): void {
