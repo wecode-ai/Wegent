@@ -282,6 +282,33 @@ describe('navigating a wiki on a narrow screen', () => {
     expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes a manager view when the stop request loses a race with completion', async () => {
+    const { codeWikiApi } = jest.requireMock('@/apis/code-wiki')
+    mockRunStatus = {
+      status: 'running',
+      generation_id: 34,
+      error_message: '',
+      failure_code: '',
+      is_stale: false,
+      last_published_commit: '',
+      progress: {
+        stage: 'writing',
+        current_step: 2,
+        total_steps: 3,
+        pages_written: 4,
+        pages_total: 9,
+      },
+    }
+    codeWikiApi.cancel.mockRejectedValue(new Error('generation is no longer running'))
+
+    render(<CodeWikiReader wiki={WIKI} canConfigure />)
+
+    fireEvent.click(await screen.findByTestId('code-wiki-progress-cancel'))
+    fireEvent.click(await screen.findByTestId('code-wiki-cancel-confirm-action'))
+
+    await waitFor(() => expect(mockRunStatusRefresh).toHaveBeenCalledTimes(1))
+  })
+
   it('does not show the configuration control without manage permission', async () => {
     await renderReader()
 

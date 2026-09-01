@@ -1218,7 +1218,7 @@
       "regenerateConfirmBody": "会重新阅读整个仓库并重写所有页面，通常需要几分钟到几十分钟。生成期间现有页面照常可读，新版本发布后才会替换。",
       "cancelConfirmTitle": "终止本次生成？",
       "cancelConfirmBody": "当前草稿会被丢弃，已发布的页面不会变化。",
-      "cancelled": "已终止生成",
+      "cancelRequested": "已受理终止请求",
       "emptyGenerating": "正在生成这个 wiki",
       "emptyGeneratingHint": "读完整个仓库通常需要几分钟到几十分钟，可以先去忙别的，稍后回来看看。",
       "emptyFailed": "上次生成没有完成",

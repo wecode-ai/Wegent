@@ -327,11 +327,14 @@ export function CodeWikiReader({ wiki, canConfigure = false, onConfigure }: Code
     setCancelling(true)
     try {
       await codeWikiApi.cancel(wiki.id, generationId)
-      runStatus.refresh()
-      toast.success(t('codeWiki.reader.cancelled'))
+      toast.success(t('codeWiki.reader.cancelRequested'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error))
     } finally {
+      // A task can finish between opening the confirmation and asking to cancel it.
+      // Refresh even when the request was refused so the reader sees that terminal
+      // state now instead of waiting for the next polling interval.
+      runStatus.refresh()
       setCancelling(false)
     }
   }, [wiki.id, t, runStatus])

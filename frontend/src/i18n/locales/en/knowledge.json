@@ -1218,7 +1218,7 @@
       "regenerateConfirmBody": "The whole repository is read again and every page rewritten, which usually takes minutes rather than seconds. The current pages stay readable until the new version is published.",
       "cancelConfirmTitle": "Stop this generation?",
       "cancelConfirmBody": "The current draft will be discarded. Published pages are unchanged.",
-      "cancelled": "Generation stopped",
+      "cancelRequested": "Stop request accepted",
       "emptyGenerating": "This wiki is being generated",
       "emptyGeneratingHint": "Reading a whole repository usually takes several minutes. Feel free to come back to it later.",
       "emptyFailed": "The last run did not finish",
