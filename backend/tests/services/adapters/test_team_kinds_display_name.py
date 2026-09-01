@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from app.models.namespace import Namespace
 from app.models.resource_member import MemberStatus, ResourceMember
 from app.models.task import TaskResource
 from app.schemas.team import TeamCreate, TeamUpdate
+from app.services.adapters import team_kinds as team_kinds_module
 from app.services.adapters.team_kinds import team_kinds_service
 
 
@@ -193,6 +195,56 @@ def test_prompt_protection_is_isolated_per_team_when_members_are_reused(
     )
     assert protected["prompt_protection_enabled"] is True
     assert unprotected["prompt_protection_enabled"] is False
+
+
+def test_team_bot_detail_includes_selected_shell_name(monkeypatch):
+    bot = SimpleNamespace(
+        id=7,
+        user_id=1,
+        name="support-bot",
+        is_active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Bot",
+            "metadata": {"name": "support-bot", "namespace": "default"},
+            "spec": {
+                "ghostRef": {"name": "support-ghost", "namespace": "default"},
+                "shellRef": {"name": "Chat", "namespace": "default"},
+            },
+        },
+    )
+    ghost = SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Ghost",
+            "metadata": {"name": "support-ghost", "namespace": "default"},
+            "spec": {"systemPrompt": "Support users"},
+        }
+    )
+    shell = SimpleNamespace(
+        json={
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Shell",
+            "metadata": {"name": "Chat", "namespace": "default"},
+            "spec": {"shellType": "Chat"},
+        }
+    )
+    resources = iter((ghost, shell))
+    monkeypatch.setattr(
+        team_kinds_module.kindReader,
+        "get_by_name_and_namespace",
+        lambda *args: next(resources),
+    )
+
+    result = team_kinds_service._convert_bot_to_dict(
+        bot,
+        db=SimpleNamespace(),
+        user_id=1,
+    )
+
+    assert result["shell_name"] == "Chat"
 
 
 def test_update_team_persists_video_workflow_mode_spec(test_db, test_user):
