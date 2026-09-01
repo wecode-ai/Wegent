@@ -40,6 +40,7 @@ trap cleanup EXIT
 
 (
   cd "$mobile_dir"
+  export EXPO_USE_PRECOMPILED_MODULES=0
   pod install --deployment --project-directory=ios
   xcodebuild \
     -quiet \
