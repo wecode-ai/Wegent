@@ -59,6 +59,32 @@ def test_generation_config_for_log_excludes_capabilities() -> None:
     }
 
 
+def test_apply_generation_params_rejects_image_options_for_video() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    with pytest.raises(ValueError, match="does not support option: size"):
+        trigger_unified._apply_generation_params(
+            {"modelType": "video", "videoConfig": {}},
+            SimpleNamespace(
+                size="1024x1024",
+                resolution=None,
+                ratio=None,
+                duration=None,
+                generation_mode_id=None,
+            ),
+        )
+
+
+def test_apply_generation_params_rejects_non_generation_model() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    with pytest.raises(ValueError, match="only supported for image or video"):
+        trigger_unified._apply_generation_params(
+            {"modelType": "llm"},
+            SimpleNamespace(size="1024x1024"),
+        )
+
+
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     """Codex execution requests should carry explicit user runtime config status."""
     from app.services.chat.trigger import unified as trigger_unified
@@ -1169,6 +1195,67 @@ class TestProcessContextsAttachments:
                 "subtask_id": 1642,
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_preserves_requested_attachment_order(self):
+        from app.services.chat.trigger import unified as trigger_unified
+
+        request = ExecutionRequest(
+            task_id=1233,
+            subtask_id=1643,
+            prompt="hello",
+            system_prompt="system",
+            model_config={},
+        )
+        first = SimpleNamespace(
+            id=11,
+            original_filename="first.png",
+            mime_type="image/png",
+            file_size=100,
+            subtask_id=1642,
+        )
+        second = SimpleNamespace(
+            id=22,
+            original_filename="second.png",
+            mime_type="image/png",
+            file_size=200,
+            subtask_id=1642,
+        )
+        ctx = ChatContextsResult(
+            final_message="processed",
+            has_table_context=False,
+            table_contexts=[],
+            kb=KnowledgeBaseToolsResult(
+                extra_tools=[],
+                enhanced_system_prompt="enhanced",
+                kb_meta_prompt="",
+            ),
+        )
+        prepare_mock = AsyncMock(return_value=ctx)
+
+        with (
+            patch(
+                "app.services.chat.preprocessing.prepare_contexts_for_chat",
+                new=prepare_mock,
+            ),
+            patch(
+                "app.services.chat.trigger.unified.context_service.get_attachments_by_subtask",
+                return_value=[second, first],
+            ),
+        ):
+            result = await trigger_unified._process_contexts(
+                db=MagicMock(),
+                request=request,
+                user_subtask_id=1642,
+                user_id=2,
+                current_contexts=[second, first],
+                attachment_ids=[11, 22],
+            )
+
+        assert [item["id"] for item in result.attachments] == [11, 22]
+        assert [
+            context.id for context in prepare_mock.await_args.kwargs["contexts"]
+        ] == [11, 22]
 
     @pytest.mark.asyncio
     async def test_executor_context_processing_uses_attachment_metadata_only(self):

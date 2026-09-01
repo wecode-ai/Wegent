@@ -34,7 +34,6 @@ function setup(
   platform: NodeJS.Platform = 'darwin',
   applyIcon?: TrayManagerDependencies['applyIcon']
 ) {
-  const guid = 'b626b80b-4514-5b9d-861c-25d34fdcf250'
   const listeners = new Map<'click' | 'double-click', () => void>()
   const tray: TrayAdapter = {
     on: vi.fn((event, listener) => {
@@ -43,7 +42,6 @@ function setup(
     setContextMenu: vi.fn(),
     setToolTip: vi.fn(),
     setTitle: vi.fn(),
-    getGUID: vi.fn(() => guid),
     destroy: vi.fn(),
   }
   const dispatchAction = vi.fn<(action: TrayAction) => void>()
@@ -57,7 +55,7 @@ function setup(
   }
   const manager = new ElectronTrayManager(dependencies)
 
-  return { buildMenu, dependencies, dispatchAction, guid, listeners, manager, tray }
+  return { buildMenu, dependencies, dispatchAction, listeners, manager, tray }
 }
 
 function findItem(template: TrayMenuTemplateItem[], id: string): TrayMenuTemplateItem | undefined {
@@ -75,7 +73,7 @@ function findItem(template: TrayMenuTemplateItem[], id: string): TrayMenuTemplat
 
 describe('ElectronTrayManager', () => {
   test('creates and destroys one tray while applying the latest state', () => {
-    const { buildMenu, dependencies, guid, manager, tray } = setup()
+    const { buildMenu, dependencies, manager, tray } = setup()
     manager.setState(state())
 
     manager.create()
@@ -88,7 +86,7 @@ describe('ElectronTrayManager', () => {
     })
     expect(tray.setToolTip).toHaveBeenCalledWith('Codex: 42%')
     expect(tray.setTitle).toHaveBeenCalledWith('42%')
-    expect(manager.snapshot()).toMatchObject({ created: true, guid })
+    expect(manager.snapshot()).toMatchObject({ created: true, guid: null })
 
     manager.destroy()
     manager.destroy()

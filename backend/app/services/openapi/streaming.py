@@ -25,7 +25,10 @@ from app.schemas.openapi_response import (
     ResponseObject,
     ShellCallOutputItem,
 )
-from app.services.openapi.output_builder import normalize_tool_output
+from app.services.openapi.output_builder import (
+    build_generation_output_item_from_block,
+    normalize_tool_output,
+)
 from wecode.service.knowledge.video_citation_sources import (
     collect_and_log_knowledge_mcp_video_sources,
     merge_video_sources,
@@ -674,6 +677,10 @@ class OpenAPIStreamingService:
                 completed_output_items[index]
                 for index in sorted(completed_output_items.keys())
             ]
+            for block in response_blocks.values():
+                generation_item = build_generation_output_item_from_block(block)
+                if generation_item is not None:
+                    output_items.append(generation_item)
 
             # Official OpenAI event: response.completed
             final_response = ResponseObject(

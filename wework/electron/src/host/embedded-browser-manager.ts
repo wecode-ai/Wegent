@@ -156,6 +156,26 @@ export class EmbeddedBrowserManager {
     }
   }
 
+  requestPopupTab(parentLabel: string, url: string): void {
+    const entry = this.entries.get(parentLabel)
+    if (!entry || !isBrowserUrl(url)) {
+      if (isBrowserUrl(url)) void shell.openExternal(url)
+      return
+    }
+    this.emit('popup', {
+      popupId: randomUUID(),
+      parentLabel: entry.label,
+      parentNativeLabel: entry.nativeLabel,
+      url,
+      origin: new URL(url).origin,
+      kind: 'context-menu',
+      strategy: 'new-tab',
+      status: 'pending',
+      createdAtUnixMs: Date.now(),
+      warning: null,
+    })
+  }
+
   async open(input: {
     label: string
     url: string
