@@ -474,6 +474,34 @@ async def test_blocked_turn_falls_back_to_failed_finalization(
 
 
 @pytest.mark.asyncio
+async def test_blocked_turn_finalizes_when_notification_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.ws import chat_namespace
+
+    namespace = SimpleNamespace(
+        emit=AsyncMock(side_effect=RuntimeError("notification failed"))
+    )
+    finalize = AsyncMock()
+    monkeypatch.setattr(chat_namespace, "_finalize_blocked_ai_trigger", finalize)
+
+    await chat_namespace._handle_prompt_protection_block(
+        namespace=namespace,
+        task_id=22,
+        assistant_subtask=SimpleNamespace(id=33, message_id=44),
+        blocked=PromptProtectionBlocked(
+            ("purpose_violation",),
+            bot_name="support",
+            shell_type="Chat",
+        ),
+        task_room="task:22",
+    )
+
+    finalize.assert_awaited_once_with(task_id=22, assistant_subtask_id=33)
+    namespace.emit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("prompt_protection_enabled", "entrypoint"),
     [

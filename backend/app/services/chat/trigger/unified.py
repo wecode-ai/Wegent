@@ -138,7 +138,7 @@ def _apply_generation_params(
     generate_params: Any,
 ) -> None:
     """Validate generation options against the selected model type and apply them."""
-    if generate_params is None:
+    if generate_params is None or not _generation_params_for_log(generate_params):
         return
 
     model_type = str(model_config.get("modelType") or "").strip().lower()

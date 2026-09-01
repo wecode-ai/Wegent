@@ -233,6 +233,52 @@ async def _finalize_blocked_ai_trigger(
             )
 
 
+async def _handle_prompt_protection_block(
+    *,
+    namespace: Any,
+    task_id: int,
+    assistant_subtask: Subtask,
+    blocked: PromptProtectionBlocked,
+    task_room: str,
+) -> None:
+    """Finish a blocked turn before sending best-effort notifications."""
+    await _finalize_blocked_ai_trigger(
+        task_id=task_id,
+        assistant_subtask_id=assistant_subtask.id,
+    )
+    try:
+        await namespace.emit(
+            ServerEvents.CHAT_START,
+            {
+                "task_id": task_id,
+                "subtask_id": assistant_subtask.id,
+                "bot_name": blocked.bot_name,
+                "shell_type": blocked.shell_type,
+                "message_id": assistant_subtask.message_id,
+            },
+            room=task_room,
+        )
+        await namespace.emit(
+            ServerEvents.CHAT_ERROR,
+            ChatErrorPayload(
+                subtask_id=assistant_subtask.id,
+                error=BLOCKED_MESSAGE,
+                type=BLOCKED_ERROR_CODE,
+                message_id=assistant_subtask.message_id,
+                task_id=task_id,
+            ).model_dump(),
+            room=task_room,
+        )
+    except Exception as exc:
+        logger.error(
+            "[WS] Failed to emit prompt-protection block: "
+            "task_id=%s, subtask_id=%s, error_type=%s",
+            task_id,
+            assistant_subtask.id,
+            type(exc).__name__,
+        )
+
+
 def _web_prompt_protection_entrypoint(
     device_id: Optional[str],
 ) -> Optional[PromptProtectionEntrypoint]:
@@ -1165,31 +1211,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                             ),
                         )
                     except PromptProtectionBlocked as blocked:
-                        await self.emit(
-                            ServerEvents.CHAT_START,
-                            {
-                                "task_id": task.id,
-                                "subtask_id": assistant_subtask.id,
-                                "bot_name": blocked.bot_name,
-                                "shell_type": blocked.shell_type,
-                                "message_id": assistant_subtask.message_id,
-                            },
-                            room=task_room,
-                        )
-                        await self.emit(
-                            ServerEvents.CHAT_ERROR,
-                            ChatErrorPayload(
-                                subtask_id=assistant_subtask.id,
-                                error=BLOCKED_MESSAGE,
-                                type=BLOCKED_ERROR_CODE,
-                                message_id=assistant_subtask.message_id,
-                                task_id=task.id,
-                            ).model_dump(),
-                            room=task_room,
-                        )
-                        await _finalize_blocked_ai_trigger(
+                        await _handle_prompt_protection_block(
+                            namespace=self,
                             task_id=task.id,
-                            assistant_subtask_id=assistant_subtask.id,
+                            assistant_subtask=assistant_subtask,
+                            blocked=blocked,
+                            task_room=task_room,
                         )
                     except Exception as e:
                         logger.exception(
@@ -1631,6 +1658,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                 namespace=self,
                 **dispatch_args_or_error,
             )
+        except PromptProtectionBlocked as blocked:
+            await _handle_prompt_protection_block(
+                namespace=self,
+                task_id=payload.task_id,
+                assistant_subtask=dispatch_args_or_error["assistant_subtask"],
+                blocked=blocked,
+                task_room=dispatch_args_or_error["task_room"],
+            )
+            return {"success": True}
         except Exception as e:
             from sqlalchemy.exc import SQLAlchemyError
 
@@ -2027,6 +2063,7 @@ def _prepare_chat_retry_dispatch(
         is_group_chat=False,
     )
 
+    device_id = get_device_id(task)
     dispatch_args = {
         "task": task,
         "assistant_subtask": failed_ai_subtask,
@@ -2035,7 +2072,8 @@ def _prepare_chat_retry_dispatch(
         "message": user_message,
         "payload": retry_payload,
         "task_room": f"task:{payload.task_id}",
-        "device_id": get_device_id(task),
+        "device_id": device_id,
+        "prompt_protection_entrypoint": _web_prompt_protection_entrypoint(device_id),
         "user_subtask_id": user_subtask.id,
     }
 

@@ -85,6 +85,25 @@ def test_apply_generation_params_rejects_non_generation_model() -> None:
         )
 
 
+def test_apply_generation_params_ignores_empty_options_for_normal_model() -> None:
+    from app.services.chat.trigger import unified as trigger_unified
+
+    model_config = {"modelType": "llm"}
+
+    trigger_unified._apply_generation_params(
+        model_config,
+        SimpleNamespace(
+            size=None,
+            resolution=None,
+            ratio=None,
+            duration=None,
+            generation_mode_id=None,
+        ),
+    )
+
+    assert model_config == {"modelType": "llm"}
+
+
 def test_apply_user_runtime_config_adds_codex_status(monkeypatch):
     """Codex execution requests should carry explicit user runtime config status."""
     from app.services.chat.trigger import unified as trigger_unified
