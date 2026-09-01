@@ -129,7 +129,8 @@ export interface ElectronE2EHost {
     executorPid: number | null
     workbenchRuntimes: unknown[]
   }
-  rendererStartupReady: () => void | Promise<void>
+  rendererStartupReady: (source: 'task-list' | 'other') => void | Promise<void>
+  rendererStartupFailed: () => void | Promise<void>
   startupSplashSnapshot: () => StartupSplashSnapshot | null
   trayActivate: (activation: TrayActivation) => boolean
   traySetState: (state: TrayMenuState) => void
@@ -186,6 +187,7 @@ export function createElectronCapabilityRouter(
       workbenchRuntimes: [],
     }),
     rendererStartupReady: () => undefined,
+    rendererStartupFailed: () => undefined,
     startupSplashSnapshot: () => null,
     trayActivate: () => false,
     traySetState: () => undefined,
@@ -216,7 +218,12 @@ export function createElectronCapabilityRouter(
   router.register('desktop.events', params =>
     desktopServices.events.read(integerParam(params, 'after') ?? 0)
   )
-  router.register('renderer.startupReady', () => e2eHost.rendererStartupReady())
+  router.register('renderer.startupReady', params =>
+    e2eHost.rendererStartupReady(
+      optionalStringParam(params, 'source') === 'task-list' ? 'task-list' : 'other'
+    )
+  )
+  router.register('renderer.startupFailed', () => e2eHost.rendererStartupFailed())
   router.register('diagnostics.filePreview', params => {
     const event = recordParam(params, 'event')
     return filePreviewLog.write('supervisor', JSON.stringify(event))
