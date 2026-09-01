@@ -1,7 +1,6 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   globalShortcut,
   ipcMain,
@@ -67,12 +66,10 @@ import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close
 import { AppUpdateService } from './host/app-update-service.js'
 import { AppUpdateLogger } from './host/app-update-logger.js'
 import { CloudCredentialError, CloudCredentialService } from './host/cloud-credential-service.js'
-import { installNativeContextMenu } from './host/image-context-menu.js'
 import {
   cleanupStaleTemporaryImages,
-  materializeTemporaryImage,
-  resolveRendererImageContext,
-  scheduleTemporaryImageCleanup,
+  createNativeContextMenuActions,
+  installContextMenu,
 } from './host/image-context-actions.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
@@ -229,29 +226,7 @@ rendererHealth.on('change', () => {
 
 function secureDshContents(contents: WebContents, dshUrl: string): void {
   const allowedOrigin = new URL(dshUrl).origin
-  installNativeContextMenu(
-    contents,
-    items => Menu.buildFromTemplate(items),
-    {
-      copyPath: path => clipboard.writeText(path),
-      openImage: async image => {
-        const temporaryPath = image.localPath
-          ? null
-          : await materializeTemporaryImage(contents, image)
-        const path = image.localPath ?? temporaryPath
-        if (!path) throw new Error('Image path is unavailable')
-        const error = await shell.openPath(path)
-        if (temporaryPath) scheduleTemporaryImageCleanup(temporaryPath)
-        if (error) throw new Error(error)
-      },
-      reportError: (action, error) => {
-        console.error(`[context-menu] ${action} failed`, error)
-      },
-      resolveImageContext: params => resolveRendererImageContext(contents, params),
-      showItemInFolder: path => shell.showItemInFolder(path),
-    },
-    app.getLocale()
-  )
+  installContextMenu(contents, 'app')
   contents.setWindowOpenHandler(({ url }) => {
     const target = new URL(url)
     if (target.origin === allowedOrigin) return { action: 'allow' }
@@ -324,6 +299,14 @@ function secureDshContents(contents: WebContents, dshUrl: string): void {
       ownerId: contents.id,
     })
     embeddedBrowser.attach(pending.label, guestContents)
+    const browserManager = embeddedBrowser
+    installContextMenu(
+      guestContents,
+      'browser',
+      createNativeContextMenuActions(guestContents, url =>
+        browserManager.requestPopupTab(pending.label, url)
+      )
+    )
   })
   contents.once('destroyed', () => pendingEmbeddedBrowserAttachments.delete(contents.id))
 }
