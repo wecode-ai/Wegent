@@ -75,6 +75,23 @@ export class RendererStorageStore {
     })
   }
 
+  removeByPrefixes(prefixes: readonly string[]): Promise<void> {
+    return this.serial(async () => {
+      const state = await this.readFile()
+      if (!state) return
+      const entries = Object.fromEntries(
+        Object.entries(state.entries).filter(
+          ([key]) => !prefixes.some(prefix => key.startsWith(prefix))
+        )
+      )
+      await this.writeFile({ version: 1, entries })
+    })
+  }
+
+  clear(): Promise<void> {
+    return this.serial(() => this.writeFile({ version: 1, entries: {} }))
+  }
+
   private path(): string {
     return join(this.dataDirectory, 'renderer-local-storage.json')
   }
