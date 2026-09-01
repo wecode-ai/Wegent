@@ -2227,9 +2227,6 @@ export function AssistantMessage({
               />
             </div>
           ) : null}
-          {shouldShowThinking && hasVisibleContent && (
-            <AssistantThinkingIndicator content={activeThinkingContent} />
-          )}
           {canShowFinalArtifacts && hasVisibleContent && webSearchSources.length > 0 && (
             <WebSearchSourcesChip sources={webSearchSources} />
           )}
@@ -2513,7 +2510,8 @@ function shouldShowAssistantThinkingIndicator({
 }): boolean {
   return (
     isStreaming &&
-    (!hasProcessingDisplayBlock || hasVisibleContent || hasTrailingCompletedProcessText)
+    !hasVisibleContent &&
+    (!hasProcessingDisplayBlock || hasTrailingCompletedProcessText)
   )
 }
 
