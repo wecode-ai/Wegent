@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
+  getVideoParamVisibility,
   teamHidesVideoParam,
   teamUsesModeSpecCategory,
   usesVideoReferenceStorage,
@@ -29,6 +30,24 @@ describe('teamModeSpec', () => {
     expect(teamHidesVideoParam(minuteVideoTeam, 'duration')).toBe(true)
     expect(teamHidesVideoParam(minuteVideoTeam, 'ratio')).toBe(false)
     expect(teamHidesVideoParam(minuteVideoTeam, 'resolution')).toBe(false)
+  })
+
+  it('resolves workflow-owned video control visibility', () => {
+    expect(getVideoParamVisibility(['duration', 'model', 'ratio'])).toEqual({
+      showModel: false,
+      showRatio: false,
+      showDuration: false,
+      showResolution: true,
+      showSettings: true,
+    })
+    expect(getVideoParamVisibility(['duration', 'ratio', 'resolution'])).toMatchObject({
+      showModel: true,
+      showSettings: false,
+    })
+    expect(getVideoParamVisibility([], false)).toMatchObject({
+      showDuration: false,
+      showSettings: true,
+    })
   })
 
   it('uses video reference storage for video-capable chat teams', () => {

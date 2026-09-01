@@ -5930,10 +5930,12 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const content = screen.getByTestId('desktop-workbench-content')
+    const contentFrame = content.parentElement
+    expect(contentFrame).not.toBeNull()
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(rightPanelShell).toHaveClass('h-full', 'min-h-0', 'overflow-hidden')
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '420px' })
+      expect(contentFrame).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({
         minWidth: '260px',
         width: 'calc(100% - 420px)',
@@ -5941,7 +5943,7 @@ describe('DesktopWorkbenchLayout', () => {
     })
     expect(panel).toHaveClass('min-w-0', 'flex-1', 'basis-0')
     expect(panel).toHaveClass('transition-[opacity,transform]', 'duration-300', 'ease-out')
-    expect(content).toHaveClass(
+    expect(contentFrame).toHaveClass(
       'transition-[width]',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
@@ -5953,7 +5955,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.pointerUp(document)
     expect(document.body).not.toHaveAttribute('data-wework-panel-resizing')
 
-    expect(content).toHaveStyle({ width: '580px' })
+    expect(contentFrame).toHaveStyle({ width: '580px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 580px)' })
     expect(screen.getByTestId('workspace-file-tree')).toHaveClass('w-[240px]')
   })
@@ -5974,13 +5976,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     fireEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
     const content = screen.getByTestId('desktop-workbench-content')
+    const contentFrame = content.parentElement
+    expect(contentFrame).not.toBeNull()
     const panelShell = screen.getByTestId('right-workspace-panel-shell')
     const expandButton = screen.getByTestId('toggle-right-workspace-panel-expanded-button')
 
     expect(expandButton).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(expandButton)
 
-    expect(content).toHaveStyle({ width: '100%' })
+    expect(contentFrame).toHaveStyle({ width: '100%' })
     expect(panelShell).toHaveStyle({ width: '100%' })
     expect(panelShell).toHaveClass('absolute', 'inset-y-0', 'right-0')
     expect(screen.queryByTestId('right-workspace-resize-handle')).not.toBeInTheDocument()
@@ -6005,7 +6009,7 @@ describe('DesktopWorkbenchLayout', () => {
     fireEvent.click(screen.getByTestId('restore-conversation-from-expanded-workspace-button'))
 
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '420px' })
+      expect(contentFrame).toHaveStyle({ width: '420px' })
       expect(panelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
     expect(screen.getByTestId('right-workspace-resize-handle')).toBeInTheDocument()
@@ -6202,19 +6206,21 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const content = screen.getByTestId('desktop-workbench-content')
+    const contentFrame = content.parentElement
+    expect(contentFrame).not.toBeNull()
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
 
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '420px' })
+      expect(contentFrame).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
 
     fireEvent.pointerDown(screen.getByTestId('right-workspace-resize-handle'), { clientX: 422 })
     fireEvent.pointerMove(document, { clientX: 702 })
 
-    expect(content).toHaveClass('transition-none')
+    expect(contentFrame).toHaveClass('transition-none')
     expect(rightPanelShell).toHaveClass('transition-none')
-    expect(content).toHaveStyle({ width: '700px' })
+    expect(contentFrame).toHaveStyle({ width: '700px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 700px)' })
 
     fireEvent.pointerMove(document, { clientX: 902 })
@@ -6230,7 +6236,7 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(content).toHaveStyle({ width: '420px' })
+    expect(contentFrame).toHaveStyle({ width: '420px' })
     expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('http://example.com/')
   })
@@ -6521,16 +6527,18 @@ describe('DesktopWorkbenchLayout', () => {
     )
 
     const content = screen.getByTestId('desktop-workbench-content')
+    const contentFrame = content.parentElement
+    expect(contentFrame).not.toBeNull()
     const topBar = screen.getByTestId('workbench-topbar')
     const rightPanelShell = screen.getByTestId('right-workspace-panel-shell')
     expect(topBar).toHaveStyle({ width: '100%' })
-    expect(content).toHaveClass(
+    expect(contentFrame).toHaveClass(
       'flex-none',
       'transition-[width]',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
-    expect(content).toHaveStyle({ width: '100%' })
+    expect(contentFrame).toHaveStyle({ width: '100%' })
     expect(rightPanelShell).toHaveClass(
       'overflow-hidden',
       'opacity-0',
@@ -6549,15 +6557,15 @@ describe('DesktopWorkbenchLayout', () => {
 
     await userEvent.click(screen.getByTestId('toggle-right-workspace-panel-button'))
 
-    expect(content).toHaveClass(
+    expect(contentFrame).toHaveClass(
       'flex-none',
       'transition-[width]',
       'duration-[240ms]',
       'ease-[cubic-bezier(0.2,0,0,1)]'
     )
-    expect(content).not.toHaveClass('border-r')
+    expect(contentFrame).not.toHaveClass('border-r')
     await waitFor(() => {
-      expect(content).toHaveStyle({ width: '420px' })
+      expect(contentFrame).toHaveStyle({ width: '420px' })
       expect(topBar).toHaveStyle({ width: '420px' })
       expect(rightPanelShell).toHaveStyle({ width: 'calc(100% - 420px)' })
     })
@@ -6708,7 +6716,9 @@ describe('DesktopWorkbenchLayout', () => {
     )
     expect(within(tabbar).getAllByText('临时聊天')).toHaveLength(1)
     await waitFor(() => {
-      expect(screen.getByTestId('desktop-workbench-content')).toHaveStyle({ width: '580px' })
+      expect(screen.getByTestId('desktop-workbench-content').parentElement).toHaveStyle({
+        width: '580px',
+      })
       expect(screen.getByTestId('right-workspace-panel-shell')).toHaveStyle({
         width: 'calc(100% - 580px)',
       })
@@ -9003,11 +9013,19 @@ describe('DesktopWorkbenchLayout', () => {
     expect(environmentInfoPanel).toContainElement(environmentInfoPopover)
     expect(environmentInfoPopover).toHaveAttribute('data-environment-info-popover')
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(true)
-    expect(screen.getByTestId('desktop-workbench-content')).toContainElement(environmentInfoPanel)
-    expect(environmentInfoPanel).toHaveClass(
-      'overflow-hidden',
-      'has-[[data-environment-info-popover]]:overflow-visible'
+    const conversationScroller = screen.getByTestId('desktop-workbench-content')
+    expect(conversationScroller.firstElementChild).toHaveClass(
+      'grid',
+      'min-h-full',
+      'grid-cols-[minmax(0,1fr)_auto]'
     )
+    expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-[320px]')
+    expect(conversationScroller).not.toContainElement(environmentInfoPanel)
+    expect(conversationScroller.parentElement).toContainElement(environmentInfoPanel)
+    expect(conversationScroller.parentElement).toBe(
+      screen.getByTestId('desktop-workbench-scroll-frame')
+    )
+    expect(environmentInfoPanel).toHaveClass('absolute', 'right-0', 'w-[320px]', 'overflow-visible')
     expect(screen.getByTestId('environment-info-popover')).toHaveClass(
       'w-[300px]',
       'bg-background',
@@ -9078,7 +9096,8 @@ describe('DesktopWorkbenchLayout', () => {
 
     expect(screen.queryByTestId('environment-info-popover')).not.toBeInTheDocument()
     expect(environmentInfoPanel.matches(':has([data-environment-info-popover])')).toBe(false)
-    expect(environmentInfoPanel).toHaveClass('overflow-hidden')
+    expect(environmentInfoPanel).toHaveClass('w-0', 'overflow-hidden')
+    expect(screen.getByTestId('environment-info-panel-spacer')).toHaveClass('w-0')
   })
 
   test('shares the pinned summary state across tasks and resets it on app-shell remount', async () => {

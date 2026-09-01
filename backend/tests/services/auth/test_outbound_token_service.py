@@ -8,10 +8,13 @@ import jwt
 import pytest
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
+from app.schemas.oauth_provider import OAUTH_AUDIENCE, OAUTH_CLIENT_KIND
 from app.schemas.token_issuer import (
     SigningKeyCreateRequest,
     TokenIssuerCreateRequest,
     TokenIssueRequest,
+    TokenIssuerUpdateRequest,
 )
 from app.services.auth.outbound_token_service import (
     OutboundTokenValidationError,
@@ -277,3 +280,60 @@ def test_issue_request_ignores_unknown_fields_in_core(test_db, test_user):
         issuer="wegent",
     )
     assert "employee_id" not in claims  # core 无扩展
+
+
+def test_sign_claims_keeps_signing_key_kid_reserved(test_db: Session):
+    signing_key, issuer = _new_issuer(test_db, "reserved-kid")
+
+    issued = outbound_token_service.sign_claims(
+        test_db,
+        issuer_id=issuer.id,
+        subject="user:1",
+        expires_in=300,
+        claims={},
+        headers={
+            "alg": "HS256",
+            "kid": "caller-controlled",
+            "typ": "at+jwt",
+        },
+    )
+
+    headers = jwt.get_unverified_header(issued.access_token)
+    assert headers["alg"] == "RS256"
+    assert headers["kid"] == signing_key.kid
+    assert headers["typ"] == "at+jwt"
+
+
+@pytest.mark.parametrize("access_ttl", ["invalid", -1, 0, 59, 3601])
+def test_update_issuer_rejects_malformed_oauth_client_ttl(
+    test_db: Session, access_ttl: object
+):
+    _, issuer = _new_issuer(test_db, "malformed-client")
+    test_db.add(
+        Kind(
+            user_id=1,
+            kind=OAUTH_CLIENT_KIND,
+            name="malformed-client",
+            namespace="system",
+            json={
+                "spec": {
+                    "tokenIssuerRef": {"kindId": issuer.id},
+                    "accessTtlSeconds": access_ttl,
+                }
+            },
+            is_active=True,
+        )
+    )
+    test_db.commit()
+
+    with pytest.raises(OutboundTokenValidationError) as exc_info:
+        outbound_token_service.update_token_issuer(
+            test_db,
+            issuer.id,
+            TokenIssuerUpdateRequest(
+                audience=OAUTH_AUDIENCE,
+                max_ttl_seconds=900,
+            ),
+        )
+
+    assert exc_info.value.error_code == "OAUTH_CLIENT_INVALID_ACCESS_TTL"
