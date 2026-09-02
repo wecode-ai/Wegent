@@ -809,7 +809,6 @@ async def trigger_ai_response_unified(
         user=user,
         message=message,
         entrypoint=prompt_protection_entrypoint,
-        previous_bot_id=previous_bot_id,
     )
 
     # 2. Dispatch task
@@ -838,8 +837,7 @@ def _prompt_protection_context(
     user: User,
     message: Union[str, list],
     entrypoint: Optional[PromptProtectionEntrypoint],
-    previous_bot_id: Optional[int],
-) -> tuple[Any, str, PromptProtectionContext] | None:
+) -> tuple[Any, PromptProtectionContext] | None:
     if entrypoint is None:
         return None
 
@@ -863,7 +861,7 @@ def _prompt_protection_context(
         entrypoint=f"{entrypoint.value}:{shell_type}",
         model_id=str(request.model_config.get("model_id") or ""),
     )
-    return team_crd, shell_type, context
+    return team_crd, context
 
 
 def _prompt_protection_system_prompt(
@@ -900,9 +898,8 @@ async def enforce_prompt_protection(
     user: User,
     message: Union[str, list],
     entrypoint: Optional[PromptProtectionEntrypoint],
-    previous_bot_id: Optional[int],
 ) -> None:
-    """Apply the Team-level gate to real user turns, not pipeline handoffs."""
+    """Apply the Team-level gate to supported user requests."""
     target = _prompt_protection_context(
         request=request,
         task=task,
@@ -911,11 +908,10 @@ async def enforce_prompt_protection(
         user=user,
         message=message,
         entrypoint=entrypoint,
-        previous_bot_id=previous_bot_id,
     )
     if target is None:
         return
-    team_crd, shell_type, context = target
+    team_crd, context = target
     raw_system_prompt = _prompt_protection_system_prompt(
         assistant_subtask=assistant_subtask,
         team=team,
@@ -934,9 +930,7 @@ async def enforce_prompt_protection(
     )
     if result.blocked:
         raise PromptProtectionBlocked(
-            result.risks,
             bot_name=request.bot_name,
-            shell_type=shell_type,
         )
 
 

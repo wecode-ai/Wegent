@@ -258,7 +258,7 @@ async def _handle_prompt_protection_block(
                 "task_id": task_id,
                 "subtask_id": assistant_subtask.id,
                 "bot_name": blocked.bot_name,
-                "shell_type": blocked.shell_type,
+                "shell_type": "Chat",
                 "message_id": assistant_subtask.message_id,
             },
             room=task_room,

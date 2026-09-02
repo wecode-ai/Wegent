@@ -809,7 +809,6 @@ async def _create_non_streaming_response_unified(
             user=user,
             message=input_text,
             entrypoint=PromptProtectionEntrypoint.OPENAPI_RESPONSES,
-            previous_bot_id=None,
         )
     except PromptProtectionBlocked:
         _close_db()
@@ -1155,7 +1154,6 @@ async def _create_streaming_response_unified(
                 user=user,
                 message=input_text,
                 entrypoint=PromptProtectionEntrypoint.OPENAPI_RESPONSES,
-                previous_bot_id=None,
             )
         except PromptProtectionBlocked:
             await finalize_prompt_protection_block(

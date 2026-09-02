@@ -396,7 +396,6 @@ def _trigger_next_stage(
                 user_subtask_id=user_subtask_id,
                 auth_token=auth_token,
                 previous_bot_id=previous_bot_id,
-                prompt_protection_entrypoint=None,
             )
         except Exception:
             logger.exception(

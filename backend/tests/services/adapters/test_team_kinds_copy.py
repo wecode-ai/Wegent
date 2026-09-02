@@ -64,7 +64,12 @@ def _add_group_member(
 
 
 def _create_bot(
-    test_db: Session, *, user_id: int, name: str, namespace: str = "default"
+    test_db: Session,
+    *,
+    user_id: int,
+    name: str,
+    namespace: str = "default",
+    shell_name: str = "ClaudeCode",
 ) -> Kind:
     bot = Kind(
         user_id=user_id,
@@ -77,7 +82,7 @@ def _create_bot(
             "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "ghostRef": {"name": f"ghost-{name}", "namespace": namespace},
-                "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+                "shellRef": {"name": shell_name, "namespace": "default"},
             },
         },
         is_active=True,
@@ -116,6 +121,7 @@ def _create_shell(
     user_id: int = 0,
     name: str = "ClaudeCode",
     namespace: str = "default",
+    shell_type: str = "ClaudeCode",
 ) -> Kind:
     shell = Kind(
         user_id=user_id,
@@ -130,7 +136,7 @@ def _create_shell(
                 "namespace": namespace,
                 "labels": {"type": "local_engine"},
             },
-            "spec": {"shellType": "ClaudeCode", "baseImage": "test-image:latest"},
+            "spec": {"shellType": shell_type, "baseImage": "test-image:latest"},
             "status": {"state": "Available"},
         },
         is_active=True,
@@ -223,7 +229,6 @@ class TestCopyTeamNonSolo:
             "spec": {
                 **team.json["spec"],
                 "quick_phrases": ["Start here"],
-                "promptProtectionEnabled": True,
             },
         }
         test_db.commit()
@@ -237,7 +242,6 @@ class TestCopyTeamNonSolo:
         assert result["name"] == "Copy of source-team"
         assert result["displayName"] == "Published agent"
         assert result["quick_phrases"] == ["Start here"]
-        assert result["prompt_protection_enabled"] is True
 
     def test_copy_non_solo_team_does_not_clone_bots(self, test_db: Session):
         """Non-solo copy: bot count stays the same (no new bots created)."""
@@ -271,9 +275,14 @@ class TestCopyTeamSolo:
     def test_copy_solo_team_clones_bot(self, test_db: Session):
         """Solo copy: creates new bot with 'Copy of' prefix."""
         user = _create_user(test_db, "copy_user3", "copy3@test.com")
-        _create_shell(test_db)
+        _create_shell(test_db, name="Chat", shell_type="Chat")
         ghost = _create_ghost(test_db, user_id=user.id, name="ghost-solo-bot")
-        bot = _create_bot(test_db, user_id=user.id, name="solo-bot")
+        bot = _create_bot(
+            test_db,
+            user_id=user.id,
+            name="solo-bot",
+            shell_name="Chat",
+        )
         team = _create_team(
             test_db,
             user_id=user.id,
@@ -281,6 +290,14 @@ class TestCopyTeamSolo:
             collaboration_model="solo",
             bot_ids=[bot.id],
         )
+        team.json = {
+            **team.json,
+            "spec": {
+                **team.json["spec"],
+                "promptProtectionEnabled": True,
+            },
+        }
+        test_db.commit()
         before_count = (
             test_db.query(Kind)
             .filter(Kind.kind == "Bot", Kind.is_active == True)
@@ -296,6 +313,7 @@ class TestCopyTeamSolo:
         )
         assert after_count == before_count + 1
         assert result["name"] == "Copy of solo-team"
+        assert result["prompt_protection_enabled"] is True
 
     def test_copy_solo_team_new_bot_name_prefixed(self, test_db: Session):
         """Solo copy: new bot has 'Copy of' prefix."""

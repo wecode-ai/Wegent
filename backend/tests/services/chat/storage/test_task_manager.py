@@ -246,10 +246,8 @@ def test_pipeline_auto_advance_does_not_create_next_stage_subtask_in_db() -> Non
     assert result.auto_advance.advance_info == advance_info
 
 
-def test_policy_blocked_pipeline_turn_completes_without_confirmation_or_advance() -> (
-    None
-):
-    """A policy refusal completes the Task without treating it as a pipeline stage."""
+def test_policy_blocked_turn_bypasses_collaboration_transitions() -> None:
+    """A policy refusal completes without applying collaboration transitions."""
     from app.services.chat.storage.db import DatabaseHandler
 
     db = MagicMock()

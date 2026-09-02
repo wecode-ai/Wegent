@@ -567,9 +567,7 @@ class TestOpenAPIResponsesCreate:
             model_config={"model_id": "selected-model"},
         )
         blocked = PromptProtectionBlocked(
-            ("system_prompt_extraction",),
             bot_name="test-bot",
-            shell_type="Chat",
         )
 
         with (
@@ -723,9 +721,7 @@ class TestOpenAPIResponsesCreate:
             model_config={"model_id": "selected-model"},
         )
         blocked = PromptProtectionBlocked(
-            ("purpose_violation", "system_prompt_extraction"),
             bot_name="test-bot",
-            shell_type="Chat",
         )
 
         with (

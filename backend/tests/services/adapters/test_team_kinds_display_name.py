@@ -23,6 +23,7 @@ def _create_team_kind(
     namespace: str = "default",
     team_name: str = "dev-team",
     members: list[dict] | None = None,
+    collaboration_model: str = "pipeline",
 ) -> Kind:
     team = Kind(
         user_id=user_id,
@@ -36,7 +37,7 @@ def _create_team_kind(
             "metadata": {"name": team_name, "namespace": namespace},
             "spec": {
                 "members": members or [],
-                "collaborationModel": "pipeline",
+                "collaborationModel": collaboration_model,
             },
             "status": {"state": "Available"},
         },
@@ -130,7 +131,11 @@ def test_update_team_persists_quick_phrases_in_spec(test_db, test_user):
 
 
 def test_prompt_protection_defaults_off_and_round_trips_on_update(test_db, test_user):
-    team = _create_team_kind(test_db, test_user.id)
+    team = _create_team_kind(
+        test_db,
+        test_user.id,
+        collaboration_model="coordinate",
+    )
 
     initial = team_kinds_service.get_by_id_and_user(
         test_db,
@@ -172,12 +177,14 @@ def test_prompt_protection_is_isolated_per_team_when_members_are_reused(
         test_user.id,
         team_name="protected-team",
         members=shared_members,
+        collaboration_model="coordinate",
     )
     unprotected_team = _create_team_kind(
         test_db,
         test_user.id,
         team_name="unprotected-team",
         members=shared_members,
+        collaboration_model="coordinate",
     )
 
     team_kinds_service.update_with_user(

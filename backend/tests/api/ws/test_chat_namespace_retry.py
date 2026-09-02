@@ -198,9 +198,7 @@ async def test_chat_retry_preserves_prompt_protection_block() -> None:
         "prompt_protection_entrypoint": (PromptProtectionEntrypoint.WEB_USER_MESSAGE),
     }
     blocked = PromptProtectionBlocked(
-        ("purpose_violation",),
         bot_name="support",
-        shell_type="Chat",
     )
 
     with (
