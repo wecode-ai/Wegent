@@ -67,7 +67,6 @@ const INTERACTION_LAYER_ATTRIBUTE = 'data-wework-browser-annotation-interaction-
 const HOVER_ATTRIBUTE = 'data-wework-browser-annotation-hover'
 const CURSOR_ATTRIBUTE = 'data-wework-browser-annotation-cursor'
 const ANNOTATION_BLUE = '#0069fb'
-const ANNOTATION_OVERLAY_BACKGROUND = 'rgba(0, 105, 251, .08)'
 const ANNOTATION_CURSOR = {
   fill: '#0285FF',
   height: 25,
@@ -529,7 +528,6 @@ function interactionLayer() {
   const layer = document.createElement('div')
   layer.setAttribute(INTERACTION_LAYER_ATTRIBUTE, '')
   Object.assign(layer.style, {
-    background: ANNOTATION_OVERLAY_BACKGROUND,
     cursor: 'none',
     inset: '0',
     pointerEvents: 'auto',
@@ -750,12 +748,6 @@ function editorPanel(draft: RuntimeDraft) {
     width: `${width}px`,
     zIndex: '4',
   })
-  surface.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    emit('close-draft')
-  })
-
   const header = styleElement(document.createElement('div'), {
     alignItems: 'center',
     display: 'flex',
@@ -975,9 +967,46 @@ function editorDesignEditor(draft: RuntimeDraft, updateSubmitAvailability: () =>
   return editor
 }
 
+interface EditorFocusSnapshot {
+  testId: string
+  selectionStart: number | null
+  selectionEnd: number | null
+}
+
+function editorFocusSnapshot(root: ShadowRoot): EditorFocusSnapshot | null {
+  const activeElement = root.activeElement
+  if (
+    !(activeElement instanceof HTMLInputElement) &&
+    !(activeElement instanceof HTMLTextAreaElement)
+  ) {
+    return null
+  }
+  const testId = activeElement.dataset.testid
+  if (!testId) return null
+  return {
+    testId,
+    selectionStart: activeElement.selectionStart,
+    selectionEnd: activeElement.selectionEnd,
+  }
+}
+
+function restoreEditorFocus(root: ShadowRoot, snapshot: EditorFocusSnapshot | null) {
+  if (!snapshot) return
+  queueMicrotask(() => {
+    const selector = `[data-testid="${cssEscape(snapshot.testId)}"]`
+    const input = root.querySelector(selector)
+    if (!(input instanceof HTMLInputElement) && !(input instanceof HTMLTextAreaElement)) return
+    input.focus()
+    if (snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+      input.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd)
+    }
+  })
+}
+
 function render() {
   renderTimer = null
   const root = ensureRoot()
+  const focusSnapshot = editorFocusSnapshot(root)
   root.replaceChildren()
   syncEditorState(state.draft)
   if (state.mode !== 'off' && !draftAnchor) {
@@ -1024,6 +1053,7 @@ function render() {
       anchor: anchorFor(element),
     })),
   })
+  restoreEditorFocus(root, focusSnapshot)
 }
 
 function scheduleRender() {
@@ -1118,6 +1148,22 @@ function selectElement(element: Element, point?: { x: number; y: number }) {
     },
   })
 }
+
+document.addEventListener(
+  'keydown',
+  event => {
+    if (event.key !== 'Escape' || state.mode === 'off') return
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    if (state.draft) {
+      emit('close-draft')
+      closeDraftLocally()
+      return
+    }
+    emit('stop-annotation')
+  },
+  true
+)
 
 document.addEventListener(
   'click',

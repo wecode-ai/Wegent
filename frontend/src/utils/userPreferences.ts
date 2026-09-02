@@ -15,6 +15,7 @@ const STORAGE_KEYS = {
   LAST_REPO_ID: 'wegent_last_repo_id',
   LAST_REPO_NAME: 'wegent_last_repo_name',
   DEFAULT_EXECUTION_TARGET: 'wegent_default_execution_target',
+  SHOW_ADVANCED_DEVICES: 'wegent_show_advanced_devices',
 } as const
 
 /**
@@ -182,6 +183,29 @@ export function getLastRepo(): { repoId: number; repoName: string } | null {
   } catch (error) {
     console.warn('Failed to get last repo from localStorage:', error)
     return null
+  }
+}
+
+/**
+ * Persist whether advanced execution devices should be visible.
+ */
+export function saveShowAdvancedDevices(show: boolean): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.SHOW_ADVANCED_DEVICES, String(show))
+  } catch (error) {
+    console.warn('Failed to save advanced device visibility to localStorage:', error)
+  }
+}
+
+/**
+ * Return whether the user opted in to advanced execution devices.
+ */
+export function getShowAdvancedDevices(): boolean {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.SHOW_ADVANCED_DEVICES) === 'true'
+  } catch (error) {
+    console.warn('Failed to load advanced device visibility from localStorage:', error)
+    return false
   }
 }
 

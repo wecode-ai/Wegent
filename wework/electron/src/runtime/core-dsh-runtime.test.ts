@@ -115,8 +115,10 @@ describe('core DSH runtime', () => {
     ).toMatchObject({
       dependencies: {
         '@wegent/dsh-app-wework': expect.stringContaining('wework-app'),
+        '@wegent/dsh-browser-runtime': expect.stringContaining('wework-browser-runtime'),
         '@wegent/dsh-electron-host': expect.stringContaining('wework-electron-host'),
         '@wegent/dsh-executor-runtime': expect.stringContaining('wework-executor-runtime'),
+        '@wegent/dsh-secure-storage': expect.stringContaining('wework-secure-storage'),
         '@wegent/dsh-terminal-runtime': expect.stringContaining('wework-terminal-runtime'),
         '@wegent/dsh-ui-core-apps': expect.stringContaining('wework-ui-core-apps'),
         '@wegent/dsh-ui-core-settings': expect.stringContaining('wework-ui-core-settings'),
@@ -131,6 +133,8 @@ describe('core DSH runtime', () => {
           bundles: [
             '@deepseek-ai/dsh-base',
             '@wegent/dsh-electron-host',
+            '@wegent/dsh-browser-runtime',
+            '@wegent/dsh-secure-storage',
             '@wegent/dsh-terminal-runtime',
             '@wegent/dsh-app-wework',
             '@deepseek-ai/dsh-web-app',
@@ -480,12 +484,16 @@ describe('core DSH runtime', () => {
     expect(Object.keys(manifest.dependencies)).toEqual([
       '@wegent/dsh-app-wework',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-executor-runtime',
       '@wegent/dsh-terminal-runtime',
     ])
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
       '@wegent/dsh-electron-host',
+      '@wegent/dsh-browser-runtime',
+      '@wegent/dsh-secure-storage',
       '@wegent/dsh-terminal-runtime',
       '@wegent/dsh-app-wework',
       '@deepseek-ai/dsh-web-app',
@@ -730,6 +738,8 @@ async function writeRuntime(
     [
       ['@wegent/dsh-app-wework', 'wework-app'],
       ['@wegent/dsh-electron-host', 'wework-electron-host'],
+      ['@wegent/dsh-browser-runtime', 'wework-browser-runtime'],
+      ['@wegent/dsh-secure-storage', 'wework-secure-storage'],
       ['@wegent/dsh-executor-runtime', 'wework-executor-runtime'],
       ['@wegent/dsh-terminal-runtime', 'wework-terminal-runtime'],
       ['@wegent/dsh-ui-core-apps', 'wework-ui-core-apps'],

@@ -245,9 +245,9 @@ print(json.dumps({
     "detectionError": None,
 }))
 "#;
-const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
+const GIT_BRANCH_DIFF_SHORTSTAT_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; [ -n "$base" ] || { git diff --shortstat HEAD --; exit 0; }; merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); [ -n "$merge_base" ] || { git diff --shortstat HEAD --; exit 0; }; git diff --shortstat "$merge_base" --"#;
 const GIT_WORKSPACE_DIFF_SCRIPT: &str = r#"if git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
-const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main main origin/master master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
+const GIT_BRANCH_DIFF_SCRIPT: &str = r#"base=""; for candidate in "$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" upstream/main upstream/master "$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" origin/main origin/master main master; do [ -n "$candidate" ] || continue; if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then base="$candidate"; break; fi; done; if [ -n "$base" ]; then merge_base=$(git merge-base "$base" HEAD 2>/dev/null || true); fi; if [ -n "$merge_base" ]; then git diff --binary "$merge_base" --; elif git rev-parse --verify --quiet HEAD >/dev/null; then git diff --binary HEAD --; else git diff --binary --; fi; git ls-files --others --exclude-standard -z | while IFS= read -r -d "" file; do git diff --binary --no-index -- /dev/null "$file" || true; done"#;
 const TURN_FILE_CHANGES_SCRIPT: &str = r#"
 import gzip
 import hashlib
@@ -3843,6 +3843,25 @@ mod tests {
             assert_eq!(command.argv.first(), Some(&"bash"));
             assert_eq!(command.argv.get(1), Some(&"-c"));
             assert!(!command.argv.contains(&"-l"));
+        }
+    }
+
+    #[test]
+    fn git_branch_diff_prefers_fork_parent_remote() {
+        for command_key in ["git_branch_diff", "git_branch_diff_shortstat"] {
+            let script = local_app_command(command_key)
+                .expect("command must be registered")
+                .argv[2];
+            let upstream = script
+                .find("upstream/HEAD")
+                .expect("upstream default branch should be considered");
+            let origin = script
+                .find("origin/HEAD")
+                .expect("origin default branch should be considered");
+            assert!(
+                upstream < origin,
+                "fork parent remote should be checked before origin"
+            );
         }
     }
 

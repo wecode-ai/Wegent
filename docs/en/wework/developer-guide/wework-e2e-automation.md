@@ -281,7 +281,11 @@ already-built real binaries. A supplied application must be built with the
 desktop E2E Vite environment variables. The lifecycle scenarios share one
 application launch to control CI duration. Test artifacts, captured model
 requests, and failure diagnostics are stored in
-`wework/test-results/desktop-e2e/`.
+`wework/test-results/desktop-e2e/`. Each scenario retains logs, screenshots,
+requests, and UI state while removing copied application bundles, Executor
+homes, extracted runtimes, and rebuildable Electron caches. The runner also
+compacts inactive result directories left by interrupted runs so repeated local
+execution does not continuously consume disk space.
 
 The local runner writes complete stdout and stderr from the prerequisite
 Electron and Executor build to

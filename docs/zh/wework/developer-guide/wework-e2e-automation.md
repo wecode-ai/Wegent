@@ -246,7 +246,9 @@ Electron 应用及其内置 Executor，再启动所选场景。可选的 `WEWORK
 和 `WEWORK_E2E_APP_BIN` 必须成对设置，用于复用已经构建的真实 Executor 和真实
 Electron 应用；传入的应用必须使用桌面 E2E 的 Vite 环境变量构建。各生命周期场景
 复用一次应用启动以控制 CI 时长；测试过程、捕获的模型请求和失败诊断会保存在
-`wework/test-results/desktop-e2e/`。
+`wework/test-results/desktop-e2e/`。场景结束后会保留日志、截图、请求和 UI 状态，
+同时删除复制的应用包、Executor Home、解压 Runtime 和 Electron 可重建缓存；runner
+启动时也会清理之前异常中断留下的非活动结果目录，避免本地磁盘随运行次数持续增长。
 
 本地 runner 会把前置 Electron 和 Executor 构建的完整 stdout、stderr 写入
 `wework/test-results/desktop-e2e/desktop-build-<pid>.log`，终端只显示构建阶段、

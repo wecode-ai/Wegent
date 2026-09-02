@@ -195,17 +195,21 @@ Product distributions may provide an implementation for `@extensions/cloud-deskt
 The browser address bar includes an annotation icon. The implementation has three layers:
 
 - The Electron `browser-annotation-controller` owns annotations, drafts, original-view preview state, and runtime revisions per browser logical label. It is the only state source of truth.
-- A dedicated preload uses a page-local ShadowRoot for target hit testing, highlighting, numbered markers, anchor rebinding, and design styles so annotation internals do not pollute page observers.
-- A separate transparent overlay window renders the compact comment or design editor. The React browser panel owns only the annotation toolbar, count, and transfer into the main composer.
+- A dedicated preload uses a page-local ShadowRoot for target hit testing, highlighting, numbered markers, anchor rebinding, design styles, and the compact editor so annotation internals do not pollute page observers.
+- The React browser panel owns only the annotation toolbar, count, and transfer into the main composer.
 
 In annotation mode:
 
 - Hover highlights only the current DOM element. Clicking creates a stable anchor containing selector, DOM path, text, and geometry context, then opens the editor.
+- The full-page interaction layer stays transparent. It must not tint the page blue or any other color; blue is reserved for the current target highlight, markers, and annotation cursor.
 - The comment editor supports add, save, cancel, and delete. Saved annotations render numbered page markers that reopen the editor.
+- Escape uses layered dismissal: when the editor is open, it closes the editor while keeping annotation mode active; without an editor, it exits annotation mode. Page scripts must not capture either shortcut state.
+- When screenshot, anchor, or design synchronization rebuilds the editor, the preload restores the focused control and its selection so the first focus is not lost.
 - The design editor starts from the target's computed styles and can change text, appearance, and layout properties. The preload applies those changes and rebinds them after target-node replacement.
 - Holding Original View uses the same render/sync path to suppress every design change and restore replaced text. Releasing it reapplies the annotation design.
 - A same-URL reload preserves annotations and rebinds anchors. A real cross-URL navigation exits annotation mode and clears the draft so stale page state cannot leak.
-- Published annotations enter the Wework main composer attachment area. The runtime DTO sent to the model contains element context, comment, and design changes but omits screenshots, timestamps, and other UI-private fields.
+- Same-document SPA navigation updates the annotation scope from the latest URL carried by preload events so save and publish use the same URL key.
+- Published annotations enter the Wework main composer attachment area. Screenshots remain local preview and targeting data; the runtime DTO sent to the model contains element context, comment, and design changes but omits screenshots, timestamps, and other UI-private fields.
 
 Annotations are comments on the visible web page, not code selection comments. `browser_annotation` items should be interpreted by the model as comments on current visible page elements.
 

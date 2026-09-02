@@ -63,6 +63,7 @@ import {
 import { assertStartupRecoverySender, StartupRecoveryService } from './host/startup-recovery.js'
 import { ElectronTrayManager, type TrayAction } from './host/tray-manager.js'
 import { createTrayIcon } from './host/tray-icon.js'
+import { trayGuidForApplicationId } from './host/tray-guid.js'
 import { TrayNativeStatusController } from './host/tray-native-status.js'
 import { WindowClosePolicy, type WindowCloseDecision } from './host/window-close-policy.js'
 import { AppUpdateService } from './host/app-update-service.js'
@@ -94,6 +95,9 @@ import { resolveDshAppRoute } from './host/dsh-app-route.js'
 import { BrowserAnnotationController } from './host/browser-annotation-controller.js'
 import { LogRetentionService, type LogCleanupResult } from './runtime/log-retention.js'
 import { PluginDevelopmentManager } from './runtime/plugin-development-manager.js'
+import { SecureValueStore } from './host/secure-value-store.js'
+import { resolveDevelopmentDockIdentity } from './host/development-dock-identity.js'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const packageMetadata = createRequire(import.meta.url)('../package.json') as {
@@ -115,6 +119,8 @@ const applicationId =
   process.env.WEWORK_APP_IDENTIFIER?.trim() ||
   packageMetadata.weworkAppId?.trim() ||
   'io.wecode.wework'
+const developmentDockIdentity = resolveDevelopmentDockIdentity(process.env)
+const packagedApplication = isEffectivePackagedApplication(app.isPackaged, process.env)
 const DEFAULT_POPOUT_WINDOW_SHORTCUT = 'Alt+Shift+Space'
 const startupStartedAt = performance.now()
 const pluginDevelopmentInstance = process.env.WEWORK_INSTANCE_MODE === 'core-dsh-plugin-development'
@@ -122,6 +128,8 @@ const pluginDevelopmentCommand = commandLineValue(
   process.argv,
   '--wework-plugin-development-command'
 )
+
+if (developmentDockIdentity) process.title = developmentDockIdentity.displayName
 
 function logStartupStep(
   step: string,
@@ -220,7 +228,7 @@ autoUpdater.logger = appUpdateLogger
 const appUpdates = new AppUpdateService({
   updater: autoUpdater,
   currentVersion: () => app.getVersion(),
-  isPackaged: () => app.isPackaged,
+  isPackaged: () => packagedApplication,
   prepareInstall: async () => {
     await prepareApplicationShutdown()
     await appUpdateLogger
@@ -894,7 +902,7 @@ async function createWindow(startupTheme: StartupSplashTheme): Promise<void> {
   const windowTitle =
     pluginDevelopmentInstance && developmentTitle
       ? `Wework Plugin Development — ${developmentTitle}`
-      : 'Wework'
+      : (developmentDockIdentity?.displayName ?? 'Wework')
   mainWindow = new BrowserWindow({
     ...desktopWindowFrameOptions(),
     width: 1440,
@@ -1075,10 +1083,11 @@ function dispatchTrayAction(action: TrayAction): void {
 }
 
 function createTrayManager(): ElectronTrayManager<Electron.Menu | null, Tray> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const iconPath = join(resourcesRoot, 'icons', '128x128.png')
+  const trayGuid = trayGuidForApplicationId(applicationId)
   return new ElectronTrayManager({
-    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath)),
+    createTray: () => new Tray(createTrayIcon(nativeImage, iconPath), trayGuid),
     buildMenu: template => Menu.buildFromTemplate(template as MenuItemConstructorOptions[]),
     dispatchAction: dispatchTrayAction,
     applyIcon: (tray, state) => {
@@ -1290,6 +1299,7 @@ async function configureDesktopRuntime(): Promise<void> {
     downloadsDirectory: app.getPath('downloads'),
     logDirectories: [app.getPath('logs')],
   })
+  const secureStorage = new SecureValueStore(app.getPath('userData'))
   embeddedBrowser = new EmbeddedBrowserManager(app.getPath('userData'), event => {
     desktopHostEvents.publish('browser.event', { ...event })
   })
@@ -1320,7 +1330,7 @@ async function configureDesktopRuntime(): Promise<void> {
       environment,
       runtimeHost: smartAppRuntimeHost,
       ensureWorkbenchRuntime:
-        app.isPackaged && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
+        packagedApplication && !process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim()
           ? async () => {
               const paths = packagedHarnessRuntimePaths()
               const resources = environment.WEWORK_HARNESS_RESOURCE_ROOT?.trim()
@@ -1385,6 +1395,7 @@ async function configureDesktopRuntime(): Promise<void> {
               taskId: taskAddressId,
             }),
           plugins: workbenchPlugins,
+          secureStorage,
           updatePreferences: updateDesktopPreferences,
         },
         {
@@ -1504,7 +1515,7 @@ async function configureDesktopRuntime(): Promise<void> {
 }
 
 function currentElectronLaunch(): { command: string; args: string[] } {
-  return app.isPackaged
+  return packagedApplication
     ? { command: process.execPath, args: [] }
     : { command: process.execPath, args: [packageRoot] }
 }
@@ -1595,6 +1606,10 @@ function startDesktopRuntime(): Promise<void> {
 if (hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     logStartupStep('electron-ready', 'completed')
+    if (process.platform === 'darwin' && app.dock && developmentDockIdentity) {
+      app.dock.setBadge(developmentDockIdentity.badge)
+      console.info('[development] Dock identity configured', developmentDockIdentity)
+    }
     logStartupStep('log-retention-start', 'started')
     await logRetention.start()
     logStartupStep('log-retention-start', 'completed')
@@ -1680,14 +1695,14 @@ function reportLogCleanup(result: LogCleanupResult): void {
 }
 
 async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
-  const resourcesRoot = app.isPackaged ? process.resourcesPath : developmentResourcesRoot
+  const resourcesRoot = packagedApplication ? process.resourcesPath : developmentResourcesRoot
   const configuredComponentResourcesRoot = process.env.WEWORK_COMPONENT_RESOURCES_ROOT?.trim()
   const componentResourcesRoot =
-    !app.isPackaged && configuredComponentResourcesRoot
+    !packagedApplication && configuredComponentResourcesRoot
       ? resolve(configuredComponentResourcesRoot)
       : resourcesRoot
   const preparedComponents = await prepareDesktopComponents({
-    isPackaged: app.isPackaged,
+    isPackaged: packagedApplication,
     managerOptions: {
       resourcesRoot: componentResourcesRoot,
       dataDirectory: app.getPath('userData'),

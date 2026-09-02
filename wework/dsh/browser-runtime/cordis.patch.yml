@@ -1,0 +1,3 @@
+- insert:
+    - id: wework-browser-runtime
+      name: '@wegent/dsh-browser-runtime'
