@@ -31,6 +31,7 @@ from app.services.knowledge.code_wiki.version_store import page_path_of
 QUALITY_REVIEW_EXT_KEY = "qualityReview"
 PLAN_ONLY_REVIEW_POLICY = "plan_only"
 PLAN_AND_QA_REVIEW_POLICY = "plan_and_qa"
+PLAN_AMENDMENT_PHASE = "plan_amendment"
 
 
 def require_quality_review(
@@ -61,11 +62,13 @@ def open_quality_review(
     review = _required_review(generation)
     checkpoints = list(review.get("checkpoints") or [])
     handoffs = list(review.get("handoffs") or [])
-    _assert_open_allowed(checkpoints, payload.phase)
+    _assert_open_allowed(checkpoints, handoffs, payload.phase)
 
     paths = _normalized_paths(payload.paths)
     _assert_handoff_scope(db, generation, payload.phase, paths)
     writing_plan = _normalized_writing_plan(payload, paths)
+    if payload.phase == PLAN_AMENDMENT_PHASE:
+        _assert_additive_amendment_scope(db, generation, paths)
     attempt = 1 + sum(item.get("phase") == payload.phase for item in checkpoints)
     handoff = {
         "phase": payload.phase,
@@ -169,16 +172,20 @@ def review_state(generation: WikiGeneration, *, phase: str) -> dict:
     checkpoint = _latest(checkpoints, phase)
     ready = _ready_handoff(handoffs, checkpoints, phase)
     if ready is not None:
-        return _state(generation, phase, "ready", handoff=ready)
+        state = _state(generation, phase, "ready", handoff=ready)
+        return _with_effective_plan(state, checkpoints, handoffs)
     if checkpoint is not None:
-        return _state(
+        state = _state(
             generation,
             phase,
             str(checkpoint["status"]),
             handoff=_latest(handoffs, phase),
             review=checkpoint,
         )
-    return _state(generation, phase, "not_started")
+        return _with_effective_plan(state, checkpoints, handoffs)
+    return _with_effective_plan(
+        _state(generation, phase, "not_started"), checkpoints, handoffs
+    )
 
 
 def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource]) -> str:
@@ -188,9 +195,17 @@ def quality_gate_reason(generation: WikiGeneration, pages: Sequence[PageSource])
         return ""
 
     checkpoints = list(review.get("checkpoints") or [])
-    plan = _latest(checkpoints, "plan")
+    handoffs = list(review.get("handoffs") or [])
+    plan = _effective_plan(checkpoints)
     if plan is None or plan.get("status") != "passed":
         return "full rebuild needs a passed plan review before publication"
+
+    amendment = _latest(checkpoints, PLAN_AMENDMENT_PHASE)
+    amendment_handoff = _latest(handoffs, PLAN_AMENDMENT_PHASE)
+    if amendment_handoff is not None and (
+        amendment is None or amendment.get("status") != "passed"
+    ):
+        return "full rebuild has an unresolved plan amendment"
 
     planned_paths = _path_keys(plan.get("paths") or [])
     focus_paths = _path_keys(plan.get("focusPaths") or [])
@@ -252,7 +267,7 @@ def _generation_paths(db: Session, generation_id: int) -> set[str]:
 def writing_progress(db: Session, generation: WikiGeneration) -> dict | None:
     """Return page-level progress derived from the passed Plan and stored pages."""
     review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
-    plan = _latest(list(review.get("checkpoints") or []), "plan")
+    plan = _effective_plan(list(review.get("checkpoints") or []))
     if plan is None or plan.get("status") != "passed":
         return None
 
@@ -325,7 +340,9 @@ def _handoff_matches(existing: dict, candidate: dict) -> bool:
     return all(existing.get(key) == value for key, value in candidate.items())
 
 
-def _assert_open_allowed(checkpoints: list[dict], phase: str) -> None:
+def _assert_open_allowed(
+    checkpoints: list[dict], handoffs: list[dict], phase: str
+) -> None:
     plan = _latest(checkpoints, "plan")
     qa = _latest(checkpoints, "qa")
     current = _latest(checkpoints, phase)
@@ -335,13 +352,39 @@ def _assert_open_allowed(checkpoints: list[dict], phase: str) -> None:
         if current.get("attempt") == 1 and current.get("status") == "changes_requested":
             return
         raise HTTPException(status_code=409, detail="Plan review is already closed")
-    if phase == "qa" and (plan is None or plan.get("status") != "passed"):
-        raise HTTPException(
-            status_code=409,
-            detail="QA is allowed only after the plan review passes",
-        )
-    if phase == "qa" and current is not None:
-        raise HTTPException(status_code=409, detail="QA review is already closed")
+    if phase == PLAN_AMENDMENT_PHASE:
+        if plan is None or plan.get("status") != "passed":
+            raise HTTPException(
+                status_code=409,
+                detail="A Plan amendment is allowed only after the plan review passes",
+            )
+        if qa is not None or _latest(handoffs, "qa") is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="A Plan amendment is not allowed after QA has started",
+            )
+        if current is None:
+            return
+        if current.get("attempt") == 1 and current.get("status") == "changes_requested":
+            return
+        raise HTTPException(status_code=409, detail="Plan amendment is already closed")
+    if phase == "qa":
+        if plan is None or plan.get("status") != "passed":
+            raise HTTPException(
+                status_code=409,
+                detail="QA is allowed only after the plan review passes",
+            )
+        amendment = _latest(checkpoints, PLAN_AMENDMENT_PHASE)
+        amendment_handoff = _latest(handoffs, PLAN_AMENDMENT_PHASE)
+        if amendment_handoff is not None and (
+            amendment is None or amendment.get("status") != "passed"
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="QA is allowed only after the Plan amendment passes",
+            )
+        if current is not None:
+            raise HTTPException(status_code=409, detail="QA review is already closed")
     if phase == "recheck" and (qa is None or qa.get("status") != "changes_requested"):
         raise HTTPException(
             status_code=409,
@@ -371,7 +414,7 @@ def _assert_handoff_scope(
     phase: str,
     paths: list[str],
 ) -> None:
-    if phase == "plan":
+    if phase in {"plan", PLAN_AMENDMENT_PHASE}:
         return
     actual_paths = _generation_paths(db, generation.id)
     supplied_paths = _path_keys(paths)
@@ -382,7 +425,7 @@ def _assert_handoff_scope(
         )
     if phase == "qa":
         review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
-        plan = _latest(list(review.get("checkpoints") or []), "plan")
+        plan = _effective_plan(list(review.get("checkpoints") or []))
         planned_paths = _path_keys((plan or {}).get("paths") or [])
         if actual_paths != planned_paths:
             missing = sorted(planned_paths - actual_paths, key=collation_key)
@@ -404,7 +447,7 @@ def _assert_handoff_scope(
 def _assert_review_scope(phase: str, paths: list[str], handoff: dict) -> None:
     reviewed = _path_keys(paths)
     handed_off = _path_keys(handoff.get("paths") or [])
-    if phase == "plan" and reviewed != handed_off:
+    if phase in {"plan", PLAN_AMENDMENT_PHASE} and reviewed != handed_off:
         raise HTTPException(
             status_code=400,
             detail="Plan verdict paths must match the persisted Plan handoff",
@@ -455,16 +498,46 @@ def _state(
     return result
 
 
+def _with_effective_plan(
+    state: dict, checkpoints: list[dict], handoffs: list[dict]
+) -> dict:
+    """Attach the current authoritative page ownership without replacing history."""
+    if state["phase"] == PLAN_AMENDMENT_PHASE and state["state"] == "not_started":
+        plan = _latest(checkpoints, "plan")
+        state["nextAction"] = (
+            "continue_writing"
+            if plan is not None and plan.get("status") == "passed"
+            else "complete_plan_review_first"
+        )
+    plan = _effective_plan(checkpoints)
+    if plan is None:
+        return state
+    amendment = _latest(checkpoints, PLAN_AMENDMENT_PHASE)
+    phase = (
+        PLAN_AMENDMENT_PHASE
+        if amendment is not None and amendment.get("status") == "passed"
+        else "plan"
+    )
+    handoff = _latest(handoffs, phase) or {}
+    state["effectivePlan"] = {
+        "phase": phase,
+        "paths": plan.get("paths") or [],
+        "focusPaths": plan.get("focusPaths") or [],
+        "writingPlan": handoff.get("writingPlan"),
+    }
+    return state
+
+
 def _normalized_writing_plan(
     payload: WikiGenerationReviewOpenRequest,
     planned_paths: list[str],
 ) -> dict | None:
     """Validate and normalize page ownership carried by a Plan handoff."""
-    if payload.phase != "plan":
+    if payload.phase not in {"plan", PLAN_AMENDMENT_PHASE}:
         if payload.writing_plan is not None:
             raise HTTPException(
                 status_code=400,
-                detail="writing_plan is valid only for a Plan handoff",
+                detail="writing_plan is valid only for a Plan handoff or amendment",
             )
         return None
 
@@ -543,18 +616,25 @@ def _normalized_optional_paths(paths: list[str]) -> list[str]:
 
 
 def _next_action(phase: str, state: str, attempt: object, policy: str) -> str:
+    if phase == PLAN_AMENDMENT_PHASE and state == "not_started":
+        return "complete_plan_review_first"
     if policy == PLAN_ONLY_REVIEW_POLICY and phase != "plan" and state == "not_started":
         return "not_required"
     if state == "not_started":
         return f"open_{phase}_review"
     if state == "ready":
         return "review_handoff_and_submit_verdict"
-    if phase == "plan" and state == "passed":
+    if phase in {"plan", PLAN_AMENDMENT_PHASE} and state == "passed":
         if policy == PLAN_ONLY_REVIEW_POLICY:
             return "write_pages_then_complete"
         return "write_pages_then_open_qa"
-    if phase == "plan" and state == "changes_requested":
-        return "revise_plan_then_open_plan" if attempt == 1 else "fail_generation"
+    if phase in {"plan", PLAN_AMENDMENT_PHASE} and state == "changes_requested":
+        subject = "plan" if phase == "plan" else "plan_amendment"
+        return (
+            f"revise_{subject}_then_open_{subject}"
+            if attempt == 1
+            else "fail_generation"
+        )
     if phase == "qa" and state == "passed":
         return "complete_generation"
     if phase == "qa" and state == "changes_requested":
@@ -567,15 +647,17 @@ def _next_action(phase: str, state: str, attempt: object, policy: str) -> str:
 def _plan_focus_paths(
     payload: WikiGenerationReviewRequest, planned_paths: list[str]
 ) -> list[str]:
-    if payload.phase != "plan":
+    if payload.phase not in {"plan", PLAN_AMENDMENT_PHASE}:
         return []
     if payload.status == "changes_requested" and not payload.focus_paths:
         return []
     if not payload.focus_paths:
-        raise HTTPException(
-            status_code=400,
-            detail="A passed plan review requires at least one core focus path",
-        )
+        if payload.phase == "plan":
+            raise HTTPException(
+                status_code=400,
+                detail="A passed plan review requires at least one core focus path",
+            )
+        return []
     focus_paths = _normalized_paths(payload.focus_paths)
     unknown = _path_keys(focus_paths) - _path_keys(planned_paths)
     if unknown:
@@ -584,6 +666,48 @@ def _plan_focus_paths(
             detail="Core focus paths must also be present in the reviewed plan paths",
         )
     return focus_paths
+
+
+def _effective_plan(checkpoints: list[dict]) -> dict | None:
+    """Return the passed Plan plus its one passed additive amendment, if any."""
+    plan = _latest(checkpoints, "plan")
+    if plan is None or plan.get("status") != "passed":
+        return None
+    amendment = _latest(checkpoints, PLAN_AMENDMENT_PHASE)
+    if amendment is None or amendment.get("status") != "passed":
+        return plan
+    effective = dict(amendment)
+    effective["focusPaths"] = sorted(
+        _path_keys(plan.get("focusPaths") or [])
+        | _path_keys(amendment.get("focusPaths") or []),
+        key=collation_key,
+    )
+    return effective
+
+
+def _assert_additive_amendment_scope(
+    db: Session, generation: WikiGeneration, candidate_paths: list[str]
+) -> None:
+    review = (generation.ext or {}).get(QUALITY_REVIEW_EXT_KEY) or {}
+    plan = _latest(list(review.get("checkpoints") or []), "plan") or {}
+    original = _path_keys(plan.get("paths") or [])
+    candidate = _path_keys(candidate_paths)
+    if not original.issubset(candidate) or candidate == original:
+        raise HTTPException(
+            status_code=400,
+            detail="Plan amendment must add paths without removing planned pages",
+        )
+    written = _generation_paths(db, generation.id)
+    if not written.issubset(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail="Plan amendment must retain every page already written",
+        )
+    if written & (candidate - original):
+        raise HTTPException(
+            status_code=400,
+            detail="Plan amendment must be opened before writing its added pages",
+        )
 
 
 def _normalized_paths(paths: list[str]) -> list[str]:

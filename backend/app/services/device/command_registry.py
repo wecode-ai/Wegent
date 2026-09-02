@@ -28,8 +28,10 @@ class LocalDeviceCommandDefinition:
 GIT_BRANCH_DIFF_SHORTSTAT_COMMAND = (
     'bash -c \'base=""; '
     "for candidate in "
+    '"$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" '
+    "upstream/main upstream/master "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
-    "origin/main main origin/master master; do "
+    "origin/main origin/master main master; do "
     '[ -n "$candidate" ] || continue; '
     'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
     'base="$candidate"; break; '
@@ -58,8 +60,10 @@ GIT_BRANCH_DIFF_COMMAND = (
     "bash -c "
     '\'base=""; '
     "for candidate in "
+    '"$(git symbolic-ref --quiet --short refs/remotes/upstream/HEAD 2>/dev/null)" '
+    "upstream/main upstream/master "
     '"$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" '
-    "origin/main main origin/master master; do "
+    "origin/main origin/master main master; do "
     '[ -n "$candidate" ] || continue; '
     'if git rev-parse --verify --quiet "$candidate^{commit}" >/dev/null; then '
     'base="$candidate"; break; '

@@ -91,6 +91,8 @@ FAILURE_CODE_EXT_KEY = "failureCode"
 class FailureCode:
     """Failures this server states in its own words."""
 
+    #: A knowledge-base manager deliberately stopped the generation.
+    CANCELLED_BY_USER = "cancelled_by_user"
     #: The task reached a terminal state without the agent concluding its run.
     TASK_ENDED_WITHOUT_REPORT = "task_ended_without_report"
     #: No task could be created, so nothing was ever going to run.
@@ -572,7 +574,9 @@ def _run_progress(db: Session, generation: WikiGeneration) -> RunProgress:
     )
 
     plan = review_state(generation, phase="plan")
-    plan_evidence = plan.get("handoff") or plan.get("review") or {}
+    plan_evidence = (
+        plan.get("effectivePlan") or plan.get("handoff") or plan.get("review") or {}
+    )
     pages_total = len(plan_evidence.get("paths") or [])
     plan_only = review_policy(generation) == PLAN_ONLY_REVIEW_POLICY
     total_steps = 3 if plan_only else 4

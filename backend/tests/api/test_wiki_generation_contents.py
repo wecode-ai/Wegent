@@ -207,6 +207,89 @@ def test_writer_records_quality_review_for_a_required_full_rebuild(
     assert checkpoint["fingerprint"]
 
 
+def test_writer_exposes_a_passed_plan_amendment_as_the_effective_plan(
+    wiki_writer_client: TestClient, test_db: Session, test_user: User
+):
+    _, generation = _create_generation(
+        test_db,
+        test_user,
+        ext={
+            "qualityReview": {
+                "required": True,
+                "policy": "plan_only",
+                "handoffs": [],
+                "checkpoints": [],
+            }
+        },
+    )
+    headers = _headers(test_user)
+    assert (
+        wiki_writer_client.post(
+            REVIEW_OPEN_URL,
+            json=_review_open_payload(generation.id),
+            headers=headers,
+        ).status_code
+        == 200
+    )
+    assert (
+        wiki_writer_client.post(
+            REVIEW_URL,
+            json=_review_payload(generation.id),
+            headers=headers,
+        ).status_code
+        == 200
+    )
+
+    amendment_open = {
+        "generation_id": generation.id,
+        "phase": "plan_amendment",
+        "paths": ["index", "architecture/runtime"],
+        "summary": "Add the missing runtime lifecycle page",
+        "handoff": "# Plan amendment\n\nAdd runtime lifecycle coverage.",
+        "writing_plan": {
+            "mode": "coordinator",
+            "coordinator_paths": ["index", "architecture/runtime"],
+            "work_packages": [],
+        },
+    }
+    opened = wiki_writer_client.post(
+        REVIEW_OPEN_URL, json=amendment_open, headers=headers
+    )
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["state"] == "ready"
+
+    verdict = wiki_writer_client.post(
+        REVIEW_URL,
+        json={
+            "generation_id": generation.id,
+            "phase": "plan_amendment",
+            "status": "passed",
+            "paths": ["index", "architecture/runtime"],
+            "focus_paths": ["architecture/runtime"],
+            "summary": "The added page has distinct source-backed scope",
+        },
+        headers=headers,
+    )
+    assert verdict.status_code == 200, verdict.text
+
+    state = wiki_writer_client.get(
+        REVIEW_STATE_URL.format(generation_id=generation.id),
+        params={"phase": "plan"},
+        headers=headers,
+    )
+    assert state.status_code == 200, state.text
+    assert state.json()["effectivePlan"] == {
+        "phase": "plan_amendment",
+        "paths": ["architecture/runtime", "index"],
+        "focusPaths": ["architecture/runtime", "index"],
+        "writingPlan": {
+            "mode": "coordinator",
+            "coordinatorPaths": ["architecture/runtime", "index"],
+            "workPackages": [],
+        },
+    }
+
+
 def test_writer_reads_persisted_review_state(
     wiki_writer_client: TestClient, test_db: Session, test_user: User
 ):
