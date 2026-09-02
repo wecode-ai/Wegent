@@ -10,9 +10,11 @@ from urllib.parse import urlparse
 
 from shared.models.db import User
 from shared.models.execution import (
+    GIT_AUTH_TRANSPORT_DEVICE_LOCAL,
     GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN,
     GIT_AUTH_TRANSPORT_LEGACY_USER_SECRET,
     GIT_AUTH_TRANSPORT_NONE,
+    ExecutionRequest,
 )
 from shared.utils.crypto import decrypt_git_token, encrypt_git_token, is_token_encrypted
 from shared.utils.url_util import domains_match
@@ -83,6 +85,20 @@ def classify_git_auth_transport(user_info: dict) -> str:
     if is_token_encrypted(token):
         return GIT_AUTH_TRANSPORT_ENCRYPTED_REQUEST_TOKEN
     return GIT_AUTH_TRANSPORT_NONE
+
+
+def build_device_git_execution_payload(request: ExecutionRequest) -> dict:
+    """Build a device payload that relies on credentials configured on the device."""
+
+    payload = request.to_dict()
+    user_info = payload.get("user")
+    if isinstance(user_info, dict):
+        user_info = dict(user_info)
+        user_info.pop("git_token", None)
+        user_info.pop("gitToken", None)
+        payload["user"] = user_info
+    payload["git_auth_transport"] = GIT_AUTH_TRANSPORT_DEVICE_LOCAL
+    return payload
 
 
 def resolve_plaintext_git_token(user: User, account: dict) -> str:
