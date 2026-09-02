@@ -41,6 +41,7 @@ from app.services.smart_app_download_link import (
 )
 from app.services.smart_app_marketplace_service import smart_app_marketplace_service
 from app.services.smart_app_package_parser import MAX_SMART_APP_PACKAGE_SIZE_BYTES
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["smart-apps"])
 
@@ -170,6 +171,7 @@ def init_submission(
 
 
 @router.put("/submissions/{submission_id}/artifact", status_code=204)
+@trace_async("upload_smart_app_submission_artifact", "marketplace.api")
 async def upload_submission_artifact(
     submission_id: int,
     request: Request,

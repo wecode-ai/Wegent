@@ -75,6 +75,7 @@ from app.services.plugin_marketplace_service import plugin_marketplace_service
 from app.services.plugin_package_parser import MAX_PLUGIN_PACKAGE_SIZE_BYTES
 from app.services.plugin_package_storage import PluginPackageStorageError
 from app.stores.tasks import subtask_store, task_store
+from shared.telemetry.decorators import trace_async
 
 router = APIRouter(tags=["plugins"])
 logger = logging.getLogger(__name__)
@@ -1014,6 +1015,7 @@ def init_plugin_submission(
 
 
 @router.put("/submissions/{submission_id}/artifact", status_code=204)
+@trace_async("upload_plugin_submission_artifact", "marketplace.api")
 async def upload_plugin_submission_artifact(
     submission_id: int,
     request: Request,

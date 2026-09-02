@@ -1058,14 +1058,23 @@ class PluginMarketplaceService:
         submission_id: int,
         package: bytes,
     ) -> None:
-        submission = self._owned_submission(db, user_id, submission_id)
-        if submission.status != "uploading":
-            raise HTTPException(status_code=409, detail="Submission is not uploading")
-        release = db.get(PluginRelease, submission.release_id)
-        if not release:
-            raise HTTPException(status_code=404, detail="Submission release not found")
-        self._validate_uploaded_package(release, package)
-        plugin_package_storage.put(release.storage_key, package)
+        submission = self._owned_submission(db, user_id, submission_id, for_update=True)
+        try:
+            if submission.status != "uploading":
+                raise HTTPException(
+                    status_code=409, detail="Submission is not uploading"
+                )
+            release = db.get(PluginRelease, submission.release_id)
+            if not release:
+                raise HTTPException(
+                    status_code=404, detail="Submission release not found"
+                )
+            self._validate_uploaded_package(release, package)
+            plugin_package_storage.put(release.storage_key, package)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
     def _requested_visibility_for_release(
         self, release: PluginRelease, *, fallback: str
