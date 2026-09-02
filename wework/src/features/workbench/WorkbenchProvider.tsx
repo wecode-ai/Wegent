@@ -114,6 +114,7 @@ import {
   applyRuntimeConversationGoalContinuation,
   applyRuntimeConversationSubagentActivity,
   applyRuntimeConversationAction,
+  enqueueRuntimeConversationAction,
   markRuntimeConversationAssistantStarted,
   publishRuntimeTransportReplaced,
   runtimeConversationKey,
@@ -1767,7 +1768,7 @@ export function WorkbenchProvider({
 
   const applyCanonicalRuntimeAction = useStableEvent(
     (address: RuntimeTaskAddress, action: Parameters<typeof applyRuntimeConversationAction>[1]) => {
-      applyRuntimeConversationAction(address, action)
+      enqueueRuntimeConversationAction(address, action)
     }
   )
   const settleCanonicalRuntimeGuidance = useStableEvent(

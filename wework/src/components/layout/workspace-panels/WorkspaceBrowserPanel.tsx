@@ -361,7 +361,8 @@ export function WorkspaceBrowserTabPanel({
   const browserPanelRef = useRef<HTMLDivElement | null>(null)
   const browserHostRef = useRef<HTMLDivElement | null>(null)
   const nativeBrowserOpenRef = useRef(false)
-  const nativeBrowserOpeningRef = useRef(false)
+  const nativeBrowserOpeningGenerationRef = useRef<number | null>(null)
+  const nativeBrowserLifecycleGenerationRef = useRef(0)
   const currentUrlRef = useRef<string | null>(null)
   const pendingNavigationUrlRef = useRef<string | null>(null)
   const activePageUrlRef = useRef<string | null>(null)
@@ -561,6 +562,7 @@ export function WorkspaceBrowserTabPanel({
   useLayoutEffect(() => {
     currentLabelRef.current = label
     activeRef.current = active
+    nativeBrowserLifecycleGenerationRef.current += 1
     pageStateRequestGenerationRef.current += 1
   }, [active, label])
 
@@ -1252,19 +1254,24 @@ export function WorkspaceBrowserTabPanel({
   }, [currentUrl])
 
   useEffect(() => {
-    if (!embeddedBrowserAvailable || !currentUrl) return
+    if (!active || !embeddedBrowserAvailable || !currentUrl) return
     if (nativeBrowserOpenRef.current) {
-      schedulePostOpenBoundsSync(active)
+      schedulePostOpenBoundsSync(true)
       return
     }
-    if (nativeBrowserOpeningRef.current) return
+    if (nativeBrowserOpeningGenerationRef.current !== null) return
 
     const requestId = activeOpenRequestIdRef.current
     const openingLabel = label
     const openingUrl = currentUrl
     const nativeOpeningUrl = requestId ? 'about:blank' : openingUrl
-    const isAbandoned = () => !mountedRef.current || currentLabelRef.current !== openingLabel
-    nativeBrowserOpeningRef.current = true
+    const lifecycleGeneration = nativeBrowserLifecycleGenerationRef.current
+    const isAbandoned = () =>
+      !mountedRef.current ||
+      !activeRef.current ||
+      currentLabelRef.current !== openingLabel ||
+      nativeBrowserLifecycleGenerationRef.current !== lifecycleGeneration
+    nativeBrowserOpeningGenerationRef.current = lifecycleGeneration
 
     setStatus('loading')
     const revealHiddenBrowser = async (visible: boolean) => {
@@ -1359,7 +1366,7 @@ export function WorkspaceBrowserTabPanel({
               )
             : await openEmbeddedBrowser(nativeOpeningUrl, bounds, openingLabel, false, !active)
         if (isAbandoned()) {
-          await closeEmbeddedBrowser(openingLabel).catch(() => undefined)
+          await closeEmbeddedBrowser(openingLabel, pageState.nativeLabel).catch(() => undefined)
           logBrowserOpenDiagnostic('lifecycle_cancelled', {
             active,
             label: openingLabel,
@@ -1414,7 +1421,9 @@ export function WorkspaceBrowserTabPanel({
           setError(t('workbench.browser_open_failed'))
         }
       } finally {
-        nativeBrowserOpeningRef.current = false
+        if (nativeBrowserOpeningGenerationRef.current === lifecycleGeneration) {
+          nativeBrowserOpeningGenerationRef.current = null
+        }
       }
     }
 
@@ -1479,14 +1488,51 @@ export function WorkspaceBrowserTabPanel({
     if (!embeddedBrowserAvailable) return
 
     if (!active) {
-      void hideEmbeddedBrowser().catch(error => {
-        console.error('Failed to hide embedded browser:', error)
+      if (annotationModeRef.current) {
+        void setEmbeddedBrowserAnnotationOriginalView(false, label).catch(error => {
+          console.error('Failed to reset embedded browser original view:', error)
+        })
+      }
+      annotationModeRef.current = false
+      window.requestAnimationFrame(() => {
+        setOriginalViewHeld(false)
+        setAnnotationMode(false)
+      })
+
+      const expectedNativeLabel = nativeLabelRef.current ?? undefined
+      const ownsNativeBrowser =
+        nativeBrowserOpenRef.current ||
+        nativeBrowserOpeningGenerationRef.current !== null ||
+        expectedNativeLabel !== undefined
+      if (!ownsNativeBrowser) return
+
+      clearScheduledBoundsSync()
+      browserBoundsSyncGenerationRef.current += 1
+      nativeBrowserOpenRef.current = false
+      nativeBrowserOpeningGenerationRef.current = null
+      nativeLabelRef.current = null
+      adoptedDownloadOwnerLabelRef.current = null
+      activeDownloadIdsRef.current = new Set()
+      onNativeLabelChange?.(null)
+      onDownloadActivityChange?.(false)
+      setDownloads([])
+      setDownloadsOpen(false)
+      void closeEmbeddedBrowser(label, expectedNativeLabel).catch(error => {
+        console.error('Failed to suspend embedded browser:', error)
       })
       return
     }
 
     scheduleEmbeddedBrowserBoundsSync(active)
-  }, [active, embeddedBrowserAvailable, hideEmbeddedBrowser, scheduleEmbeddedBrowserBoundsSync])
+  }, [
+    active,
+    clearScheduledBoundsSync,
+    embeddedBrowserAvailable,
+    label,
+    onDownloadActivityChange,
+    onNativeLabelChange,
+    scheduleEmbeddedBrowserBoundsSync,
+  ])
 
   useEffect(() => {
     if (!embeddedBrowserAvailable) return
@@ -1622,14 +1668,10 @@ export function WorkspaceBrowserTabPanel({
 
   useEffect(() => {
     return () => {
-      // Do NOT close the native embedded browser here. React StrictMode double-invokes
-      // effects in development (mount -> unmount -> remount), so this cleanup runs once
-      // for a "fake" unmount immediately before the real mount. Closing the native
-      // webview here tears down the very browser the remounted panel is about to open,
-      // which resets the panel back to the empty start page (blank address bar).
-      // The native browser lifecycle is owned by the explicit close-tab action
-      // (closeRightPanelTab -> closeEmbeddedBrowsers), not by component unmount.
-      // Here we only clear local references so a remount re-adopts the existing browser.
+      // React StrictMode double-invokes this cleanup in development. Inactive panels
+      // suspend through the active-state effect, explicit tab closure is handled by
+      // the workspace owner, and Electron webview unmount destroys its WebContents.
+      // This cleanup only invalidates renderer-local ownership.
       nativeBrowserOpenRef.current = false
       if (consumeEmbeddedBrowserLabelTransfer(label)) return
       nativeLabelRef.current = null
@@ -2921,9 +2963,9 @@ export function WorkspaceBrowserTabPanel({
             )}
             aria-label={t('workbench.browser')}
           >
-            {electronRuntime ? (
+            {electronRuntime && active ? (
               <ElectronEmbeddedBrowserView
-                active={active}
+                active
                 cursor={agentCursor}
                 cursorScale={
                   deviceToolbar.isEnabled

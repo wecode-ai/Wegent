@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     env, fs,
     future::Future,
     path::{Path, PathBuf},
@@ -20,7 +20,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
-    time::{timeout, timeout_at, Instant},
+    time::{sleep, timeout, timeout_at, Instant},
 };
 
 use crate::{
@@ -42,6 +42,7 @@ use super::{model_id, prompt_text};
 
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
+const DEFAULT_CODEX_APP_SERVER_IDLE_SHUTDOWN_SECONDS: u64 = 60;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
@@ -412,12 +413,25 @@ impl CodexAppServerClient {
     }
 
     async fn restart_if_idle(&self) -> Result<(), (usize, usize)> {
+        self.restart_if_idle_for_generation(None).await.map(|_| ())
+    }
+
+    async fn restart_if_idle_for_generation(
+        &self,
+        expected_generation: Option<u64>,
+    ) -> Result<bool, (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
-            let active_turn_count = state.active_threads.values().sum::<usize>();
+            if expected_generation.is_some_and(|generation| {
+                state.next_thread_generation != generation.saturating_add(1)
+            }) {
+                return Ok(false);
+            }
+            let active_turn_count = state.active_threads.values().sum::<usize>()
+                + state.starting_turn_generations.len();
             let Some(process) = state.process.as_ref() else {
                 state.thread_generations.clear();
-                return Ok(());
+                return Ok(false);
             };
             let pending_request_count = process.pending.lock().await.len();
             if active_turn_count > 0 || pending_request_count > 0 {
@@ -429,7 +443,7 @@ impl CodexAppServerClient {
         if let Some(process) = process {
             drop(process);
         }
-        Ok(())
+        Ok(true)
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
@@ -542,11 +556,17 @@ impl CodexAppServerClient {
             if !start_if_missing {
                 return Err("codex app-server is not running".to_owned());
             }
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let process_generation = state.next_process_generation;
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                process_generation,
+                &launch_config,
+            )
+            .await?;
             state.process = Some(process);
             state.next_id = next_id;
+            state.next_process_generation += 1;
         }
 
         let request_id = state.next_id;
@@ -573,8 +593,9 @@ impl CodexAppServerClient {
 
     pub(crate) async fn subscribe_notifications(
         &self,
-    ) -> Result<broadcast::Receiver<Value>, String> {
-        Ok(self.ensure_process().await?.notifications.subscribe_all())
+    ) -> Result<(u64, broadcast::Receiver<Value>), String> {
+        let handle = self.ensure_process().await?;
+        Ok((handle.generation, handle.notifications.subscribe_all()))
     }
 
     async fn subscribe_thread_notifications_for_launch_config(
@@ -605,12 +626,19 @@ impl CodexAppServerClient {
             .handle())
     }
 
-    async fn mark_thread_active(&self, thread_id: &str) {
-        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
-        let _lifecycle_guard = lifecycle_gate.lock().await;
+    async fn begin_turn_request(&self) -> u64 {
         let mut state = self.state.lock().await;
         let generation = state.next_thread_generation;
         state.next_thread_generation += 1;
+        state.starting_turn_generations.insert(generation);
+        generation
+    }
+
+    async fn mark_thread_active(&self, thread_id: &str, generation: u64) {
+        let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
+        let _lifecycle_guard = lifecycle_gate.lock().await;
+        let mut state = self.state.lock().await;
+        state.starting_turn_generations.remove(&generation);
         state
             .thread_generations
             .insert(thread_id.to_owned(), generation);
@@ -618,6 +646,14 @@ impl CodexAppServerClient {
             .active_threads
             .entry(thread_id.to_owned())
             .or_insert(0) += 1;
+    }
+
+    async fn finish_turn_request(&self, generation: u64) {
+        self.state
+            .lock()
+            .await
+            .starting_turn_generations
+            .remove(&generation);
     }
 
     async fn mark_thread_idle(&self, thread_id: &str) -> Option<u64> {
@@ -725,8 +761,53 @@ impl CodexAppServerClient {
             let result = client
                 .request_thread_unsubscribe_if_idle(&thread_id, generation)
                 .await;
+            let should_schedule_idle_shutdown = matches!(result, Ok(true));
             observation.finish(&result);
+            if should_schedule_idle_shutdown {
+                client
+                    .shutdown_app_server_after_idle_grace(generation)
+                    .await;
+            }
         });
+    }
+
+    fn shutdown_app_server_after_idle_grace_in_background(&self, generation: u64) {
+        let client = self.clone();
+        tokio::spawn(async move {
+            client
+                .shutdown_app_server_after_idle_grace(generation)
+                .await;
+        });
+    }
+
+    async fn shutdown_app_server_after_idle_grace(&self, generation: u64) {
+        let idle_seconds = codex_app_server_idle_shutdown_seconds();
+        loop {
+            sleep(Duration::from_secs(idle_seconds)).await;
+            match self.restart_if_idle_for_generation(Some(generation)).await {
+                Ok(true) => {
+                    log_executor_event(
+                        "codex shared app-server idle shutdown completed",
+                        &[
+                            ("generation", generation.to_string()),
+                            ("idle_seconds", idle_seconds.to_string()),
+                        ],
+                    );
+                    return;
+                }
+                Ok(false) => return,
+                Err((active_turn_count, pending_request_count)) => {
+                    log_executor_event(
+                        "codex shared app-server idle shutdown deferred",
+                        &[
+                            ("generation", generation.to_string()),
+                            ("active_turn_count", active_turn_count.to_string()),
+                            ("pending_request_count", pending_request_count.to_string()),
+                        ],
+                    );
+                }
+            }
+        }
     }
 
     async fn unscoped_notification_belongs_to_thread(&self, thread_id: &str) -> bool {
@@ -758,12 +839,18 @@ impl CodexAppServerClient {
                 ..CodexLaunchConfig::default()
             };
             let initialize_started_at = Instant::now();
-            let (process, next_id) =
-                start_persistent_codex_app_server(&self.binary, state.next_id, &launch_config)
-                    .await?;
+            let process_generation = state.next_process_generation;
+            let (process, next_id) = start_persistent_codex_app_server(
+                &self.binary,
+                state.next_id,
+                process_generation,
+                &launch_config,
+            )
+            .await?;
             initialize_elapsed = Some(initialize_started_at.elapsed());
             state.process = Some(process);
             state.next_id = next_id;
+            state.next_process_generation += 1;
         }
         Ok((
             state
@@ -797,14 +884,17 @@ impl CodexAppServerClient {
         if state.process.is_none() {
             let mut process_launch_config = launch_config.clone();
             process_launch_config.env = state.runtime_proxy_env.clone();
+            let process_generation = state.next_process_generation;
             let (process, next_id) = start_persistent_codex_app_server(
                 &self.binary,
                 state.next_id,
+                process_generation,
                 &process_launch_config,
             )
             .await?;
             state.process = Some(process);
             state.next_id = next_id;
+            state.next_process_generation += 1;
         }
         Ok(state
             .process
@@ -896,7 +986,9 @@ fn codex_app_server_request_is_retryable(method: &str) -> bool {
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
     next_id: u64,
+    next_process_generation: u64,
     active_threads: HashMap<String, usize>,
+    starting_turn_generations: HashSet<u64>,
     thread_generations: HashMap<String, u64>,
     next_thread_generation: u64,
     thread_lifecycle_gates: HashMap<String, Weak<Mutex<()>>>,
@@ -908,7 +1000,9 @@ impl Default for CodexAppServerSharedState {
         Self {
             process: None,
             next_id: 1,
+            next_process_generation: 1,
             active_threads: HashMap::new(),
+            starting_turn_generations: HashSet::new(),
             thread_generations: HashMap::new(),
             next_thread_generation: 1,
             thread_lifecycle_gates: HashMap::new(),
@@ -974,6 +1068,7 @@ impl CodexNotificationHub {
 }
 
 struct CodexAppServerProcess {
+    generation: u64,
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
@@ -984,6 +1079,7 @@ struct CodexAppServerProcess {
 impl CodexAppServerProcess {
     fn handle(&self) -> CodexAppServerHandle {
         CodexAppServerHandle {
+            generation: self.generation,
             stdin: Arc::clone(&self.stdin),
             pending: Arc::clone(&self.pending),
             notifications: self.notifications.clone(),
@@ -1004,6 +1100,7 @@ impl Drop for CodexAppServerProcess {
 
 #[derive(Clone)]
 struct CodexAppServerHandle {
+    generation: u64,
     stdin: Arc<Mutex<ChildStdin>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
@@ -1033,6 +1130,7 @@ impl CodexAppServerHandle {
 async fn start_persistent_codex_app_server(
     binary: &str,
     next_id: u64,
+    generation: u64,
     request_launch_config: &CodexLaunchConfig,
 ) -> Result<(CodexAppServerProcess, u64), String> {
     let launch_config = persistent_codex_app_server_launch_config(request_launch_config);
@@ -1075,6 +1173,7 @@ async fn start_persistent_codex_app_server(
             ));
             Ok((
                 CodexAppServerProcess {
+                    generation,
                     child,
                     stdin: Arc::new(Mutex::new(stdin)),
                     pending,
@@ -1432,7 +1531,9 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     log_executor_event("codex shared app-server turn starting", &fields);
 
+    let turn_generation = client.begin_turn_request().await;
     let mut subscribed_thread_id = None;
+    let mut marked_thread_active = false;
     let result: Result<CodexAppServerTurn, String> = async {
         let request = &prepared.request;
         let awaits_initial_goal_turn = initial_thread_goal.is_some() && !request.ephemeral;
@@ -1521,7 +1622,8 @@ async fn run_codex_app_server_turn_on_shared_client(
         let auto_approve_mcp_tool_calls = codex_auto_approve_mcp_tool_calls(request);
 
         let mut turn_fields = codex_turn_fields(request, &thread_id);
-        client.mark_thread_active(&thread_id).await;
+        client.mark_thread_active(&thread_id, turn_generation).await;
+        marked_thread_active = true;
         let startup_timeout_seconds = codex_turn_startup_timeout_seconds();
         let startup_deadline = Instant::now() + Duration::from_secs(startup_timeout_seconds);
         let active_turn_id = if awaits_initial_goal_turn {
@@ -1618,7 +1720,9 @@ async fn run_codex_app_server_turn_on_shared_client(
     }
     .await;
 
-    if let Some(thread_id) = subscribed_thread_id {
+    if marked_thread_active {
+        let thread_id =
+            subscribed_thread_id.expect("an active shared turn must have a subscribed thread");
         if let Some(generation) = client.mark_thread_idle(&thread_id).await {
             // Ephemeral threads cannot be resumed after app-server unloads them, so keep the
             // owner subscription alive while the temporary chat may still send direct turns.
@@ -1628,7 +1732,15 @@ async fn run_codex_app_server_turn_on_shared_client(
                 client
                     .clear_idle_thread_generation(&thread_id, generation)
                     .await;
+                if !prepared.request.ephemeral {
+                    client.shutdown_app_server_after_idle_grace_in_background(generation);
+                }
             }
+        }
+    } else {
+        client.finish_turn_request(turn_generation).await;
+        if !prepared.request.ephemeral {
+            client.shutdown_app_server_after_idle_grace_in_background(turn_generation);
         }
     }
 
@@ -2792,6 +2904,14 @@ fn codex_rpc_timeout_seconds() -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_CODEX_RPC_TIMEOUT_SECONDS)
+}
+
+fn codex_app_server_idle_shutdown_seconds() -> u64 {
+    env::var("WEGENT_CODEX_APP_SERVER_IDLE_SHUTDOWN_SECONDS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CODEX_APP_SERVER_IDLE_SHUTDOWN_SECONDS)
 }
 
 fn codex_turn_startup_timeout_seconds() -> u64 {

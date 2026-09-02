@@ -107,7 +107,7 @@ export interface WorkbenchContentLoadRef {
   kind: 'message_content' | 'block_content' | 'tool_output'
 }
 
-type ProcessingBlockUpdate = {
+export type WorkbenchProcessingBlockUpdate = {
   content?: string
   contentDelta?: string
   toolInput?: Record<string, unknown>
@@ -200,7 +200,7 @@ export type WorkbenchMessageAction<
       messageId?: string
       subtaskId?: string
       blockId: string
-      updates: ProcessingBlockUpdate
+      updates: WorkbenchProcessingBlockUpdate
     }
 
 export function isGenericTaskStatusError(error?: string): boolean {
@@ -497,7 +497,7 @@ export function reduceWorkbenchMessages<
         )
         const blocks = (message.blocks ?? []).map((block) =>
           block.id === action.blockId
-            ? mergeProcessingBlockUpdate(block, action.updates)
+            ? mergeWorkbenchProcessingBlockUpdate(block, action.updates)
             : block
         )
         return limitWorkbenchMessage({
@@ -519,9 +519,9 @@ export function reduceWorkbenchMessages<
   }
 }
 
-function mergeProcessingBlockUpdate<TFileChanges>(
+export function mergeWorkbenchProcessingBlockUpdate<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>,
-  updates: ProcessingBlockUpdate
+  updates: WorkbenchProcessingBlockUpdate
 ): WorkbenchProcessingBlock<TFileChanges> {
   const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
     updates
@@ -585,13 +585,12 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
     return message
   }
 
-  const content = limitTextContent(
+  const content = limitWorkbenchMessageContent(
     message.content,
-    MAX_LIVE_MESSAGE_CONTENT_CHARS,
     message.contentOriginalChars
   )
   const blocks = sortProcessingBlocksByCreatedAt(
-    message.blocks?.map(limitProcessingBlock)
+    message.blocks?.map(limitWorkbenchProcessingBlock)
   )
   return {
     ...message,
@@ -605,7 +604,7 @@ function limitWorkbenchMessage<TAttachment, TFileChanges>(
   }
 }
 
-function limitProcessingBlock<TFileChanges>(
+export function limitWorkbenchProcessingBlock<TFileChanges>(
   block: WorkbenchProcessingBlock<TFileChanges>
 ): WorkbenchProcessingBlock<TFileChanges> {
   if (block.type === 'tool') {
@@ -1166,6 +1165,17 @@ function mergeWorkbenchChunkContent(
       incomingLength
     )
   }
+}
+
+export function limitWorkbenchMessageContent(
+  value: string,
+  knownOriginalChars?: number
+): { text: string; truncated: boolean; originalChars: number } {
+  return limitTextContent(
+    value,
+    MAX_LIVE_MESSAGE_CONTENT_CHARS,
+    knownOriginalChars
+  )
 }
 
 function nextMergedOriginalChars(

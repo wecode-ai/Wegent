@@ -174,6 +174,8 @@ export type RuntimeConversationItem =
       type: 'assistant_text'
       content: string
       streamTextOffset?: number
+      contentTruncated?: boolean
+      contentOriginalChars?: number
       createdAt: string
     }
   | {

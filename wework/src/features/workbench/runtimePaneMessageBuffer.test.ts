@@ -48,6 +48,58 @@ describe('appendBufferedRuntimePaneMessageAction', () => {
     expect(actions).toHaveLength(2)
   })
 
+  test('coalesces contiguous reasoning chunks', () => {
+    const actions: RuntimePaneMessageAction[] = []
+
+    appendBufferedRuntimePaneMessageAction(actions, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: 'first',
+    })
+    appendBufferedRuntimePaneMessageAction(actions, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      content: '',
+      reasoningChunk: ' second',
+    })
+
+    expect(actions).toEqual([
+      {
+        type: 'assistant_chunk',
+        subtaskId: 'turn-1',
+        content: '',
+        reasoningChunk: 'first second',
+      },
+    ])
+  })
+
+  test('coalesces contiguous tool output deltas', () => {
+    const actions: RuntimePaneMessageAction[] = []
+
+    appendBufferedRuntimePaneMessageAction(actions, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'tool-1',
+      updates: { toolOutputDelta: 'first', status: 'streaming' },
+    })
+    appendBufferedRuntimePaneMessageAction(actions, {
+      type: 'block_updated',
+      subtaskId: 'turn-1',
+      blockId: 'tool-1',
+      updates: { toolOutputDelta: ' second', status: 'streaming' },
+    })
+
+    expect(actions).toEqual([
+      {
+        type: 'block_updated',
+        subtaskId: 'turn-1',
+        blockId: 'tool-1',
+        updates: { toolOutputDelta: 'first second', status: 'streaming' },
+      },
+    ])
+  })
+
   test('keeps terminal actions after the coalesced streaming content', () => {
     const actions: RuntimePaneMessageAction[] = []
 

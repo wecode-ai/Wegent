@@ -552,7 +552,7 @@ pub struct RuntimeWorkRpcHandler {
     supervisor_evaluating: Arc<Mutex<HashSet<String>>>,
     supervisor_model_configs: Arc<Mutex<HashMap<String, Value>>>,
     thread_event_routes: Arc<Mutex<HashMap<String, RuntimeThreadEventRoute>>>,
-    notification_router: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    notification_router: Arc<Mutex<Option<RuntimeNotificationRouter>>>,
     archived_delete_tx: mpsc::UnboundedSender<RuntimeTaskLink>,
     automation_store: AutomationStore,
     task_store_path: Arc<PathBuf>,
@@ -630,6 +630,11 @@ struct RuntimeThreadEventRoute {
     request: ExecutionRequest,
     event_mapper: CodexNotificationEventMapper,
     active: bool,
+}
+
+struct RuntimeNotificationRouter {
+    process_generation: u64,
+    task: tokio::task::JoinHandle<()>,
 }
 
 struct ScheduledTurnGuard {

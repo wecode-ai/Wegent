@@ -485,6 +485,9 @@ export class EmbeddedBrowserManager {
     // Registration, not navigation completion, is the browser host readiness boundary.
     // The requested URL is already authoritative in state() while Chromium finishes loading.
     await this.load(entry, entry.requestedUrl as string)
+    if (this.entries.get(label) !== entry || contents.isDestroyed()) {
+      throw new Error(`Embedded browser closed while opening: ${label}`)
+    }
     return this.state(label)
   }
 
@@ -869,22 +872,39 @@ export class EmbeddedBrowserManager {
     }
   }
 
-  close(label: string, expectedNativeLabel?: string | null): void {
-    const entry = this.entries.get(label)
-    if (!entry) return
-    if (expectedNativeLabel && entry.nativeLabel !== expectedNativeLabel) return
-    this.entries.delete(label)
-    this.agentControlPaused.delete(label)
-    this.agentActive.delete(label)
-    this.clearAgentCursorHide(label)
-    this.agentCursorStates.delete(label)
-    this.agentCursorArrivals.delete(label)
-    this.cancelAgentCursorArrivalWaiters(label)
+  close(label: string, expectedNativeLabel?: string | null): boolean {
+    const normalizedLabel = requiredLabel(label)
+    const entry = this.entries.get(normalizedLabel)
+    if (expectedNativeLabel && entry?.nativeLabel !== expectedNativeLabel) return false
+
+    const attached = this.attachedContents.get(normalizedLabel)
+    const contents = new Set<WebContents>()
+    if (entry) contents.add(entry.contents)
+    if (!expectedNativeLabel && attached) contents.add(attached)
+    if (entry && attached?.id === entry.contents.id) contents.add(attached)
+
+    this.entries.delete(normalizedLabel)
+    this.attachedContents.delete(normalizedLabel)
+    this.rejectAttachmentWaiters(
+      normalizedLabel,
+      `Embedded browser closed before webview attached: ${normalizedLabel}`
+    )
+    this.agentControlPaused.delete(normalizedLabel)
+    this.agentActive.delete(normalizedLabel)
+    this.clearAgentCursorHide(normalizedLabel)
+    this.agentCursorStates.delete(normalizedLabel)
+    this.agentCursorArrivals.delete(normalizedLabel)
+    this.cancelAgentCursorArrivalWaiters(normalizedLabel)
     for (const [approvalId, approval] of this.agentApprovals) {
-      if (approval.label === label) this.agentApprovals.delete(approvalId)
+      if (approval.label === normalizedLabel) this.agentApprovals.delete(approvalId)
     }
-    this.attachedContents.delete(label)
-    if (!entry.contents.isDestroyed()) entry.contents.close()
+    for (const [baseLabel, activeLabel] of this.activeTabs) {
+      if (activeLabel === normalizedLabel) this.activeTabs.delete(baseLabel)
+    }
+    for (const target of contents) {
+      if (!target.isDestroyed()) target.close()
+    }
+    return contents.size > 0
   }
 
   closeMany(labels: string[]): void {
@@ -1061,14 +1081,13 @@ export class EmbeddedBrowserManager {
     this.downloads.clear()
     for (const id of [...this.backgroundPages.keys()]) this.closeBackgroundPage(id)
     this.requestHeaderRules.clear()
-    this.closeMany([...this.entries.keys()])
-    for (const [label, waiters] of this.attachmentWaiters) {
-      for (const waiter of waiters) {
-        clearTimeout(waiter.timeout)
-        waiter.reject(new Error(`Embedded browser stopped before webview attached: ${label}`))
-      }
+    this.closeMany([...new Set([...this.entries.keys(), ...this.attachedContents.keys()])])
+    for (const label of this.attachmentWaiters.keys()) {
+      this.rejectAttachmentWaiters(
+        label,
+        `Embedded browser stopped before webview attached: ${label}`
+      )
     }
-    this.attachmentWaiters.clear()
   }
 
   private required(label: string): BrowserEntry {
@@ -1258,6 +1277,16 @@ export class EmbeddedBrowserManager {
       waiters.add({ resolve, reject, timeout })
       this.attachmentWaiters.set(label, waiters)
     })
+  }
+
+  private rejectAttachmentWaiters(label: string, message: string): void {
+    const waiters = this.attachmentWaiters.get(label)
+    if (!waiters) return
+    this.attachmentWaiters.delete(label)
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timeout)
+      waiter.reject(new Error(message))
+    }
   }
 }
 

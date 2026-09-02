@@ -392,7 +392,12 @@ async function runRequestedArgs() {
   if (checkpoints) return runCheckpoints(checkpoints)
 
   const label = requestedArgs.join(' ') || 'desktop task flow'
-  const env = await sharedBuildEnvironment()
+  const env = {
+    ...(await sharedBuildEnvironment()),
+    ...(requestedArgs.includes('--memory-only') && process.env.WEWORK_E2E_SCREENSHOTS === undefined
+      ? { WEWORK_E2E_SCREENSHOTS: 'final' }
+      : {}),
+  }
   console.log(`[desktop-e2e] START ${label}`)
   const result = await runTaskFlow(requestedArgs, env, label)
   if (result.code === 0) {

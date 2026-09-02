@@ -2024,7 +2024,7 @@ describe('WorkspaceBrowserPanel', () => {
     expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
   })
 
-  test('opens an external request in a hidden browser while the panel is inactive', async () => {
+  test('defers an external request until the browser panel becomes active', async () => {
     mockBrowserHostRect()
     const openRequest = {
       id: 'test-2',
@@ -2036,40 +2036,28 @@ describe('WorkspaceBrowserPanel', () => {
     }
     const view = render(<WorkspaceBrowserPanel active={false} openRequest={openRequest} />)
 
-    await waitFor(() => {
-      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
-        'about:blank',
-        {
-          x: 0,
-          y: 0,
-          width: 1,
-          height: 1,
-        },
-        'workspace-browser',
-        false,
-        true,
-        false
-      )
-    })
-    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).not.toHaveBeenCalled()
 
     view.rerender(<WorkspaceBrowserPanel active openRequest={openRequest} />)
 
     await waitFor(() => {
-      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledWith(
+        'about:blank',
         {
           x: 500,
           y: 120,
           width: 400,
           height: 300,
         },
+        'workspace-browser',
         true,
-        'workspace-browser'
+        true,
+        false
       )
     })
   })
 
-  test('keeps an in-flight external open alive when panel activity changes', async () => {
+  test('closes an in-flight browser and reopens it after the panel becomes active', async () => {
     mockBrowserHostRect()
     let resolveOpen:
       | ((value: { nativeLabel: string; title: null; url: string }) => void)
@@ -2095,7 +2083,17 @@ describe('WorkspaceBrowserPanel', () => {
     })
 
     view.rerender(<WorkspaceBrowserPanel active={false} openRequest={openRequest} />)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'workspace-browser',
+        undefined
+      )
+    })
+
     view.rerender(<WorkspaceBrowserPanel active openRequest={openRequest} />)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2)
+    })
 
     await act(async () => {
       resolveOpen?.({
@@ -2108,8 +2106,7 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.test/')
     })
-    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(1)
-    expect(embeddedBrowserMocks.closeEmbeddedBrowser).not.toHaveBeenCalled()
+    expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2)
   })
 
   test('does not close a reused logical label when an uninitialized panel unmounts', () => {
@@ -2190,7 +2187,7 @@ describe('WorkspaceBrowserPanel', () => {
     expect(input).toHaveValue('https://example.com/session-state')
   })
 
-  test('hides the native browser when the browser panel becomes inactive', async () => {
+  test('closes the native browser when the browser panel becomes inactive and reopens it', async () => {
     mockBrowserHostRect()
     const { rerender } = render(<WorkspaceBrowserPanel active />)
 
@@ -2202,21 +2199,21 @@ describe('WorkspaceBrowserPanel', () => {
       expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled()
     })
 
-    embeddedBrowserMocks.setEmbeddedBrowserBounds.mockClear()
+    embeddedBrowserMocks.closeEmbeddedBrowser.mockClear()
     rerender(<WorkspaceBrowserPanel active={false} />)
 
     await waitFor(() => {
-      expect(embeddedBrowserMocks.setEmbeddedBrowserBounds).toHaveBeenCalledWith(
-        {
-          x: 0,
-          y: 0,
-          width: 1,
-          height: 1,
-        },
-        false,
-        'workspace-browser'
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'workspace-browser',
+        'workspace-browser-native-1'
       )
     })
+
+    rerender(<WorkspaceBrowserPanel active />)
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2)
+    })
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
   })
 
   test('hides the native browser after the occlusion snapshot loads', async () => {
@@ -2309,6 +2306,44 @@ describe('WorkspaceBrowserPanel', () => {
     await waitFor(() => {
       expect(webviewHost).toHaveStyle({ pointerEvents: 'auto', visibility: 'visible' })
     })
+  })
+
+  test('destroys and recreates the Electron webview when browser activity changes', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
+    mockBrowserHostRect()
+    const { rerender } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+
+    const firstWebviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledOnce()
+    })
+
+    rerender(<WorkspaceBrowserPanel active={false} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('workspace-browser-electron-webview')).not.toBeInTheDocument()
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'workspace-browser',
+        'workspace-browser-native-1'
+      )
+    })
+    expect(firstWebviewHost.isConnected).toBe(false)
+
+    rerender(<WorkspaceBrowserPanel active />)
+
+    const secondWebviewHost = await screen.findByTestId('workspace-browser-electron-webview')
+    await waitFor(() => {
+      expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalledTimes(2)
+    })
+    expect(secondWebviewHost).not.toBe(firstWebviewHost)
+    expect(screen.getByTestId('workspace-browser-url-input')).toHaveValue('https://example.com/')
   })
 
   test('does not capture a snapshot for an inactive browser tab', async () => {
@@ -2896,7 +2931,7 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
-  test('replays adjustments when the active browser tab is left while viewing the original page', async () => {
+  test('exits annotation mode when the active browser tab is suspended', async () => {
     mockBrowserHostRect()
     embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue(
       annotationState([
@@ -2928,10 +2963,19 @@ describe('WorkspaceBrowserPanel', () => {
     rerender(<WorkspaceBrowserPanel active={false} />)
 
     await waitFor(() => {
-      expect(button).toHaveAttribute('aria-pressed', 'false')
+      expect(
+        screen.queryByTestId('workspace-browser-annotation-original-view-button')
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByTestId('workspace-browser-annotation-close-button')
+      ).not.toBeInTheDocument()
       expect(embeddedBrowserMocks.setEmbeddedBrowserAnnotationOriginalView).toHaveBeenCalledWith(
         false,
         'workspace-browser'
+      )
+      expect(embeddedBrowserMocks.closeEmbeddedBrowser).toHaveBeenCalledWith(
+        'workspace-browser',
+        'workspace-browser-native-1'
       )
     })
   })

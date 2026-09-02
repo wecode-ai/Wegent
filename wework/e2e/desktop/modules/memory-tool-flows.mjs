@@ -51,6 +51,7 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64'
 )
+const CODEX_IDLE_RECLAMATION_TIMEOUT_MS = 90_000
 
 async function ensureTaskRowVisible(control, taskRowTestId) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -341,11 +342,13 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
   )
   await captureVerificationScreenshot(control, 'concurrent-memory-01-running.png')
 
-  const samples = []
-  for (let index = 0; index < 5; index += 1) {
-    samples.push(await captureTotalMemorySample(control, 'running'))
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
-  }
+  const samples = await captureStableTotalMemorySamples(
+    control,
+    'running',
+    MEMORY_MIN_SETTLED_SAMPLES,
+    MEMORY_MAX_SETTLED_SAMPLES,
+    CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB
+  )
   const peak = samples.reduce((largest, sample) =>
     sample.physicalFootprintKiB > largest.physicalFootprintKiB ? sample : largest
   )
@@ -404,18 +407,55 @@ async function verifyConcurrentTaskMemory({ composerSelector, control }) {
     'utf8'
   )
   assert.ok(
-    peakGrowthKiB <= CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
-    `Wework physical footprint grew by ${peakGrowthKiB} KiB with ten concurrent tasks`
+    samples.every(sample => processGroupCount(sample, 'codex-app-server') === 1),
+    'The concurrent memory E2E did not keep exactly one shared Codex app-server'
+  )
+  control.releaseConcurrentMemoryResponses()
+  const firstReclaimedSample = await waitForProcessGroupToDisappear(
+    control,
+    'codex-app-server',
+    CODEX_IDLE_RECLAMATION_TIMEOUT_MS
+  )
+  const reclaimedSamples = await captureStableTotalMemorySamples(
+    control,
+    'idle-reclamation',
+    MEMORY_MIN_SETTLED_SAMPLES,
+    MEMORY_MAX_SETTLED_SAMPLES,
+    CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB
+  )
+  const reclaimedWindow = reclaimedSamples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
+  const reclaimed = medianMemorySample(reclaimedWindow)
+  assert.ok(reclaimed, 'The concurrent memory E2E did not capture reclaimed memory samples')
+  const reclaimedGrowthKiB = reclaimed.physicalFootprintKiB - baseline.physicalFootprintKiB
+  await writeFile(
+    join(resultDir, 'codex-idle-reclamation.json'),
+    `${JSON.stringify(
+      {
+        timeoutMs: CODEX_IDLE_RECLAMATION_TIMEOUT_MS,
+        maxReclaimedGrowthKiB: CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+        baseline,
+        firstReclaimedSample,
+        reclaimed,
+        reclaimedGrowthKiB,
+        samples: reclaimedSamples,
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
   )
   assert.ok(
-    settledGrowthKiB <= CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
-    `Wework physical footprint settled ${settledGrowthKiB} KiB above baseline with ten concurrent tasks`
+    peakGrowthKiB <= CONCURRENT_MEMORY_MAX_PEAK_GROWTH_KIB,
+    `Wework physical footprint grew by ${peakGrowthKiB} KiB with ten concurrent tasks`
   )
   assert.ok(
     settledSampleRangeKiB <= CONCURRENT_MEMORY_MAX_SETTLED_SAMPLE_RANGE_KIB,
     `Wework concurrent memory sample range reached ${settledSampleRangeKiB} KiB`
   )
-  control.releaseConcurrentMemoryResponses()
+  assert.ok(
+    reclaimedGrowthKiB <= CONCURRENT_MEMORY_MAX_SETTLED_GROWTH_KIB,
+    `Wework physical footprint settled ${reclaimedGrowthKiB} KiB above baseline after idle reclamation`
+  )
 }
 
 async function verifyMemoryGrowth({ composerSelector, control }) {
@@ -439,8 +479,8 @@ async function verifyMemoryGrowth({ composerSelector, control }) {
   while (!completed && Date.now() - startedAt < MEMORY_RESPONSE_TIMEOUT_MS) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, MEMORY_SAMPLE_INTERVAL_MS))
     samples.push(await captureMemorySample(control, 'streaming'))
-    const snapshot = JSON.parse(await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR))
-    completed = snapshot.text.includes(MEMORY_COMPLETION_TEXT)
+    const assistantText = await control.command('getText', '[data-testid="message-assistant"]')
+    completed = assistantText.includes(MEMORY_COMPLETION_TEXT)
   }
   assert.equal(completed, true, 'The memory E2E response did not complete')
   await captureVerificationScreenshot(control, 'memory-03-completed.png')
@@ -540,16 +580,22 @@ async function captureStableMemorySamples(control, phase, minimumSamples, maximu
   return samples
 }
 
-async function captureStableTotalMemorySamples(control, phase) {
+async function captureStableTotalMemorySamples(
+  control,
+  phase,
+  minimumSamples = MEMORY_MIN_BASELINE_SAMPLES,
+  maximumSamples = MEMORY_MAX_BASELINE_SAMPLES,
+  maximumSampleRangeKiB = MEMORY_MAX_SAMPLE_RANGE_KIB
+) {
   const samples = []
-  while (samples.length < MEMORY_MAX_BASELINE_SAMPLES) {
+  while (samples.length < maximumSamples) {
     if (samples.length > 0) {
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
     }
     samples.push(await captureTotalMemorySample(control, phase))
-    if (samples.length < MEMORY_MIN_BASELINE_SAMPLES) continue
+    if (samples.length < minimumSamples) continue
     const recent = samples.slice(-MEMORY_SAMPLE_WINDOW_SIZE)
-    if (memorySampleRangeKiB(recent) <= MEMORY_MAX_SAMPLE_RANGE_KIB) break
+    if (memorySampleRangeKiB(recent) <= maximumSampleRangeKiB) break
   }
   return samples
 }
@@ -557,6 +603,23 @@ async function captureStableTotalMemorySamples(control, phase) {
 function memorySampleRangeKiB(samples) {
   const footprints = samples.map(sample => sample.physicalFootprintKiB)
   return Math.max(...footprints) - Math.min(...footprints)
+}
+
+function processGroupCount(sample, groupName) {
+  return sample.groups.find(group => group.group === groupName)?.process_count ?? 0
+}
+
+async function waitForProcessGroupToDisappear(control, groupName, timeoutMs) {
+  const startedAt = Date.now()
+  let sample = null
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+    sample = await captureTotalMemorySample(control, 'idle-reclamation')
+    if (processGroupCount(sample, groupName) === 0) return sample
+  }
+  throw new Error(
+    `Wework process group "${groupName}" remained after ${timeoutMs} ms: ${JSON.stringify(sample)}`
+  )
 }
 
 function medianMemorySample(samples) {
