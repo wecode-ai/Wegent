@@ -239,7 +239,7 @@ def _gemini_body(model_id: str, protected_input: str) -> dict[str, Any]:
 def _anthropic_body(model_id: str, protected_input: str) -> dict[str, Any]:
     return {
         "model": model_id,
-        "max_tokens": 256,
+        "max_tokens": 4096,
         "temperature": 0,
         "system": GATE_INSTRUCTIONS,
         "messages": [{"role": "user", "content": protected_input}],

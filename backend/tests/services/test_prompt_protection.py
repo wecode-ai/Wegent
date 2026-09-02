@@ -86,6 +86,12 @@ def test_extract_model_text_supports_responses_anthropic_and_gemini():
     )
 
 
+def test_anthropic_gate_reserves_tokens_for_reasoning_and_final_decision():
+    body = prompt_protection._anthropic_body("selected-model", "protected input")
+
+    assert body["max_tokens"] == 4096
+
+
 def _evaluation_kwargs(model_adapter=None) -> dict:
     kwargs = {
         "context": PromptProtectionContext(
