@@ -1051,9 +1051,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Install Redis and Maestro
+      - name: Install Mobile runtime dependencies and Maestro
         run: |
-          command -v redis-server >/dev/null || brew install redis
+          brew_packages=()
+          command -v redis-server >/dev/null || brew_packages+=(redis)
+          brew list --versions libmagic >/dev/null || brew_packages+=(libmagic)
+          ((${#brew_packages[@]} == 0)) || brew install "${brew_packages[@]}"
           export MAESTRO_VERSION
           curl -Ls https://get.maestro.mobile.dev | bash
           echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
