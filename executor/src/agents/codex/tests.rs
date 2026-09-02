@@ -1570,7 +1570,7 @@ fn required_loopback_hosts_are_merged_into_no_proxy() {
 
 #[test]
 fn codex_launch_config_forwards_task_identity_to_thread_only() {
-    let request = ExecutionRequest {
+    let mut request = ExecutionRequest {
         task_id: "task-525".to_owned(),
         auth_token: Some("task-jwt".to_owned()),
         runtime_auth_token: Some("runtime-jwt".to_owned()),
@@ -1582,6 +1582,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
         }),
         ..ExecutionRequest::default()
     };
+    request.extra.insert(
+        "runtimeTaskTitle".to_owned(),
+        json!("Identify local development instances"),
+    );
 
     let launch_config =
         build_codex_launch_config(&request).expect("Codex launch config should be built");
@@ -1617,6 +1621,10 @@ fn codex_launch_config_forwards_task_identity_to_thread_only() {
     assert_eq!(
         config["shell_environment_policy.set.WEGENT_SKILL_USER_NAME"],
         "alice"
+    );
+    assert_eq!(
+        config["shell_environment_policy.set.WEWORK_PARENT_TITLE"],
+        "Identify local development instances"
     );
 }
 
@@ -1705,6 +1713,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
             "shell_environment_policy.set.WEGENT_RUNTIME_AUTH_TOKEN=\"runtime-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_IDENTITY_TOKEN=\"skill-jwt\"".to_owned(),
             "shell_environment_policy.set.WEGENT_SKILL_USER_NAME=\"alice\"".to_owned(),
+            "shell_environment_policy.set.WEWORK_PARENT_TITLE=\"Task title\"".to_owned(),
         ],
         model_provider: Some("wecode-openai".to_owned()),
         effort: Some("high".to_owned()),
@@ -1732,6 +1741,7 @@ fn persistent_codex_app_server_launch_config_keeps_only_process_settings() {
         "WEGENT_RUNTIME_AUTH_TOKEN",
         "WEGENT_SKILL_IDENTITY_TOKEN",
         "WEGENT_SKILL_USER_NAME",
+        "WEWORK_PARENT_TITLE",
     ] {
         assert!(!launch_config
             .config_overrides

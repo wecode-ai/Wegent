@@ -10,7 +10,31 @@ describe('dev-mac-app', () => {
     const source = await readFile(scriptPath, 'utf8')
 
     expect(source).toContain('node "$SCRIPT_DIR/resolve-dev-user-data.mjs"')
-    expect(source).toContain('WEWORK_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID')
+    expect(source).toContain('node "$SCRIPT_DIR/resolve-dev-instance-identity.mjs"')
+    expect(source).toContain(
+      'WEWORK_DEV_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID'
+    )
+    expect(source).toContain(
+      'node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_DEV_USER_DATA_DIR:-}"'
+    )
+    expect(source).not.toContain(
+      'node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_USER_DATA_DIR:-}"'
+    )
+    expect(source).toContain('unset WEWORK_DEV_APP_IDENTIFIER')
+    expect(source).toContain('unset WEWORK_DEV_USER_DATA_DIR')
+    expect(source).toContain('export WEWORK_DEV_INSTANCE_ID="${DEV_IDENTITY_FIELDS[2]}"')
+    expect(source).toContain('export WEWORK_DEV_INSTANCE_LABEL="${DEV_IDENTITY_FIELDS[3]}"')
+    expect(source).toContain('export WEWORK_DEV_DOCK_TITLE="${DEV_IDENTITY_FIELDS[4]}"')
+    expect(source).toContain('export WEWORK_DEV_EXECUTABLE_NAME="${DEV_IDENTITY_FIELDS[5]}"')
+    expect(source).toContain('cp -cR "$source_app" "$temporary_app"')
+    expect(source).toContain('plutil -replace CFBundleDisplayName')
+    expect(source).toContain('plutil -replace CFBundleExecutable')
+    expect(source).toContain('mv "$source_executable" "$target_executable"')
+    expect(source).toContain('target_app="$bundle_root/$WEWORK_DEV_EXECUTABLE_NAME.app"')
+    expect(source).toContain('codesign --force --deep --sign - "$temporary_app"')
+    expect(source).toContain(
+      'DEV_ELECTRON_APP="$(prepare_dev_electron_app "$SOURCE_ELECTRON_APP")"'
+    )
     expect(source).toContain('WEWORK_HARNESS_RUNTIME_ASSET_CACHE_ROOT')
     expect(source).toContain('$WEWORK_DIR/node_modules/.cache/harness-runtime-dev')
     expect(source).toContain('WEWORK_DEV_EXECUTOR_PATH')

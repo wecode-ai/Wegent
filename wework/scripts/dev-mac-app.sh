@@ -34,8 +34,8 @@ Options:
 
 Environment:
   VITE_WEGENT_BACKEND_URL          Backend URL. Defaults to WEWORK_HOST/BACKEND_PORT.
-  WEWORK_USER_DATA_DIR             Electron user data. Defaults to a directory isolated by worktree.
-  WEWORK_APP_IDENTIFIER            Application identity. Defaults to one isolated by worktree.
+  WEWORK_DEV_USER_DATA_DIR         Override Electron user data for this launch.
+  WEWORK_DEV_APP_IDENTIFIER        Override the application identity for this launch.
   WEWORK_DEV_EXECUTOR_PATH         Executor command. Defaults to the source sidecar.
   WEWORK_DEV_CACHE_ROOT            Shared immutable dev cache. Defaults to ~/Library/Caches/wegent.
   WEWORK_DEV_HARNESS_RUNTIME_ROOT  Harness runtime. Defaults to the worktree runtime.
@@ -98,25 +98,55 @@ git_branch_name() {
   git -C "$PROJECT_DIR" branch --show-current 2>/dev/null || true
 }
 
-build_dev_title() {
-  if [ -n "${WEWORK_PARENT_TITLE:-}" ]; then
-    echo "$WEWORK_PARENT_TITLE"
-    return
-  fi
-  if [ -n "$WEWORK_DEV_BRANCH" ]; then
-    echo "$WEWORK_DEV_BRANCH"
-    return
-  fi
-  basename "$PROJECT_DIR"
-}
-
-build_dev_instance_id() {
+build_stable_id() {
   node -e "
     const { createHash } = require('node:crypto')
     process.stdout.write(
       createHash('sha256').update(process.argv[1]).digest('hex').slice(0, 12)
     )
-  " "$PROJECT_DIR"
+  " "$1"
+}
+
+prepare_dev_electron_app() {
+  local source_app="$1"
+  local electron_version
+  local variant_id
+  local bundle_root
+  local target_app
+  local temporary_app
+  local info_plist
+  local source_executable
+  local target_executable
+
+  electron_version="$(plutil -extract CFBundleShortVersionString raw -o - "$source_app/Contents/Info.plist")"
+  variant_id="$(
+    build_stable_id "v3|$electron_version|$WEWORK_DEV_DOCK_TITLE|$WEWORK_APP_IDENTIFIER"
+  )"
+  bundle_root="$WEWORK_DEV_CACHE_ROOT/electron-apps/$WEWORK_DEV_INSTANCE_ID/$variant_id"
+  target_app="$bundle_root/$WEWORK_DEV_EXECUTABLE_NAME.app"
+
+  if [ ! -x "$target_app/Contents/MacOS/$WEWORK_DEV_EXECUTABLE_NAME" ]; then
+    mkdir -p "$bundle_root"
+    temporary_app="$bundle_root/.$WEWORK_DEV_EXECUTABLE_NAME.app.tmp.$$"
+    rm -rf "$temporary_app"
+    cp -cR "$source_app" "$temporary_app"
+    info_plist="$temporary_app/Contents/Info.plist"
+    source_executable="$temporary_app/Contents/MacOS/Electron"
+    target_executable="$temporary_app/Contents/MacOS/$WEWORK_DEV_EXECUTABLE_NAME"
+    mv "$source_executable" "$target_executable"
+    plutil -replace CFBundleDisplayName -string "$WEWORK_DEV_DOCK_TITLE" "$info_plist"
+    plutil -replace CFBundleName -string "$WEWORK_DEV_DOCK_TITLE" "$info_plist"
+    plutil -replace CFBundleExecutable -string "$WEWORK_DEV_EXECUTABLE_NAME" "$info_plist"
+    plutil -replace CFBundleIdentifier -string "$WEWORK_APP_IDENTIFIER" "$info_plist"
+    codesign --force --deep --sign - "$temporary_app"
+    if [ -e "$target_app" ]; then
+      rm -rf "$temporary_app"
+    else
+      mv "$temporary_app" "$target_app"
+    fi
+  fi
+
+  echo "$target_app"
 }
 
 resolve_macos_target() {
@@ -156,23 +186,41 @@ require_command git
 require_command node
 require_command pnpm
 require_command cargo
+require_command plutil
+require_command codesign
 
 MACOS_TARGET="$(resolve_macos_target)"
 export WEWORK_DEV_WORKTREE="$PROJECT_DIR"
 export WEWORK_DEV_BRANCH="$(git_branch_name)"
-export WEWORK_DEV_TITLE="$(build_dev_title)"
-export WEWORK_USER_DATA_DIR="$(
-  node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_USER_DATA_DIR:-}"
+DEV_IDENTITY_OUTPUT="$(
+  node "$SCRIPT_DIR/resolve-dev-instance-identity.mjs" "$PROJECT_DIR" "$WEWORK_DEV_BRANCH"
 )"
+DEV_IDENTITY_FIELDS=()
+while IFS= read -r value; do
+  DEV_IDENTITY_FIELDS+=("$value")
+done <<<"$DEV_IDENTITY_OUTPUT"
+if [ "${#DEV_IDENTITY_FIELDS[@]}" -ne 6 ]; then
+  echo "Error: failed to resolve the development instance identity." >&2
+  exit 1
+fi
+export WEWORK_PARENT_TITLE="${DEV_IDENTITY_FIELDS[0]}"
+export WEWORK_DEV_TITLE="${DEV_IDENTITY_FIELDS[1]}"
+export WEWORK_DEV_INSTANCE_ID="${DEV_IDENTITY_FIELDS[2]}"
+export WEWORK_DEV_INSTANCE_LABEL="${DEV_IDENTITY_FIELDS[3]}"
+export WEWORK_DEV_DOCK_TITLE="${DEV_IDENTITY_FIELDS[4]}"
+export WEWORK_DEV_EXECUTABLE_NAME="${DEV_IDENTITY_FIELDS[5]}"
+export WEWORK_APP_IDENTIFIER="${WEWORK_DEV_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID}"
+export WEWORK_USER_DATA_DIR="$(
+  node "$SCRIPT_DIR/resolve-dev-user-data.mjs" "$PROJECT_DIR" "${WEWORK_DEV_USER_DATA_DIR:-}"
+)"
+unset WEWORK_DEV_APP_IDENTIFIER
+unset WEWORK_DEV_USER_DATA_DIR
 export VITE_WEWORK_DEV_TITLE="$WEWORK_DEV_TITLE"
 export VITE_WEWORK_DEV_WORKTREE="$WEWORK_DEV_WORKTREE"
 export VITE_WEWORK_DEV_BRANCH="$WEWORK_DEV_BRANCH"
 export VITE_WEWORK_PARENT_TITLE="${WEWORK_PARENT_TITLE:-}"
 export VITE_WEWORK_PARENT_PROJECT="${WEWORK_PARENT_PROJECT:-}"
 export VITE_WEWORK_PARENT_WORKSPACE="${WEWORK_PARENT_WORKSPACE:-}"
-WEWORK_DEV_INSTANCE_ID="$(build_dev_instance_id)"
-export WEWORK_APP_IDENTIFIER="${WEWORK_APP_IDENTIFIER:-io.wecode.wework.dev.$WEWORK_DEV_INSTANCE_ID}"
-export WEWORK_USER_DATA_DIR="${WEWORK_USER_DATA_DIR:-$HOME/Library/Application Support/io.wecode.wework.dev/$WEWORK_DEV_INSTANCE_ID}"
 export VITE_WEGENT_BACKEND_URL="${VITE_WEGENT_BACKEND_URL:-$(wework_resolve_backend_base_url)}"
 export VITE_WEWORK_RELEASE_CHANNEL="${VITE_WEWORK_RELEASE_CHANNEL:-development}"
 export VITE_WEWORK_RUNTIME_MODE="${VITE_WEWORK_RUNTIME_MODE:-local-first}"
@@ -225,6 +273,9 @@ print_configuration() {
   echo "  WEWORK_DEV_TITLE=$WEWORK_DEV_TITLE"
   echo "  WEWORK_DEV_WORKTREE=$WEWORK_DEV_WORKTREE"
   echo "  WEWORK_DEV_BRANCH=${WEWORK_DEV_BRANCH:-<detached>}"
+  echo "  WEWORK_DEV_INSTANCE_LABEL=$WEWORK_DEV_INSTANCE_LABEL"
+  echo "  WEWORK_DEV_DOCK_TITLE=$WEWORK_DEV_DOCK_TITLE"
+  echo "  WEWORK_DEV_EXECUTABLE_NAME=$WEWORK_DEV_EXECUTABLE_NAME"
   echo "  WEWORK_APP_IDENTIFIER=$WEWORK_APP_IDENTIFIER"
   echo "  WEWORK_USER_DATA_DIR=$WEWORK_USER_DATA_DIR"
   echo "  VITE_WEGENT_BACKEND_URL=$VITE_WEGENT_BACKEND_URL"
@@ -325,7 +376,9 @@ unset ELECTRON_RUN_AS_NODE
 unset WEWORK_NODE_PATH
 unset WEWORK_NODE_RUNTIME_KIND
 pnpm --dir electron run build
-ELECTRON_BINARY="$WEWORK_DIR/electron/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+SOURCE_ELECTRON_APP="$WEWORK_DIR/electron/node_modules/electron/dist/Electron.app"
+DEV_ELECTRON_APP="$(prepare_dev_electron_app "$SOURCE_ELECTRON_APP")"
+ELECTRON_BINARY="$DEV_ELECTRON_APP/Contents/MacOS/$WEWORK_DEV_EXECUTABLE_NAME"
 if [ "${#ELECTRON_ARGS[@]}" -gt 0 ]; then
   "$ELECTRON_BINARY" "$WEWORK_DIR/electron" "${ELECTRON_ARGS[@]}"
 else
