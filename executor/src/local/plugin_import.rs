@@ -31,6 +31,9 @@ const CODEX_PERSONAL_MARKETPLACE_ID: &str = "personal";
 const EXECUTOR_HOME_ENV: &str = "WEGENT_EXECUTOR_HOME";
 const PERSONAL_PACKAGE_ARTIFACT_DIRECTORY: &str = "personal-plugin-packages";
 const PERSONAL_PACKAGE_ARTIFACT_TTL: Duration = Duration::from_secs(60 * 60);
+const IGNORED_PLUGIN_SOURCE_DIRECTORIES: &[&str] =
+    &[".git", ".pytest_cache", "__pycache__", "node_modules"];
+const IGNORED_PLUGIN_SOURCE_FILES: &[&str] = &[".DS_Store"];
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1942,6 +1945,21 @@ fn collect_plugin_files(root: &Path) -> Result<Vec<PathBuf>, String> {
             let path = entry.path();
             let metadata = fs::symlink_metadata(&path)
                 .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+            let entry_name = entry.file_name();
+            if metadata.is_dir()
+                && IGNORED_PLUGIN_SOURCE_DIRECTORIES
+                    .iter()
+                    .any(|ignored| entry_name == *ignored)
+            {
+                continue;
+            }
+            if metadata.is_file()
+                && IGNORED_PLUGIN_SOURCE_FILES
+                    .iter()
+                    .any(|ignored| entry_name == *ignored)
+            {
+                continue;
+            }
             if metadata.file_type().is_symlink() {
                 return Err(format!(
                     "Plugin package cannot contain symbolic links: {}",
@@ -3391,6 +3409,48 @@ mod tests {
         assert!(archive.by_name("README.md").is_ok());
         remove_personal_package_artifact(&artifacts, &package.cleanup_token).unwrap();
         assert!(!Path::new(&package.path).exists());
+    }
+
+    #[test]
+    fn personal_plugin_package_excludes_ci_ignored_source_paths() {
+        let temp = TempDir::new().unwrap();
+        let plugin_root = temp.path().join("example-plugin");
+        let artifacts = temp.path().join("artifacts");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).unwrap();
+        fs::create_dir_all(plugin_root.join(".git")).unwrap();
+        fs::create_dir_all(plugin_root.join(".pytest_cache")).unwrap();
+        fs::create_dir_all(plugin_root.join("__pycache__")).unwrap();
+        fs::create_dir_all(plugin_root.join("node_modules/package")).unwrap();
+        fs::create_dir(&artifacts).unwrap();
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            br#"{"name":"example-plugin","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        fs::write(plugin_root.join("README.md"), "plugin body").unwrap();
+        fs::write(plugin_root.join(".DS_Store"), "finder metadata").unwrap();
+        fs::write(plugin_root.join(".git/config"), "git metadata").unwrap();
+        fs::write(plugin_root.join(".pytest_cache/state"), "pytest cache").unwrap();
+        fs::write(plugin_root.join("__pycache__/plugin.pyc"), "python cache").unwrap();
+        fs::write(
+            plugin_root.join("node_modules/package/index.js"),
+            "dependency",
+        )
+        .unwrap();
+
+        let package = package_plugin_directory(&plugin_root, "example-plugin", &artifacts).unwrap();
+        let mut archive = zip::ZipArchive::new(fs::File::open(&package.path).unwrap()).unwrap();
+        let names = (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            names,
+            vec![
+                ".codex-plugin/plugin.json".to_owned(),
+                "README.md".to_owned()
+            ]
+        );
     }
 
     #[cfg(unix)]

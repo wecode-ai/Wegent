@@ -88,6 +88,31 @@ def test_canonical_hash_changes_when_executable_mode_changes() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "generated_path",
+    [
+        ".git/config",
+        ".pytest_cache/state",
+        "__pycache__/plugin.pyc",
+        "node_modules/package/index.js",
+        ".DS_Store",
+    ],
+)
+def test_canonical_files_reject_ci_ignored_source_paths(generated_path: str) -> None:
+    package = _zip(
+        [
+            (".codex-plugin/plugin.json", _manifest(), 0o644),
+            (generated_path, b"generated", 0o644),
+        ]
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        canonical_plugin_files(package)
+
+    assert exc_info.value.status_code == 422
+    assert str(exc_info.value.detail).endswith(generated_path)
+
+
 def test_canonical_paths_reject_nfc_collisions() -> None:
     package = _zip(
         [

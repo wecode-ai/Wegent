@@ -22,6 +22,13 @@ GENERATED_PUBLICATION_FILES = {
     ".wework-publication.json",
     "plugin-risk.json",
 }
+IGNORED_SOURCE_DIRECTORY_NAMES = {
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "node_modules",
+}
+IGNORED_SOURCE_FILE_NAMES = {".DS_Store"}
 SOURCE_TREE_HASH_PREFIX = b"wework-plugin-source-tree-v1\0"
 RELEASE_IDEMPOTENCY_KEY_PATTERN = re.compile(r"wework-plugin-v1:[0-9a-f]{64}\Z")
 PLUGIN_MANIFEST_PATHS = (
@@ -119,6 +126,20 @@ def _canonical_plugin_files(
                     exclude_generated and relative in GENERATED_PUBLICATION_FILES
                 ):
                     continue
+                if (
+                    any(
+                        part in IGNORED_SOURCE_DIRECTORY_NAMES
+                        for part in relative_parts[:-1]
+                    )
+                    or relative_parts[-1] in IGNORED_SOURCE_FILE_NAMES
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            "Release artifact contains a non-source path that must "
+                            f"be excluded: {relative}"
+                        ),
+                    )
                 try:
                     path_bytes = relative.encode("utf-8")
                 except UnicodeEncodeError as exc:
