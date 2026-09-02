@@ -1,6 +1,6 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { afterEach, describe, expect, test } from 'vitest'
 
@@ -39,13 +39,13 @@ async function expectMissing(path) {
 describe('desktop E2E result retention', () => {
   test('resolves the configured or default result root', () => {
     expect(resolveDesktopE2EResultRoot('/repo/wework', {})).toBe(
-      join('/repo/wework', 'test-results', 'desktop-e2e')
+      join(resolve('/repo/wework'), 'test-results', 'desktop-e2e')
     )
     expect(
       resolveDesktopE2EResultRoot('/repo/wework', {
         WEWORK_E2E_RESULT_ROOT: '/tmp/custom-results',
       })
-    ).toBe('/tmp/custom-results')
+    ).toBe(resolve('/tmp/custom-results'))
   })
 
   test('removes rebuildable runtime payloads while preserving diagnostic evidence', async () => {
@@ -84,7 +84,7 @@ describe('desktop E2E result retention', () => {
     const active = join(resultRoot, '2026-09-02T00-00-00-000Z-222')
     await createDirectoryWithFile(join(inactive, 'executor-home'))
     await createDirectoryWithFile(join(active, 'executor-home'))
-    await markDesktopE2EResultActive(active, 222)
+    await markDesktopE2EResultActive(active, { ownerProcessId: 222 })
 
     const result = await compactInactiveDesktopE2EResults(resultRoot, {
       isProcessAlive: processId => processId === 222,
@@ -107,5 +107,36 @@ describe('desktop E2E result retention', () => {
 
     expect(result).toEqual({ compacted: 0, removed: 0 })
     await expectExists(join(active, 'executor-home', 'payload'))
+  })
+
+  test('keeps results while their detached application process group is alive', async () => {
+    const resultRoot = await temporaryRoot()
+    const active = join(resultRoot, '2026-09-02T00-00-00-000Z-444')
+    await createDirectoryWithFile(join(active, 'executor-home'))
+    await markDesktopE2EResultActive(active, {
+      applicationProcessId: 555,
+      ownerProcessId: 444,
+    })
+
+    const result = await compactInactiveDesktopE2EResults(resultRoot, {
+      isApplicationAlive: processId => processId === 555,
+      isProcessAlive: () => false,
+    })
+
+    expect(result).toEqual({ compacted: 0, removed: 0 })
+    await expectExists(join(active, 'executor-home', 'payload'))
+  })
+
+  test('ignores unrelated directories with numeric suffixes', async () => {
+    const resultRoot = await temporaryRoot()
+    const unrelated = join(resultRoot, 'unrelated-666')
+    await createDirectoryWithFile(join(unrelated, 'executor-home'))
+
+    const result = await compactInactiveDesktopE2EResults(resultRoot, {
+      isProcessAlive: () => false,
+    })
+
+    expect(result).toEqual({ compacted: 0, removed: 0 })
+    await expectExists(join(unrelated, 'executor-home', 'payload'))
   })
 })

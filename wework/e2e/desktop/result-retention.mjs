@@ -2,7 +2,11 @@ import { spawn } from 'node:child_process'
 import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
+import { processGroupIsAlive, processIsAlive } from './process-lifecycle.mjs'
+
 const ACTIVE_MARKER = '.active'
+const POSIX_REMOVE_ATTEMPTS = 20
+const POSIX_REMOVE_RETRY_DELAY_MS = 100
 const CACHE_DIRECTORY_NAMES = new Set([
   'Cache',
   'Code Cache',
@@ -20,6 +24,7 @@ const TRANSIENT_TOP_LEVEL_ENTRIES = new Set([
   'wegent-executor.exe',
 ])
 const MACOS_APP_BUNDLE_PATTERN = /^WeWork-Electron-E2E-\d+\.app$/
+const RESULT_DIRECTORY_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-(\d+)$/
 
 function removeOptions() {
   return {
@@ -44,14 +49,98 @@ async function removePath(path) {
     await rm(path, removeOptions())
     return
   }
-  await new Promise((resolvePromise, reject) => {
-    const child = spawn('/bin/rm', ['-rf', path], { stdio: 'ignore' })
-    child.once('error', reject)
-    child.once('close', code => {
-      if (code === 0) resolvePromise()
-      else reject(new Error(`/bin/rm exited with code ${code ?? 'unknown'} for ${path}`))
-    })
-  })
+
+  let lastError
+  for (let attempt = 1; attempt <= POSIX_REMOVE_ATTEMPTS; attempt += 1) {
+    try {
+      await new Promise((resolvePromise, reject) => {
+        const child = spawn('/bin/rm', ['-rf', path], {
+          stdio: ['ignore', 'ignore', 'pipe'],
+        })
+        let stderr = ''
+        child.stderr.setEncoding('utf8')
+        child.stderr.on('data', chunk => {
+          stderr += chunk
+        })
+        child.once('error', reject)
+        child.once('close', code => {
+          if (code === 0) {
+            resolvePromise()
+            return
+          }
+          reject(
+            new Error(`/bin/rm exited with code ${code ?? 'unknown'} for ${path}: ${stderr.trim()}`)
+          )
+        })
+      })
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt < POSIX_REMOVE_ATTEMPTS) {
+        await new Promise(resolvePromise => setTimeout(resolvePromise, POSIX_REMOVE_RETRY_DELAY_MS))
+      }
+    }
+  }
+  throw lastError
+}
+
+function positiveProcessId(value) {
+  return Number.isInteger(value) && value > 0 ? value : undefined
+}
+
+function normalizeActivity(activity, fallbackOwnerProcessId = process.pid) {
+  if (typeof activity === 'number') {
+    return { ownerProcessId: positiveProcessId(activity) ?? fallbackOwnerProcessId }
+  }
+  const applicationProcessId = positiveProcessId(activity?.applicationProcessId)
+  const ownerProcessId = positiveProcessId(activity?.ownerProcessId) ?? fallbackOwnerProcessId
+  return { applicationProcessId, ownerProcessId }
+}
+
+function parseActivity(value) {
+  try {
+    const parsed = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return null
+    const activity = normalizeActivity(parsed, null)
+    return activity.applicationProcessId || activity.ownerProcessId ? activity : null
+  } catch {
+    const ownerProcessId = Number.parseInt(value.trim(), 10)
+    return Number.isInteger(ownerProcessId) && ownerProcessId > 0 ? { ownerProcessId } : null
+  }
+}
+
+function applicationProcessIsAlive(processId) {
+  if (process.platform === 'win32') return processIsAlive(processId)
+  return processGroupIsAlive(processId)
+}
+
+function isRecognizedResultDirectory(resultDirectory) {
+  return RESULT_DIRECTORY_PATTERN.test(basename(resultDirectory))
+}
+
+function ownerProcessIdFromResultDirectory(resultDirectory) {
+  const match = basename(resultDirectory).match(RESULT_DIRECTORY_PATTERN)
+  return match ? Number.parseInt(match[1], 10) : null
+}
+
+async function activeProcesses(resultDirectory) {
+  try {
+    const activity = parseActivity(await readFile(join(resultDirectory, ACTIVE_MARKER), 'utf8'))
+    if (activity) return activity
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+  return {
+    ownerProcessId: ownerProcessIdFromResultDirectory(resultDirectory),
+  }
+}
+
+function activityIsAlive(
+  activity,
+  { isApplicationAlive = applicationProcessIsAlive, isOwnerAlive = processIsAlive } = {}
+) {
+  if (activity.ownerProcessId && isOwnerAlive(activity.ownerProcessId)) return true
+  return Boolean(activity.applicationProcessId && isApplicationAlive(activity.applicationProcessId))
 }
 
 async function removeNamedDirectories(root, names) {
@@ -107,8 +196,15 @@ export function resolveDesktopE2EResultRoot(weworkDirectory, environment = proce
     : join(resolve(weworkDirectory), 'test-results', 'desktop-e2e')
 }
 
-export async function markDesktopE2EResultActive(resultDirectory, processId = process.pid) {
-  await writeFile(join(resultDirectory, ACTIVE_MARKER), `${processId}\n`, 'utf8')
+export async function markDesktopE2EResultActive(
+  resultDirectory,
+  activity = { ownerProcessId: process.pid }
+) {
+  await writeFile(
+    join(resultDirectory, ACTIVE_MARKER),
+    `${JSON.stringify(normalizeActivity(activity))}\n`,
+    'utf8'
+  )
 }
 
 export async function clearDesktopE2EResultActive(resultDirectory) {
@@ -131,44 +227,21 @@ export async function compactDesktopE2EResult(resultDirectory) {
   return removed
 }
 
-function processIdFromResultDirectory(resultDirectory) {
-  const match = basename(resultDirectory).match(/-(\d+)$/)
-  return match ? Number.parseInt(match[1], 10) : null
-}
-
-async function activeProcessId(resultDirectory) {
-  try {
-    const value = (await readFile(join(resultDirectory, ACTIVE_MARKER), 'utf8')).trim()
-    const processId = Number.parseInt(value, 10)
-    if (Number.isInteger(processId) && processId > 0) return processId
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error
-  }
-  return processIdFromResultDirectory(resultDirectory)
-}
-
-function processIsAlive(processId) {
-  try {
-    process.kill(processId, 0)
-    return true
-  } catch (error) {
-    if (error?.code === 'ESRCH') return false
-    if (error?.code === 'EPERM') return true
-    throw error
-  }
-}
-
 export async function compactInactiveDesktopE2EResults(
   resultRoot,
-  { isProcessAlive = processIsAlive } = {}
+  {
+    isApplicationAlive = applicationProcessIsAlive,
+    isProcessAlive: isOwnerAlive = processIsAlive,
+  } = {}
 ) {
   let compacted = 0
   let removed = 0
   for (const entry of await directoryEntries(resultRoot)) {
     if (!entry.isDirectory()) continue
     const resultDirectory = join(resultRoot, entry.name)
-    const processId = await activeProcessId(resultDirectory)
-    if (processId && isProcessAlive(processId)) continue
+    if (!isRecognizedResultDirectory(resultDirectory)) continue
+    const activity = await activeProcesses(resultDirectory)
+    if (activityIsAlive(activity, { isApplicationAlive, isOwnerAlive })) continue
     const removedFromResult = await compactDesktopE2EResult(resultDirectory)
     await clearDesktopE2EResultActive(resultDirectory)
     if (removedFromResult > 0) compacted += 1
