@@ -3049,6 +3049,44 @@ describe('WorkspaceBrowserPanel', () => {
     })
   })
 
+  test('cancels a deferred annotation reset when the browser tab reactivates', async () => {
+    mockBrowserHostRect()
+    embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValue(
+      annotationState([], { mode: 'batch' })
+    )
+    const { rerender } = render(<WorkspaceBrowserPanel active />)
+
+    const input = screen.getByTestId('workspace-browser-url-input')
+    fireEvent.change(input, { target: { value: 'example.com' } })
+    fireEvent.submit(input.closest('form')!)
+    await waitFor(() => expect(embeddedBrowserMocks.openEmbeddedBrowser).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId('workspace-browser-annotate-button'))
+    await screen.findByTestId('workspace-browser-annotation-close-button')
+
+    const animationFrames = new Map<number, FrameRequestCallback>()
+    let nextFrameId = 1
+    const requestAnimationFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation(callback => {
+        const frameId = nextFrameId++
+        animationFrames.set(frameId, callback)
+        return frameId
+      })
+    const cancelAnimationFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation(frameId => {
+        animationFrames.delete(frameId)
+      })
+
+    rerender(<WorkspaceBrowserPanel active={false} backgroundActive />)
+    expect(requestAnimationFrame).toHaveBeenCalled()
+    rerender(<WorkspaceBrowserPanel active />)
+
+    expect(cancelAnimationFrame).toHaveBeenCalled()
+    animationFrames.forEach(callback => callback(0))
+    expect(screen.getByTestId('workspace-browser-annotation-close-button')).toBeInTheDocument()
+  })
+
   test('clear button wipes page annotation boxes while staying in annotation mode', async () => {
     mockBrowserHostRect()
     embeddedBrowserMocks.readEmbeddedBrowserAnnotationState.mockResolvedValueOnce(

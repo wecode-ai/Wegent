@@ -43,6 +43,7 @@ use super::{model_id, prompt_text};
 const DEFAULT_CODEX_RPC_TIMEOUT_SECONDS: u64 = 300;
 const DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS: u64 = 180;
 const DEFAULT_CODEX_APP_SERVER_IDLE_SHUTDOWN_SECONDS: u64 = 60;
+const CODEX_APP_SERVER_TRANSIENT_SHUTDOWN_RETRY_MILLIS: u64 = 100;
 const DEFAULT_PROVIDER_ID: &str = "wecode-openai";
 pub const CODEX_APP_SERVER_TURN_CANCELLED: &str = "codex app-server turn cancelled";
 const DEFAULT_REASONING_EFFORT: &str = "medium";
@@ -266,6 +267,11 @@ pub struct CodexAppServerClient {
     state: Arc<Mutex<CodexAppServerSharedState>>,
 }
 
+struct CodexThreadUnsubscribeAttempt {
+    result: Result<bool, String>,
+    process_generation: Option<u64>,
+}
+
 impl CodexAppServerClient {
     pub fn new(binary: impl Into<String>) -> Self {
         let binary = resolve_codex_binary(&binary.into());
@@ -288,12 +294,46 @@ impl CodexAppServerClient {
             return Err(error);
         }
 
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
+        await_pending_codex_response(
+            method,
+            timeout_seconds,
+            request_id,
+            &handle.pending,
+            response_rx,
+        )
         .await
+    }
+
+    pub async fn request_transient(&self, method: &str, params: Value) -> Result<Value, String> {
+        let timeout_seconds = codex_rpc_timeout_seconds();
+        let (request_id, handle, response_rx, started) =
+            self.prepare_request_with_process(true).await?;
+        let process_generation = handle.generation;
+        let message = json!({
+            "method": method,
+            "id": request_id,
+            "params": params,
+        });
+        let result = match handle.write_message(message).await {
+            Ok(()) => {
+                await_pending_codex_response(
+                    method,
+                    timeout_seconds,
+                    request_id,
+                    &handle.pending,
+                    response_rx,
+                )
+                .await
+            }
+            Err(error) => {
+                handle.remove_pending(request_id).await;
+                Err(error)
+            }
+        };
+        if started {
+            self.shutdown_transient_process_in_background(process_generation);
+        }
+        result
     }
 
     pub async fn ensure_started(&self) -> Result<Option<Duration>, String> {
@@ -338,20 +378,22 @@ impl CodexAppServerClient {
                 "codex app-server was restarted after its runtime proxy changed".to_owned(),
             )
             .await;
-            drop(process);
+            terminate_codex_app_server_process(process).await;
         }
         Ok(true)
     }
 
     async fn request_existing(&self, method: &str, params: Value) -> Result<Value, String> {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let response_rx = self.start_existing_request(method, params).await?;
+        let (request_id, handle, response_rx) = self.start_existing_request(method, params).await?;
 
-        with_rpc_timeout(method, timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
+        await_pending_codex_response(
+            method,
+            timeout_seconds,
+            request_id,
+            &handle.pending,
+            response_rx,
+        )
         .await
     }
 
@@ -359,7 +401,14 @@ impl CodexAppServerClient {
         &self,
         method: &str,
         params: Value,
-    ) -> Result<oneshot::Receiver<Result<Value, String>>, String> {
+    ) -> Result<
+        (
+            u64,
+            CodexAppServerHandle,
+            oneshot::Receiver<Result<Value, String>>,
+        ),
+        String,
+    > {
         let (request_id, handle, response_rx) = self.prepare_existing_request().await?;
         let message = json!({
             "method": method,
@@ -370,7 +419,7 @@ impl CodexAppServerClient {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
-        Ok(response_rx)
+        Ok((request_id, handle, response_rx))
     }
 
     pub async fn run_turn_with_cancel(
@@ -391,7 +440,7 @@ impl CodexAppServerClient {
             "codex app-server was restarted".to_owned(),
         )
         .await;
-        drop(process);
+        terminate_codex_app_server_process(process).await;
     }
 
     pub async fn restart_if_no_pending_requests(&self) -> Result<(), usize> {
@@ -407,7 +456,7 @@ impl CodexAppServerClient {
             state.process.take()
         };
         if let Some(process) = process {
-            drop(process);
+            terminate_codex_app_server_process(process).await;
         }
         Ok(())
     }
@@ -416,27 +465,33 @@ impl CodexAppServerClient {
         &self,
         turn_generation: u64,
     ) -> Result<(), (usize, usize)> {
-        self.restart_if_idle_with_constraints(None, Some(turn_generation))
+        self.restart_if_idle_with_constraints(None, None, Some(turn_generation))
             .await
             .map(|_| ())
     }
 
     async fn restart_if_idle_for_generation(
         &self,
-        expected_generation: u64,
+        expected_thread_generation: u64,
+        expected_process_generation: u64,
     ) -> Result<bool, (usize, usize)> {
-        self.restart_if_idle_with_constraints(Some(expected_generation), None)
-            .await
+        self.restart_if_idle_with_constraints(
+            Some(expected_thread_generation),
+            Some(expected_process_generation),
+            None,
+        )
+        .await
     }
 
     async fn restart_if_idle_with_constraints(
         &self,
-        expected_generation: Option<u64>,
+        expected_thread_generation: Option<u64>,
+        expected_process_generation: Option<u64>,
         ignored_starting_generation: Option<u64>,
     ) -> Result<bool, (usize, usize)> {
         let process = {
             let mut state = self.state.lock().await;
-            if expected_generation.is_some_and(|generation| {
+            if expected_thread_generation.is_some_and(|generation| {
                 state.next_thread_generation != generation.saturating_add(1)
             }) {
                 return Ok(false);
@@ -452,6 +507,11 @@ impl CodexAppServerClient {
                 state.thread_generations.clear();
                 return Ok(false);
             };
+            if expected_process_generation
+                .is_some_and(|generation| process.generation != generation)
+            {
+                return Ok(false);
+            }
             let pending_request_count = process.pending.lock().await.len();
             if active_turn_count > 0 || pending_request_count > 0 {
                 return Err((active_turn_count, pending_request_count));
@@ -460,9 +520,30 @@ impl CodexAppServerClient {
             state.process.take()
         };
         if let Some(process) = process {
-            drop(process);
+            terminate_codex_app_server_process(process).await;
         }
         Ok(true)
+    }
+
+    fn shutdown_transient_process_in_background(&self, process_generation: u64) {
+        let client = self.clone();
+        tokio::spawn(async move {
+            loop {
+                sleep(Duration::from_millis(
+                    CODEX_APP_SERVER_TRANSIENT_SHUTDOWN_RETRY_MILLIS,
+                ))
+                .await;
+                match client
+                    .restart_if_idle_with_constraints(None, Some(process_generation), None)
+                    .await
+                {
+                    Ok(_) => return,
+                    Err((active_turn_count, _)) if active_turn_count > 0 => return,
+                    Err((0, _)) => {}
+                    Err(_) => return,
+                }
+            }
+        });
     }
 
     async fn restart_stalled_turn_process(&self, thread_id: &str) -> bool {
@@ -483,7 +564,7 @@ impl CodexAppServerClient {
             "codex app-server was restarted after a stalled turn".to_owned(),
         )
         .await;
-        drop(process);
+        terminate_codex_app_server_process(process).await;
         true
     }
 
@@ -532,7 +613,8 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(true).await
+        let (request_id, handle, response_rx, _) = self.prepare_request_with_process(true).await?;
+        Ok((request_id, handle, response_rx))
     }
 
     async fn prepare_existing_request(
@@ -545,7 +627,8 @@ impl CodexAppServerClient {
         ),
         String,
     > {
-        self.prepare_request_with_process(false).await
+        let (request_id, handle, response_rx, _) = self.prepare_request_with_process(false).await?;
+        Ok((request_id, handle, response_rx))
     }
 
     async fn prepare_request_with_process(
@@ -556,6 +639,7 @@ impl CodexAppServerClient {
             u64,
             CodexAppServerHandle,
             oneshot::Receiver<Result<Value, String>>,
+            bool,
         ),
         String,
     > {
@@ -567,7 +651,8 @@ impl CodexAppServerClient {
         {
             state.process = None;
         }
-        if state.process.is_none() {
+        let started = state.process.is_none();
+        if started {
             let launch_config = CodexLaunchConfig {
                 env: state.runtime_proxy_env.clone(),
                 ..CodexLaunchConfig::default()
@@ -597,7 +682,7 @@ impl CodexAppServerClient {
             .handle();
         let (tx, rx) = oneshot::channel();
         handle.pending.lock().await.insert(request_id, tx);
-        Ok((request_id, handle, rx))
+        Ok((request_id, handle, rx, started))
     }
 
     async fn send_response(&self, request_id: Value, result: Value) -> Result<(), String> {
@@ -738,9 +823,9 @@ impl CodexAppServerClient {
         &self,
         thread_id: &str,
         generation: u64,
-    ) -> Result<bool, String> {
+    ) -> CodexThreadUnsubscribeAttempt {
         let timeout_seconds = codex_rpc_timeout_seconds();
-        let response_rx = {
+        let request = {
             let lifecycle_gate = self.thread_lifecycle_gate(thread_id).await;
             let _lifecycle_guard = lifecycle_gate.lock().await;
             {
@@ -748,67 +833,117 @@ impl CodexAppServerClient {
                 if state.active_threads.contains_key(thread_id)
                     || state.thread_generations.get(thread_id) != Some(&generation)
                 {
-                    return Ok(false);
+                    return CodexThreadUnsubscribeAttempt {
+                        result: Ok(false),
+                        process_generation: state
+                            .process
+                            .as_ref()
+                            .map(|process| process.generation),
+                    };
                 }
             }
 
-            let response_rx = self
-                .start_existing_request("thread/unsubscribe", json!({"threadId": thread_id}))
-                .await?;
+            let (request_id, handle, response_rx) = match self.prepare_existing_request().await {
+                Ok(request) => request,
+                Err(error) => {
+                    return CodexThreadUnsubscribeAttempt {
+                        result: Err(error),
+                        process_generation: None,
+                    };
+                }
+            };
+            let message = json!({
+                "method": "thread/unsubscribe",
+                "id": request_id,
+                "params": {"threadId": thread_id},
+            });
+            if let Err(error) = handle.write_message(message).await {
+                handle.remove_pending(request_id).await;
+                return CodexThreadUnsubscribeAttempt {
+                    result: Err(error),
+                    process_generation: Some(handle.generation),
+                };
+            }
             let mut state = self.state.lock().await;
             if !state.active_threads.contains_key(thread_id)
                 && state.thread_generations.get(thread_id) == Some(&generation)
             {
                 state.thread_generations.remove(thread_id);
             }
-            response_rx
+            (request_id, handle, response_rx)
         };
 
-        with_rpc_timeout("thread/unsubscribe", timeout_seconds, async {
-            response_rx
-                .await
-                .map_err(|_| "codex app-server response channel closed".to_owned())?
-        })
-        .await?;
-        Ok(true)
+        let (request_id, handle, response_rx) = request;
+        let process_generation = handle.generation;
+        let result = await_pending_codex_response(
+            "thread/unsubscribe",
+            timeout_seconds,
+            request_id,
+            &handle.pending,
+            response_rx,
+        )
+        .await
+        .map(|_| true);
+        CodexThreadUnsubscribeAttempt {
+            result,
+            process_generation: Some(process_generation),
+        }
     }
 
     fn unsubscribe_thread_in_background(&self, thread_id: String, generation: u64) {
         let client = self.clone();
         tokio::spawn(async move {
             let observation = CodexThreadUnsubscribeObservation::new(thread_id.clone());
-            let result = client
+            let attempt = client
                 .request_thread_unsubscribe_if_idle(&thread_id, generation)
                 .await;
-            let should_schedule_idle_shutdown = matches!(result, Ok(true));
-            observation.finish(&result);
-            if should_schedule_idle_shutdown {
+            observation.finish(&attempt.result);
+            if let Some(process_generation) = attempt.process_generation {
                 client
-                    .shutdown_app_server_after_idle_grace(generation)
+                    .shutdown_app_server_after_idle_grace(generation, process_generation)
                     .await;
             }
         });
     }
 
-    fn shutdown_app_server_after_idle_grace_in_background(&self, generation: u64) {
+    async fn shutdown_app_server_after_idle_grace_in_background(&self, generation: u64) {
+        let Some(process_generation) = self.current_process_generation().await else {
+            return;
+        };
         let client = self.clone();
         tokio::spawn(async move {
             client
-                .shutdown_app_server_after_idle_grace(generation)
+                .shutdown_app_server_after_idle_grace(generation, process_generation)
                 .await;
         });
     }
 
-    async fn shutdown_app_server_after_idle_grace(&self, generation: u64) {
+    async fn current_process_generation(&self) -> Option<u64> {
+        let mut state = self.state.lock().await;
+        if state
+            .process
+            .as_mut()
+            .is_some_and(|process| process.has_exited())
+        {
+            state.process = None;
+        }
+        state.process.as_ref().map(|process| process.generation)
+    }
+
+    async fn shutdown_app_server_after_idle_grace(&self, generation: u64, process_generation: u64) {
         let idle_seconds = codex_app_server_idle_shutdown_seconds();
         loop {
             sleep(Duration::from_secs(idle_seconds)).await;
-            match self.restart_if_idle_for_generation(generation).await {
+            match self
+                .restart_if_idle_for_generation(generation, process_generation)
+                .await
+            {
                 Ok(true) => {
                     log_executor_event(
                         "codex shared app-server idle shutdown completed",
                         &[
                             ("generation", generation.to_string()),
+                            ("process_generation", process_generation.to_string()),
                             ("idle_seconds", idle_seconds.to_string()),
                         ],
                     );
@@ -820,6 +955,7 @@ impl CodexAppServerClient {
                         "codex shared app-server idle shutdown deferred",
                         &[
                             ("generation", generation.to_string()),
+                            ("process_generation", process_generation.to_string()),
                             ("active_turn_count", active_turn_count.to_string()),
                             ("pending_request_count", pending_request_count.to_string()),
                         ],
@@ -1753,14 +1889,18 @@ async fn run_codex_app_server_turn_on_shared_client(
                     .clear_idle_thread_generation(&thread_id, generation)
                     .await;
                 if !prepared.request.ephemeral {
-                    client.shutdown_app_server_after_idle_grace_in_background(generation);
+                    client
+                        .shutdown_app_server_after_idle_grace_in_background(generation)
+                        .await;
                 }
             }
         }
     } else {
         client.finish_turn_request(turn_generation).await;
         if !prepared.request.ephemeral {
-            client.shutdown_app_server_after_idle_grace_in_background(turn_generation);
+            client
+                .shutdown_app_server_after_idle_grace_in_background(turn_generation)
+                .await;
         }
     }
 
@@ -2888,6 +3028,11 @@ async fn terminate_codex_app_server_child(child: &mut Child) {
     let _ = child.wait().await;
 }
 
+async fn terminate_codex_app_server_process(mut process: CodexAppServerProcess) {
+    process.reader_task.abort();
+    terminate_codex_app_server_child(&mut process.child).await;
+}
+
 fn signal_codex_app_server_child(child: &mut Child) {
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
@@ -2916,6 +3061,23 @@ async fn with_rpc_timeout<T>(
             "codex app-server {operation} timed out after {timeout_seconds}s"
         )),
     }
+}
+
+async fn await_pending_codex_response(
+    operation: &str,
+    timeout_seconds: u64,
+    request_id: u64,
+    pending: &Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
+    response_rx: oneshot::Receiver<Result<Value, String>>,
+) -> Result<Value, String> {
+    let result = with_rpc_timeout(operation, timeout_seconds, async {
+        response_rx
+            .await
+            .map_err(|_| "codex app-server response channel closed".to_owned())?
+    })
+    .await;
+    pending.lock().await.remove(&request_id);
+    result
 }
 
 fn codex_rpc_timeout_seconds() -> u64 {

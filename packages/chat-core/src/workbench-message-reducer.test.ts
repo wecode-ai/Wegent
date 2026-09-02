@@ -928,6 +928,71 @@ describe('reduceWorkbenchMessages', () => {
     ])
   })
 
+  test('clears stale truncation metadata when block snapshots replace live previews', () => {
+    let state = reduceWorkbenchMessages([], {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'thinking-1',
+        subtaskId: '9',
+        type: 'thinking',
+        content: 'x'.repeat(120_010),
+        status: 'streaming',
+        createdAt: 1770000000000
+      }
+    })
+    state = reduceWorkbenchMessages(state, {
+      type: 'block_created',
+      subtaskId: '9',
+      block: {
+        id: 'tool-1',
+        subtaskId: '9',
+        type: 'tool',
+        toolName: 'bash',
+        toolOutput: 'y'.repeat(70_000),
+        status: 'streaming',
+        createdAt: 1770000000001
+      }
+    })
+
+    state = reduceWorkbenchMessages(state, {
+      type: 'block_updated',
+      subtaskId: '9',
+      blockId: 'thinking-1',
+      updates: {
+        content: 'final reasoning',
+        status: 'done'
+      }
+    })
+    state = reduceWorkbenchMessages(state, {
+      type: 'block_updated',
+      subtaskId: '9',
+      blockId: 'tool-1',
+      updates: {
+        toolOutput: 'final output',
+        status: 'done'
+      }
+    })
+
+    expect(state[0].blocks).toMatchObject([
+      {
+        id: 'thinking-1',
+        content: 'final reasoning',
+        contentTruncated: undefined,
+        contentOriginalChars: undefined,
+        contentLoadRef: undefined
+      },
+      {
+        id: 'tool-1',
+        toolOutput: 'final output',
+        toolOutputTruncated: undefined,
+        toolOutputOriginalBytes: undefined,
+        toolOutputOriginalChars: undefined,
+        toolOutputLoadRef: undefined
+      }
+    ])
+  })
+
   test('appends text block content deltas without replacing existing content', () => {
     const state = reduceWorkbenchMessages([], {
       type: 'block_created',

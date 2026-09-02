@@ -1501,14 +1501,15 @@ export function WorkspaceBrowserTabPanel({
   useEffect(() => {
     if (!embeddedBrowserAvailable) return
 
+    let annotationResetFrame: number | null = null
     if (!active) {
       if (annotationModeRef.current) {
         void setEmbeddedBrowserAnnotationOriginalView(false, label).catch(error => {
           console.error('Failed to reset embedded browser original view:', error)
         })
       }
-      annotationModeRef.current = false
-      window.requestAnimationFrame(() => {
+      annotationResetFrame = window.requestAnimationFrame(() => {
+        annotationModeRef.current = false
         setOriginalViewHeld(false)
         setAnnotationMode(false)
       })
@@ -1520,7 +1521,13 @@ export function WorkspaceBrowserTabPanel({
         nativeBrowserOpenRef.current ||
         nativeBrowserOpeningGenerationRef.current !== null ||
         expectedNativeLabel !== undefined
-      if (!ownsNativeBrowser) return
+      if (!ownsNativeBrowser) {
+        return () => {
+          if (annotationResetFrame !== null) {
+            window.cancelAnimationFrame(annotationResetFrame)
+          }
+        }
+      }
 
       clearScheduledBoundsSync()
       browserBoundsSyncGenerationRef.current += 1
@@ -1536,10 +1543,19 @@ export function WorkspaceBrowserTabPanel({
       void closeEmbeddedBrowser(label, expectedNativeLabel).catch(error => {
         console.error('Failed to suspend embedded browser:', error)
       })
-      return
+      return () => {
+        if (annotationResetFrame !== null) {
+          window.cancelAnimationFrame(annotationResetFrame)
+        }
+      }
     }
 
     scheduleEmbeddedBrowserBoundsSync(active)
+    return () => {
+      if (annotationResetFrame !== null) {
+        window.cancelAnimationFrame(annotationResetFrame)
+      }
+    }
   }, [
     active,
     browserRuntimeActive,

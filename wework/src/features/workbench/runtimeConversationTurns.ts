@@ -796,17 +796,27 @@ function mergeRuntimeAssistantTextContent(
   offset: number | undefined
 ): ReturnType<typeof limitRuntimeAssistantText> {
   const currentContent = current?.content ?? ''
+  const incomingChars = textCodePointLength(content)
   const mergedContent =
     offset === undefined
       ? `${currentContent}${content}`
       : `${currentContent.slice(0, offset)}${content}${currentContent.slice(
           offset + content.length
         )}`
-  const currentOriginalChars = current?.contentOriginalChars ?? currentContent.length
+  const currentOriginalChars = current?.contentOriginalChars ?? textCodePointLength(currentContent)
+  const appendedOriginalChars =
+    offset === undefined ||
+    (current?.streamTextOffset !== undefined && offset >= current.streamTextOffset)
+      ? currentOriginalChars + incomingChars
+      : currentOriginalChars
   const nextOriginalChars =
     offset === undefined
-      ? currentOriginalChars + content.length
-      : Math.max(currentOriginalChars, offset + content.length)
+      ? appendedOriginalChars
+      : Math.max(
+          appendedOriginalChars,
+          textCodePointLength(currentContent.slice(0, offset)) + incomingChars,
+          textCodePointLength(mergedContent)
+        )
   return limitRuntimeAssistantText(
     mergedContent,
     offset === undefined ? undefined : offset + content.length,
@@ -904,11 +914,15 @@ function upsertReasoningChunk(
       ...current.block,
       content: `${current.block.content}${reasoningChunk}`,
       contentOriginalChars:
-        (current.block.contentOriginalChars ?? current.block.content.length) +
-        reasoningChunk.length,
+        (current.block.contentOriginalChars ?? textCodePointLength(current.block.content)) +
+        textCodePointLength(reasoningChunk),
       status: 'streaming',
     }),
   })
+}
+
+function textCodePointLength(value: string): number {
+  return /[\uD800-\uDFFF]/.test(value) ? Array.from(value).length : value.length
 }
 
 function upsertBlocks(

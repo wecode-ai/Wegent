@@ -87,7 +87,7 @@ async fn idle_shutdown_skips_a_newer_thread_generation() {
         .await;
 
     assert_eq!(
-        client.restart_if_idle_for_generation(generation).await,
+        client.restart_if_idle_for_generation(generation, 1).await,
         Ok(false)
     );
     assert_eq!(
@@ -105,7 +105,7 @@ async fn idle_shutdown_clears_current_generation_without_a_process() {
     let generation = client.mark_thread_idle("thread-1").await.unwrap();
 
     assert_eq!(
-        client.restart_if_idle_for_generation(generation).await,
+        client.restart_if_idle_for_generation(generation, 1).await,
         Ok(false)
     );
     assert!(client.state.lock().await.thread_generations.is_empty());
@@ -121,7 +121,7 @@ async fn idle_shutdown_waits_while_a_turn_is_starting() {
 
     assert_eq!(
         client
-            .restart_if_idle_for_generation(previous_generation)
+            .restart_if_idle_for_generation(previous_generation, 1)
             .await,
         Ok(false)
     );
@@ -134,7 +134,7 @@ async fn idle_shutdown_waits_while_a_turn_is_starting() {
 }
 
 #[cfg(unix)]
-fn spawn_sleeping_test_app_server() -> (CodexAppServerProcess, u32) {
+fn spawn_sleeping_test_app_server(generation: u64) -> (CodexAppServerProcess, u32) {
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
@@ -147,7 +147,7 @@ fn spawn_sleeping_test_app_server() -> (CodexAppServerProcess, u32) {
     let child_id = child.id().unwrap();
     let stdin = Arc::new(Mutex::new(child.stdin.take().unwrap()));
     let process = CodexAppServerProcess {
-        generation: 1,
+        generation,
         child,
         stdin,
         pending: Arc::new(Mutex::new(HashMap::new())),
@@ -163,7 +163,7 @@ async fn stale_provider_restart_ignores_only_the_current_starting_turn() {
     let client = CodexAppServerClient::new("codex-stale-provider-restart-test");
     let current_generation = client.begin_turn_request().await;
     let other_generation = client.begin_turn_request().await;
-    let (process, _) = spawn_sleeping_test_app_server();
+    let (process, _) = spawn_sleeping_test_app_server(1);
 
     client.state.lock().await.process = Some(process);
 
@@ -188,11 +188,49 @@ async fn stale_provider_restart_ignores_only_the_current_starting_turn() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn idle_shutdown_skips_a_replacement_process_generation() {
+    let client = CodexAppServerClient::new("codex-idle-shutdown-process-generation-test");
+    let generation = client.begin_turn_request().await;
+    client.finish_turn_request(generation).await;
+    let (process, _) = spawn_sleeping_test_app_server(2);
+    client.state.lock().await.process = Some(process);
+
+    assert_eq!(
+        client.restart_if_idle_for_generation(generation, 1).await,
+        Ok(false)
+    );
+    assert_eq!(
+        client
+            .state
+            .lock()
+            .await
+            .process
+            .as_ref()
+            .map(|process| process.generation),
+        Some(2)
+    );
+    client.restart().await;
+}
+
+#[tokio::test]
+async fn timed_out_codex_request_is_removed_from_pending_responses() {
+    let pending = Arc::new(Mutex::new(HashMap::new()));
+    let (response_tx, response_rx) = oneshot::channel();
+    pending.lock().await.insert(7, response_tx);
+
+    let result = await_pending_codex_response("test", 0, 7, &pending, response_rx).await;
+
+    assert!(matches!(result, Err(error) if error.contains("timed out")));
+    assert!(pending.lock().await.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn idle_shutdown_terminates_the_app_server_process_group() {
     let client = CodexAppServerClient::new("codex-idle-shutdown-process-test");
     let generation = client.begin_turn_request().await;
     client.finish_turn_request(generation).await;
-    let (process, child_id) = spawn_sleeping_test_app_server();
+    let (process, child_id) = spawn_sleeping_test_app_server(1);
 
     {
         let mut state = client.state.lock().await;
@@ -202,18 +240,40 @@ async fn idle_shutdown_terminates_the_app_server_process_group() {
     let (process_generation, _notification_rx) = client.subscribe_notifications().await.unwrap();
     assert_eq!(process_generation, 1);
     assert_eq!(
-        client.restart_if_idle_for_generation(generation).await,
+        client
+            .restart_if_idle_for_generation(generation, process_generation)
+            .await,
         Ok(true)
     );
     assert!(client.state.lock().await.process.is_none());
+    assert_ne!(unsafe { libc::kill(child_id as libc::pid_t, 0) }, 0);
+}
 
+#[cfg(unix)]
+#[tokio::test]
+async fn transient_shutdown_waits_for_concurrent_requests_to_finish() {
+    let client = CodexAppServerClient::new("codex-transient-shutdown-test");
+    let (process, child_id) = spawn_sleeping_test_app_server(1);
+    let pending = Arc::clone(&process.pending);
+    let (response_tx, _response_rx) = oneshot::channel();
+    pending.lock().await.insert(7, response_tx);
+    client.state.lock().await.process = Some(process);
+
+    client.shutdown_transient_process_in_background(1);
+    sleep(Duration::from_millis(
+        CODEX_APP_SERVER_TRANSIENT_SHUTDOWN_RETRY_MILLIS * 2,
+    ))
+    .await;
+    assert_eq!(unsafe { libc::kill(child_id as libc::pid_t, 0) }, 0);
+
+    pending.lock().await.clear();
     timeout(Duration::from_secs(1), async {
         while unsafe { libc::kill(child_id as libc::pid_t, 0) } == 0 {
             sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("idle shutdown should terminate the app-server process group");
+    .expect("transient shutdown should wait for pending requests and then terminate");
 }
 
 #[tokio::test]

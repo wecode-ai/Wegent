@@ -525,8 +525,29 @@ export function mergeWorkbenchProcessingBlockUpdate<TFileChanges>(
 ): WorkbenchProcessingBlock<TFileChanges> {
   const { contentDelta, toolOutputDelta, durationMs, ...directUpdates } =
     updates
+  const resetContentMetadata =
+    typeof directUpdates.content === 'string'
+      ? {
+          contentTruncated: undefined,
+          contentOriginalChars: undefined,
+          contentLoadRef: undefined
+        }
+      : {}
+  const resetToolOutputMetadata = Object.prototype.hasOwnProperty.call(
+    directUpdates,
+    'toolOutput'
+  )
+    ? {
+        toolOutputTruncated: undefined,
+        toolOutputOriginalBytes: undefined,
+        toolOutputOriginalChars: undefined,
+        toolOutputLoadRef: undefined
+      }
+    : {}
   let nextBlock = withBlockCompletionTime(block, {
     ...block,
+    ...resetContentMetadata,
+    ...resetToolOutputMetadata,
     ...directUpdates,
     ...(durationMs !== undefined && {
       durationMs: Math.max(0, durationMs),

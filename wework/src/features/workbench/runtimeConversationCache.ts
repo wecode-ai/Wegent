@@ -339,6 +339,7 @@ export function enqueueRuntimeConversationAction(
     return
   }
 
+  touchEntry(turnsByConversation, key)
   const pending = pendingStreamingActions.get(key)
   if (pending) {
     appendBufferedRuntimePaneMessageAction(pending.actions, action)

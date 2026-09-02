@@ -606,7 +606,13 @@ function memorySampleRangeKiB(samples) {
 }
 
 function processGroupCount(sample, groupName) {
-  return sample.groups.find(group => group.group === groupName)?.process_count ?? 0
+  return sample.groups.filter(group => group.group === groupName).length
+}
+
+function processCountForGroup(sample, groupName) {
+  return sample.groups
+    .filter(group => group.group === groupName)
+    .reduce((count, group) => count + group.process_count, 0)
 }
 
 async function waitForProcessGroupToDisappear(control, groupName, timeoutMs) {
@@ -615,7 +621,7 @@ async function waitForProcessGroupToDisappear(control, groupName, timeoutMs) {
   while (Date.now() - startedAt < timeoutMs) {
     await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
     sample = await captureTotalMemorySample(control, 'idle-reclamation')
-    if (processGroupCount(sample, groupName) === 0) return sample
+    if (processCountForGroup(sample, groupName) === 0) return sample
   }
   throw new Error(
     `Wework process group "${groupName}" remained after ${timeoutMs} ms: ${JSON.stringify(sample)}`

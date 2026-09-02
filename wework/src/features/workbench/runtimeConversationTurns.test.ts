@@ -2558,6 +2558,37 @@ describe('runtimeConversationTurns', () => {
         streamTextOffset: 3,
       }),
     ])
+    const item = turns[0].items[0]
+    expect(item?.type === 'assistant_text' ? item.contentOriginalChars : 0).toBeUndefined()
+  })
+
+  test('counts streamed assistant and reasoning emoji as Unicode code points', () => {
+    let turns = reduceRuntimeConversationTurns([{ id: 'turn-1', items: [], status: 'streaming' }], {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: `${'😀'.repeat(200_001)}tail`,
+      reasoningChunk: `${'😎'.repeat(120_001)}tail`,
+    })
+    turns = reduceRuntimeConversationTurns(turns, {
+      type: 'assistant_chunk',
+      subtaskId: 'turn-1',
+      itemId: 'message-1',
+      content: '🚀',
+      reasoningChunk: '🧠',
+    })
+
+    const message = projectRuntimeConversationTurns(turns)[0]
+    const reasoning = message.blocks?.find(block => block.type === 'thinking')
+    expect(message).toMatchObject({
+      contentTruncated: true,
+      contentOriginalChars: 200_006,
+    })
+    expect(reasoning).toMatchObject({
+      type: 'thinking',
+      contentTruncated: true,
+      contentOriginalChars: 120_006,
+    })
   })
 
   test('replaces a streamed item with the completed snapshot by exact item id', () => {
