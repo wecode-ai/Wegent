@@ -122,7 +122,7 @@ def _timeline_tracks(timeline: dict[str, Any]) -> dict[str, list[dict[str, Any]]
 
 
 def _callback_base_url() -> str:
-    value = settings.WEGENT_SOCKET_URL.strip().rstrip("/")
+    value = settings.FRONTEND_URL.strip().rstrip("/")
     parsed = urlsplit(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise HTTPException(

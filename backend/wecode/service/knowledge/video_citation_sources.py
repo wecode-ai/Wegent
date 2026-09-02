@@ -73,6 +73,22 @@ def _source_key(source: dict[str, Any]) -> tuple[int, int] | None:
     return kb_id, document_id
 
 
+def _set_available_segments(
+    source: dict[str, Any],
+    segments: Any,
+    *,
+    truncated: bool,
+) -> None:
+    """Attach a full chapter catalog to a segment source when available."""
+    if not isinstance(segments, list) or not segments:
+        return
+    source["available_segments"] = list(segments)
+    if truncated:
+        source["available_segments_truncated"] = True
+    else:
+        source.pop("available_segments_truncated", None)
+
+
 def _video_chunk_key(chunk: dict[str, Any]) -> tuple[int, int] | None:
     metadata = chunk.get("metadata")
     if not isinstance(metadata, dict):
@@ -98,15 +114,15 @@ def _video_chunk_key(chunk: dict[str, Any]) -> tuple[int, int] | None:
 
 def collect_knowledge_mcp_video_sources(
     collected: VideoSourceMap, tool_output: Any
-) -> None:
-    """Collect time-addressable video citations from a knowledge MCP result."""
+) -> tuple[int, int] | None:
+    """Collect citations and return a parsed complete-document source key."""
     payload = _decode_mcp_json_payload(tool_output)
     if payload is None:
-        return
+        return None
     if payload.get("mode") == "rag_retrieval":
         _collect_rag_retrieval_video_sources(collected, payload)
-        return
-    _collect_document_content_video_source(collected, payload)
+        return None
+    return _collect_document_content_video_source(collected, payload)
 
 
 def _collect_into(
@@ -188,7 +204,7 @@ def _collect_rag_retrieval_video_sources(
 
 def _collect_document_content_video_source(
     collected: VideoSourceMap, payload: dict[str, Any]
-) -> None:
+) -> tuple[int, int] | None:
     """Collect chapters from a fully-read video document content payload.
 
     Handles the ``wegent_kb_get_document_content`` MCP result: unlike RAG
@@ -198,28 +214,31 @@ def _collect_document_content_video_source(
     pages), mirroring the chat_shell ``kb_head`` whitelist conditions.
     """
     if payload.get("source_media_type") != "video":
-        return
+        return None
     if payload.get("offset", 0) != 0 or payload.get("has_more", False):
-        return
+        return None
     content = payload.get("content")
     if not isinstance(content, str) or not content:
-        return
+        return None
     document_id = _positive_int(payload.get("document_id"))
     kb_id = _positive_int(payload.get("knowledge_base_id")) or _positive_int(
         payload.get("kb_id")
     )
     if document_id is None or kb_id is None:
-        return
+        return None
 
     parse_result = extract_all_video_segments(content)
     if not parse_result.segments:
-        return
+        return None
 
-    # Full-document chapters are strictly more complete than chunk-level RAG
-    # segments; the coverage rules in merge_video_source replace partial hits.
+    source_key = (kb_id, document_id)
+
+    # Full-document chapters are a fallback when this response has no RAG
+    # evidence. The coverage rules in merge_video_source keep retrieved
+    # segments when both observations exist for the same video.
     _collect_into(
         collected,
-        (kb_id, document_id),
+        source_key,
         title=payload.get("name"),
         coverage="complete",
         segments=[
@@ -233,6 +252,7 @@ def _collect_document_content_video_source(
         ],
         input_truncated=parse_result.truncated,
     )
+    return source_key
 
 
 def collect_and_log_knowledge_mcp_video_sources(
@@ -267,22 +287,26 @@ def collect_and_log_knowledge_mcp_video_sources(
     previous_source_count = len(collected)
     previous_segment_count = sum(len(source.segments) for source in collected.values())
     previous_coverages = {key: source.coverage for key, source in collected.items()}
-    collect_knowledge_mcp_video_sources(collected, tool_output)
+    complete_source_key = collect_knowledge_mcp_video_sources(collected, tool_output)
     current_segment_count = sum(len(source.segments) for source in collected.values())
     added_segments = current_segment_count - previous_segment_count
-    # A retrieved → complete replacement can shrink the segment count, so
-    # growth alone cannot observe it; track coverage upgrades explicitly.
-    replaced = any(
-        previous_coverages.get(key) == "retrieved" and source.coverage == "complete"
-        for key, source in collected.items()
+    segment_preferred = (
+        complete_source_key is not None
+        and previous_coverages.get(complete_source_key) == "retrieved"
+        and collected.get(complete_source_key) is not None
+        and collected[complete_source_key].coverage == "retrieved"
     )
-    if added_segments != 0 or len(collected) > previous_source_count or replaced:
+    if (
+        added_segments != 0
+        or len(collected) > previous_source_count
+        or segment_preferred
+    ):
         logger.info(
             "Collected MCP video citations: decision=%s, coverage_action=%s, "
             "context=%s, source_count=%d, previous_segment_count=%d, "
             "new_segment_count=%d",
             decision,
-            "replace" if replaced else "merge",
+            "segment_preferred_over_chapters" if segment_preferred else "merge",
             context,
             len(collected),
             previous_segment_count,
@@ -300,6 +324,8 @@ def merge_video_sources(existing: Any, videos: VideoSourceMap) -> list[dict[str,
         copied_source = dict(source)
         if isinstance(source.get("segments"), list):
             copied_source["segments"] = list(source["segments"])
+        if isinstance(source.get("available_segments"), list):
+            copied_source["available_segments"] = list(source["available_segments"])
         merged.append(copied_source)
     by_key = {
         key: source for source in merged if (key := _source_key(source)) is not None
@@ -325,9 +351,39 @@ def merge_video_sources(existing: Any, videos: VideoSourceMap) -> list[dict[str,
         target["kb_id"] = video["kb_id"]
         if (
             target.get("source_type") == "wegent_video_chapters"
-            and video["source_type"] != "wegent_video_chapters"
+            and video["source_type"] == "wegent_video_segment"
         ):
-            # Complete chapters already present; ignore later partial RAG hits.
+            # RAG hits are the retrieval evidence. Replace the chapter snapshot
+            # rather than appending to it so only retrieved segments render.
+            chapter_segments = target.get("segments")
+            chapter_segments_truncated = bool(target.get("segments_truncated"))
+            target["source_type"] = video["source_type"]
+            target["segments"] = list(video["segments"])
+            if video.get("segments_truncated"):
+                target["segments_truncated"] = True
+            else:
+                target.pop("segments_truncated", None)
+            _set_available_segments(
+                target,
+                video.get("available_segments") or chapter_segments,
+                truncated=bool(
+                    video.get("available_segments_truncated")
+                    or chapter_segments_truncated
+                ),
+            )
+            continue
+        if (
+            target.get("source_type") == "wegent_video_segment"
+            and video["source_type"] == "wegent_video_chapters"
+        ):
+            # Chapters are a fallback only; preserve existing RAG evidence.
+            if not target.get("title"):
+                target["title"] = video["title"]
+            _set_available_segments(
+                target,
+                video["segments"],
+                truncated=bool(video.get("segments_truncated")),
+            )
             continue
         target["source_type"] = video["source_type"]
         # Video segments are already normalized by the shared builder; for a
@@ -361,5 +417,10 @@ def merge_video_sources(existing: Any, videos: VideoSourceMap) -> list[dict[str,
             seen.add(segment_key)
         if truncated:
             target["segments_truncated"] = True
+        _set_available_segments(
+            target,
+            video.get("available_segments"),
+            truncated=bool(video.get("available_segments_truncated")),
+        )
 
     return merged

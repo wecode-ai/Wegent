@@ -74,4 +74,49 @@ describe('SourceReferences', () => {
 
     expect(screen.getByRole('button', { name: 'play-6' })).toBeInTheDocument()
   })
+
+  it('renders full video chapters after all video segments without a citation index', () => {
+    act(() => {
+      registerExternalSourceOpener('wegent_video_segment', source => (
+        <button type="button">segment-{source.document_id}</button>
+      ))
+      registerExternalSourceOpener('wegent_video_chapters', source => (
+        <button type="button">chapters-{source.document_id}</button>
+      ))
+    })
+
+    render(
+      <SourceReferences
+        sources={[
+          {
+            index: 3,
+            title: 'all-chapters.video.md',
+            source_type: 'wegent_video_chapters',
+            document_id: 803,
+          },
+          {
+            index: 1,
+            title: 'first-segment.video.md',
+            source_type: 'wegent_video_segment',
+            document_id: 801,
+            segments: [{ start_sec: 0, end_sec: 10 }],
+          },
+          {
+            index: 2,
+            title: 'second-segment.video.md',
+            source_type: 'wegent_video_segment',
+            document_id: 802,
+            segments: [
+              { start_sec: 10, end_sec: 20 },
+              { start_sec: 20, end_sec: 30 },
+            ],
+          },
+        ]}
+      />
+    )
+
+    const labels = screen.getAllByRole('button').map(button => button.textContent)
+    expect(labels).toEqual(['segment-802', 'segment-801', 'chapters-803'])
+    expect(screen.queryByText('[3]')).not.toBeInTheDocument()
+  })
 })

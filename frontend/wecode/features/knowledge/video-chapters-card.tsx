@@ -16,7 +16,13 @@ import { resolveVideoSegmentBounds } from './video-segment-bounds'
 import { formatVideoTime } from './video-time'
 import { useVideoSegmentPlayback } from './use-video-segment-playback'
 
-function VideoChaptersCard({ source }: { source: SourceReference }) {
+function VideoChaptersCard({
+  source,
+  triggerLabel,
+}: {
+  source: SourceReference
+  triggerLabel?: string
+}) {
   const { t } = useTranslation('chat')
   const segments = useMemo(() => source.segments ?? [], [source.segments])
   const documentId = source.document_id ?? 0
@@ -144,10 +150,12 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
         data-testid={`video-chapters-toggle-${source.index}`}
       >
         <Play className="h-4 w-4 shrink-0 text-primary" />
-        <span className="flex-1 truncate text-left">{source.title}</span>
-        <span className="text-text-muted">
-          {t('sourceReferences.videoChaptersCount', { count: segments.length })}
-        </span>
+        <span className="flex-1 truncate text-left">{triggerLabel ?? source.title}</span>
+        {!triggerLabel && (
+          <span className="text-text-muted">
+            {t('sourceReferences.videoChaptersCount', { count: segments.length })}
+          </span>
+        )}
         <ChevronDown className="h-4 w-4 shrink-0" />
       </button>
     )
@@ -160,106 +168,112 @@ function VideoChaptersCard({ source }: { source: SourceReference }) {
       className={`w-full overflow-hidden border border-border bg-surface ${
         isFullscreen
           ? 'flex h-screen max-w-none flex-col justify-center rounded-none bg-black'
-          : 'max-w-2xl rounded-lg'
+          : 'max-w-md rounded-lg'
       }`}
       data-testid={`video-chapters-card-${source.index}`}
     >
-      <div className={`relative bg-black ${isFullscreen ? 'flex min-h-0 flex-1' : ''}`}>
-        {isLoading && (
-          <div className="flex h-48 items-center justify-center">
-            <Spinner />
-          </div>
-        )}
-        {notReady && (
-          <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-white">
-            <AlertCircle className="h-5 w-5" />
-            {t('sourceReferences.videoNotReady')}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRetry}
-              data-testid={`video-chapters-retry-${source.index}`}
-            >
-              {t('common:actions.retry')}
-            </Button>
-          </div>
-        )}
-        {(hasError || videoError) && !isLoading && !notReady && (
-          <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-white">
-            <AlertCircle className="h-5 w-5" />
-            {t('sourceReferences.videoLoadFailed')}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRetry}
-              data-testid={`video-chapters-error-retry-${source.index}`}
-            >
-              {t('common:actions.retry')}
-            </Button>
-          </div>
-        )}
-        {mediaDuration !== undefined &&
-          !currentBounds &&
-          !isLoading &&
-          !videoError &&
-          !hasError &&
-          !notReady && (
-            <div className="flex h-48 items-center justify-center gap-2 px-4 text-sm text-white">
-              <AlertCircle className="h-5 w-5" />
-              {t('sourceReferences.invalidVideoSegmentRange')}
+      {isExpanded && (
+        <div className={`relative bg-black ${isFullscreen ? 'flex min-h-0 flex-1' : ''}`}>
+          {isLoading && (
+            <div className="flex h-48 items-center justify-center">
+              <Spinner />
             </div>
           )}
-        {playUrl && !hasError && !videoError && !notReady && (
-          <>
-            <video
-              ref={videoRef}
-              preload="none"
-              playsInline
-              onLoadedMetadata={handleLoadedMetadata}
-              onTimeUpdate={handleTimeUpdate}
-              onPause={handlePause}
-              onEnded={handleEnded}
-              onError={handleError}
-              className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
-              data-testid={`video-chapters-player-${source.index}`}
-            >
-              <source src={playUrl} type={mimeType} />
-            </video>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute inset-0 m-auto h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/75"
-              onClick={togglePlayback}
-              disabled={!currentBounds}
-              data-testid={`video-chapters-overlay-toggle-${source.index}`}
-              aria-label={t(
-                isPlaying
-                  ? 'sourceReferences.pauseVideoSegment'
-                  : 'sourceReferences.playVideoSegment'
-              )}
-            >
-              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
-            </Button>
-            {fullscreenAvailable && (
+          {notReady && (
+            <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-white">
+              <AlertCircle className="h-5 w-5" />
+              {t('sourceReferences.videoNotReady')}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                data-testid={`video-chapters-retry-${source.index}`}
+              >
+                {t('common:actions.retry')}
+              </Button>
+            </div>
+          )}
+          {(hasError || videoError) && !isLoading && !notReady && (
+            <div className="flex h-48 flex-col items-center justify-center gap-2 text-sm text-white">
+              <AlertCircle className="h-5 w-5" />
+              {t('sourceReferences.videoLoadFailed')}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                data-testid={`video-chapters-error-retry-${source.index}`}
+              >
+                {t('common:actions.retry')}
+              </Button>
+            </div>
+          )}
+          {mediaDuration !== undefined &&
+            !currentBounds &&
+            !isLoading &&
+            !videoError &&
+            !hasError &&
+            !notReady && (
+              <div className="flex h-48 items-center justify-center gap-2 px-4 text-sm text-white">
+                <AlertCircle className="h-5 w-5" />
+                {t('sourceReferences.invalidVideoSegmentRange')}
+              </div>
+            )}
+          {playUrl && !hasError && !videoError && !notReady && (
+            <>
+              <video
+                ref={videoRef}
+                preload="none"
+                playsInline
+                onLoadedMetadata={handleLoadedMetadata}
+                onTimeUpdate={handleTimeUpdate}
+                onPause={handlePause}
+                onEnded={handleEnded}
+                onError={handleError}
+                className={`${isFullscreen ? 'h-full min-h-0' : 'aspect-video'} w-full object-contain`}
+                data-testid={`video-chapters-player-${source.index}`}
+              >
+                <source src={playUrl} type={mimeType} />
+              </video>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="absolute right-2 top-2 h-9 w-9 rounded-full bg-black/60 text-white hover:bg-black/75"
-                onClick={toggleFullscreen}
-                aria-label={t('sourceReferences.maximizeVideoSegment')}
-                data-testid={`video-chapters-maximize-${source.index}`}
+                className="absolute inset-0 m-auto h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/75"
+                onClick={togglePlayback}
+                disabled={!currentBounds}
+                data-testid={`video-chapters-overlay-toggle-${source.index}`}
+                aria-label={t(
+                  isPlaying
+                    ? 'sourceReferences.pauseVideoSegment'
+                    : 'sourceReferences.playVideoSegment'
+                )}
               >
-                {isFullscreen ? <Minimize className="h-4 w-4" /> : <Maximize className="h-4 w-4" />}
+                {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
               </Button>
-            )}
-          </>
-        )}
-      </div>
+              {fullscreenAvailable && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-2 h-9 w-9 rounded-full bg-black/60 text-white hover:bg-black/75"
+                  onClick={toggleFullscreen}
+                  aria-label={t('sourceReferences.maximizeVideoSegment')}
+                  data-testid={`video-chapters-maximize-${source.index}`}
+                >
+                  {isFullscreen ? (
+                    <Minimize className="h-4 w-4" />
+                  ) : (
+                    <Maximize className="h-4 w-4" />
+                  )}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Playback timeline */}
-      {playUrl && !hasError && !videoError && !notReady && (
+      {isExpanded && playUrl && !hasError && !videoError && !notReady && (
         <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-text-muted">
           <Button
             type="button"

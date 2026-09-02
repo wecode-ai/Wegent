@@ -247,6 +247,7 @@ export class BrowserAnnotationController {
       })
       return
     }
+    if (type !== 'runtime-ready') this.updateRuntimeLocation(label, event)
     if (type === 'runtime-ready') {
       this.runtimeReady(label, event)
       return
@@ -278,7 +279,29 @@ export class BrowserAnnotationController {
       this.closeDraft()
       return
     }
+    if (type === 'stop-annotation') {
+      this.stop(label)
+      return
+    }
     if (type === 'anchors-updated') this.updateAnchors(label, event)
+  }
+
+  private updateRuntimeLocation(label: string, event: Record<string, unknown>): void {
+    const pageSessionId = stringValue(event.pageSessionId)
+    const url = stringValue(event.pageUrl)
+    const session = this.session(label)
+    if (
+      !pageSessionId ||
+      !url ||
+      !session.runtime ||
+      session.runtime.pageSessionId !== pageSessionId ||
+      canonicalPageUrl(session.runtime.url) === canonicalPageUrl(url)
+    ) {
+      return
+    }
+    session.runtime = { ...session.runtime, url }
+    session.runtimeRevision += 1
+    session.unresolvedIds = []
   }
 
   closeLabel(label: string): void {

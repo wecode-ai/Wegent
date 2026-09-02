@@ -9,11 +9,10 @@
  */
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ButtonHTMLAttributes, ReactNode } from 'react'
 import { CreateKnowledgeBaseDialog } from '@/features/knowledge/document/components/CreateKnowledgeBaseDialog'
 import { codeWikiApi } from '@/apis/code-wiki'
 import { getKnowledgeBaseRetrievalProfile } from '@/apis/knowledge'
-import { retrieverApis } from '@/apis/retrievers'
-import { modelApis } from '@/apis/models'
 
 jest.mock('@/hooks/useTranslation', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
@@ -44,19 +43,6 @@ jest.mock('@/apis/knowledge', () => ({
   }),
 }))
 
-// The model selector fetches on mount. Left real it resolves after the test ends,
-// setting state on an unmounted tree.
-jest.mock('@/apis/models', () => ({
-  modelApis: { getUnifiedModels: jest.fn().mockResolvedValue({ data: [] }) },
-}))
-
-jest.mock('@/apis/retrievers', () => ({
-  retrieverApis: {
-    getUnifiedRetrievers: jest.fn().mockResolvedValue({ data: [] }),
-    getStorageRetrievalMethods: jest.fn().mockResolvedValue({ data: {} }),
-  },
-}))
-
 jest.mock('@/features/tasks/components/selector', () => ({
   RepositorySelector: () => <div data-testid="repository-selector" />,
 }))
@@ -66,6 +52,51 @@ jest.mock('@/components/model-select/ModelRefSelector', () => ({
     <div data-testid="model-ref-selector">{error}</div>
   ),
 }))
+
+jest.mock('@/features/knowledge/document/components/RetrievalSettingsSection', () => ({
+  RetrievalSettingsSection: ({ scope, groupName }: { scope?: string; groupName?: string }) => (
+    <div
+      data-testid="retrieval-settings-section"
+      data-scope={scope}
+      data-group-name={groupName || ''}
+    />
+  ),
+}))
+
+jest.mock('@/components/ui/select', () => {
+  const React = jest.requireActual<typeof import('react')>('react')
+  const SelectContext = React.createContext<((value: string) => void) | undefined>(undefined)
+
+  return {
+    Select: ({
+      children,
+      onValueChange,
+    }: {
+      children: ReactNode
+      onValueChange?: (value: string) => void
+    }) => <SelectContext.Provider value={onValueChange}>{children}</SelectContext.Provider>,
+    SelectTrigger: ({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) => (
+      <button type="button" {...props}>
+        {children}
+      </button>
+    ),
+    SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+    SelectItem: ({ children, value }: { children: ReactNode; value: string }) => {
+      const onValueChange = React.useContext(SelectContext)
+      return (
+        <button
+          type="button"
+          role="option"
+          aria-selected={false}
+          onClick={() => onValueChange?.(value)}
+        >
+          {children}
+        </button>
+      )
+    },
+    SelectValue: () => null,
+  }
+})
 
 // The code option is behind a staged rollout. These tests are about what choosing it
 // does, so they turn it on; the test below is about the rollout itself.
@@ -98,7 +129,7 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
     mockedGetKnowledgeBaseRetrievalProfile.mockImplementation(() => new Promise(() => undefined))
   })
 
-  it('loads retrieval resources for the selected group rather than the opening scope', async () => {
+  it('uses the selected group for retrieval settings rather than the opening scope', () => {
     render(
       <CreateKnowledgeBaseDialog
         open
@@ -119,30 +150,25 @@ describe('CreateKnowledgeBaseDialog kind selection', () => {
       />
     )
     fireEvent.click(screen.getByTestId('knowledge-advanced-section-trigger'))
-    await waitFor(() =>
-      expect(retrieverApis.getUnifiedRetrievers).toHaveBeenCalledWith('personal', undefined)
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute(
+      'data-scope',
+      'personal'
     )
-    fireEvent.keyDown(screen.getByTestId('group-selector'), { key: 'ArrowDown' })
-    fireEvent.click(await screen.findByRole('option', { name: 'Team' }))
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute('data-group-name', '')
 
-    await waitFor(() =>
-      expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('group', 'team-space')
-    )
-    await waitFor(() =>
-      expect(modelApis.getUnifiedModels).toHaveBeenCalledWith(
-        undefined,
-        false,
-        'group',
-        'team-space',
-        'embedding'
-      )
+    fireEvent.click(screen.getByRole('option', { name: 'Team' }))
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute('data-scope', 'group')
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute(
+      'data-group-name',
+      'team-space'
     )
 
-    fireEvent.keyDown(screen.getByTestId('group-selector'), { key: 'ArrowDown' })
-    fireEvent.click(await screen.findByRole('option', { name: 'Personal' }))
-    await waitFor(() =>
-      expect(retrieverApis.getUnifiedRetrievers).toHaveBeenLastCalledWith('personal', undefined)
+    fireEvent.click(screen.getByRole('option', { name: 'Personal' }))
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute(
+      'data-scope',
+      'personal'
     )
+    expect(screen.getByTestId('retrieval-settings-section')).toHaveAttribute('data-group-name', '')
   })
 
   it('starts on documents, where a name is required', async () => {
