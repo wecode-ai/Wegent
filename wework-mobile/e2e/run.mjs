@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -63,13 +63,12 @@ const {
   fetchJson,
   resultDir,
   runChecked,
+  waitForLogPattern,
 } = shared
 
 const workspacePath = join('/tmp', 'wme2e')
 const control = new DesktopE2EServer(workspacePath)
-const checkpointSync = ['runtime', 'history', 'recovery'].includes(requestedFlow)
-  ? createCheckpointSyncServer()
-  : null
+const checkpointSync = createCheckpointSyncServer()
 let cloudEnvironment
 let approvalLoop
 let controlStarted = false
@@ -282,10 +281,32 @@ function approveAuthorizationSessions(environment) {
 
 async function runCheckpoint(flow, targetPlatform, backendUrl, sync) {
   const controller = startCheckpointController(flow, sync)
+  const backendLog = await readFile(cloudEnvironment.backendLogPath, 'utf8').catch(() => '')
+  const authorization = startAuthorizationController(
+    sync,
+    cloudEnvironment.backendLogPath,
+    backendLog.length
+  )
   const maestro = runMaestro(flow, targetPlatform, backendUrl, sync?.url)
-  await Promise.race([maestro, approvalLoop.done, rejectOnFailure(controller)])
-  await controller
+  await Promise.race([
+    maestro,
+    approvalLoop.done,
+    rejectOnFailure(authorization),
+    rejectOnFailure(controller),
+  ])
+  await Promise.all([authorization, controller])
   verifyCheckpointSideEffects(flow, targetPlatform)
+}
+
+function startAuthorizationController(sync, backendLogPath, backendLogOffset) {
+  return (async () => {
+    const signal = await sync.waitFor('authorization-complete')
+    await waitForLogPattern(backendLogPath, /response: GET \/api\/users\/me .* 200 /u, {
+      fromOffset: backendLogOffset,
+      timeoutMs: checkpointControllerTimeoutMs,
+    })
+    signal.acknowledge()
+  })()
 }
 
 function verifyCheckpointSideEffects(flow, targetPlatform) {
@@ -321,11 +342,7 @@ function startCheckpointController(flow, sync) {
     return (async () => {
       const readySignal = await sync.waitFor('history-ready')
       readySignal.acknowledge()
-      await control.awaitScenarioRequestCount(
-        'turn_navigation',
-        6,
-        checkpointControllerTimeoutMs
-      )
+      await control.awaitScenarioRequestCount('turn_navigation', 6, checkpointControllerTimeoutMs)
     })()
   }
   if (flow === 'recovery') {

@@ -27,6 +27,8 @@ appId: com.wecode.wegent
 - hideKeyboard
 - tapOn:
     id: authorize-login
+- runScript: ../scripts/signal-authorization-complete.js
+- launchApp
 - extendedWaitUntil:
     visible:
       id: conversation-list

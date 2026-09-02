@@ -28,10 +28,6 @@ appId: com.wecode.wegent
       - tapOn:
           id: project-create-submit
       - extendedWaitUntil:
-          notVisible:
-            id: project-dialog
-          timeout: 30000
-      - extendedWaitUntil:
           visible:
             id: project-${E2E_PROJECT_NAME}
           timeout: 30000
