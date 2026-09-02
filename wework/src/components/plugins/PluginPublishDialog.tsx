@@ -466,6 +466,12 @@ export function PluginPublishDialog({
       normalizedPublicationVersion !== normalizedPluginVersion
     )
   )
+  const activePublicationStatusLabel = activePublication
+    ? t(
+        'workbench.plugins_publication_status_' + activePublication.status,
+        activePublication.status
+      )
+    : ''
 
   const errorContent = error ? (
     <div role="alert" className="space-y-2 rounded-xl bg-red-500/5 px-3 py-2 text-sm text-red-600">
@@ -909,11 +915,19 @@ export function PluginPublishDialog({
                 </span>
                 <span className="mt-1 block text-xs leading-4 text-text-muted">
                   {activePublication
-                    ? t('workbench.plugins_publication_active_summary', {
-                        defaultValue: 'v{{version}} · {{status}}',
-                        version: activePublication.version,
-                        status: activePublication.status,
-                      })
+                    ? publicationRequiresProgress
+                      ? t('workbench.plugins_publication_active_summary', {
+                          defaultValue: 'v{{version}} · {{status}}',
+                          version: activePublication.version,
+                          status: activePublicationStatusLabel,
+                        })
+                      : t('workbench.plugins_publication_next_revision_summary', {
+                          defaultValue:
+                            'Next v{{version}} · previous request v{{previousVersion}} {{status}}',
+                          version: pluginVersion,
+                          previousVersion: activePublication.version,
+                          status: activePublicationStatusLabel,
+                        })
                     : t(
                         'workbench.plugins_share_enterprise_everyone_hint',
                         '提交企业发布申请，通过检查与审核后向全员发布'

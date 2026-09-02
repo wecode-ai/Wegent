@@ -1723,6 +1723,7 @@
     "plugins_publication_create_revision": "提交新修订版",
     "plugins_publication_view_progress": "查看申请进度",
     "plugins_publication_active_summary": "v{{version}} · {{status}}",
+    "plugins_publication_next_revision_summary": "本次 v{{version}} · 上次申请 v{{previousVersion}} {{status}}",
     "plugins_share_saved_notice": "分享范围已更新。",
     "plugins_publication_submitted_notice": "全员发布申请已提交；审核期间仍可继续编辑和使用个人插件。",
     "plugins_publication_withdrawn_notice": "全员发布申请已撤回。",

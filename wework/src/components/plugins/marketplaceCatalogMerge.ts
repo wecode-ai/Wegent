@@ -186,6 +186,11 @@ export function mergeMarketplaceCatalog(
         if (cloudItem) {
           merged.set(ownedCloudKey, {
             ...cloudItem,
+            // The owned personal card represents the editable local source. The
+            // cloud row can still describe an older shared/published release, so
+            // keep the card aligned with the version that detail and publication
+            // flows will actually package.
+            version: item.version || cloudItem.version,
             localPersonalSource: {
               marketplacePath: marketplacePath.trim(),
               pluginName: item.name,

@@ -1725,6 +1725,7 @@
     "plugins_publication_create_revision": "Submit a new revision",
     "plugins_publication_view_progress": "View request progress",
     "plugins_publication_active_summary": "v{{version}} · {{status}}",
+    "plugins_publication_next_revision_summary": "Next v{{version}} · previous request v{{previousVersion}} {{status}}",
     "plugins_share_saved_notice": "Sharing scope updated.",
     "plugins_publication_submitted_notice": "Enterprise release request submitted. You can keep editing and using the personal plugin during review.",
     "plugins_publication_withdrawn_notice": "Enterprise release request withdrawn.",

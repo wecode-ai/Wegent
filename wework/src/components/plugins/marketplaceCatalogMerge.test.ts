@@ -117,6 +117,7 @@ describe('mergeMarketplaceCatalog', () => {
   test('preserves an owners local source when the published cloud row wins deduplication', () => {
     const localSource = {
       ...localCatalogPlugin(),
+      version: '0.2.0+codex.20260902140548',
       installed: false,
       installedPluginId: null,
       enabled: false,
@@ -127,6 +128,7 @@ describe('mergeMarketplaceCatalog', () => {
     expect(merged).toHaveLength(1)
     expect(merged[0]).toMatchObject({
       id: 4,
+      version: '0.2.0+codex.20260902140548',
       localPersonalSource: {
         marketplacePath: '/Users/test/plugins/personal-marketplace.json',
         pluginName: 'dev-tools',

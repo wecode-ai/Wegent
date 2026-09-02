@@ -19,6 +19,7 @@ from app.models.api_key import (
     KEY_TYPE_PERSONAL,
     KEY_TYPE_PLUGIN_RELEASE,
     KEY_TYPE_SERVICE,
+    NEVER_EXPIRES_AT,
     APIKey,
 )
 from app.models.user import User
@@ -87,16 +88,22 @@ def create_plugin_release_key(
     current_user: User = Depends(get_admin_user),
 ) -> PluginReleaseKeyCreatedResponse:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    expires_at = request.expiresAt
-    if expires_at.tzinfo is not None:
-        expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
-    if expires_at <= now:
-        raise HTTPException(status_code=422, detail="expiresAt must be in the future")
-    if expires_at > now + timedelta(days=settings.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS):
-        raise HTTPException(
-            status_code=422,
-            detail="Plugin release key lifetime exceeds the configured maximum",
-        )
+    expires_at = NEVER_EXPIRES_AT
+    if request.expiresAt is not None:
+        expires_at = request.expiresAt
+        if expires_at.tzinfo is not None:
+            expires_at = expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+        if expires_at <= now:
+            raise HTTPException(
+                status_code=422, detail="expiresAt must be in the future"
+            )
+        if expires_at > now + timedelta(
+            days=settings.WEWORK_PLUGIN_RELEASE_KEY_MAX_DAYS
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Plugin release key lifetime exceeds the configured maximum",
+            )
     random_part = secrets.token_urlsafe(32)
     raw_key = f"wg-{random_part}"
     api_key = APIKey(

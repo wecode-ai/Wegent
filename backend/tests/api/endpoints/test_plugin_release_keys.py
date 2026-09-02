@@ -17,15 +17,12 @@ def test_create_plugin_release_key_uses_minimal_contract(
     test_db: Session,
     test_admin_token: str,
 ) -> None:
-    expires_at = datetime.now(timezone.utc) + timedelta(days=1)
-
     response = test_client.post(
         "/api/admin/plugin-release-keys",
         headers={"Authorization": f"Bearer {test_admin_token}"},
         json={
             "name": "Protected master release",
             "description": "GitLab protected pipeline",
-            "expiresAt": expires_at.isoformat(),
         },
     )
 
@@ -40,5 +37,26 @@ def test_create_plugin_release_key_uses_minimal_contract(
         test_db.query(APIKey).filter(APIKey.key_type == KEY_TYPE_PLUGIN_RELEASE).one()
     )
     assert record.name == "Protected master release"
+    assert record.expires_at.year == 9999
     assert not hasattr(record, "scopes_json")
     assert not hasattr(record, "restrictions_json")
+
+
+def test_create_plugin_release_key_accepts_explicit_expiry(
+    test_client: TestClient,
+    test_db: Session,
+    test_admin_token: str,
+) -> None:
+    expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+
+    response = test_client.post(
+        "/api/admin/plugin-release-keys",
+        headers={"Authorization": f"Bearer {test_admin_token}"},
+        json={"name": "Temporary release", "expiresAt": expires_at.isoformat()},
+    )
+
+    assert response.status_code == 201
+    record = (
+        test_db.query(APIKey).filter(APIKey.key_type == KEY_TYPE_PLUGIN_RELEASE).one()
+    )
+    assert record.expires_at.year != 9999

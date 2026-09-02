@@ -362,11 +362,36 @@ describe('PluginPublishDialog', () => {
     )
 
     fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+    expect(screen.getByTestId('plugin-share-intent-enterprise')).toHaveTextContent(
+      '本次 v1.2.0 · 上次申请 v1.1.0 已退回修改'
+    )
     expect(screen.getByTestId('plugin-share-intent-continue')).toHaveTextContent('提交新修订版')
     fireEvent.click(screen.getByTestId('plugin-share-intent-continue'))
 
     expect(onViewPublication).not.toHaveBeenCalled()
     expect(screen.getByTestId('plugin-publication-step-version')).toHaveTextContent('v1.2.0')
+  })
+
+  test('shows the current personal version instead of a withdrawn request version', () => {
+    render(
+      <PluginPublishDialog
+        {...defaultProps}
+        pluginVersion="0.2.0+codex.20260902140548"
+        activePublication={{
+          id: 82,
+          version: '0.1.0',
+          status: 'withdrawn',
+          canCreateRevision: true,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByTestId('plugin-share-intent-enterprise'))
+
+    expect(screen.getByTestId('plugin-share-intent-enterprise')).toHaveTextContent(
+      '本次 v0.2.0+codex.20260902140548 · 上次申请 v0.1.0 已撤回'
+    )
+    expect(screen.getByTestId('plugin-share-intent-continue')).toHaveTextContent('提交新修订版')
   })
 
   test('starts a new request when a newer personal version follows a published request', () => {

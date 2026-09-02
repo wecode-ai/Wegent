@@ -106,11 +106,11 @@ class ServiceKeyListResponse(BaseModel):
 
 
 class PluginReleaseKeyCreate(BaseModel):
-    """Create a short-lived key for protected GitLab release jobs."""
+    """Create a key for protected GitLab release jobs."""
 
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
-    expiresAt: datetime
+    expiresAt: Optional[datetime] = None
 
 
 class PluginReleaseKeyResponse(BaseModel):
