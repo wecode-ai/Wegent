@@ -857,6 +857,91 @@ describe('runtimeConversationTurns', () => {
     expect(turns[0].items.map(item => item.id)).toEqual(['file-changes-1', 'assistant-item-1'])
   })
 
+  test('reopens a stale transcript turn when a live tool starts', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [],
+          status: 'done',
+          completedAt: '2026-09-02T15:11:46.000Z',
+        },
+      ],
+      {
+        type: 'block_created',
+        subtaskId: 'turn-1',
+        block: {
+          id: 'tool-1',
+          subtaskId: 'turn-1',
+          type: 'tool',
+          toolName: 'node_repl.js',
+          status: 'streaming',
+          createdAt: Date.parse('2026-09-02T15:11:47.000Z'),
+        },
+      }
+    )
+
+    expect(turns[0]).toMatchObject({
+      status: 'streaming',
+      items: [
+        expect.objectContaining({
+          id: 'tool-1',
+          block: expect.objectContaining({ status: 'streaming' }),
+        }),
+      ],
+    })
+    expect(turns[0].completedAt).toBeUndefined()
+  })
+
+  test('reopens a stale transcript turn when a live block update resumes', () => {
+    const turns = reduceRuntimeConversationTurns(
+      [
+        {
+          id: 'turn-1',
+          items: [
+            {
+              id: 'tool-1',
+              type: 'block',
+              block: {
+                id: 'tool-1',
+                subtaskId: 'turn-1',
+                type: 'tool',
+                toolName: 'node_repl.js',
+                status: 'done',
+                createdAt: Date.parse('2026-09-02T15:11:46.000Z'),
+              },
+            },
+          ],
+          status: 'done',
+          completedAt: '2026-09-02T15:11:46.000Z',
+        },
+      ],
+      {
+        type: 'block_updated',
+        subtaskId: 'turn-1',
+        blockId: 'tool-1',
+        updates: {
+          status: 'streaming',
+          toolOutputDelta: 'partial',
+        },
+      }
+    )
+
+    expect(turns[0]).toMatchObject({
+      status: 'streaming',
+      items: [
+        expect.objectContaining({
+          id: 'tool-1',
+          block: expect.objectContaining({
+            status: 'streaming',
+            toolOutputDelta: 'partial',
+          }),
+        }),
+      ],
+    })
+    expect(turns[0].completedAt).toBeUndefined()
+  })
+
   test('keeps a completed final text block before subsequently applied guidance', () => {
     const guidance = {
       ...userMessage('guidance-1', 'Use the new name'),
