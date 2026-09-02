@@ -13,6 +13,7 @@ const requestedCheckpoints = readOption('--checkpoints')
 const reuseApp = process.argv.includes('--reuse-app')
 const supportedPlatforms = new Set(['ios', 'android'])
 const heartbeatIntervalMs = 30_000
+const maestroDriverStartupTimeoutMs = 3 * 60_000
 
 assert.ok(
   supportedPlatforms.has(platform),
@@ -120,7 +121,7 @@ function runComposerAttachmentCleanup() {
     MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
     MAESTRO_CLI_NO_ANALYTICS: 'true',
     MAESTRO_DISABLE_UPDATE_CHECK: 'true',
-    MAESTRO_DRIVER_STARTUP_TIMEOUT: '60000',
+    MAESTRO_DRIVER_STARTUP_TIMEOUT: String(maestroDriverStartupTimeoutMs),
   })
 }
 

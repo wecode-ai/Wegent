@@ -14,6 +14,7 @@ const requestedFlow = readOption('--flow')
 const reuseApp = process.argv.includes('--reuse-app')
 const supportedPlatforms = new Set(['ios', 'android'])
 const checkpointControllerTimeoutMs = 5 * 60_000
+const maestroDriverStartupTimeoutMs = 3 * 60_000
 const mobileRuntimeModelName = 'mobile-e2e-runtime-model'
 
 assert.ok(
@@ -66,7 +67,9 @@ const {
 
 const workspacePath = join('/tmp', 'wme2e')
 const control = new DesktopE2EServer(workspacePath)
-const checkpointSync = requestedFlow === 'recovery' ? createCheckpointSyncServer() : null
+const checkpointSync = ['runtime', 'history', 'recovery'].includes(requestedFlow)
+  ? createCheckpointSyncServer()
+  : null
 let cloudEnvironment
 let approvalLoop
 let controlStarted = false
@@ -299,8 +302,11 @@ function verifyCheckpointSideEffects(flow, targetPlatform) {
 
 function startCheckpointController(flow, sync) {
   if (flow === 'runtime') {
+    assert.ok(sync, 'Runtime E2E requires checkpoint synchronization')
     control.setScenario('cloud_initial')
     return (async () => {
+      const readySignal = await sync.waitFor('runtime-ready')
+      readySignal.acknowledge()
       await control.awaitScenarioRequestCount('cloud_initial', 2, checkpointControllerTimeoutMs)
       control.setScenario('cloud_follow_up')
       await control.awaitScenarioRequest('cloud_follow_up')
@@ -310,8 +316,17 @@ function startCheckpointController(flow, sync) {
     })()
   }
   if (flow === 'history') {
+    assert.ok(sync, 'History E2E requires checkpoint synchronization')
     control.setScenario('turn_navigation')
-    return control.awaitScenarioRequestCount('turn_navigation', 6, checkpointControllerTimeoutMs)
+    return (async () => {
+      const readySignal = await sync.waitFor('history-ready')
+      readySignal.acknowledge()
+      await control.awaitScenarioRequestCount(
+        'turn_navigation',
+        6,
+        checkpointControllerTimeoutMs
+      )
+    })()
   }
   if (flow === 'recovery') {
     assert.ok(sync, 'Recovery E2E requires checkpoint synchronization')
@@ -355,6 +370,7 @@ async function runMaestro(flow, targetPlatform, backendUrl, syncUrl) {
     '--env',
     `E2E_WORKSPACE_PATH=${workspacePath}`,
     ...(syncUrl ? ['--env', `E2E_SYNC_URL=${syncUrl}`] : []),
+    ...(syncUrl ? ['--env', `E2E_CHECKPOINT_READY_SIGNAL=${flow}-ready`] : []),
     '--env',
     'E2E_PROJECT_NAME=e2e',
     '--env',
@@ -390,7 +406,7 @@ async function runMaestro(flow, targetPlatform, backendUrl, syncUrl) {
       MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED: 'true',
       MAESTRO_CLI_NO_ANALYTICS: 'true',
       MAESTRO_DISABLE_UPDATE_CHECK: 'true',
-      MAESTRO_DRIVER_STARTUP_TIMEOUT: '60000',
+      MAESTRO_DRIVER_STARTUP_TIMEOUT: String(maestroDriverStartupTimeoutMs),
     },
   })
 }

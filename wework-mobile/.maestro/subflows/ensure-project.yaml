@@ -13,13 +13,15 @@ appId: com.wecode.wegent
           id: project-dialog
       - tapOn:
           id: project-name
-      - inputText: ${E2E_PROJECT_NAME}
+      - setClipboard: ${E2E_PROJECT_NAME}
+      - pasteText
       - assertVisible:
           id: project-name
           text: ${E2E_PROJECT_NAME}
       - tapOn:
           id: project-workspace-path
-      - inputText: ${E2E_WORKSPACE_PATH}
+      - setClipboard: ${E2E_WORKSPACE_PATH}
+      - pasteText
       - assertVisible:
           id: project-workspace-path
           text: ${E2E_WORKSPACE_PATH}

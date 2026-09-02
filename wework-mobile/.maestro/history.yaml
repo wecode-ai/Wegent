@@ -6,6 +6,7 @@ tags:
 - runFlow: subflows/login.yaml
 - runFlow: subflows/open-project-chat.yaml
 - runFlow: subflows/select-runtime-model.yaml
+- runScript: scripts/signal-checkpoint-ready.js
 - tapOn:
     id: new-chat-input
 - setClipboard: ${E2E_HISTORY_PROMPT_PREFIX}_1
