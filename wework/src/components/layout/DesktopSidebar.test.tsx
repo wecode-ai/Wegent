@@ -3404,7 +3404,10 @@ describe('DesktopSidebar', () => {
     const runningStatus = screen.getByTestId('runtime-local-task-running-codex-running')
     expect(runningStatus).toHaveAttribute('aria-label', '运行中')
     expect(runningStatus).not.toHaveTextContent('运行中')
-    expect(runningStatus.querySelector('svg')).not.toBeNull()
+    const spinnerLayer = runningStatus.querySelector('.animate-spin')
+    expect(spinnerLayer).toBeInstanceOf(HTMLSpanElement)
+    expect(spinnerLayer).toHaveClass('will-change-transform')
+    expect(spinnerLayer?.querySelector('svg')).not.toHaveClass('animate-spin')
     expect(screen.queryByTestId('runtime-local-task-running-codex-idle')).not.toBeInTheDocument()
   })
 

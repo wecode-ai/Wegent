@@ -20,6 +20,7 @@ import {
   isRequestUserInputBlock,
   type RequestUserInputBlock,
 } from '../requestUserInputMessages'
+import { ActivityShimmerText } from '../ActivityShimmerText'
 import { AssistantThinkingIndicator } from '../AssistantThinkingIndicator'
 import { ToolBlockItem, type FileEditDurationsByBlock } from './ToolBlockItem'
 import {
@@ -831,9 +832,13 @@ function ContextCompactionIndicator({ block }: { block: ToolBlock }) {
         className={`inline-flex min-w-0 max-w-full items-center gap-1.5 text-sm font-semibold ${textClassName}`}
       >
         <Archive className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
-        <span className={`min-w-0 truncate ${isRunning ? 'waiting-thinking-text' : ''}`}>
-          {label}
-        </span>
+        {isRunning ? (
+          <ActivityShimmerText variant="thinking" className="min-w-0 truncate">
+            {label}
+          </ActivityShimmerText>
+        ) : (
+          <span className="min-w-0 truncate">{label}</span>
+        )}
       </span>
       <span className="h-px min-w-6 flex-1 bg-border" aria-hidden="true" />
     </div>
