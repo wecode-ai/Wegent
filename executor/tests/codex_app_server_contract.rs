@@ -795,7 +795,7 @@ async fn codex_app_server_engine_does_not_timeout_running_turn() {
 
 async fn codex_app_server_idle_restart_preserves_in_flight_requests() {
     let _lock = env_lock().await;
-    let request_marker = unique_dir("codex-pending-request").join("received");
+    let request_marker = unique_dir("codex-pending-request'quoted").join("received");
     let fake_codex = write_fake_codex_with_pending_request(&request_marker);
     let client = CodexAppServerClient::new(fake_codex.display().to_string());
     let request_client = client.clone();
@@ -1298,13 +1298,13 @@ while IFS= read -r line; do
     *'"method":"initialized"'*)
       ;;
     *'"method":"plugin/list"'*)
-      touch '__REQUEST_MARKER__'
+      touch __REQUEST_MARKER__
       sleep 30
       ;;
   esac
 done
 "#
-    .replace("__REQUEST_MARKER__", &request_marker.display().to_string());
+    .replace("__REQUEST_MARKER__", &shell_quote(request_marker));
     fs::write(&path, content).unwrap();
     #[cfg(unix)]
     {
@@ -1313,6 +1313,10 @@ done
         fs::set_permissions(&path, permissions).unwrap();
     }
     path
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 fn write_fake_codex_logging_start(log_path: &Path, env_keys: &[&str]) -> PathBuf {
