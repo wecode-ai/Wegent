@@ -125,9 +125,8 @@ pub fn hydrate_process_environment() -> Result<Option<ShellEnvironmentLoad>, Str
 fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> {
     let system_root = env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_owned());
     let powershell = format!("{system_root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    let script = "[string]::Join('===', @(";
     let script = format!(
-        "{script}[Environment]::GetEnvironmentVariable('Path','Machine'),\
+        "[string]::Join('===', @([Environment]::GetEnvironmentVariable('Path','Machine'),\
         [Environment]::GetEnvironmentVariable('Path','User')))"
     );
     let output = WindowsCommand::new(&powershell)
@@ -138,8 +137,8 @@ fn windows_registry_paths() -> Result<(Option<String>, Option<String>), String> 
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            script,
         ])
+        .arg(script)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
