@@ -105,33 +105,31 @@ const REMOTE_TERMINAL_LINE_SELECTOR =
   '[data-testid="remote-terminal"] .xterm-accessibility-tree [role="listitem"]'
 
 async function verifyRemoteTerminalUsesPanelWidth(control) {
-  const outputStartedAt = Date.now()
-  let terminalText = ''
-  while (Date.now() - outputStartedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    terminalText = await control.command('getText', REMOTE_TERMINAL_LINE_SELECTOR)
-    if (terminalText.trim()) break
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
-  }
-  assert.ok(terminalText.trim(), 'The remote terminal did not emit initial shell output')
-
-  await control.command('terminalInput', '[data-testid="remote-terminal"]', {
-    value: `stty size | sed 's/^/${REMOTE_TERMINAL_SIZE_MARKER}=/'\r`,
+  await control.command('waitFor', REMOTE_TERMINAL_LINE_SELECTOR, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
 
   const startedAt = Date.now()
+  let lastReportedSize = 'none'
+  let terminalText = ''
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
+    await control.command('terminalInput', '[data-testid="remote-terminal"]', {
+      value: `stty size | sed 's/^/${REMOTE_TERMINAL_SIZE_MARKER}=/'\r`,
+    })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 200))
     terminalText = await control.command('getText', REMOTE_TERMINAL_LINE_SELECTOR)
-    const size = terminalText.match(/WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE=(\d+)\s+(\d+)/u)
+    const sizes = Array.from(
+      terminalText.matchAll(/WEWORK_DESKTOP_E2E_REMOTE_TERMINAL_SIZE=(\d+)\s+(\d+)/gu)
+    )
+    const size = sizes.at(-1)
     if (size) {
-      assert.ok(
-        Number(size[2]) > 80,
-        `The remote PTY kept its default 80-column width instead of the fitted panel width: ${size[0]}`
-      )
-      return
+      lastReportedSize = size[0]
+      if (Number(size[2]) > 80) return
     }
-    await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
-  throw new Error(`The remote terminal did not report its fitted dimensions: ${terminalText}`)
+  throw new Error(
+    `The remote PTY did not reach the fitted panel width; last size: ${lastReportedSize}; terminal: ${terminalText.slice(-2000)}`
+  )
 }
 
 async function waitForSingleProjectByTitle(control, expectedTitle, message, timeoutMs) {
