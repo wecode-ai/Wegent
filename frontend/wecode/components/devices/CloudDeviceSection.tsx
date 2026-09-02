@@ -282,6 +282,13 @@ function CloudMachineCard({
   t,
 }: CloudMachineCardProps) {
   const primaryDevice = getPrimaryDevice(devices)
+  const orderedDevices = useMemo(
+    () =>
+      [...devices].sort(
+        (a, b) => Number(a.bind_shell === 'openclaw') - Number(b.bind_shell === 'openclaw')
+      ),
+    [devices]
+  )
   const isAnyOnline = devices.some(d => d.status === 'online' || d.status === 'busy')
 
   // Get upgrade status
@@ -320,6 +327,7 @@ function CloudMachineCard({
 
   return (
     <div
+      data-testid={`cloud-machine-card-${primaryDevice.cloud_config?.sandboxId ?? primaryDevice.device_id}`}
       className={cn(
         'bg-surface border rounded-lg p-4',
         primaryDevice.is_default ? 'border-primary' : 'border-border'
@@ -411,7 +419,7 @@ function CloudMachineCard({
 
       {/* Device capability rows */}
       <div className="mt-3 pt-3 border-t border-border/50">
-        {devices.map(device => (
+        {orderedDevices.map(device => (
           <DeviceCapabilityRow
             key={device.device_id}
             device={device}
@@ -469,7 +477,10 @@ function DeviceCapabilityRow({ device, onStartTask, t }: DeviceCapabilityRowProp
     : t('devices:status_offline')
 
   return (
-    <div className="grid grid-cols-[100px_1fr_60px_auto] items-center gap-3 py-2">
+    <div
+      data-testid={`cloud-runtime-row-${device.bind_shell ?? 'claudecode'}-${device.device_id}`}
+      className="grid grid-cols-[100px_1fr_60px_auto] items-center gap-3 py-2"
+    >
       {/* Capability type badge - fixed width */}
       <span
         className={cn(
